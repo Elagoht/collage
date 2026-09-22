@@ -61,6 +61,20 @@ var ErrEmptyErrorPage = errors.New("collage: error page rendered empty")
 // fragment failure policy.
 var ErrPanic = errors.New("collage: panic recovered while serving the request")
 
+// ErrAssetFailed is the error reported to plugins through ErrorHook when a mounted
+// asset request completes with a status of 400 or above: a missing file, a
+// disallowed method, or any other 4xx or 5xx asset.Mount itself decided to write.
+// It is deliberately one sentinel for every such status rather than a family of
+// them — a plugin reacting to "this asset request failed" needs no finer
+// distinction than that, whether the status was 404 or 405, matching this
+// project's one-sentinel-per-failure-mode rule — and the wrapped message names the
+// status that was actually written, since the mount, not this package, chose it.
+//
+// A panic recovered while serving a mount is reported as ErrPanic instead, through
+// the same path any other collaborator's panic takes: this sentinel covers only a
+// mount that returned normally with an error status already on the wire.
+var ErrAssetFailed = errors.New("collage: asset request failed")
+
 // Pipeline stages, as reported to plugins through ErrorEvent.Stage. The field is
 // documented as caller-defined rather than an enum, so these are the names this
 // handler happens to use.
@@ -74,6 +88,7 @@ const (
 	stageCacheWrite   = "cache_write"
 	stageErrorPage    = "error_page"
 	stagePanic        = "panic"
+	stageAsset        = "asset"
 )
 
 // contentTypeHTML is the Content-Type every rendered page and built-in error page
@@ -145,7 +160,7 @@ type Deps struct {
 	Vary []string
 	// Mounts serves asset file systems under their own URL prefixes, checked
 	// before every request is routed. A nil or empty Mounts serves no assets. See
-	// Handler.ServeHTTP for why checking them first is safe.
+	// Handler.serve for why checking them first is safe.
 	Mounts []*asset.Mount
 }
 
@@ -208,26 +223,11 @@ func New(d Deps) (*Handler, error) {
 // ServeHTTP implements http.Handler: it runs the request lifecycle inside one span
 // and reports the completed response to Metrics.
 //
-// A mount's URL space is claimed before any of that: internal/core's
-// checkMountsDoNotShadow refuses to build a handler at all if any mount prefix
-// would shadow a registered page or document path, so by the time a Handler
-// exists every mount prefix is guaranteed to own URL space no route answers to.
-// That guarantee is what makes checking mounts first — rather than falling
-// through to the router and only trying a mount on a miss — safe: it can never
-// take a request away from a page or a document, it costs nothing but a
-// linear scan of however many mounts exist, and it is why a request for the bare
-// mount prefix gets the mount's own plain-text 404 (see asset.Mount.Handles)
-// instead of the router's HTML one. Without the close-out check enforcing that
-// guarantee elsewhere, checking mounts before routing would be a correctness
-// hazard rather than a safe optimization.
+// A mount's URL space is claimed before routing, inside serve, but that check no
+// longer opts a mounted request out of everything below: see serve and serveMount
+// for why a mount now runs through the same timing, span, panic guard, and metric
+// every page and document request gets.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	for _, mount := range h.mounts {
-		if mount.Handles(r.URL.Path) {
-			mount.ServeHTTP(w, r)
-			return
-		}
-	}
-
 	start := time.Now()
 
 	ctx, span := h.tracer.StartSpan(r.Context(), "collage.http")
@@ -273,7 +273,32 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request) (status i
 }
 
 // serve runs the request lifecycle and returns the status code it wrote.
+//
+// A mount is checked before routing, exactly as before, but no longer returns
+// straight to net/http: internal/core's checkMountsDoNotShadow refuses to build a
+// handler at all if any mount prefix would shadow a registered page or document
+// path, so by the time a Handler exists every mount prefix is guaranteed to own
+// URL space no route answers to. That guarantee is what makes checking mounts
+// first — rather than falling through to the router and only trying a mount on a
+// miss — safe: it can never take a request away from a page or a document, it
+// costs nothing but a linear scan of however many mounts exist, and it is why a
+// request for the bare mount prefix gets the mount's own plain-text 404 (see
+// asset.Mount.Handles) instead of the router's HTML one. Without the close-out
+// check enforcing that guarantee elsewhere, checking mounts before routing would
+// be a correctness hazard rather than a safe optimization.
+//
+// What changed is that serve, not ServeHTTP, is where the check happens now:
+// serve runs inside serveGuarded, which is what turns a panic into a 500 on the
+// normal error path, and ServeHTTP is what times the request and reports the
+// HTTPResponse metric. A mount request goes through serveMount so it gets all of
+// that instead of bypassing it.
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
+	for _, mount := range h.mounts {
+		if mount.Handles(r.URL.Path) {
+			return h.serveMount(w, r, mount)
+		}
+	}
+
 	ctx := r.Context()
 
 	match, err := h.router.Match(r)

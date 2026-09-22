@@ -286,6 +286,14 @@ var ErrEmptyErrorPage = httpx.ErrEmptyErrorPage
 // recovers itself as a PanicError.
 var ErrPanic = httpx.ErrPanic
 
+// ErrAssetFailed is the error a plugin's ErrorHook receives, under the stage
+// "asset", when a mounted asset request completes with a status of 400 or above.
+// It is one sentinel for every such status — a 404 for a missing file and a 405
+// for a disallowed method both report it — rather than one per code, since a
+// plugin reacting to "this asset request failed" needs no finer distinction than
+// that. A panic recovered while serving a mount is reported as ErrPanic instead.
+var ErrAssetFailed = httpx.ErrAssetFailed
+
 // New builds an App from cfg: it applies the framework's defaults to every field
 // left at its zero value, validates the result, converts it into the internal
 // configuration, and constructs the application.

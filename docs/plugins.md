@@ -97,6 +97,15 @@ A plugin therefore has no way to reach the router, the cache, the render engine,
 the template set, or any page it was not explicitly handed. That is the structural
 half of the specification's "plugins cannot mutate core state".
 
+`Host` has no `Documents` method, and that is deliberate rather than an
+oversight: nothing outside the framework's own build step reads the document
+registry today (see `internal/core/document.go`'s `Documents`, which
+`App.RenderDocumentPath` and the static builder use directly, neither of which is
+a plugin). `Pages` exists on `Host` because a plugin's per-request hooks receive a
+live `*Page` a plugin may want to cross-reference against the full list; nothing
+analogous currently reads a document through a hook, so there is no consumer to
+build the method for yet.
+
 **`Host` limits reachability, not mutability.** `*collage.Page` is a plain struct
 of exported fields. `Pages` and `Page` hand back a defensive copy — the struct,
 plus its `Paths`, `Redirects`, `SEO`, and `DependencyTags` containers — so writing
@@ -119,12 +128,12 @@ mutation obvious. Where mutation *is* intended it is explicit —
 
 | Interface | Method | Fires | May change |
 | --- | --- | --- | --- |
-| `PageResolvedHook` | `OnPageResolved` | After routing, before anything else — including on a cache hit | nothing |
-| `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit | nothing |
-| `AfterRenderHook` | `OnAfterRender` | After a successful render | `ev.HTML` |
-| `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored | `ev.Skip`, `ev.TTL`, `ev.Tags` |
-| `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated | nothing |
-| `ErrorHook` | `OnError` | On any failure while serving a request | nothing |
+| `PageResolvedHook` | `OnPageResolved` | After routing, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch three hooks, not six" below) | nothing |
+| `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** | nothing |
+| `AfterRenderHook` | `OnAfterRender` | After a successful render. **Pages only** | `ev.HTML` |
+| `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored — for a page or a document alike | `ev.Skip`, `ev.TTL`, `ev.Tags` |
+| `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike | nothing |
+| `ErrorHook` | `OnError` | On any failure while serving a request — a page, a document, or a mounted asset alike | nothing |
 
 Two consequences of where `OnAfterRender` sits are worth stating plainly:
 
@@ -135,19 +144,39 @@ Two consequences of where `OnAfterRender` sits are worth stating plainly:
 - **A rendered error page does not run it at all.** The error path renders the
   error page directly rather than through the request's render pipeline.
 
+### Documents dispatch three hooks, not six
+
+A document (`collage.NewDocument`) dispatches `OnCacheWrite`,
+`OnCacheInvalidate`, and `OnError`. It does **not** dispatch `OnPageResolved`,
+`OnBeforeRender`, or `OnAfterRender` — those three are about a render, and a
+document handler is not one: `AfterRenderEvent.HTML` would be a lie for a zip
+file or a JPEG, and there is no `*Page` for `PageResolvedEvent.Page` to carry.
+The accepted consequence is explicit: **a plugin cannot post-process a document
+body.** A plugin that stamps every page from `OnAfterRender` stamps nothing on a
+sitemap. `ErrorEvent.Page` is `nil` for a document failure — the event's `Path`
+already identifies the route, and the framework's own log line names the
+document. See `docs/documents.md` for the full reasoning; this table and that
+page are kept in agreement on it.
+
+A mounted asset request dispatches only `OnError`, and only for a 4xx or 5xx
+response, or for a panic recovered while serving it: an asset is neither a page
+nor a document, so none of the cache or render hooks apply to it either.
+
 An `ErrorHook` can classify what it receives with `errors.Is`:
 `collage.ErrNoRoute` (no route matched — a link problem), `collage.ErrNotFound`
 (a required fragment's content does not exist — a content problem),
 `collage.ErrEmptyErrorPage` (a registered error page rendered nothing),
-`collage.ErrMaxDepthExceeded`, `collage.ErrRequiredSlotEmpty`,
-`collage.ErrNoRootFragment`, and `collage.PanicError` through `errors.As`.
+`collage.ErrAssetFailed` (a mounted asset request completed with a 4xx or 5xx —
+one sentinel for every such status), `collage.ErrMaxDepthExceeded`,
+`collage.ErrRequiredSlotEmpty`, `collage.ErrNoRootFragment`, and
+`collage.PanicError` through `errors.As`.
 
 `ErrorEvent.Stage` names where in the pipeline the failure happened (`"route"`,
 `"not_found"`, `"page_resolved"`, `"before_render"`, `"render"`,
-`"after_render"`, `"cache_write"`, `"error_page"`). It is caller-defined rather
-than an enum. `"error_page"` is the one worth alerting on: it means the page that
-reports failures failed, which nobody finds out about otherwise, because the
-client still receives a plausible-looking error page.
+`"after_render"`, `"cache_write"`, `"error_page"`, `"asset"`). It is
+caller-defined rather than an enum. `"error_page"` is the one worth alerting on:
+it means the page that reports failures failed, which nobody finds out about
+otherwise, because the client still receives a plausible-looking error page.
 
 ## Dispatch and error semantics
 

@@ -5,14 +5,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
+	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/observability"
@@ -474,6 +477,11 @@ func withVary(headers ...string) envOption {
 // withDefaultTTL sets the handler's fallback cache TTL.
 func withDefaultTTL(ttl time.Duration) envOption {
 	return func(d *Deps) { d.DefaultTTL = ttl }
+}
+
+// withMounts installs mounts, checked before routing.
+func withMounts(mounts ...*asset.Mount) envOption {
+	return func(d *Deps) { d.Mounts = mounts }
 }
 
 // withCacheConfig replaces the environment's memory cache with one built from cfg,
@@ -1499,5 +1507,248 @@ func TestPanicInACollaboratorDoesNotLeakDiagnosticsOutsideDevMode(t *testing.T) 
 
 	if strings.Contains(string(body), "router exploded") {
 		t.Errorf("body = %q, want no panic value in a production response", body)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Mounted assets
+// ---------------------------------------------------------------------------
+
+// slowFS wraps an fs.FS and sleeps for delay on every Open, so a test can prove a
+// metric's duration is real elapsed time rather than an untouched zero value,
+// without depending on how fast the underlying file system happens to be.
+type slowFS struct {
+	inner fs.FS
+	delay time.Duration
+}
+
+// Open sleeps for delay, then delegates to the wrapped file system.
+func (s slowFS) Open(name string) (fs.File, error) {
+	time.Sleep(s.delay)
+	return s.inner.Open(name)
+}
+
+// panicFS is a hostile fs.FS whose Open panics instead of returning, standing in
+// for a mount's file system misbehaving the same way panickingRouter stands in
+// for an application's Router: something the framework did not write blowing up
+// mid-request.
+type panicFS struct{}
+
+// Open always panics.
+func (panicFS) Open(string) (fs.File, error) {
+	panic("mount fs exploded")
+}
+
+// mustMount builds an asset.Mount at prefix over fsys, failing the test if
+// construction fails.
+func mustMount(t *testing.T, prefix string, fsys fs.FS) *asset.Mount {
+	t.Helper()
+	m, err := asset.New(prefix, fsys)
+	if err != nil {
+		t.Fatalf("asset.New(%q) = %v, want nil", prefix, err)
+	}
+	return m
+}
+
+// TestAssetSuccessProducesHTTPResponseMetric is the base case for Task 9a: an
+// asset request that used to bypass every metric, span, and hook now produces the
+// same HTTPResponse metric a page does, with a real, non-zero duration.
+func TestAssetSuccessProducesHTTPResponseMetric(t *testing.T) {
+	fsys := fstest.MapFS{"app.css": {Data: []byte("body{color:red}")}}
+	mount := mustMount(t, "/static/", slowFS{inner: fsys, delay: time.Millisecond})
+	env := newEnv(t, nil, withMounts(mount))
+
+	res := env.get("/static/app.css")
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	}
+	if got := res.Body.String(); got != "body{color:red}" {
+		t.Errorf("body = %q, want the mounted file's content", got)
+	}
+
+	responses := env.metrics.Snapshot().HTTPResponses
+	if len(responses) != 1 || responses[0].Status != http.StatusOK || responses[0].Path != "/static/app.css" {
+		t.Fatalf("HTTPResponse calls = %+v, want one 200 for \"/static/app.css\"", responses)
+	}
+	if responses[0].Duration <= 0 {
+		t.Errorf("HTTPResponse duration = %v, want a non-zero duration", responses[0].Duration)
+	}
+}
+
+// TestAssetNotFoundDispatchesOnErrorAndMetric checks that a missing file under a
+// mount is counted in HTTPResponse and reported to ErrorHook exactly once, the two
+// things an asset 404 used to skip entirely.
+func TestAssetNotFoundDispatchesOnErrorAndMetric(t *testing.T) {
+	fsys := fstest.MapFS{"app.css": {Data: []byte("body{color:red}")}}
+	mount := mustMount(t, "/static/", fsys)
+	recorder := &recordingPlugin{}
+	env := newEnv(t, nil, withMounts(mount), withPlugins(t, recorder))
+
+	res := env.get("/static/missing.css")
+
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusNotFound)
+	}
+
+	responses := env.metrics.Snapshot().HTTPResponses
+	if len(responses) != 1 || responses[0].Status != http.StatusNotFound {
+		t.Fatalf("HTTPResponse calls = %+v, want one 404", responses)
+	}
+
+	errs := recorder.reportedErrors()
+	if len(errs) != 1 {
+		t.Fatalf("OnError dispatches = %d, want 1", len(errs))
+	}
+	if !errors.Is(errs[0], ErrAssetFailed) {
+		t.Errorf("reported error = %v, want ErrAssetFailed", errs[0])
+	}
+
+	stages := recorder.recorded()
+	if len(stages) != 1 || stages[0] != "Error:"+stageAsset {
+		t.Errorf("hooks = %v, want one Error:%s", stages, stageAsset)
+	}
+}
+
+// TestAssetMethodNotAllowedDispatchesOnErrorAndMetric mirrors the 404 case for a
+// 405: a disallowed method is still an asset request that failed, and must be
+// counted and reported the same way.
+func TestAssetMethodNotAllowedDispatchesOnErrorAndMetric(t *testing.T) {
+	fsys := fstest.MapFS{"app.css": {Data: []byte("body{color:red}")}}
+	mount := mustMount(t, "/static/", fsys)
+	recorder := &recordingPlugin{}
+	env := newEnv(t, nil, withMounts(mount), withPlugins(t, recorder))
+
+	res := env.do(httptest.NewRequest(http.MethodPost, "/static/app.css", nil))
+
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusMethodNotAllowed)
+	}
+
+	responses := env.metrics.Snapshot().HTTPResponses
+	if len(responses) != 1 || responses[0].Status != http.StatusMethodNotAllowed {
+		t.Fatalf("HTTPResponse calls = %+v, want one 405", responses)
+	}
+
+	errs := recorder.reportedErrors()
+	if len(errs) != 1 || !errors.Is(errs[0], ErrAssetFailed) {
+		t.Fatalf("OnError dispatches = %v, want one ErrAssetFailed", errs)
+	}
+}
+
+// TestPanickingMountBecomesA500 is the asset-side counterpart to
+// TestPanicInACollaboratorBecomesA500: a mount's file system panicking used to
+// unwind straight into net/http, dropping the connection with no status line, no
+// hook, and no metric. It must now go through the same panic guard as everything
+// else — a 500 on the normal error path, one ErrorHook dispatch, and the process
+// left standing.
+func TestPanickingMountBecomesA500(t *testing.T) {
+	mount := mustMount(t, "/static/", panicFS{})
+	spy := &recordingPlugin{}
+	env := newEnv(t, nil, withMounts(mount), withPlugins(t, spy))
+	srv := env.server(t)
+
+	res, body := request(t, srv, http.MethodGet, "/static/app.css")
+
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusInternalServerError)
+	}
+	if len(body) == 0 {
+		t.Error("body is empty: the client got a status with no page")
+	}
+
+	if got := spy.recorded(); len(got) != 1 || got[0] != "Error:"+stagePanic {
+		t.Fatalf("hooks = %v, want one Error:%s", got, stagePanic)
+	}
+	reported := spy.reportedErrors()
+	if len(reported) != 1 || !errors.Is(reported[0], ErrPanic) {
+		t.Fatalf("reported errors = %v, want one ErrPanic", reported)
+	}
+	if !strings.Contains(reported[0].Error(), "mount fs exploded") {
+		t.Errorf("reported error = %q, want it to carry the panic value", reported[0])
+	}
+
+	responses := env.metrics.Snapshot().HTTPResponses
+	if len(responses) != 1 || responses[0].Status != http.StatusInternalServerError {
+		t.Fatalf("HTTPResponse metrics = %+v, want one 500", responses)
+	}
+}
+
+// TestMountContentTypeSurvivesThroughRealRequest checks, through a real server
+// rather than httptest.ResponseRecorder, that wrapping the ResponseWriter to
+// capture the status never changes what the mount actually served: the real mime
+// type on a hit, and the mount's own plain-text error body — never the page
+// router's HTML — on a 404 and a 405.
+func TestMountContentTypeSurvivesThroughRealRequest(t *testing.T) {
+	fsys := fstest.MapFS{"app.css": {Data: []byte("body{color:red}")}}
+	mount := mustMount(t, "/static/", fsys)
+	env := newEnv(t, nil, withMounts(mount))
+	srv := env.server(t)
+
+	hit, hitBody := request(t, srv, http.MethodGet, "/static/app.css")
+	if got := hit.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/css") {
+		t.Errorf("hit Content-Type = %q, want text/css", got)
+	}
+	if string(hitBody) != "body{color:red}" {
+		t.Errorf("hit body = %q, want the mounted file's content", hitBody)
+	}
+
+	miss, missBody := request(t, srv, http.MethodGet, "/static/missing.css")
+	if miss.StatusCode != http.StatusNotFound {
+		t.Fatalf("miss status = %d, want %d", miss.StatusCode, http.StatusNotFound)
+	}
+	if got := miss.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("miss Content-Type = %q, want text/plain, never the page router's HTML", got)
+	}
+	if strings.Contains(string(missBody), "<html") {
+		t.Errorf("miss body = %q, want the mount's own plain-text 404, not HTML", missBody)
+	}
+
+	disallowed, disallowedBody := request(t, srv, http.MethodPost, "/static/app.css")
+	if disallowed.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("disallowed status = %d, want %d", disallowed.StatusCode, http.StatusMethodNotAllowed)
+	}
+	if got := disallowed.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("disallowed Content-Type = %q, want text/plain", got)
+	}
+	if strings.Contains(string(disallowedBody), "<html") {
+		t.Errorf("disallowed body = %q, want the mount's own plain-text body, not HTML", disallowedBody)
+	}
+}
+
+// TestPageRequestUnaffectedByMountsBeingConfigured is the page-side control for
+// this task: a page request's HTTPResponse metric and hook dispatch order must be
+// exactly what they were before mounts ran through the same serve path, whether or
+// not any mounts are configured alongside it.
+func TestPageRequestUnaffectedByMountsBeingConfigured(t *testing.T) {
+	page := testPage("home", "/", types.StrategyStatic)
+	mount := mustMount(t, "/static/", fstest.MapFS{"app.css": {Data: []byte("body{}")}})
+	recorder := &recordingPlugin{}
+	env := newEnv(t, []*types.Page{page}, withMounts(mount), withPlugins(t, recorder))
+	env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+	res := env.get("/")
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	}
+	if got := res.Body.String(); got != "<html>home</html>" {
+		t.Errorf("body = %q, want the rendered page", got)
+	}
+
+	want := []string{"PageResolved", "BeforeRender", "AfterRender", "CacheWrite"}
+	if got := recorder.recorded(); len(got) != len(want) {
+		t.Fatalf("hooks = %v, want %v", got, want)
+	} else {
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("hooks = %v, want %v", got, want)
+			}
+		}
+	}
+
+	responses := env.metrics.Snapshot().HTTPResponses
+	if len(responses) != 1 || responses[0].Status != http.StatusOK || responses[0].Path != "/" {
+		t.Errorf("HTTPResponse calls = %+v, want one 200 for \"/\"", responses)
 	}
 }
