@@ -88,6 +88,29 @@ func TestExecuteDocument_OrdinaryErrorIsNotNotFound(t *testing.T) {
 	}
 }
 
+func TestExecuteDocument_TagsSurviveAFailingHandler(t *testing.T) {
+	engine := New(nil, Options{})
+	doc := &types.Document{
+		Name:           "feed",
+		ContentType:    "application/rss+xml",
+		DependencyTags: []string{"site"},
+		Handler: func(ctx context.Context, rc *types.RenderContext) ([]byte, []string, error) {
+			return nil, []string{"blog:posts"}, errors.New("database unavailable")
+		},
+	}
+
+	result, err := engine.ExecuteDocument(context.Background(), doc, documentContext())
+	if err == nil {
+		t.Fatal("ExecuteDocument() = nil, want the handler's error")
+	}
+	if result.Body != nil {
+		t.Fatalf("Body = %q, want nil on failure", result.Body)
+	}
+	if want := []string{"blog:posts", "site"}; !slices.Equal(result.Tags, want) {
+		t.Fatalf("Tags = %v, want %v — a handler that resolved its dependencies before failing has still told us what would invalidate this response", result.Tags, want)
+	}
+}
+
 func TestExecuteDocument_PanicIsContained(t *testing.T) {
 	engine := New(nil, Options{})
 	doc := &types.Document{

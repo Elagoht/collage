@@ -29,10 +29,12 @@ type DocumentResult struct {
 	Timing observability.Timing
 }
 
-// ExecuteDocument runs doc's handler with panic containment and doc's effective
-// timeout, and returns its body, content type and collected tags. The handler runs
-// on the calling goroutine — see Execute for why a spawned one would leak, and for
-// the limitation that a handler ignoring its context can still overrun.
+// ExecuteDocument runs doc's handler with panic containment and the engine's
+// default timeout — Document has no per-document Timeout field, unlike Fragment, so
+// there is no effective timeout to resolve — and returns its body, content type and
+// collected tags. The handler runs on the calling goroutine — see Execute for why a
+// spawned one would leak, and for the limitation that a handler ignoring its context
+// can still overrun.
 func (e *SlotEngine) ExecuteDocument(ctx context.Context, doc *types.Document, rc *types.RenderContext) (*DocumentResult, error) {
 	started := time.Now()
 	result := &DocumentResult{ContentType: doc.ContentType}
@@ -51,12 +53,16 @@ func (e *SlotEngine) ExecuteDocument(ctx context.Context, doc *types.Document, r
 	result.Timing.Data = result.Timing.Total
 	e.metrics.RenderDuration(ctx, doc.Name, result.Timing.Total, false)
 
+	// Tags first, error second: a handler that resolved what it depends on and
+	// then failed has still told us what would invalidate this response — the same
+	// rationale attempt() in fragment.go applies to a data handler's tags.
+	result.Tags = sortedTags(append(append([]string(nil), tags...), doc.DependencyTags...))
+
 	if err != nil {
 		result.NotFound = errors.Is(err, types.ErrNotFound)
 		return result, err
 	}
 
 	result.Body = body
-	result.Tags = sortedTags(append(append([]string(nil), tags...), doc.DependencyTags...))
 	return result, nil
 }
