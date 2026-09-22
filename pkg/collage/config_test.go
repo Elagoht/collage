@@ -26,8 +26,9 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 			Timeout:   5 * time.Second,
 		},
 		Cache: CacheConfig{
-			DefaultTTL: 5 * time.Minute,
-			MaxEntries: 10000,
+			DefaultTTL:    5 * time.Minute,
+			MaxEntries:    10000,
+			MaxKeysPerTag: 10000,
 		},
 		Locale: LocaleConfig{
 			Default:    "en",

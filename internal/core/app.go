@@ -92,6 +92,18 @@ var ErrEmptyTemplateRoot = errors.New("collage: empty template root")
 // Config.Locale.CookieName is empty, matching internal/router's own fallback.
 const defaultLocaleCookie = "locale"
 
+// defaultMaxKeysPerTag is the per-tag cache-key cap the dependency tracker is given
+// when Config.Cache.MaxKeysPerTag is left at zero. It matches the cache's own
+// default entry cap: a tag cannot usefully resolve to more live cache entries than
+// the cache holds, and an unbounded tracker in front of a bounded cache is how a
+// query-string flood turns into a memory leak.
+//
+// pkg/collage.Config.ApplyDefaults fills the same value in, so this fallback only
+// matters for a Config built here directly — but it is the tracker's only bound,
+// and leaving it to the layer above would mean the bound holds by convention rather
+// than by construction.
+const defaultMaxKeysPerTag = 10000
+
 // Config is internal/core's mirror of pkg/collage.Config. The two structs are kept
 // field-aligned on purpose: pkg/collage owns the defaults and the validation, then
 // converts its Config into this one and calls New, so that internal/core never
@@ -167,6 +179,11 @@ type CacheConfig struct {
 	DefaultTTL time.Duration
 	// MaxEntries caps the number of cache entries.
 	MaxEntries int
+	// MaxKeysPerTag caps how many cache keys the dependency tracker records under
+	// any one tag. Zero means "use the default" (defaultMaxKeysPerTag); a negative
+	// value means unlimited. See pkg/collage.CacheConfig.MaxKeysPerTag for what
+	// dropping a key means.
+	MaxKeysPerTag int
 }
 
 // LocaleConfig is internal/core's mirror of pkg/collage.LocaleConfig. Every
@@ -296,10 +313,11 @@ type App struct {
 	shutdownErr error
 }
 
-// *App is the plugin.Host implementation plugins receive in Init. The assertion is
-// here, not in a test, so a change that drops one of Host's methods fails to build
-// rather than failing to run.
-var _ plugin.Host = (*App)(nil)
+// App deliberately carries no plugin.Host assertion of its own. Plugins receive a
+// hostView, which forwards to the App and exposes nothing else; see host.go for why
+// handing over the App itself made Host's narrowing notional. App still has every
+// method Host names — they are its public API — but it is never the value a plugin
+// holds.
 
 // New builds an App from a validated configuration. cfg is expected to have been
 // defaulted and validated already — pkg/collage.New does both before converting —
@@ -324,6 +342,9 @@ func New(cfg Config) (*App, error) {
 	}
 	if cfg.Locale.CookieName == "" {
 		cfg.Locale.CookieName = defaultLocaleCookie
+	}
+	if cfg.Cache.MaxKeysPerTag == 0 {
+		cfg.Cache.MaxKeysPerTag = defaultMaxKeysPerTag
 	}
 
 	devMode := cfg.DevMode || cfg.Template.DevMode
@@ -369,6 +390,14 @@ func New(cfg Config) (*App, error) {
 		}
 	}
 
+	// Bounded before it is ever written to: the tracker is written on every cache
+	// write and nothing prunes it on eviction or expiry, so the cap is what keeps
+	// a bounded cache from sitting behind an unbounded index. A negative
+	// MaxKeysPerTag arrives here as the caller's explicit request for unlimited,
+	// which is MemoryTracker's own meaning for a non-positive value.
+	tracker := dependency.NewMemory()
+	tracker.MaxKeysPerTag = cfg.Cache.MaxKeysPerTag
+
 	app := &App{
 		cfg:     cfg,
 		devMode: devMode,
@@ -381,7 +410,7 @@ func New(cfg Config) (*App, error) {
 			DevMode:        devMode,
 		}),
 		store:   store,
-		tracker: dependency.NewMemory(),
+		tracker: tracker,
 		routes: router.New(router.LocaleOptions{
 			Default:             cfg.Locale.Default,
 			Supported:           cfg.Locale.Supported,
@@ -514,7 +543,11 @@ func (a *App) buildHandler() (http.Handler, error) {
 
 	// context.Background, not a request context: Init is startup work whose
 	// lifetime is the process, and every plugin's Shutdown is what ends it.
-	if err := a.plugins.Init(context.Background(), a); err != nil {
+	//
+	// hostView, not a, is what goes across: a plugin holding the *App could assert
+	// its way back to Shutdown, ListenAndServe, Handler, and RenderPath, which is
+	// exactly what plugin.Host exists to keep out of reach. See host.go.
+	if err := a.plugins.Init(context.Background(), &hostView{app: a}); err != nil {
 		return a.buildFailed(err)
 	}
 

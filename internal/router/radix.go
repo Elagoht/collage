@@ -42,12 +42,17 @@ type node struct {
 	// page is set on a page-tree node that terminates a registered page path.
 	page *types.Page
 
-	// hasRedirect, redirectTo, and redirectStatus are set on a redirect-tree node
-	// that terminates a registered redirect. redirectTo is the unsubstituted
-	// destination template.
-	hasRedirect    bool
-	redirectTo     string
-	redirectStatus int
+	// hasRedirect, redirectTo, redirectStatus, and redirectCatchAll are set on a
+	// redirect-tree node that terminates a registered redirect. redirectTo is the
+	// unsubstituted destination template. redirectCatchAll names the From
+	// pattern's catch-all parameter, or is empty when the pattern has none: it is
+	// recorded here because substitution has to escape a whole path tail
+	// differently from a single segment, and only the pattern knows which
+	// parameter is which.
+	hasRedirect      bool
+	redirectTo       string
+	redirectStatus   int
+	redirectCatchAll string
 }
 
 // edge is a dynamic or catch-all outgoing edge: the parameter name it captures,

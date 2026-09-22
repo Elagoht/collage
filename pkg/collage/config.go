@@ -147,6 +147,26 @@ type CacheConfig struct {
 	// (ApplyDefaults sets it to 10000); a negative value means unlimited, and is left
 	// untouched by ApplyDefaults.
 	MaxEntries int
+	// MaxKeysPerTag caps how many cache keys the framework's dependency tracker
+	// records under any one tag. Zero means "use the default" (ApplyDefaults sets
+	// it to 10000); a negative value means unlimited, and is left untouched by
+	// ApplyDefaults.
+	//
+	// The tracker is what resolves a dependency tag back to the cache keys built
+	// from it, and it is written on every cache write — but nothing removes from
+	// it when the cache evicts or expires an entry, so a key stays recorded until
+	// the tag it was recorded under is invalidated. The cache key carries the
+	// request's query string, so any client can mint unlimited distinct keys for
+	// one page; without a cap the tracker grows without bound while the cache
+	// itself stays at MaxEntries. This is that cap.
+	//
+	// When a tag is at the cap, recording a new key under it drops the oldest key
+	// recorded under that tag. Dropping removes the key from the index only, not
+	// from the cache: the entry keeps being served until it expires, but
+	// InvalidateTags no longer reaches it. Set this above the number of live cache
+	// entries any one tag can plausibly cover, or negative to accept unbounded
+	// tracker growth in exchange for never dropping.
+	MaxKeysPerTag int
 }
 
 // LocaleConfig configures locale resolution. Each locale source is enabled by
@@ -229,6 +249,9 @@ func (c *Config) ApplyDefaults() {
 	}
 	if c.Cache.MaxEntries == 0 {
 		c.Cache.MaxEntries = 10000
+	}
+	if c.Cache.MaxKeysPerTag == 0 {
+		c.Cache.MaxKeysPerTag = 10000
 	}
 
 	if c.Locale.Default == "" {

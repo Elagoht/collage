@@ -506,3 +506,198 @@ func TestRouter_RouteTable(t *testing.T) {
 		})
 	}
 }
+
+// TestRouter_Redirect_SubstitutedValueIsEscaped is the open-redirect regression:
+// Redirect.Validate only ever sees the To *template*, and Match decodes each path
+// segment on its own, so a captured value carrying "/", "\", "?", "#", or CR/LF used
+// to land in the destination — and therefore in the Location header — as structure
+// rather than as text. Every row here is a destination that must come out escaped.
+func TestRouter_Redirect_SubstitutedValueIsEscaped(t *testing.T) {
+	cases := []struct {
+		name    string
+		from    string
+		to      string
+		request string
+		want    string
+	}{
+		{
+			name:    "encoded slash cannot become protocol-relative",
+			from:    "/old/{slug}",
+			to:      "/{slug}",
+			request: "/old/%2Fevil.com",
+			want:    "/%2Fevil.com",
+		},
+		{
+			name:    "backslash cannot become protocol-relative",
+			from:    "/old/{slug}",
+			to:      "/{slug}",
+			request: "/old/%5Cevil.com",
+			want:    "/%5Cevil.com",
+		},
+		{
+			name:    "question mark cannot start a query",
+			from:    "/legacy/{slug}",
+			to:      "/blog/{slug}",
+			request: "/legacy/a%3Fb=1",
+			want:    "/blog/a%3Fb=1",
+		},
+		{
+			name:    "hash cannot start a fragment",
+			from:    "/legacy/{slug}",
+			to:      "/blog/{slug}",
+			request: "/legacy/a%23frag",
+			want:    "/blog/a%23frag",
+		},
+		{
+			name:    "CRLF cannot inject a header",
+			from:    "/legacy/{slug}",
+			to:      "/blog/{slug}",
+			request: "/legacy/a%0d%0aX-Inj:%201",
+			want:    "/blog/a%0D%0AX-Inj:%201",
+		},
+		{
+			name:    "an ordinary slug is left alone",
+			from:    "/old/{slug}",
+			to:      "/blog/{slug}",
+			request: "/old/hello-world",
+			want:    "/blog/hello-world",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
+			page := newTestPageWithRedirects("target", map[string]string{"en": "/unrelated"}, []*types.Redirect{
+				{From: c.from, To: c.to},
+			})
+			mustRegister(t, r, page)
+
+			result := matchPath(t, r, c.request)
+			if result.RedirectTo != c.want {
+				t.Fatalf("RedirectTo = %q, want %q", result.RedirectTo, c.want)
+			}
+			if reason, unsafe := unsafeRedirectReason(result.RedirectTo); unsafe {
+				t.Fatalf("RedirectTo %q is unsafe: %s", result.RedirectTo, reason)
+			}
+		})
+	}
+}
+
+// TestRouter_Redirect_CatchAllKeepsSegmentBoundaries checks that escaping a
+// substituted value does not flatten a catch-all's path tail: the "/" separators the
+// pattern asked for survive, and only what is inside a segment is escaped.
+func TestRouter_Redirect_CatchAllKeepsSegmentBoundaries(t *testing.T) {
+	r := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
+	page := newTestPageWithRedirects("docs", map[string]string{"en": "/unrelated"}, []*types.Redirect{
+		{From: "/old-docs/{rest...}", To: "/docs/{rest}"},
+	})
+	mustRegister(t, r, page)
+
+	if got := matchPath(t, r, "/old-docs/a/b/c").RedirectTo; got != "/docs/a/b/c" {
+		t.Fatalf("RedirectTo = %q, want /docs/a/b/c", got)
+	}
+	// A catch-all captures the decoded segments rejoined with "/", so an encoded
+	// slash inside one of them is already indistinguishable from a real separator
+	// by the time substitution sees it — a known fidelity limit of catch-all
+	// capture, not of escaping. What must still hold is that the destination stays
+	// a single-slash-prefixed relative path.
+	got := matchPath(t, r, "/old-docs/a/b%2Fc").RedirectTo
+	if got != "/docs/a/b/c" {
+		t.Fatalf("RedirectTo = %q, want /docs/a/b/c", got)
+	}
+	if reason, unsafe := unsafeRedirectReason(got); unsafe {
+		t.Fatalf("RedirectTo %q is unsafe: %s", got, reason)
+	}
+
+	// The leading "%2F" case is the one that matters: it must not be able to turn
+	// the destination protocol-relative.
+	if got := matchPath(t, r, "/old-docs/%2Fevil.com").RedirectTo; got != "/docs//evil.com" {
+		t.Fatalf("RedirectTo = %q, want /docs//evil.com", got)
+	}
+
+	// And when the catch-all is the whole destination, the rejoined tail can still
+	// begin with "/" — which is exactly what the match-time check refuses.
+	root := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
+	mustRegister(t, root, newTestPageWithRedirects("root", map[string]string{"en": "/unrelated"}, []*types.Redirect{
+		{From: "/{rest...}", To: "/{rest}"},
+	}))
+	if _, err := root.Match(httptest.NewRequest(http.MethodGet, "/%2Fevil.com", nil)); !errors.Is(err, ErrUnsafeRedirectTarget) {
+		t.Fatalf("Match error = %v, want ErrUnsafeRedirectTarget", err)
+	}
+}
+
+// TestRouter_Redirect_UnsafeTemplate_IsRefused checks the second half of the
+// open-redirect defence: escaping covers a hostile request, and this covers a To
+// template that is itself unsafe. Match refuses rather than handing the caller a
+// Location header it must not send.
+func TestRouter_Redirect_UnsafeTemplate_IsRefused(t *testing.T) {
+	cases := []struct {
+		name string
+		to   string
+	}{
+		{name: "protocol-relative", to: "//evil.com"},
+		{name: "backslash protocol-relative", to: "/\\evil.com"},
+		{name: "carriage return", to: "/blog\r\nX-Inj: 1"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
+			page := newTestPageWithRedirects("target", map[string]string{"en": "/unrelated"}, []*types.Redirect{
+				{From: "/old", To: c.to},
+			})
+			mustRegister(t, r, page)
+
+			req := httptest.NewRequest(http.MethodGet, "/old", nil)
+			result, err := r.Match(req)
+			if !errors.Is(err, ErrUnsafeRedirectTarget) {
+				t.Fatalf("Match error = %v, want ErrUnsafeRedirectTarget", err)
+			}
+			if result != nil {
+				t.Fatalf("expected a nil result alongside the error, got %+v", result)
+			}
+		})
+	}
+}
+
+// TestRouter_RedirectShadowsPage_IgnoresPlaceholderNames is the M2 regression:
+// redirects match before pages and carry no locale of their own, so a redirect whose
+// From differs from a page's path only in what the placeholder is called makes that
+// page unreachable in every locale. The shadow check has to compare patterns the way
+// matching does — by shape, not by placeholder name — in either registration order.
+func TestRouter_RedirectShadowsPage_IgnoresPlaceholderNames(t *testing.T) {
+	t.Run("page first", func(t *testing.T) {
+		r := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr"}})
+		mustRegister(t, r, newTestPage("blog", map[string]string{"en": "/blog/{slug}", "tr": "/blog/{slug}"}))
+
+		err := r.Register(newTestPageWithRedirects("other", map[string]string{"en": "/other"}, []*types.Redirect{
+			{From: "/blog/{x}", To: "/archive"},
+		}))
+		if !errors.Is(err, ErrRedirectShadowsPage) {
+			t.Fatalf("Register error = %v, want ErrRedirectShadowsPage", err)
+		}
+	})
+
+	t.Run("redirect first", func(t *testing.T) {
+		r := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr"}})
+		mustRegister(t, r, newTestPageWithRedirects("other", map[string]string{"en": "/other"}, []*types.Redirect{
+			{From: "/blog/{x}", To: "/archive"},
+		}))
+
+		err := r.Register(newTestPage("blog", map[string]string{"en": "/blog/{slug}"}))
+		if !errors.Is(err, ErrRedirectShadowsPage) {
+			t.Fatalf("Register error = %v, want ErrRedirectShadowsPage", err)
+		}
+	})
+
+	t.Run("catch-all shape is distinct from a dynamic one", func(t *testing.T) {
+		r := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
+		mustRegister(t, r, newTestPage("blog", map[string]string{"en": "/blog/{slug}"}))
+
+		// "/blog/{rest...}" matches paths "/blog/{slug}" never reaches, so it is
+		// not a shadow and must still register.
+		mustRegister(t, r, newTestPageWithRedirects("other", map[string]string{"en": "/other"}, []*types.Redirect{
+			{From: "/blog/{rest...}", To: "/archive"},
+		}))
+	})
+}

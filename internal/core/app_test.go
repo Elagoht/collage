@@ -9,12 +9,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/types"
@@ -999,4 +1001,163 @@ func (p *invalidateSpy) observed() [][]string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.seen
+}
+
+// hostCapturePlugin records the Host it was handed in Init, so a test can inspect
+// what a plugin can actually reach through it.
+type hostCapturePlugin struct {
+	host plugin.Host
+}
+
+var _ plugin.Plugin = (*hostCapturePlugin)(nil)
+
+// Name identifies the plugin.
+func (p *hostCapturePlugin) Name() string { return "host-capture" }
+
+// Version reports the plugin's version.
+func (p *hostCapturePlugin) Version() string { return "1.0.0" }
+
+// Init records the Host it was given.
+func (p *hostCapturePlugin) Init(_ context.Context, host plugin.Host) error {
+	p.host = host
+	return nil
+}
+
+// Shutdown does nothing.
+func (p *hostCapturePlugin) Shutdown(context.Context) error { return nil }
+
+// TestPluginHost_CannotRecoverTheApp is the narrowing plugin.Host promises, checked
+// the way it would actually be broken: not by naming *App — a plugin lives outside
+// this package and would not have the name — but by asserting the Host parameter to
+// an interface that happens to describe the App's wider surface. Every assertion
+// below must fail, or "a plugin cannot reach the router, the cache, the render
+// engine, or the lifecycle" is a comment rather than a property.
+func TestPluginHost_CannotRecoverTheApp(t *testing.T) {
+	app := newTestApp(t, nil)
+	if err := app.RegisterPage(newHomePage()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	spy := &hostCapturePlugin{}
+	if err := app.RegisterPlugin(spy); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+
+	app.Handler()
+
+	if spy.host == nil {
+		t.Fatal("plugin Init never ran: no Host was captured")
+	}
+	if _, ok := spy.host.(*App); ok {
+		t.Fatal("Host is the *App itself: a plugin can reach the whole application")
+	}
+	if _, ok := spy.host.(interface {
+		Shutdown(context.Context) error
+	}); ok {
+		t.Error("Host exposes Shutdown: a plugin can stop the application it is hosted by")
+	}
+	if _, ok := spy.host.(interface{ ListenAndServe() error }); ok {
+		t.Error("Host exposes ListenAndServe")
+	}
+	if _, ok := spy.host.(interface{ Handler() http.Handler }); ok {
+		t.Error("Host exposes Handler")
+	}
+	if _, ok := spy.host.(interface {
+		InvalidateTagsN(context.Context, ...string) (int, error)
+	}); ok {
+		t.Error("Host exposes InvalidateTagsN, which is not part of the Host contract")
+	}
+
+	// The six methods Host does name must still work: narrowing is not allowed to
+	// cost a plugin anything it was promised.
+	if spy.host.DevMode() != app.DevMode() {
+		t.Error("Host.DevMode does not agree with the application")
+	}
+	if pages := spy.host.Pages(); len(pages) != 1 || pages[0].Name != "home" {
+		t.Errorf("Host.Pages() = %v, want the one registered page", pages)
+	}
+	if page, ok := spy.host.Page("home"); !ok || page.Name != "home" {
+		t.Errorf("Host.Page(\"home\") = %v, %v, want the home page", page, ok)
+	}
+	if spy.host.Logger() != app.Logger() {
+		t.Error("Host.Logger does not return the application's logger")
+	}
+	if err := spy.host.InvalidateTags(context.Background(), "homepage"); err != nil {
+		t.Errorf("Host.InvalidateTags: %v", err)
+	}
+	if err := spy.host.RegisterCommand(plugin.Command{Name: "host-view-command"}); err != nil {
+		t.Errorf("Host.RegisterCommand: %v", err)
+	}
+	if cmds := app.Commands(); len(cmds) != 1 || cmds[0].Name != "host-view-command" {
+		t.Errorf("Commands() = %v, want the command registered through the Host", cmds)
+	}
+}
+
+// TestDependencyTracker_IsBoundedUnderAKeyFlood is the unbounded-growth regression.
+// The cache key carries the request's raw query string, so an anonymous client can
+// mint unlimited distinct keys for one page; the cache itself is bounded by
+// MaxEntries, but every write also records the key in the dependency tracker and
+// nothing removes it when the cache evicts. Without Cache.MaxKeysPerTag the tracker
+// grew one key per request forever while the cache stayed at five entries.
+func TestDependencyTracker_IsBoundedUnderAKeyFlood(t *testing.T) {
+	const (
+		maxEntries    = 5
+		maxKeysPerTag = 5
+		requests      = 2000
+	)
+
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.Cache.MaxEntries = maxEntries
+		cfg.Cache.MaxKeysPerTag = maxKeysPerTag
+	})
+	if err := app.RegisterPage(newHomePage()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	handler := app.Handler()
+
+	for i := range requests {
+		recorder := get(handler, "/?utm="+strconv.Itoa(i))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d, want 200", i, recorder.Code)
+		}
+	}
+
+	tracker, ok := app.tracker.(*dependency.MemoryTracker)
+	if !ok {
+		t.Fatalf("tracker is %T, want *dependency.MemoryTracker", app.tracker)
+	}
+	stats := tracker.Stats()
+	if stats.Keys > maxKeysPerTag {
+		t.Fatalf("tracker holds %d keys after %d requests, want at most %d", stats.Keys, requests, maxKeysPerTag)
+	}
+	if stats.Dropped == 0 {
+		t.Fatal("tracker dropped nothing: the cap was never reached, so this test proves nothing")
+	}
+}
+
+// TestNew_MaxKeysPerTag_NegativeMeansUnlimited checks the other half of the
+// convention the rest of the configuration uses: zero is "use the default", and a
+// negative value is the caller explicitly accepting unbounded growth.
+func TestNew_MaxKeysPerTag_NegativeMeansUnlimited(t *testing.T) {
+	cases := []struct {
+		name      string
+		configure int
+		want      int
+	}{
+		{name: "zero takes the default", configure: 0, want: defaultMaxKeysPerTag},
+		{name: "negative stays negative", configure: -1, want: -1},
+		{name: "positive is honoured", configure: 7, want: 7},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			app := newTestApp(t, func(cfg *Config) { cfg.Cache.MaxKeysPerTag = c.configure })
+			tracker, ok := app.tracker.(*dependency.MemoryTracker)
+			if !ok {
+				t.Fatalf("tracker is %T, want *dependency.MemoryTracker", app.tracker)
+			}
+			if tracker.MaxKeysPerTag != c.want {
+				t.Fatalf("MaxKeysPerTag = %d, want %d", tracker.MaxKeysPerTag, c.want)
+			}
+		})
+	}
 }

@@ -32,7 +32,15 @@ type App = core.App
 // whichever hook interfaces it needs.
 type Plugin = plugin.Plugin
 
-// Host is the capability surface a plugin receives in Init. *App implements it.
+// Host is the capability surface a plugin receives in Init: DevMode, Pages, Page,
+// InvalidateTags, Logger, and RegisterCommand, and nothing else.
+//
+// The value handed to Init is deliberately not the *App. *App has every one of these
+// methods, but it also has Shutdown, ListenAndServe, Handler, and RenderPath, and a
+// method set travels with a value through an interface — a plugin given the *App
+// could assert its Host parameter to an interface naming those and recover them
+// without ever referring to *App by name. What Init receives is a narrow forwarding
+// value instead, so the assertion has nothing to find.
 type Host = plugin.Host
 
 // Command is a CLI subcommand a plugin contributes through Host.RegisterCommand.
@@ -218,6 +226,15 @@ var ErrRedirectShadowsPage = router.ErrRedirectShadowsPage
 // match time.
 var ErrUnsubstitutedPlaceholder = router.ErrUnsubstitutedPlaceholder
 
+// ErrUnsafeRedirectTarget is the failure a plugin's ErrorHook receives, under the
+// stage "route", when a redirect's destination is not a single-slash-prefixed
+// relative path once its placeholders are substituted — a protocol-relative
+// "//host" or "/\host", or one carrying a control character. The framework
+// percent-escapes every substituted value, so this reports a redirect whose own To
+// is unsafe. The request is answered with a 500 rather than a Location header
+// nobody should follow.
+var ErrUnsafeRedirectTarget = router.ErrUnsafeRedirectTarget
+
 // ErrTemplateRootMissing is returned, wrapped, by New when Config.Template.Root
 // does not exist or is not a directory. It is the most common startup failure there
 // is, and it is worth telling apart from a template that exists but does not parse.
@@ -307,11 +324,12 @@ func toCoreConfig(cfg *Config) core.Config {
 			Funcs:     cfg.Template.Funcs,
 		},
 		Cache: core.CacheConfig{
-			Enabled:    cfg.Cache.Enabled,
-			Store:      cfg.Cache.Store,
-			Type:       cfg.Cache.Type,
-			DefaultTTL: cfg.Cache.DefaultTTL,
-			MaxEntries: cfg.Cache.MaxEntries,
+			Enabled:       cfg.Cache.Enabled,
+			Store:         cfg.Cache.Store,
+			Type:          cfg.Cache.Type,
+			DefaultTTL:    cfg.Cache.DefaultTTL,
+			MaxEntries:    cfg.Cache.MaxEntries,
+			MaxKeysPerTag: cfg.Cache.MaxKeysPerTag,
 		},
 		Locale: core.LocaleConfig{
 			Default:             cfg.Locale.Default,

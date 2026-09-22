@@ -27,6 +27,20 @@ var ErrRedirectShadowsPage = errors.New("collage: redirect shadows a registered 
 // substituted at match time.
 var ErrUnsubstitutedPlaceholder = errors.New("collage: redirect placeholder not captured by from pattern")
 
+// ErrUnsafeRedirectTarget is returned by Match when a redirect's destination, after
+// its placeholders have been substituted, is not a single-slash-prefixed relative
+// path — a protocol-relative "//host" or "/\host", or a destination carrying a
+// control character. Such a destination goes straight into the Location header, so
+// serving it would be an open redirect or a header injection; Match refuses it and
+// the caller turns it into a 500 rather than a redirect.
+//
+// Substituted values are percent-escaped (see substitute), so this fires on a To
+// template that is itself unsafe rather than on a hostile request parameter. It is
+// checked at match time all the same: it is the last point before the value reaches
+// the wire, and a check there cannot be bypassed by a Redirect constructed without
+// going through a builder.
+var ErrUnsafeRedirectTarget = errors.New("collage: unsafe redirect target")
+
 // MatchResult describes what a request resolved to: a page, a redirect, or no
 // match, always alongside the resolved locale.
 type MatchResult struct {
@@ -41,7 +55,10 @@ type MatchResult struct {
 	// redirect matched or nothing matched.
 	PathParams map[string]string
 	// RedirectTo is the destination path when a redirect matched, with its
-	// placeholders already substituted. It is empty when no redirect matched.
+	// placeholders already substituted and each substituted value
+	// percent-escaped. It is always a relative path beginning with exactly one
+	// "/" — see ErrUnsafeRedirectTarget — so it is safe to write straight into a
+	// Location header. It is empty when no redirect matched.
 	RedirectTo string
 	// RedirectStatus is the HTTP status code for RedirectTo, taken from the
 	// matched Redirect's EffectiveStatus. It is zero when no redirect matched.
@@ -57,9 +74,11 @@ type MatchResult struct {
 type Router interface {
 	// Match resolves req's locale and path to a MatchResult. A redirect takes
 	// priority over a page match at the same path. Match returns an error only
-	// for conditions the caller must react to specially; malformed request
-	// input — such as a segment that fails percent-decoding — and an unmatched
-	// route both resolve normally, the latter with IsNotFound true.
+	// for conditions the caller must react to specially — currently only
+	// ErrUnsafeRedirectTarget, a redirect whose destination must not be served;
+	// malformed request input — such as a segment that fails percent-decoding —
+	// and an unmatched route both resolve normally, the latter with IsNotFound
+	// true.
 	Match(req *http.Request) (*MatchResult, error)
 	// Register adds page's paths, across every locale in page.Paths, and its
 	// Redirects to the router. It returns ErrInvalidPattern for a malformed
@@ -136,9 +155,13 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 	}
 
 	if redirectNode, params, ok := rt.redirectTree.match(segments); ok {
+		destination := substitute(redirectNode.redirectTo, params, redirectNode.redirectCatchAll)
+		if reason, unsafe := unsafeRedirectReason(destination); unsafe {
+			return nil, fmt.Errorf("%w: redirect to %q resolved to %q: %s", ErrUnsafeRedirectTarget, redirectNode.redirectTo, destination, reason)
+		}
 		return &MatchResult{
 			Locale:         locale,
-			RedirectTo:     substitute(redirectNode.redirectTo, params),
+			RedirectTo:     destination,
 			RedirectStatus: redirectNode.redirectStatus,
 		}, nil
 	}
@@ -217,9 +240,15 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	}
 
 	captured := make(map[string]struct{}, len(fromSegments))
+	catchAll := ""
 	for _, seg := range fromSegments {
-		if seg.kind != segmentStatic {
-			captured[seg.text] = struct{}{}
+		if seg.kind == segmentStatic {
+			continue
+		}
+		captured[seg.text] = struct{}{}
+		if seg.kind == segmentCatchAll {
+			// parsePattern guarantees at most one, as the final segment.
+			catchAll = seg.text
 		}
 	}
 	for _, name := range placeholderNames(redirect.To) {
@@ -238,6 +267,7 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	target.hasRedirect = true
 	target.redirectTo = redirect.To
 	target.redirectStatus = redirect.EffectiveStatus()
+	target.redirectCatchAll = catchAll
 	rt.redirectFroms[normalizedFrom] = redirect
 
 	return nil
@@ -302,8 +332,23 @@ func placeholderNames(s string) []string {
 	return names
 }
 
-// substitute replaces every "{name}" placeholder in template with params[name].
-func substitute(template string, params map[string]string) string {
+// substitute replaces every "{name}" placeholder in template with params[name],
+// percent-escaping each substituted value before it is written.
+//
+// The escaping is what keeps a redirect destination structural: Match decodes each
+// path segment individually, so a request for "/old/%2Fevil.com" against
+// "/old/{slug}" captures slug == "/evil.com", and pasting that into "/{slug}" would
+// produce the protocol-relative "//evil.com" — an open redirect. The same goes for a
+// captured "?", "#", "\", or CR/LF, each of which would change which resource the
+// Location header names or what headers follow it. url.PathEscape escapes every one
+// of those and leaves an ordinary slug untouched, so a value can only ever land in
+// the destination as one path segment's worth of text.
+//
+// catchAll, when non-empty, names the single parameter whose captured value is a
+// whole path tail rather than one segment. Its "/" separators are structure the
+// pattern asked for, so they are preserved and only the segments between them are
+// escaped. Every other parameter is escaped whole, separators included.
+func substitute(template string, params map[string]string, catchAll string) string {
 	var b strings.Builder
 	for i := 0; i < len(template); {
 		if template[i] != '{' {
@@ -316,8 +361,53 @@ func substitute(template string, params map[string]string) string {
 			b.WriteString(template[i:])
 			break
 		}
-		b.WriteString(params[template[i+1:i+end]])
+		name := template[i+1 : i+end]
+		if catchAll != "" && name == catchAll {
+			b.WriteString(escapePathTail(params[name]))
+		} else {
+			b.WriteString(url.PathEscape(params[name]))
+		}
 		i += end + 1
 	}
 	return b.String()
+}
+
+// escapePathTail percent-escapes each "/"-separated piece of value and rejoins them
+// with "/", so a catch-all's captured path tail keeps its segment boundaries while
+// everything inside a segment is escaped.
+func escapePathTail(value string) string {
+	parts := strings.Split(value, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
+}
+
+// unsafeRedirectReason reports whether destination is unsafe to write into a
+// Location header, and why. A safe destination is a relative path: it begins with
+// exactly one "/", the character after it is neither "/" nor "\", and it carries no
+// control character.
+//
+// Requiring the single leading "/" is what rejects an absolute URL with a scheme
+// ("https://evil.com" and "javascript:...") — neither can begin with "/" — as well
+// as the schemeless "//evil.com" and the "/\evil.com" that browsers normalise to it.
+// The control-character scan rejects CR and LF, which net/http happens to reject
+// too; relying on that would leave the guarantee owned by another package's
+// implementation detail rather than by this one.
+func unsafeRedirectReason(destination string) (string, bool) {
+	if destination == "" {
+		return "destination is empty", true
+	}
+	if destination[0] != '/' {
+		return `destination is not a relative path starting with "/"`, true
+	}
+	if len(destination) > 1 && (destination[1] == '/' || destination[1] == '\\') {
+		return "destination is protocol-relative", true
+	}
+	for i := 0; i < len(destination); i++ {
+		if c := destination[i]; c < 0x20 || c == 0x7f {
+			return fmt.Sprintf("destination contains the control character %#02x at offset %d", c, i), true
+		}
+	}
+	return "", false
 }

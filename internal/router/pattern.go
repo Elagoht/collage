@@ -45,14 +45,40 @@ func splitPath(path string) []string {
 
 // normalizePattern returns pattern's canonical form for equality comparisons: its
 // segments rejoined with a single leading "/" and no trailing "/", or "/" itself
-// for the root. This makes "/blog/" and "/blog" compare equal, matching the
-// trailing-slash equivalence route matching applies.
+// for the root, with every placeholder segment reduced to "{}" or "{...}". This
+// makes "/blog/" and "/blog" compare equal, matching the trailing-slash equivalence
+// route matching applies, and makes "/blog/{slug}" and "/blog/{x}" compare equal,
+// matching the fact that route matching never looks at a placeholder's name either.
+//
+// Erasing the name matters because this is what the redirect/page shadow check
+// compares. Redirects are matched before pages and are not per-locale, so a
+// redirect registered at "/blog/{x}" takes every request a page at "/blog/{slug}"
+// would have served, in every locale — comparing the literal strings would let that
+// pair through as two unrelated patterns and leave the page unreachable everywhere.
 func normalizePattern(pattern string) string {
 	segments := splitPath(pattern)
 	if len(segments) == 0 {
 		return "/"
 	}
-	return "/" + strings.Join(segments, "/")
+	normalized := make([]string, len(segments))
+	for i, segment := range segments {
+		normalized[i] = normalizeSegment(segment)
+	}
+	return "/" + strings.Join(normalized, "/")
+}
+
+// normalizeSegment returns "{}" for a dynamic segment, "{...}" for a catch-all one,
+// and segment unchanged for a literal one. It recognises a placeholder the same way
+// parsePattern does — braces at both ends — so the two cannot disagree about what a
+// placeholder is.
+func normalizeSegment(segment string) string {
+	if !strings.HasPrefix(segment, "{") || !strings.HasSuffix(segment, "}") {
+		return segment
+	}
+	if strings.HasSuffix(segment[1:len(segment)-1], "...") {
+		return "{...}"
+	}
+	return "{}"
 }
 
 // parsePattern parses a route or redirect pattern into its ordered segments. See
