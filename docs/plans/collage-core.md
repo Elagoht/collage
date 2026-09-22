@@ -1433,6 +1433,27 @@ names the page and the specific problem.
   `type Metrics = observability.Metrics`, `type Tracer = observability.Tracer` aliases so
   users can implement these without importing internal packages.
 
+**The public surface must make the spec's stated guarantees true.** The specification
+promises that caches are pluggable and that a custom `FuncMap` is supported. Both are
+false unless `pkg/collage` exposes them, because `internal/` is unreachable from any
+consumer. Required, beyond the domain and plugin aliases:
+
+- `CacheConfig.Store Cache` — install a custom cache. `TaggedCache` is aliased too, so an
+  implementation can opt into tag-aware writes. A nil `Store` keeps the built-in memory
+  cache. Without this, "caches are pluggable" is not true.
+- `TemplateConfig.Funcs template.FuncMap` — merged over `DefaultFuncs()` at construction,
+  so callers can add helpers. `internal/template.HTMLConfig` already carries `Funcs`; it
+  only needs plumbing. Without this, "support custom FuncMap" is not true.
+- `type Result = render.Result`, `Metadata`, `FragmentMetadata` — `App.RenderPath` returns
+  `*render.Result`, which is usable but **unnameable** from outside the module, so a caller
+  cannot declare a variable or write a helper against it.
+- The router's registration sentinels (invalid pattern, duplicate route, redirect shadows
+  page, unsubstituted placeholder), so a caller can `errors.Is` a registration failure
+  rather than string-matching it.
+- `ErrNotFound`, which app code must wrap to trigger a page-specific 404. Without it the
+  per-page 404 feature is unreachable from outside — the same class of gap as the two
+  below, and the reason to audit the whole surface rather than patch it case by case.
+
 **The static builder must be re-exported too.** `internal/build` is unreachable from any
 consumer of this module — Go forbids importing `internal/` across module boundaries — so
 without aliases a user's own project cannot run a static build at all, and a scaffolded
