@@ -182,7 +182,7 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
 	}
 
-	runIn := func(name string, args ...string) {
+	runIn := func(name string, args ...string) string {
 		t.Helper()
 		cmd := exec.Command(name, args...)
 		cmd.Dir = target
@@ -191,9 +191,42 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s %s: %v\n%s", name, strings.Join(args, " "), err, out)
 		}
+		return string(out)
 	}
 
 	runIn(goBin, "mod", "edit", "-replace", "github.com/Elagoht/collage="+repoRoot)
 	runIn(goBin, "mod", "tidy")
 	runIn(goBin, "build", "./...")
+
+	// The scaffold's own -collage-build path is not a hand-rolled writer: it
+	// calls collage.NewBuilder, the same static builder collage-core's own
+	// internal/build implements. Running it for real here, and checking the
+	// file it wrote, is the check that "collage build" reaches that real
+	// builder rather than some weaker stand-in the scaffold carries on its
+	// own — see docs/plans/collage-core.md's "re-export the static builder"
+	// amendment for why this distinction matters.
+	buildOut := runIn(goBin, "run", ".", "-collage-build", "-out", "dist")
+	if !strings.Contains(buildOut, "build complete, 1 file(s) written") {
+		t.Fatalf("build output = %q, want it to report exactly one file written", buildOut)
+	}
+
+	indexPath := filepath.Join(target, "dist", "index.html")
+	body, err := os.ReadFile(indexPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", indexPath, err)
+	}
+	if len(body) == 0 {
+		t.Fatal("dist/index.html is empty")
+	}
+
+	// -clean must reach BuildOptions.Clean, not just be accepted and ignored:
+	// write a marker file that only survives if it wasn't cleaned.
+	marker := filepath.Join(target, "dist", "stale.txt")
+	if err := os.WriteFile(marker, []byte("stale"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+	runIn(goBin, "run", ".", "-collage-build", "-out", "dist", "-clean")
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("stale.txt survived a -clean build (err = %v), want it removed", err)
+	}
 }

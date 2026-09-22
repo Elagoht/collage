@@ -23,9 +23,14 @@ CLI relies on:
   does **not** hot-reload Go code — a change to `main.go`, or any other `.go`
   file here, still requires stopping and re-running `collage dev` (or
   `go run .`).
-- **`collage build`** runs `go run . -collage-build -out <dir>`. `main.go`
-  parses those two flags and, when `-collage-build` is set, renders every
-  statically-buildable page to `<dir>` instead of starting a server.
+- **`collage build`** runs `go run . -collage-build -out <dir>` (appending
+  `-clean` when `collage build -clean` was used). `main.go` parses those flags
+  and, when `-collage-build` is set, renders every statically-buildable page
+  to `<dir>` instead of starting a server, through `collage.NewBuilder` —
+  collage-core's own static builder, so this project gets the same
+  output-directory safety checks (symlink-escape containment, refusing a
+  dangerous `-out`) as every other project built from this scaffold, rather
+  than a copy of its own.
 
 If you rewrite `main.go`, keep both halves of that contract working, or
 `collage dev` / `collage build` will stop doing anything useful for this

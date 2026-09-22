@@ -48,6 +48,39 @@ func TestRun_Build_CustomOut(t *testing.T) {
 	}
 }
 
+func TestRun_Build_CleanAppendsCleanFlag(t *testing.T) {
+	c, _, _ := testCLI()
+	runner := &fakeRunner{}
+	c.Runner = runner
+
+	code := c.Run(context.Background(), []string{"build", "-clean"})
+
+	if code != 0 {
+		t.Fatalf("Run() = %d, want 0", code)
+	}
+	want := []string{"run", ".", "-collage-build", "-out", "dist", "-clean"}
+	if got := strings.Join(runner.args, " "); got != strings.Join(want, " ") {
+		t.Errorf("args = %q, want %q", got, strings.Join(want, " "))
+	}
+}
+
+func TestRun_Build_WithoutCleanOmitsCleanFlag(t *testing.T) {
+	c, _, _ := testCLI()
+	runner := &fakeRunner{}
+	c.Runner = runner
+
+	code := c.Run(context.Background(), []string{"build"})
+
+	if code != 0 {
+		t.Fatalf("Run() = %d, want 0", code)
+	}
+	for _, arg := range runner.args {
+		if arg == "-clean" {
+			t.Errorf("args = %v, want no -clean when it was not requested", runner.args)
+		}
+	}
+}
+
 func TestRun_Build_RunnerErrorExitsOne(t *testing.T) {
 	c, _, errOut := testCLI()
 	c.Runner = &fakeRunner{err: errors.New("exit status 1")}

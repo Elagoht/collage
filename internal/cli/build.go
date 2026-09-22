@@ -11,17 +11,19 @@ import (
 )
 
 // buildUsage is "collage help build"'s own usage text.
-const buildUsage = `Usage: collage build [-out dir]
+const buildUsage = `Usage: collage build [-out dir] [-clean]
 
 Runs "go run . -collage-build -out <dir>" in the current directory's Go
-project.
+project, appending -clean when this command's own -clean was given.
 
-The scaffolded main.go (see "collage new") parses -collage-build and -out and,
-on seeing them, renders the project to static files under <dir> instead of
-starting a server. It prints what it wrote as it writes it; that output is
-streamed straight through, not reformatted by this command.
+The scaffolded main.go (see "collage new") parses -collage-build, -out, and
+-clean and, on seeing -collage-build, renders the project to static files
+under <dir> instead of starting a server — removing <dir>'s existing contents
+first when -clean was given. It prints what it wrote as it writes it; that
+output is streamed straight through, not reformatted by this command.
 
   -out dir   directory the project renders static files into (default "dist")
+  -clean     remove -out's existing contents before building
 `
 
 // runBuild implements the "build" command.
@@ -30,6 +32,7 @@ func (c *CLI) runBuild(ctx context.Context, args []string) int {
 	fs.SetOutput(c.stderr())
 	fs.Usage = func() { fmt.Fprint(c.stderr(), buildUsage) }
 	out := fs.String("out", "dist", "directory the project renders static files into")
+	clean := fs.Bool("clean", false, "remove -out's existing contents before building")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -44,7 +47,12 @@ func (c *CLI) runBuild(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	err := c.runner().Run(ctx, "", nil, c.stdout(), c.stderr(), "go", "run", ".", "-collage-build", "-out", *out)
+	runArgs := []string{"run", ".", "-collage-build", "-out", *out}
+	if *clean {
+		runArgs = append(runArgs, "-clean")
+	}
+
+	err := c.runner().Run(ctx, "", nil, c.stdout(), c.stderr(), "go", runArgs...)
 	if err != nil {
 		fmt.Fprintf(c.stderr(), "collage: build: %v\n", err)
 		return 1
