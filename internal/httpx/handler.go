@@ -262,8 +262,19 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 	result, err := h.renderer.Render(ctx, types.NewRenderContext(ctx, r, page, match.Locale, match.PathParams))
 	renderTime := time.Since(renderStart)
 	if err != nil {
+		// result is non-nil on every Render path, including a fatal error, so
+		// NotFound can be read here safely; the error is checked first, as
+		// Render's contract requires.
+		status := http.StatusInternalServerError
+		if result.NotFound {
+			// A required fragment's data handler reported that the content
+			// itself does not exist, as distinct from a failure to fetch it: the
+			// request is a 404, not a 500, and resolves to page's own
+			// NotFoundPage through errorPageFor exactly as a router miss does.
+			status = http.StatusNotFound
+		}
 		return h.serveFailure(w, r, failure{
-			status:   http.StatusInternalServerError,
+			status:   status,
 			err:      err,
 			page:     page,
 			locale:   match.Locale,

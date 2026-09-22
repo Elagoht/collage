@@ -3,6 +3,7 @@ package render
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	htmltemplate "html/template"
 	"sort"
@@ -38,6 +39,11 @@ type renderState struct {
 	// descendants' time from its own template execution. Each fragment replaces its
 	// descendants' contribution with its own on the way out.
 	childTotal time.Duration
+	// notFound is set once, at the required fragment whose own attempt first
+	// failed with an error satisfying errors.Is(err, types.ErrNotFound). It is
+	// never reset: the render either fails for this reason or it does not, and
+	// only one frame ever qualifies to set it, see renderFragment.
+	notFound bool
 }
 
 // addTags records tags in the render's tag set, ignoring empty ones.
@@ -118,6 +124,16 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 
 		switch {
 		case f.Required || isFatal(err):
+			// Classify only at the frame where this error first became fatal: a
+			// required fragment's own attempt failing fresh. An error that is
+			// already fatal here was fatal-marked, and therefore classified if it
+			// warranted classification, at the deeper frame it came from —
+			// re-checking it here would either duplicate that classification or,
+			// for a non-required ancestor merely forwarding a fatal error it
+			// cannot absorb, wrongly attribute it to the wrong fragment.
+			if f.Required && !isFatal(err) && errors.Is(err, types.ErrNotFound) {
+				state.notFound = true
+			}
 			propagate = true
 		case f.Fallback != nil:
 			fallbackOut, fallbackErr := e.attempt(rc, f.Fallback, state)

@@ -45,6 +45,14 @@ type Result struct {
 	DependencyTags []string
 	// Metadata describes how the render performed.
 	Metadata *Metadata
+	// NotFound reports that the render failed because a required fragment's data
+	// handler returned an error satisfying errors.Is(err, types.ErrNotFound): the
+	// content the page needed does not exist, as distinct from some other kind of
+	// failure. This is a classification of the error Render already returned, not
+	// a separate success path — HTML is still nil and the caller must still check
+	// the error before consulting this field. A non-required fragment's
+	// ErrNotFound follows the ordinary optional-failure policy and never sets it.
+	NotFound bool
 }
 
 // Degraded reports whether any fragment in the render failed, whether or not a
@@ -215,6 +223,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 		HTML:           html,
 		DependencyTags: state.sortedTags(rc.Page.DependencyTags),
 		Metadata:       metadata,
+		NotFound:       state.notFound,
 	}
 
 	if err != nil {

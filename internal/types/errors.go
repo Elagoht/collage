@@ -57,3 +57,8 @@ var ErrEmptyTemplatePath = errors.New("collage: empty template path")
 
 // ErrInvalidPath is returned when a path pattern does not start with "/".
 var ErrInvalidPath = errors.New("collage: invalid path")
+
+// ErrNotFound reports that a fragment's data does not exist, as distinct from a
+// failure to fetch it. A DataHandler returns an error wrapping ErrNotFound to make
+// the page render as 404 rather than 500.
+var ErrNotFound = errors.New("collage: not found")
