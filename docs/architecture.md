@@ -53,7 +53,7 @@ different mechanisms rather than one generalised one.
 | Templates | Fragments and slots | None | None |
 | Page cache | Yes | Yes — same key, same ETag, same tags | Never |
 | `Range` requests | No | No | Yes, via `http.ServeContent` |
-| Plugin hooks | All six | `OnCacheWrite`, `OnCacheInvalidate`, `OnError` | None |
+| Plugin hooks | All six | `OnCacheWrite`, `OnCacheInvalidate`, `OnError` | `OnError` only |
 | A failure renders | The page's error page, in HTML | `text/plain` | `text/plain` |
 
 A generated payload (sitemap, feed, JWKS) is small, computed from application

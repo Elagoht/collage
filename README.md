@@ -255,8 +255,9 @@ Details in [docs/caching.md](docs/caching.md),
 | [docs/routing.md](docs/routing.md) | Path patterns, locales, redirects, error-page resolution, registration errors |
 | [docs/cli.md](docs/cli.md) | `collage new`/`dev`/`build`, plugin subcommands, and the static site builder |
 
-`docs/spec/usage-examples.md` holds the canonical examples the public API is
-defined against.
+`docs/spec/usage-examples.md` holds the canonical examples the original
+architecture spec's public API was defined against; it predates `Document` and
+`Mount` and is not a reference for either — see the docs table above instead.
 
 ## The CLI
 

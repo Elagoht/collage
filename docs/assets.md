@@ -232,8 +232,12 @@ Stated plainly, because each one is a real constraint rather than an oversight:
 - **Mounted assets are invisible to tag invalidation and to the page cache.**
   That is the design, not a gap — but it does mean `InvalidateTags` can never
   make a client re-fetch a stylesheet.
-- **A mount is invisible to plugins, metrics and tracing.** A request a mount
-  claims is answered before the request lifecycle begins, so no hook fires — not
-  even `OnError` for a 404 — no `Metrics.HTTPResponse` is recorded, and no trace
-  span is opened. Observability for asset traffic belongs to whatever sits in
-  front of the server.
+- **A mount dispatches only `OnError`, and only for a 4xx, a 5xx, or a panic
+  recovered while serving it.** `Metrics.HTTPResponse` and the request's trace
+  span fire unconditionally, for every asset request, exactly as they do for a
+  page or a document — there is no metrics or tracing exemption left to claim.
+  What genuinely does not fire for a mount is the render-hook trio,
+  `OnPageResolved`, `OnBeforeRender`, and `OnAfterRender`: an asset is not a
+  render, so there is nothing for those three to observe. See
+  `docs/plugins.md`'s "Documents dispatch three hooks, not six" section, which
+  covers the asset case alongside the document one.
