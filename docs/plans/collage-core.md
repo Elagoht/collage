@@ -998,8 +998,16 @@ Constraint 3. `MatchResult.RedirectStatus` is added so the handler does not re-d
 
 1. An explicit locale prefix in the path (`/tr/blog/post`) when `LocaleConfig.FromPath`
    and the prefix is in `Supported`. The prefix is stripped before route matching.
-2. `Accept-Language`, when `FromHeader` — parse q-values properly, pick the highest-q
-   supported language, fall back on a primary-subtag match (`tr-TR` matches `tr`).
+2. `Accept-Language`, when header-locale is enabled — parse q-values properly and resolve
+   **per entry, in descending q order**: for each entry try an exact match first, then a
+   primary-subtag match (`tr-TR` matches `tr`), and take the first entry that matches
+   either way. This is the RFC 4647 lookup shape.
+   **It must NOT be two global passes** (every entry checked for an exact match, then
+   every entry retried with subtag fallback). That ordering lets a weakly-preferred exact
+   match beat a strongly-preferred subtag match: `tr-TR;q=0.9,en;q=0.1` against supported
+   `{tr,en}` would resolve to `en`, serving English to a browser that asked loudly for
+   Turkish. Highest q wins, and exact-vs-subtag only breaks ties *within* one entry.
+   A `q` value outside `[0, 1]` is clamped into range; `q=0` excludes the entry.
 3. The cookie named by `LocaleConfig.FromCookie`, when non-empty.
 4. `LocaleConfig.Default`.
 
