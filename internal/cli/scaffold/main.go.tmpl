@@ -1,0 +1,133 @@
+// Command @@NAME@@ serves this collage application, or — when invoked with
+// -collage-build — renders it to static files instead of serving it.
+//
+// # The collage CLI contract
+//
+// "collage dev" runs `go run .` in this directory with COLLAGE_DEV=1 set in
+// the process environment. This file honours that by turning on development
+// mode whenever COLLAGE_DEV=1 is set: templates are reloaded from disk on
+// every request. Development mode does NOT hot-reload Go code — a change to
+// this file, or any other .go file in this project, still requires stopping
+// and re-running `collage dev` (or `go run .`).
+//
+// "collage build" runs `go run . -collage-build -out <dir>` (with -clean
+// appended when "collage build -clean" was used). This file honours that by
+// parsing -collage-build, -out, and -clean below and, when -collage-build is
+// set, rendering every statically-buildable page to <dir> — through
+// collage.NewBuilder, the same static builder the collage CLI's own
+// documentation refers to — instead of starting a server.
+//
+// If you rewrite this file, keep both halves of the contract working, or
+// "collage dev" and "collage build" will stop doing anything useful here.
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+func main() {
+	buildFlag := flag.Bool("collage-build", false, "render the app to static files instead of serving it")
+	outFlag := flag.String("out", "dist", "output directory for -collage-build")
+	cleanFlag := flag.Bool("clean", false, "remove -out's existing contents before building")
+	flag.Parse()
+
+	devMode := os.Getenv("COLLAGE_DEV") == "1"
+
+	cfg := &collage.Config{
+		DevMode: devMode,
+		Server: collage.ServerConfig{
+			Host: "localhost",
+			Port: 3000,
+		},
+		Template: collage.TemplateConfig{
+			Root: "templates",
+		},
+	}
+
+	app, err := collage.New(cfg)
+	if err != nil {
+		log.Fatalf("@@NAME@@: %v", err)
+	}
+	if err := app.RegisterPage(homePage()); err != nil {
+		log.Fatalf("@@NAME@@: register home page: %v", err)
+	}
+
+	if *buildFlag {
+		if err := staticBuild(app, *outFlag, *cleanFlag); err != nil {
+			log.Fatalf("@@NAME@@: static build: %v", err)
+		}
+		return
+	}
+
+	fmt.Printf("@@NAME@@: serving on http://%s:%d (dev mode: %v)\n", cfg.Server.Host, cfg.Server.Port, devMode)
+	if err := app.ListenAndServe(); err != nil {
+		log.Fatalf("@@NAME@@: %v", err)
+	}
+}
+
+// homePage wires the one page this scaffold ships: a shared layout and a
+// static home page, served at "/". Its content fragment has no DataHandler,
+// so it renders with no data — add one (see collage.FragmentBuilder's
+// WithDataHandler) once this page needs to render something dynamic.
+func homePage() *collage.Page {
+	layout := collage.NewFragment("layout", "layouts/default.html").
+		WithSlot("content", true, false).
+		Build()
+
+	content := collage.NewFragment("home-content", "pages/home.html").Build()
+
+	return collage.NewPage("home").
+		WithLayout(layout).
+		WithContent(content).
+		WithPath("en", "/").
+		Static().
+		Build()
+}
+
+// staticBuild renders every statically-buildable page to files under outDir,
+// removing outDir's existing contents first when clean is set.
+//
+// This calls straight through to collage.NewBuilder — collage-core's own
+// static builder, reached through pkg/collage's public alias — rather than
+// reimplementing any part of it here. That matters beyond convenience: the
+// builder's containment checks (a resolved path is verified to stay inside
+// outDir even when a symlink is involved) and its dangerous-output-directory
+// refusals (refusing to write into a filesystem root, or to -clean a
+// repository root) are exactly the kind of logic that is easy to get subtly
+// wrong in a hand-rolled copy. Every project scaffolded by "collage new"
+// shares this one implementation instead of a copy of its own.
+func staticBuild(app *collage.App, outDir string, clean bool) error {
+	builder, err := collage.NewBuilder(app, collage.BuildOptions{
+		OutDir: outDir,
+		Clean:  clean,
+	})
+	if err != nil {
+		return err
+	}
+
+	report, buildErr := builder.Build(context.Background())
+	// report is populated even when buildErr is not nil: Build records every
+	// individual failure in report.Errors and joins them into buildErr, so the
+	// report below is worth printing regardless of whether the build fully
+	// succeeded.
+	for _, path := range report.Written {
+		fmt.Println("@@NAME@@: wrote", path)
+	}
+	for _, skip := range report.Skipped {
+		if skip.Locale != "" {
+			fmt.Printf("@@NAME@@: skip %s (%s): %s\n", skip.Page, skip.Locale, skip.Reason)
+			continue
+		}
+		fmt.Printf("@@NAME@@: skip %s: %s\n", skip.Page, skip.Reason)
+	}
+	fmt.Printf("@@NAME@@: build complete, %d file(s) written, %d skipped, took %s\n",
+		len(report.Written), len(report.Skipped), report.Duration)
+
+	return buildErr
+}
