@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -284,7 +283,7 @@ func TestBuild_ARefusedDocumentDoesNotStopTheBuild(t *testing.T) {
 // TestBuild_EmptyDocumentBodyIsNotWritten covers the fix-round-1 parity gap: a
 // document handler returning "nil, nil, nil" — a successful render with no body —
 // must not reach disk as a zero-byte file the way it used to. internal/httpx
-// refuses to *serve* exactly this as ErrEmptyDocumentBody, a 500, because a
+// refuses to *serve* exactly this as types.ErrEmptyDocumentBody, a 500, because a
 // document has no equivalent of a page's deliberate empty render; a static build
 // reusing that same sentinel means the built artifact matches what the live server
 // would have done, rather than silently shipping a broken sitemap or feed. It must
@@ -309,10 +308,10 @@ func TestBuild_EmptyDocumentBodyIsNotWritten(t *testing.T) {
 	}
 	report, buildErr := b.Build(context.Background())
 
-	if !errors.Is(buildErr, httpx.ErrEmptyDocumentBody) {
-		t.Fatalf("Build error = %v, want it to wrap httpx.ErrEmptyDocumentBody", buildErr)
+	if !errors.Is(buildErr, types.ErrEmptyDocumentBody) {
+		t.Fatalf("Build error = %v, want it to wrap types.ErrEmptyDocumentBody", buildErr)
 	}
-	if len(report.Errors) != 1 || !errors.Is(report.Errors[0], httpx.ErrEmptyDocumentBody) {
+	if len(report.Errors) != 1 || !errors.Is(report.Errors[0], types.ErrEmptyDocumentBody) {
 		t.Fatalf("Report.Errors = %v, want one ErrEmptyDocumentBody", report.Errors)
 	}
 	if _, statErr := os.Stat(filepath.Join(out, "empty.json")); !os.IsNotExist(statErr) {

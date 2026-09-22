@@ -15,15 +15,6 @@ import (
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// ErrEmptyDocumentBody is reported to plugins, and served as a 500, when a
-// document's handler returns successfully but produces no body. A page may
-// legitimately render nothing — an optional root fragment with no fallback
-// produces an empty page on purpose — but a document has no such thing: its
-// handler's return value IS the entire response, so an empty success is
-// indistinguishable from a handler that forgot to populate it, not a valid empty
-// document.
-var ErrEmptyDocumentBody = errors.New("collage: document handler produced an empty body")
-
 // ErrDocumentRenderingUnsupported is reported to plugins, and served as a 500,
 // when Deps.Renderer does not implement document execution. Renderer is an
 // interface the embedding application may supply itself — Deps documents it as
@@ -98,7 +89,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	}
 
 	if len(result.Body) == 0 {
-		err := fmt.Errorf("%w: document %q", ErrEmptyDocumentBody, doc.Name)
+		err := fmt.Errorf("%w: document %q", types.ErrEmptyDocumentBody, doc.Name)
 		h.reportError(r, failure{status: http.StatusInternalServerError, err: err, document: doc, stage: stageRender})
 		writePlainText(w, r, http.StatusInternalServerError, h.devMode, doc.Name, err)
 		return http.StatusInternalServerError

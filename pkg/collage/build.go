@@ -2,7 +2,7 @@ package collage
 
 import (
 	"github.com/Elagoht/collage/internal/build"
-	"github.com/Elagoht/collage/internal/httpx"
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // Builder renders an application's static-eligible pages to files under
@@ -76,10 +76,13 @@ var ErrBuildPanic = build.ErrBuildPanic
 
 // ErrEmptyDocumentBody is recorded in BuildReport.Errors, and no file is written,
 // when a document renders successfully but produces no body — the same condition
-// internal/httpx serves as a 500 for a live request, reused here rather than a
-// second sentinel for the same failure mode. See DocumentHandlerFunc: a handler
-// that genuinely wants to serve an empty document can return a single newline.
-var ErrEmptyDocumentBody = httpx.ErrEmptyDocumentBody
+// internal/httpx serves as a 500 for a live request, reused here (from
+// internal/types, where it lives alongside ErrNotFound as a property of a
+// document's handler contract rather than of HTTP serving or of static building)
+// rather than a second sentinel for the same failure mode. See
+// DocumentHandlerFunc: a handler that genuinely wants to serve an empty document
+// can return a single newline.
+var ErrEmptyDocumentBody = types.ErrEmptyDocumentBody
 
 // NewBuilder returns a static-site builder that renders app's pages and
 // documents, and copies app's mounted assets, according to opts, ready for

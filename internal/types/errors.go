@@ -74,3 +74,16 @@ var ErrEmptyContentType = errors.New("collage: empty content type")
 // ErrNoDocumentHandler reports that a document declared no handler. Unlike a page,
 // a document has no template to fall back on, so a handler is mandatory.
 var ErrNoDocumentHandler = errors.New("collage: document has no handler")
+
+// ErrEmptyDocumentBody reports that a document's handler returned successfully but
+// produced no body. A page may legitimately render nothing — an optional root
+// fragment with no fallback produces an empty page on purpose — but a document has
+// no such thing: its handler's return value IS the entire response, so an empty
+// success is indistinguishable from a handler that forgot to populate it, not a
+// valid empty document. It lives here rather than in internal/httpx or
+// internal/build, the two packages that currently check for it, because it
+// describes a property of a document's handler contract — DocumentHandlerFunc's
+// own doc comment states the same rule — not of HTTP serving or of static
+// building; both of those packages already import internal/types and reach it
+// without a new dependency edge between them.
+var ErrEmptyDocumentBody = errors.New("collage: document handler produced an empty body")
