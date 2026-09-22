@@ -1067,8 +1067,28 @@ type Plugin interface {
 ```
 
 `Host` replaces the spec's `app interface{}` (Global Constraint 3). It is the narrow,
-read-mostly surface the core offers plugins — this is also how "plugins cannot mutate
-core state" is enforced structurally:
+read-mostly surface the core offers plugins.
+
+**Be precise about what this enforces.** `Host` structurally limits *reachability*: a
+plugin cannot obtain the router, the cache, the render engine, the template set, or any
+page it was not handed. It does **not** make what it hands out immutable — Go has no
+mechanism for that, and `types.Page` is a struct of exported fields. Two consequences,
+both of which must be stated honestly in doc comments rather than papered over:
+
+- `Host.Pages()` and `Host.Page(name)` return a **defensive copy** of the `Page` struct,
+  with its `Paths`, `Redirects`, `SEO` and `DependencyTags` containers copied too. These
+  are startup- and CLI-path calls where the allocation does not matter. Fragment pointers
+  are still shared, and the doc says so.
+- Event structs carry the **live** `*types.Page` and must not copy it — they are on the
+  per-request hot path of a cache-first framework. Their doc comments state plainly that
+  the pointer is live, that mutating it is undefined behaviour, and that the framework
+  does not defend against a plugin that does. "Read-only" as an unqualified claim is
+  forbidden wording here.
+
+In-process Go plugins are trusted code; the design goal is to make accidental mutation
+hard and deliberate mutation obvious, not to sandbox a hostile plugin. Claiming more than
+that in a doc comment is worse than claiming less.
+
 
 ```go
 // Host is the capability surface a plugin receives. It exposes what plugins may read
