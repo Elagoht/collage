@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/template"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -253,6 +254,106 @@ func TestRender_FragmentFailurePolicy(t *testing.T) {
 	}
 }
 
+// TestRender_NilSlotDefinitionIsAnError covers a slot map entry mapped to nil.
+// Fragment.Slot reports that the slot exists, and Render never insists that
+// Fragment.Validate has run, so without an explicit check the fill loop dereferences
+// nil — and a contained panic would make "invalid memory address" the page's recorded
+// failure reason instead of the actual fault.
+func TestRender_NilSlotDefinitionIsAnError(t *testing.T) {
+	engine := newEngine(t, Options{})
+
+	content := fragment("content", "layout.html")
+	content.Slots = map[string]*types.SlotDefinition{"content": nil}
+	content.Required = true
+
+	_, err := renderPage(t, engine, pageWith(content))
+	if !errors.Is(err, types.ErrInvalidSlotDefinition) {
+		t.Fatalf("Render() error = %v, want types.ErrInvalidSlotDefinition", err)
+	}
+	var panicErr *PanicError
+	if errors.As(err, &panicErr) {
+		t.Errorf("Render() error = %v, want a described fault rather than a recovered nil dereference", err)
+	}
+	if !strings.Contains(err.Error(), `"content"`) {
+		t.Errorf("Render() error = %q, want it to name the malformed slot", err)
+	}
+}
+
+// TestRender_RequiredInsideAFallbackDoesNotEscalate pins which of two overlapping
+// rules wins. Required-ness is scoped to the primary tree: "the page cannot render
+// without me" and "this alternative cannot render without me" are different claims,
+// and escalating the second would let a broken fallback take down the page it exists
+// to protect. So the page renders, degraded, without the fragment.
+func TestRender_RequiredInsideAFallbackDoesNotEscalate(t *testing.T) {
+	engine := newEngine(t, Options{})
+	boom := errors.New("collage: primary source down")
+	grandchildBoom := errors.New("collage: fallback source down")
+
+	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
+
+	child := fragment("child", "leaf.html")
+	child.DataHandler = failingHandler(boom)
+	child.Fallback = declare(fragment("child-fallback", "section.html"), &types.SlotDefinition{Name: "inner"})
+
+	grandchild := fragment("fallback-grandchild", "leaf.html")
+	grandchild.Required = true
+	grandchild.DataHandler = failingHandler(grandchildBoom)
+	bind(t, child.Fallback, "inner", grandchild)
+	bind(t, layout, "content", child)
+
+	result, err := renderPage(t, engine, pageWith(layout))
+	if err != nil {
+		t.Fatalf("Render() error = %v, want a required fragment inside a fallback not to fail the page", err)
+	}
+	if string(result.HTML) != "<html><body></body></html>" {
+		t.Errorf("Render() HTML = %q, want the page without the fragment", result.HTML)
+	}
+	if !result.Degraded() {
+		t.Error("Degraded() = false, want true: the page is missing a fragment")
+	}
+
+	meta := fragmentMetadata(t, result, "child")
+	for _, want := range []error{boom, grandchildBoom} {
+		if !errors.Is(meta.Err, want) {
+			t.Errorf("FragmentMetadata.Err = %v, want it to wrap %v", meta.Err, want)
+		}
+	}
+	if meta.UsedFallback {
+		t.Error("FragmentMetadata.UsedFallback = true, want false: the fallback did not produce output")
+	}
+	if grandchildMeta := fragmentMetadata(t, result, "fallback-grandchild"); !grandchildMeta.Failed {
+		t.Error("the required fragment inside the fallback was not recorded as failed")
+	}
+}
+
+// TestRender_RequiredFragmentSkipsItsOwnFallback pins the precedence between Required
+// and Fallback on one and the same fragment: Required wins, and the fallback is never
+// even attempted. Rendering it would produce output for a page that is about to fail.
+func TestRender_RequiredFragmentSkipsItsOwnFallback(t *testing.T) {
+	engine := newEngine(t, Options{})
+	boom := errors.New("collage: primary source down")
+
+	fallbackRan := false
+	child := fragment("child", "leaf.html")
+	child.Required = true
+	child.DataHandler = failingHandler(boom)
+	child.Fallback = fragment("child-fallback", "fallback.html")
+	child.Fallback.DataHandler = func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+		fallbackRan = true
+		return nil, nil, nil
+	}
+
+	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
+	bind(t, layout, "content", child)
+
+	if _, err := renderPage(t, engine, pageWith(layout)); !errors.Is(err, boom) {
+		t.Fatalf("Render() error = %v, want the required fragment's failure to propagate", err)
+	}
+	if fallbackRan {
+		t.Error("the fallback of a required fragment was rendered, want it skipped entirely")
+	}
+}
+
 // TestRender_RequiredChildIsNotAbsorbedByAnAncestorFallback covers the case the
 // failure policy is silent about: a required fragment nested under an optional
 // ancestor that has a fallback. "Required" has to mean the page fails, or the
@@ -486,7 +587,8 @@ func TestRender_MaxDepth(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			engine := newEngine(t, Options{MaxDepth: test.maxDepth})
+			metrics := observability.NewRecordingMetrics()
+			engine := newEngine(t, Options{MaxDepth: test.maxDepth, Metrics: metrics})
 			root := chainOf(t, test.depth)
 
 			result, err := renderPage(t, engine, pageWith(root))
@@ -502,6 +604,19 @@ func TestRender_MaxDepth(t *testing.T) {
 
 			if !errors.Is(err, ErrMaxDepthExceeded) {
 				t.Fatalf("Render() error = %v, want ErrMaxDepthExceeded", err)
+			}
+			// The frame that trips the limit is rejected before it runs, so it gets
+			// neither a metadata entry nor a duration metric — only the error names
+			// it. Metadata covers the fragments that actually executed.
+			if got := len(result.Metadata.Fragments); got != test.depth-1 {
+				t.Errorf("Metadata.Fragments = %d entries, want %d: one per fragment that ran", got, test.depth-1)
+			}
+			if got := len(metrics.Snapshot().FragmentDurations); got != test.depth-1 {
+				t.Errorf("FragmentDuration calls = %d, want %d: one per fragment that ran", got, test.depth-1)
+			}
+			tripped := fmt.Sprintf("chain-%d", test.depth-1)
+			if slices.Contains(fragmentNames(result), tripped) {
+				t.Errorf("Metadata.Fragments names = %v, want no entry for %q, which never ran", fragmentNames(result), tripped)
 			}
 			// The chain is the only thing that makes the error actionable: it names
 			// the path that ran away, which is where the accidental recursion is.

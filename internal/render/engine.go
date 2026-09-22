@@ -32,7 +32,11 @@ type Engine interface {
 
 // Result is one page's rendered output.
 type Result struct {
-	// HTML is the rendered page. It is nil when Render returned an error.
+	// HTML is the rendered page. It is nil whenever Render returned an error, and
+	// may also be nil on a successful render that produced nothing — an optional
+	// root fragment that failed with no fallback renders an empty page rather than
+	// failing it. A nil HTML therefore means "no markup", not "error"; Degraded
+	// reports whether anything went wrong.
 	HTML []byte
 	// DependencyTags holds every tag the render depended on: the tags returned by
 	// each fragment's data handler plus the page's own, de-duplicated and sorted so
@@ -67,11 +71,13 @@ type Metadata struct {
 	Locale string
 	// Timing records where the render spent its time.
 	Timing observability.Timing
-	// Fragments holds one entry per fragment the render visited, in the order the
-	// fragments were entered: a parent precedes the children bound into its slots.
-	// A fallback has no entry of its own — it is reported on the fragment it stood
-	// in for, through UsedFallback — but fragments bound into a fallback's slots do
-	// get one.
+	// Fragments holds one entry per fragment the render actually ran, in the order
+	// the fragments were entered: a parent precedes the children bound into its
+	// slots. A fragment rejected before it ran has no entry — the frame that trips
+	// MaxDepth, or a nil entry in a Fill slice — since there is nothing to report
+	// about a fragment that never executed; the error names it instead. A fallback
+	// has no entry of its own either: it is reported on the fragment it stood in
+	// for, through UsedFallback. Fragments bound into a fallback's slots do get one.
 	Fragments []FragmentMetadata
 }
 
@@ -172,7 +178,11 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 
 	root := rc.Page.Root()
 	if root == nil {
-		return &Result{Metadata: metadata}, fmt.Errorf("%w: page %q", ErrNoRootFragment, rc.Page.Name)
+		// The page's own tags are known even though no fragment ran, and every
+		// other failure path reports what it collected; this one does too.
+		empty := &renderState{page: rc.Page.Name, tags: make(map[string]struct{})}
+		result := &Result{DependencyTags: empty.sortedTags(rc.Page.DependencyTags), Metadata: metadata}
+		return result, fmt.Errorf("%w: page %q", ErrNoRootFragment, rc.Page.Name)
 	}
 
 	ctx, span := e.tracer.StartSpan(ctx, "collage.render")

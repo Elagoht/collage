@@ -124,7 +124,13 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 			if fallbackErr != nil {
 				// A fallback exists to contain a failure, so its own failure is
 				// contained here rather than escalated: the page loses this
-				// fragment's output and records both errors.
+				// fragment's output and records both errors. This holds however the
+				// fallback failed, including for a Required fragment inside the
+				// fallback's own subtree — required-ness is scoped to the primary
+				// tree. "The page cannot render without me" and "this alternative
+				// cannot render without me" are different claims, and letting the
+				// second one through would let a broken fallback take down the very
+				// page it exists to protect.
 				meta.Err = fmt.Errorf("%w: fallback %q also failed: %w", err, f.Fallback.Name, fallbackErr)
 			} else {
 				out = fallbackOut
@@ -227,6 +233,13 @@ func (e *SlotEngine) renderSlot(rc *types.RenderContext, f *types.Fragment, name
 	slot, ok := f.Slot(name)
 	if !ok {
 		return "", fmt.Errorf("%w: fragment %q has no slot %q, only %v", types.ErrUnknownSlot, f.Name, name, f.SlotNames())
+	}
+	// Slot reports ok for a key mapped to a nil definition, and Render never
+	// requires that Fragment.Validate has run, so the nil is checked here rather
+	// than assumed away. Without it the deref below panics and the fragment's
+	// failure reason becomes "invalid memory address" instead of the real fault.
+	if slot == nil {
+		return "", fmt.Errorf("%w: fragment %q slot %q is nil", types.ErrInvalidSlotDefinition, f.Name, name)
 	}
 
 	var buf strings.Builder

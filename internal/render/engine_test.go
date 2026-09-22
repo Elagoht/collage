@@ -107,6 +107,7 @@ func TestRender_RejectsUnrenderableInput(t *testing.T) {
 		rc       *types.RenderContext
 		want     error
 		wantPage string
+		wantTags []string
 	}{
 		{
 			name: "nil render context",
@@ -119,10 +120,16 @@ func TestRender_RejectsUnrenderableInput(t *testing.T) {
 			want: ErrNilRenderContext,
 		},
 		{
-			name:     "page without any fragment",
-			rc:       types.NewRenderContext(context.Background(), nil, &types.Page{Name: "empty"}, "en", nil),
-			want:     ErrNoRootFragment,
+			name: "page without any fragment",
+			rc: types.NewRenderContext(context.Background(), nil, &types.Page{
+				Name:           "empty",
+				DependencyTags: []string{"site", "site", ""},
+			}, "en", nil),
+			want: ErrNoRootFragment,
+			// No fragment ran, but the page's own tags are known, and every other
+			// failure path reports what it collected.
 			wantPage: "empty",
+			wantTags: []string{"site"},
 		},
 	}
 
@@ -142,6 +149,9 @@ func TestRender_RejectsUnrenderableInput(t *testing.T) {
 			}
 			if result.Metadata.Page != test.wantPage {
 				t.Errorf("Metadata.Page = %q, want %q", result.Metadata.Page, test.wantPage)
+			}
+			if !slices.Equal(result.DependencyTags, test.wantTags) {
+				t.Errorf("DependencyTags = %v, want %v", result.DependencyTags, test.wantTags)
 			}
 		})
 	}
@@ -411,5 +421,28 @@ func TestRender_FailedRenderStillReportsMetadata(t *testing.T) {
 	}
 	if call := snapshot.RenderDurations[0]; call.Page != "test-page" || call.Duration <= 0 {
 		t.Errorf("RenderDuration call = %+v, want page test-page with a positive duration", call)
+	}
+}
+
+// TestRender_SuccessfulRenderCanProduceNoHTML pins the half of Result.HTML's contract
+// that is easy to get backwards: nil HTML means "no markup", not "error". An optional
+// root fragment that fails with no fallback renders an empty page rather than failing
+// one, so a caller that treats nil as a failure signal would be wrong — Degraded is
+// the signal.
+func TestRender_SuccessfulRenderCanProduceNoHTML(t *testing.T) {
+	engine := newEngine(t, Options{})
+
+	content := fragment("content", "plain.html")
+	content.DataHandler = failingHandler(errors.New("collage: boom"))
+
+	result, err := renderPage(t, engine, pageWith(content))
+	if err != nil {
+		t.Fatalf("Render() error = %v, want the optional root's failure to be contained", err)
+	}
+	if result.HTML != nil {
+		t.Errorf("Render() HTML = %q, want nil for a render that produced nothing", result.HTML)
+	}
+	if !result.Degraded() {
+		t.Error("Degraded() = false, want true: nil HTML with no error is only meaningful alongside Degraded")
 	}
 }
