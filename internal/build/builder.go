@@ -29,11 +29,12 @@ var ErrNilRenderer = errors.New("collage: nil renderer")
 // ErrInvalidOutDir is returned by New when Options.OutDir is empty.
 var ErrInvalidOutDir = errors.New("collage: invalid output directory")
 
-// ErrDangerousCleanTarget is returned by Build when Options.Clean is true and
-// Options.OutDir resolves to a filesystem root or a repository root — a directory
-// whose contents must never be silently deleted because a config field was blank or
-// mistyped.
-var ErrDangerousCleanTarget = errors.New("collage: refusing to clean a dangerous output directory")
+// ErrDangerousOutDir is returned by Build when Options.OutDir resolves — after
+// symlinks are followed — to a filesystem root, which Build refuses to write into
+// at all, or when Options.Clean is true and OutDir additionally resolves to a
+// repository root, a directory whose contents must never be silently deleted
+// because a config field was blank or mistyped.
+var ErrDangerousOutDir = errors.New("collage: refusing to use a dangerous output directory")
 
 // ErrPathEscapesOutDir is returned when a resolved output path falls outside
 // Options.OutDir. PathProvider is user code: a provider returning "../escape", or a
@@ -93,8 +94,9 @@ type Options struct {
 	// locale each page declares in its own Paths.
 	Locales []string
 	// Clean removes OutDir's existing contents (not OutDir itself) before writing.
-	// Build refuses to do so when OutDir resolves to a filesystem root or a
-	// repository root; see ErrDangerousCleanTarget.
+	// Build additionally refuses to run at all — Clean or not — when OutDir
+	// resolves to a filesystem root, and refuses to clean (though it still writes)
+	// when OutDir resolves to a repository root; see ErrDangerousOutDir.
 	Clean bool
 	// Concurrency bounds how many pages render and write concurrently. Zero or
 	// negative defaults to 1 — sequential, matching the framework's determinism
@@ -180,9 +182,10 @@ type buildTask struct {
 //
 // Build writes each rendered page to "<OutDir>/<path>/index.html", creating
 // directories as needed; the root path "/" writes "<OutDir>/index.html". Every
-// resolved output path is verified to stay within OutDir — see ErrPathEscapesOutDir
-// — since PathProvider is user code and a path built from an unsanitised parameter
-// must not be able to write outside the output directory.
+// resolved output path is verified to stay within OutDir both lexically and on
+// disk — see ErrPathEscapesOutDir — since PathProvider is user code and a path
+// built from an unsanitised parameter, or a symlink planted anywhere under OutDir,
+// must not be able to redirect a write outside the output directory.
 //
 // Options.Concurrency bounds how many pages render and write at once, but
 // Report.Written, Report.Skipped, and Report.Errors are always assembled in the same
@@ -330,6 +333,17 @@ func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, tas
 		return "", fmt.Errorf("collage: render page %q locale %q path %q: %w", task.page.Name, task.locale, task.path, err)
 	}
 
+	// resolveTarget's containment check is purely lexical: it proves the *string*
+	// target stays inside outDirResolved and nothing about the filesystem. A
+	// symlink planted anywhere under OutDir — a directory component or the leaf
+	// file itself — can redirect the write below outside OutDir entirely. This
+	// must run before os.MkdirAll, not after: MkdirAll itself follows symlinks
+	// when it walks existing parent directories, so checking afterwards is too
+	// late to catch what it would already have walked through.
+	if err := verifyNoSymlinksBeneath(outDirResolved, target); err != nil {
+		return "", fmt.Errorf("collage: page %q locale %q: %w", task.page.Name, task.locale, err)
+	}
+
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return "", fmt.Errorf("collage: create directory for %q: %w", target, err)
 	}
@@ -350,6 +364,11 @@ func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, tas
 // prepareOutDir) so a symlinked OutDir — /tmp on macOS resolves to /private/tmp,
 // which t.TempDir() itself returns — does not make every legitimate write look
 // like an escape.
+//
+// This check is purely lexical: it says nothing about whether a component that
+// already exists on disk between outDirResolved and target is itself a symlink to
+// somewhere else. See verifyNoSymlinksBeneath for that, which renderAndWrite calls
+// separately before touching the filesystem.
 func resolveTarget(outDirResolved, urlPath string) (string, error) {
 	trimmed := strings.TrimPrefix(urlPath, "/")
 	rel := filepath.FromSlash(trimmed)
@@ -371,9 +390,58 @@ func resolveTarget(outDirResolved, urlPath string) (string, error) {
 	return target, nil
 }
 
+// verifyNoSymlinksBeneath confirms that no path component from outDirResolved down
+// to and including target — the very file about to be created — already exists as
+// a symlink. outDirResolved must itself be symlink-free (see prepareOutDir), so
+// only the components rel adds beyond it need checking.
+//
+// A component that does not exist yet is not a symlink — there is nothing there to
+// be one — so it is skipped rather than rejected: Build is expected to create fresh
+// directories under OutDir on every run.
+//
+// This is a best-effort check, not a race-free guarantee: nothing stops another
+// process from replacing a component with a symlink between this check and the
+// os.MkdirAll/os.WriteFile calls that follow it in renderAndWrite. Closing that
+// window portably (e.g. with O_NOFOLLOW, which is not available in a portable form
+// from the standard library) is out of scope here; this closes the case where the
+// symlink was already there.
+func verifyNoSymlinksBeneath(outDirResolved, target string) error {
+	rel, err := filepath.Rel(outDirResolved, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%w: %s", ErrPathEscapesOutDir, target)
+	}
+	if rel == "." {
+		return nil
+	}
+
+	current := outDirResolved
+	for _, segment := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, segment)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("collage: stat %q: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: %s is a symlink", ErrPathEscapesOutDir, current)
+		}
+	}
+	return nil
+}
+
 // prepareOutDir resolves Options.OutDir to an absolute, symlink-resolved directory,
-// optionally cleaning its contents first, and returns that resolved path for the
-// rest of Build to write under and check escapes against.
+// refuses to proceed at all when that resolved directory is a filesystem root,
+// refuses to additionally clean it (though a non-Clean build still writes into it)
+// when it is a repository root, and returns the resolved path for the rest of
+// Build to write under and check escapes against.
+//
+// The danger checks run against the resolved path, not the literal Options.OutDir
+// string: OutDir can itself be a symlink — to "/", for instance — and
+// isFilesystemRoot is a pure string comparison with no I/O of its own, so checking
+// it against the unresolved string would fail open on exactly the case it exists
+// to catch. Resolution happens before either danger check, not after.
 func (b *Builder) prepareOutDir() (string, error) {
 	absOutDir, err := filepath.Abs(b.opts.OutDir)
 	if err != nil {
@@ -381,27 +449,82 @@ func (b *Builder) prepareOutDir() (string, error) {
 	}
 	cleanOutDir := filepath.Clean(absOutDir)
 
-	if b.opts.Clean {
-		if dangerousOutDir(cleanOutDir) {
-			return "", fmt.Errorf("%w: %s", ErrDangerousCleanTarget, cleanOutDir)
-		}
-		if err := cleanDirContents(cleanOutDir); err != nil {
-			return "", fmt.Errorf("collage: clean %q: %w", cleanOutDir, err)
-		}
-	}
-
-	if err := os.MkdirAll(cleanOutDir, 0o755); err != nil {
-		return "", fmt.Errorf("collage: create output directory %q: %w", cleanOutDir, err)
-	}
-
-	// Resolved once, here, rather than per written file: a symlinked OutDir (macOS
-	// /tmp -> /private/tmp, which t.TempDir() itself returns) must not make every
-	// subsequent containment check in resolveTarget reject a legitimate write.
-	resolved, err := filepath.EvalSymlinks(cleanOutDir)
+	resolved, err := resolveExistingPrefix(cleanOutDir)
 	if err != nil {
 		return "", fmt.Errorf("collage: resolve output directory %q: %w", cleanOutDir, err)
 	}
-	return resolved, nil
+
+	// Applies to every build, Clean or not: writing site output into "/" is
+	// dangerous even when nothing is deleted first.
+	if isFilesystemRoot(resolved) {
+		return "", fmt.Errorf("%w: %s", ErrDangerousOutDir, resolved)
+	}
+
+	if b.opts.Clean {
+		// Scoped to Clean, unlike the filesystem-root check above: building
+		// (without deleting) into a repository root is a plausible setup — a
+		// "docs/" or "dist/" directory inside the project — but deleting its
+		// contents because Options.OutDir was left pointing at the wrong
+		// directory is not something a blank or mistyped config field should be
+		// able to trigger.
+		if hasRepositoryMarker(resolved) {
+			return "", fmt.Errorf("%w: %s", ErrDangerousOutDir, resolved)
+		}
+		if err := cleanDirContents(resolved); err != nil {
+			return "", fmt.Errorf("collage: clean %q: %w", resolved, err)
+		}
+	}
+
+	if err := os.MkdirAll(resolved, 0o755); err != nil {
+		return "", fmt.Errorf("collage: create output directory %q: %w", resolved, err)
+	}
+
+	// Re-resolved after MkdirAll: resolveExistingPrefix above may have stopped
+	// short of the full path if OutDir did not exist yet (filepath.EvalSymlinks
+	// requires its argument to exist) and appended the missing suffix literally.
+	// Now that MkdirAll has created it, resolving the complete path is possible,
+	// and this is the value every per-file containment and symlink check is
+	// measured against for the rest of Build.
+	finalResolved, err := filepath.EvalSymlinks(resolved)
+	if err != nil {
+		return "", fmt.Errorf("collage: resolve output directory %q: %w", resolved, err)
+	}
+	return finalResolved, nil
+}
+
+// resolveExistingPrefix resolves symlinks in the longest existing ancestor of path
+// and appends whatever suffix of path does not exist yet, unresolved: a path
+// component that does not exist cannot be a symlink, and filepath.EvalSymlinks
+// itself requires its argument to exist — it cannot be called on path directly
+// when OutDir has not been created yet, which is the common case for a first
+// build.
+func resolveExistingPrefix(path string) (string, error) {
+	existing := path
+	var missing []string
+	for {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			// Nothing on the whole path exists. Break rather than loop forever;
+			// the EvalSymlinks call below reports a clear error for this case.
+			break
+		}
+		missing = append([]string{filepath.Base(existing)}, missing...)
+		existing = parent
+	}
+
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	if len(missing) == 0 {
+		return resolved, nil
+	}
+	return filepath.Join(append([]string{resolved}, missing...)...), nil
 }
 
 // cleanDirContents removes every entry inside dir, leaving dir itself in place. A
@@ -422,17 +545,13 @@ func cleanDirContents(dir string) error {
 	return nil
 }
 
-// dangerousOutDir reports whether dir — already absolute and filepath.Clean-ed — is
-// a directory whose contents Build must never be asked to delete: a filesystem root,
-// or a repository root. Options.OutDir being empty is already rejected by New, for
-// every build, not only a cleaning one, so it is not re-checked here.
-func dangerousOutDir(dir string) bool {
-	// filepath.Dir of a filesystem root returns the root itself; no other
-	// directory is its own parent, on Unix or Windows.
-	if filepath.Dir(dir) == dir {
-		return true
-	}
-	return hasRepositoryMarker(dir)
+// isFilesystemRoot reports whether dir — already absolute, filepath.Clean-ed, and
+// symlink-resolved — is a filesystem root. filepath.Dir of a filesystem root
+// returns the root itself; no other directory is its own parent, on Unix or
+// Windows. Options.OutDir being empty is already rejected by New, for every
+// build, not only a cleaning one, so it is not re-checked here.
+func isFilesystemRoot(dir string) bool {
+	return filepath.Dir(dir) == dir
 }
 
 // hasRepositoryMarker reports whether dir looks like the root of a source

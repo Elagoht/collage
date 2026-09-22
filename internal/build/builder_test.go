@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
@@ -24,6 +25,10 @@ type fakeRenderer struct {
 	calls []renderCall
 	// fail maps a call key (see renderKey) to the error RenderPath returns for it.
 	fail map[string]error
+	// delays maps a call key (see renderKey) to an artificial delay RenderPath
+	// sleeps for before returning, used to force goroutines to finish out of
+	// dispatch order under a concurrent Build.
+	delays map[string]time.Duration
 }
 
 type renderCall struct {
@@ -43,11 +48,16 @@ func (f *fakeRenderer) Pages() []*types.Page {
 func (f *fakeRenderer) RenderPath(_ context.Context, path, locale string, params map[string]string) (*render.Result, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, renderCall{path: path, locale: locale, params: params})
-	if err, ok := f.fail[renderKey(path, locale)]; ok {
-		f.mu.Unlock()
-		return nil, err
-	}
+	failErr, shouldFail := f.fail[renderKey(path, locale)]
+	delay := f.delays[renderKey(path, locale)]
 	f.mu.Unlock()
+
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	if shouldFail {
+		return nil, failErr
+	}
 
 	return &render.Result{
 		HTML: fmt.Appendf(nil, "<html>%s|%s</html>", locale, path),
@@ -96,6 +106,23 @@ func resolvedTempDir(t *testing.T) string {
 		t.Fatalf("EvalSymlinks(%s): %v", dir, err)
 	}
 	return resolved
+}
+
+// requireSymlinkSupport skips t when the current environment cannot create
+// symlinks (e.g. Windows without the privilege or developer mode enabled), so the
+// symlink-escape tests degrade to a skip rather than a failure where they cannot
+// run at all.
+func requireSymlinkSupport(t *testing.T) {
+	t.Helper()
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write probe target: %v", err)
+	}
+	link := filepath.Join(dir, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks not supported in this environment: %v", err)
+	}
 }
 
 func readFile(t *testing.T, path string) string {
@@ -369,6 +396,61 @@ func TestBuild_PathProvider_Escape(t *testing.T) {
 	}
 }
 
+// TestBuild_PathProvider_SymlinkEscape is the required test reproducing the C1
+// review finding: resolveTarget's containment check is purely lexical
+// (filepath.Clean + filepath.Rel), which proves nothing about the filesystem. A
+// symlink planted under OutDir — here, OutDir/escaped pointing at a sibling
+// directory entirely outside OutDir — must still be rejected before any bytes are
+// written through it, by the separate, filesystem-aware verifyNoSymlinksBeneath
+// check.
+func TestBuild_PathProvider_SymlinkEscape(t *testing.T) {
+	requireSymlinkSupport(t)
+
+	out := resolvedTempDir(t)
+	external := resolvedTempDir(t)
+
+	link := filepath.Join(out, "escaped")
+	if err := os.Symlink(external, link); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/escaped/{slug}"})
+	app := &fakeRenderer{pages: []*types.Page{page}}
+	provider := &fakePathProvider{instances: map[string][]PathInstance{
+		"post|en": {
+			{Path: "/escaped/pwned", Params: map[string]string{"slug": "pwned"}},
+		},
+	}}
+
+	b, err := New(app, Options{OutDir: out, PathProvider: provider})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, buildErr := b.Build(context.Background())
+	if buildErr == nil {
+		t.Fatal("Build succeeded for a write redirected through a symlink, want an error")
+	}
+	if !errors.Is(buildErr, ErrPathEscapesOutDir) {
+		t.Fatalf("err = %v, want ErrPathEscapesOutDir", buildErr)
+	}
+	if len(report.Written) != 0 {
+		t.Fatalf("Written = %v, want none", report.Written)
+	}
+
+	// The critical assertion: nothing was written through the symlink into
+	// external, the directory genuinely outside OutDir.
+	if _, err := os.Stat(filepath.Join(external, "pwned")); err == nil {
+		t.Fatal("a file was written outside OutDir through the symlink")
+	}
+	entries, err := os.ReadDir(external)
+	if err != nil {
+		t.Fatalf("ReadDir(external): %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("external has unexpected entries: %v", entries)
+	}
+}
+
 // TestBuild_Clean_RefusesFilesystemRoot verifies that Clean never even attempts to
 // touch "/": the refusal is a pure string check on the resolved path, so it is safe
 // to assert here without actually risking anything on disk.
@@ -379,8 +461,48 @@ func TestBuild_Clean_RefusesFilesystemRoot(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	_, err = b.Build(context.Background())
-	if !errors.Is(err, ErrDangerousCleanTarget) {
-		t.Fatalf("err = %v, want ErrDangerousCleanTarget", err)
+	if !errors.Is(err, ErrDangerousOutDir) {
+		t.Fatalf("err = %v, want ErrDangerousOutDir", err)
+	}
+}
+
+// TestBuild_RefusesFilesystemRoot_WithoutClean verifies the filesystem-root refusal
+// applies to every build, not only a cleaning one: writing site output directly
+// into "/" is dangerous even when nothing is deleted first.
+func TestBuild_RefusesFilesystemRoot_WithoutClean(t *testing.T) {
+	app := &fakeRenderer{}
+	b, err := New(app, Options{OutDir: "/", Clean: false})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = b.Build(context.Background())
+	if !errors.Is(err, ErrDangerousOutDir) {
+		t.Fatalf("err = %v, want ErrDangerousOutDir", err)
+	}
+}
+
+// TestBuild_Clean_RefusesSymlinkedFilesystemRoot is the required test reproducing
+// the C2 review finding: the filesystem-root check (filepath.Dir(dir) == dir) is a
+// pure string comparison with no I/O, so run against the unresolved OutDir string
+// it fails open on an OutDir that is itself a symlink to "/". prepareOutDir must
+// resolve symlinks before running that check, not after.
+func TestBuild_Clean_RefusesSymlinkedFilesystemRoot(t *testing.T) {
+	requireSymlinkSupport(t)
+
+	parent := t.TempDir()
+	link := filepath.Join(parent, "root-link")
+	if err := os.Symlink(string(filepath.Separator), link); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	app := &fakeRenderer{}
+	b, err := New(app, Options{OutDir: link, Clean: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, buildErr := b.Build(context.Background())
+	if !errors.Is(buildErr, ErrDangerousOutDir) {
+		t.Fatalf("err = %v, want ErrDangerousOutDir", buildErr)
 	}
 }
 
@@ -404,8 +526,8 @@ func TestBuild_Clean_RefusesRepositoryRoot(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	_, buildErr := b.Build(context.Background())
-	if !errors.Is(buildErr, ErrDangerousCleanTarget) {
-		t.Fatalf("err = %v, want ErrDangerousCleanTarget", buildErr)
+	if !errors.Is(buildErr, ErrDangerousOutDir) {
+		t.Fatalf("err = %v, want ErrDangerousOutDir", buildErr)
 	}
 
 	if _, err := os.Stat(sentinel); err != nil {
@@ -578,5 +700,72 @@ func TestResolveTarget_RejectsSiblingLookalike(t *testing.T) {
 	}
 	if target != filepath.Join(outDirResolved, "about", "index.html") {
 		t.Fatalf("target = %s", target)
+	}
+}
+
+// TestBuild_ConcurrencyPreservesDeterministicOrder is the required coverage for
+// Options.Concurrency above 1: a build at Concurrency: 8, over enough pages to
+// interleave, must still assemble Report.Written in the same order a sequential
+// (Concurrency: 1) build over the same pages would, and must write byte-identical
+// output. delays are assigned in reverse of enumeration order — the first-
+// enumerated page sleeps longest, the last-enumerated page sleeps least — so with
+// real concurrency the goroutines finish in close to the opposite order from how
+// they were dispatched, which is exactly the case that would expose a build that
+// merges results in completion order instead of enumeration order.
+func TestBuild_ConcurrencyPreservesDeterministicOrder(t *testing.T) {
+	const n = 20
+	pages := make([]*types.Page, n)
+	delays := make(map[string]time.Duration, n)
+	for i := range n {
+		name := fmt.Sprintf("page%02d", i)
+		path := fmt.Sprintf("/p%02d", i)
+		pages[i] = newTestPage(name, types.StrategyStatic, map[string]string{"en": path})
+		delays[renderKey(path, "en")] = time.Duration(n-i) * 2 * time.Millisecond
+	}
+
+	seqOut := resolvedTempDir(t)
+	seqApp := &fakeRenderer{pages: pages, delays: delays}
+	seqBuilder, err := New(seqApp, Options{OutDir: seqOut, Concurrency: 1})
+	if err != nil {
+		t.Fatalf("New (sequential): %v", err)
+	}
+	seqReport, err := seqBuilder.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build (sequential): %v", err)
+	}
+
+	concOut := resolvedTempDir(t)
+	concApp := &fakeRenderer{pages: pages, delays: delays}
+	concBuilder, err := New(concApp, Options{OutDir: concOut, Concurrency: 8})
+	if err != nil {
+		t.Fatalf("New (concurrent): %v", err)
+	}
+	concReport, err := concBuilder.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build (concurrent): %v", err)
+	}
+
+	if len(seqReport.Written) != n || len(concReport.Written) != n {
+		t.Fatalf("Written lengths = seq %d, conc %d, want %d each", len(seqReport.Written), len(concReport.Written), n)
+	}
+
+	for i := range seqReport.Written {
+		seqRel, err := filepath.Rel(seqOut, seqReport.Written[i])
+		if err != nil {
+			t.Fatalf("Rel(seq): %v", err)
+		}
+		concRel, err := filepath.Rel(concOut, concReport.Written[i])
+		if err != nil {
+			t.Fatalf("Rel(conc): %v", err)
+		}
+		if seqRel != concRel {
+			t.Fatalf("Written order mismatch at index %d: sequential = %s, concurrent = %s", i, seqRel, concRel)
+		}
+
+		seqContent := readFile(t, seqReport.Written[i])
+		concContent := readFile(t, concReport.Written[i])
+		if seqContent != concContent {
+			t.Fatalf("output mismatch at index %d: sequential = %q, concurrent = %q", i, seqContent, concContent)
+		}
 	}
 }
