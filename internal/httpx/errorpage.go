@@ -31,6 +31,10 @@ type failure struct {
 	// fragment names the fragment whose failure produced err, or is empty when no
 	// single fragment is responsible.
 	fragment string
+	// document is the document being served when the failure happened, or nil
+	// when a page was being served or nothing had been resolved yet. At most one
+	// of page and document is ever set.
+	document *types.Document
 	// stage names where in the pipeline the failure happened.
 	stage string
 }
@@ -66,17 +70,33 @@ func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure
 // A zero f.status means no response is being written for this failure — a cache
 // write that failed after the page rendered — which is logged and reported like any
 // other error but changes nothing the client sees.
+//
+// When f.document is set, the log record also names it, so an operator chasing a
+// failing sitemap or feed can tell which document broke. It is deliberately left
+// off ErrorEvent: ErrorEvent.Page already exists for a page and stays nil here for a
+// document, since the event's Path already identifies the route, and widening a
+// public plugin struct just to carry a name for a log line is not worth it.
 func (h *Handler) reportError(r *http.Request, f failure) {
 	level := slog.LevelError
 	if f.stage == stageNotFound {
 		level = slog.LevelDebug
 	}
-	h.logger.Log(r.Context(), level, "collage: request failed",
-		"path", r.URL.Path,
-		"stage", f.stage,
-		"fragment", f.fragment,
-		"error", f.err,
-	)
+	if f.document != nil {
+		h.logger.Log(r.Context(), level, "collage: request failed",
+			"path", r.URL.Path,
+			"stage", f.stage,
+			"fragment", f.fragment,
+			"document", f.document.Name,
+			"error", f.err,
+		)
+	} else {
+		h.logger.Log(r.Context(), level, "collage: request failed",
+			"path", r.URL.Path,
+			"stage", f.stage,
+			"fragment", f.fragment,
+			"error", f.err,
+		)
+	}
 
 	// Error always returns nil: the registry logs and swallows a failing ErrorHook
 	// rather than handing it back, precisely so error handling cannot recurse.

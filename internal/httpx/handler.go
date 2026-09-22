@@ -283,6 +283,14 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 		return status
 	}
 
+	// Checked before the not-found fallback below, deliberately: on a successful
+	// document match, Page is nil by MatchResult's own contract (exactly one of
+	// Page and Document is set), and the nil-Page check below would otherwise
+	// treat every matched document as a 404 before this branch ever ran.
+	if match.Document != nil {
+		return h.serveDocument(w, r, match)
+	}
+
 	// A nil Page is treated as not-found even when IsNotFound is false: Router is
 	// an interface the embedding application may implement itself, and there is
 	// nothing to render either way.
