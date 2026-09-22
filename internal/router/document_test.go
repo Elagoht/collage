@@ -87,6 +87,43 @@ func TestRegisterDocument_StaticBeatsADynamicPage(t *testing.T) {
 	}
 }
 
+// TestRegisterDocument_RedirectRegisteredAfterShadowsIt is one direction of
+// the order-independence requirement for ErrRedirectShadowsPage now that
+// documents share the page tree: a redirect registered after a document, at
+// the document's own path, must not be allowed to silently win the match —
+// redirects are checked before the page/document tree, so an unchecked
+// shadow here would make the document permanently unreachable with no error.
+func TestRegisterDocument_RedirectRegisteredAfterShadowsIt(t *testing.T) {
+	rt := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
+	if err := rt.RegisterDocument(testDocument("sitemap", "/sitemap.xml")); err != nil {
+		t.Fatalf("RegisterDocument() = %v", err)
+	}
+
+	err := rt.Register(newTestPageWithRedirects("other", map[string]string{"en": "/other"}, []*types.Redirect{
+		{From: "/sitemap.xml", To: "/other"},
+	}))
+	if !errors.Is(err, ErrRedirectShadowsPage) {
+		t.Fatalf("Register() = %v, want ErrRedirectShadowsPage — a redirect must not silently shadow an already-registered document", err)
+	}
+}
+
+// TestRegisterDocument_RedirectRegisteredBeforeShadowsIt is the other
+// direction: a redirect already claiming a path must block a document from
+// registering at that same path, the same way it already blocks a page.
+func TestRegisterDocument_RedirectRegisteredBeforeShadowsIt(t *testing.T) {
+	rt := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
+	if err := rt.Register(newTestPageWithRedirects("other", map[string]string{"en": "/other"}, []*types.Redirect{
+		{From: "/sitemap.xml", To: "/other"},
+	})); err != nil {
+		t.Fatalf("Register() = %v", err)
+	}
+
+	err := rt.RegisterDocument(testDocument("sitemap", "/sitemap.xml"))
+	if !errors.Is(err, ErrRedirectShadowsPage) {
+		t.Fatalf("RegisterDocument() = %v, want ErrRedirectShadowsPage", err)
+	}
+}
+
 func TestRegisterDocument_LocalePrefixedPathsResolve(t *testing.T) {
 	rt := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr"}})
 	doc := &types.Document{

@@ -15,10 +15,12 @@ import (
 )
 
 // ErrRedirectShadowsPage is returned at registration time when a redirect's From
-// pattern normalizes to the same path as a page already registered for some
-// locale, in either registration order: the redirect would make the page
-// unreachable, or the page would make the redirect unreachable, whichever was
-// registered second.
+// pattern normalizes to the same path as a page or document already registered
+// for some locale, in either registration order: the redirect would make the
+// page or document unreachable, or the page or document would make the
+// redirect unreachable, whichever was registered second. The name predates
+// documents sharing the page tree; it covers both route kinds, and a caller
+// handles either collision identically.
 var ErrRedirectShadowsPage = errors.New("collage: redirect shadows a registered page")
 
 // ErrUnsubstitutedPlaceholder is returned at registration time when a redirect's
@@ -120,12 +122,16 @@ type router struct {
 	// of which locale was resolved.
 	redirectTree *node
 
-	// pagePathsByLocale and redirectFroms record normalized pattern strings
-	// already registered, keyed by locale for pages (Redirect.From carries no
+	// routedPathsByLocale and redirectFroms record normalized pattern strings
+	// already registered, keyed by locale for routes (Redirect.From carries no
 	// locale) so ErrRedirectShadowsPage and ErrDuplicateRoute can name the prior
 	// registration regardless of which order things were registered in.
-	pagePathsByLocale map[string]map[string]*types.Page
-	redirectFroms     map[string]*types.Redirect
+	// routedPathsByLocale's value is a formatted owner description — `page
+	// "about"` or `document "sitemap"` — rather than *types.Page, so one map and
+	// one shadow check (see checkRedirectShadow and registerRedirect) cover a
+	// page and a document alike without a second, drifting copy of either.
+	routedPathsByLocale map[string]map[string]string
+	redirectFroms       map[string]*types.Redirect
 
 	notFoundPage *types.Page
 	errorPage    *types.Page
@@ -134,11 +140,11 @@ type router struct {
 // New returns a Router that resolves locales according to opts.
 func New(opts LocaleOptions) Router {
 	return &router{
-		localeOptions:     opts,
-		pageTrees:         make(map[string]*node),
-		redirectTree:      &node{},
-		pagePathsByLocale: make(map[string]map[string]*types.Page),
-		redirectFroms:     make(map[string]*types.Redirect),
+		localeOptions:       opts,
+		pageTrees:           make(map[string]*node),
+		redirectTree:        &node{},
+		routedPathsByLocale: make(map[string]map[string]string),
+		redirectFroms:       make(map[string]*types.Redirect),
 	}
 }
 
@@ -199,8 +205,9 @@ func (rt *router) Register(page *types.Page) error {
 		}
 
 		normalized := normalizePattern(pattern)
-		if existing, ok := rt.redirectFroms[normalized]; ok {
-			return fmt.Errorf("%w: page %q path %q locale %q: redirect %q -> %q already registered there", ErrRedirectShadowsPage, page.Name, pattern, locale, existing.From, existing.To)
+		owner := fmt.Sprintf("page %q", page.Name)
+		if err := rt.checkRedirectShadow(owner, pattern, locale, normalized); err != nil {
+			return err
 		}
 
 		tree, ok := rt.pageTrees[locale]
@@ -218,12 +225,7 @@ func (rt *router) Register(page *types.Page) error {
 		}
 		target.page = page
 
-		byPath, ok := rt.pagePathsByLocale[locale]
-		if !ok {
-			byPath = make(map[string]*types.Page)
-			rt.pagePathsByLocale[locale] = byPath
-		}
-		byPath[normalized] = page
+		rt.recordRoutedPath(locale, normalized, owner)
 	}
 
 	return rt.registerRedirects(page.Name, page.Redirects)
@@ -241,6 +243,36 @@ func (rt *router) registerRedirects(owner string, redirects []*types.Redirect) e
 	return nil
 }
 
+// checkRedirectShadow returns ErrRedirectShadowsPage when a redirect already
+// registered at pattern's normalized form would make owner's route at pattern
+// unreachable in locale. This is the "redirect registered first" half of the
+// shadow check; registerRedirect's own lookup against routedPathsByLocale is
+// the other half, for a redirect registered after the route. owner names the
+// registering route for the error, e.g. `page "about"` or `document
+// "sitemap"`. Register and RegisterDocument both call this — a page and a
+// document colliding with an existing redirect must be rejected identically.
+func (rt *router) checkRedirectShadow(owner, pattern, locale, normalized string) error {
+	if existing, ok := rt.redirectFroms[normalized]; ok {
+		return fmt.Errorf("%w: %s path %q locale %q: redirect %q -> %q already registered there",
+			ErrRedirectShadowsPage, owner, pattern, locale, existing.From, existing.To)
+	}
+	return nil
+}
+
+// recordRoutedPath records that owner claims pattern's normalized form for
+// locale, once Register or RegisterDocument has confirmed the registration
+// otherwise succeeds. registerRedirect consults this so a redirect registered
+// afterward at the same path is caught too — the "route registered first"
+// half of the shadow check that checkRedirectShadow does not cover.
+func (rt *router) recordRoutedPath(locale, normalized, owner string) {
+	byPath, ok := rt.routedPathsByLocale[locale]
+	if !ok {
+		byPath = make(map[string]string)
+		rt.routedPathsByLocale[locale] = byPath
+	}
+	byPath[normalized] = owner
+}
+
 // registerRedirect validates and inserts redirect into rt.redirectTree.
 func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	fromSegments, err := parsePattern(redirect.From)
@@ -249,9 +281,9 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	}
 
 	normalizedFrom := normalizePattern(redirect.From)
-	for _, byPath := range rt.pagePathsByLocale {
-		if page, ok := byPath[normalizedFrom]; ok {
-			return fmt.Errorf("%w: redirect from %q: page %q is registered at that path", ErrRedirectShadowsPage, redirect.From, page.Name)
+	for _, byPath := range rt.routedPathsByLocale {
+		if owner, ok := byPath[normalizedFrom]; ok {
+			return fmt.Errorf("%w: redirect from %q: %s is registered at that path", ErrRedirectShadowsPage, redirect.From, owner)
 		}
 	}
 

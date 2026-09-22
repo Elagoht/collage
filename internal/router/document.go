@@ -16,6 +16,12 @@ func (rt *router) RegisterDocument(doc *types.Document) error {
 			return fmt.Errorf("collage: document %q: %w", doc.Name, err)
 		}
 
+		normalized := normalizePattern(pattern)
+		owner := fmt.Sprintf("document %q", doc.Name)
+		if err := rt.checkRedirectShadow(owner, pattern, locale, normalized); err != nil {
+			return err
+		}
+
 		tree, ok := rt.pageTrees[locale]
 		if !ok {
 			tree = &node{}
@@ -30,6 +36,8 @@ func (rt *router) RegisterDocument(doc *types.Document) error {
 				ErrDuplicateRoute, doc.Name, occupant, pattern, locale)
 		}
 		target.document = doc
+
+		rt.recordRoutedPath(locale, normalized, owner)
 	}
 
 	return rt.registerRedirects(doc.Name, doc.Redirects)

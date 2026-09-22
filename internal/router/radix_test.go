@@ -226,6 +226,45 @@ func TestNode_Match_BacktracksWhenStaticCannotTerminate(t *testing.T) {
 	}
 }
 
+// TestNode_Match_Document pins node.terminal()'s document arm through the
+// same matching path a document actually takes: a node whose only occupant is
+// a document, with neither page nor hasRedirect set, must still report a
+// match. Without that arm, terminal() returns false for a document-only leaf
+// and matchFrom fails silently — RegisterDocument would succeed but Match
+// would never find the document, the worst possible failure mode.
+func TestNode_Match_Document(t *testing.T) {
+	tree := &node{}
+	target := mustInsert(t, tree, "/sitemap.xml")
+	target.document = &types.Document{Name: "sitemap"}
+
+	got, params, ok := tree.match([]string{"sitemap.xml"})
+	if !ok || got != target {
+		t.Fatalf("match document: ok=%v got=%v want=%v", ok, got, target)
+	}
+	if len(params) != 0 {
+		t.Fatalf("document match should capture no params, got %v", params)
+	}
+}
+
+// TestNode_Terminal_AllThreeOccupantKinds pins terminal()'s three-way check
+// directly, independent of any tree traversal, so a future edit that drops
+// one arm — page, document, or hasRedirect — fails immediately here instead
+// of only surfacing as an unexplained non-match somewhere downstream.
+func TestNode_Terminal_AllThreeOccupantKinds(t *testing.T) {
+	if (&node{}).terminal() {
+		t.Fatal("an empty node should not be terminal")
+	}
+	if !(&node{page: &types.Page{Name: "p"}}).terminal() {
+		t.Fatal("a node with page set should be terminal")
+	}
+	if !(&node{document: &types.Document{Name: "d"}}).terminal() {
+		t.Fatal("a node with document set should be terminal")
+	}
+	if !(&node{hasRedirect: true}).terminal() {
+		t.Fatal("a node with hasRedirect set should be terminal")
+	}
+}
+
 func TestNode_Match_NoMatch(t *testing.T) {
 	tree := &node{}
 	target := mustInsert(t, tree, "/blog/post")
