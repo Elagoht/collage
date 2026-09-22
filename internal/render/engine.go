@@ -32,7 +32,7 @@ type Engine interface {
 
 // Result is one page's rendered output.
 type Result struct {
-	// HTML is the rendered page.
+	// HTML is the rendered page. It is nil when Render returned an error.
 	HTML []byte
 	// DependencyTags holds every tag the render depended on: the tags returned by
 	// each fragment's data handler plus the page's own, de-duplicated and sorted so
@@ -146,13 +146,20 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 // the render and replaces the one rc was built with, so a caller cannot accidentally
 // hand fragments a context that outlives the request; a nil ctx falls back to rc's.
 //
+// Render always returns a non-nil Result with non-nil Metadata, on every path: every
+// render has timing metadata, including one that failed, which is the render an
+// operator most wants to see. Callers MUST check the error before touching HTML — on
+// a failure HTML is nil and the Result carries only what was collected before the
+// failure, so treating it as a renderable page would serve a blank one.
+//
 // It returns ErrNilRenderContext for a nil rc or a rc with no Page,
 // ErrNoRootFragment for a page with neither a layout nor a content fragment, and the
 // underlying error when a required fragment fails or the tree exceeds MaxDepth.
 // Every other fragment failure is contained and reported through the Result.
 func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Result, error) {
 	if rc == nil || rc.Page == nil {
-		return nil, ErrNilRenderContext
+		// Nothing to describe: there is no page to name and no render to time.
+		return &Result{Metadata: &Metadata{}}, ErrNilRenderContext
 	}
 	if ctx == nil {
 		ctx = rc.Context()
@@ -161,9 +168,11 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 		ctx = context.Background()
 	}
 
+	metadata := &Metadata{Page: rc.Page.Name, Locale: rc.Locale}
+
 	root := rc.Page.Root()
 	if root == nil {
-		return nil, fmt.Errorf("%w: page %q", ErrNoRootFragment, rc.Page.Name)
+		return &Result{Metadata: metadata}, fmt.Errorf("%w: page %q", ErrNoRootFragment, rc.Page.Name)
 	}
 
 	ctx, span := e.tracer.StartSpan(ctx, "collage.render")
@@ -179,28 +188,31 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	total := time.Since(start)
 
 	// Reported whether or not the render succeeded: a render that failed still
-	// consumed the time it took, and failures are usually the slow ones.
+	// consumed the time it took, and failures are usually the slow ones. A metrics
+	// layer that only sees successful renders is blind to the case that matters.
 	e.metrics.RenderDuration(ctx, rc.Page.Name, total, false)
 
-	if err != nil {
-		span.RecordError(err)
-		return nil, err
+	metadata.Timing = observability.Timing{
+		Total:     total,
+		Data:      state.dataTime,
+		Template:  state.templateTime,
+		CacheHit:  false,
+		Fragments: len(state.fragments),
 	}
+	metadata.Fragments = state.fragments
 
-	return &Result{
+	result := &Result{
 		HTML:           html,
 		DependencyTags: state.sortedTags(rc.Page.DependencyTags),
-		Metadata: &Metadata{
-			Page:   rc.Page.Name,
-			Locale: rc.Locale,
-			Timing: observability.Timing{
-				Total:     total,
-				Data:      state.dataTime,
-				Template:  state.templateTime,
-				CacheHit:  false,
-				Fragments: len(state.fragments),
-			},
-			Fragments: state.fragments,
-		},
-	}, nil
+		Metadata:       metadata,
+	}
+
+	if err != nil {
+		// Explicit, not incidental: a failed render must never hand back markup,
+		// however far through the tree it got before failing.
+		result.HTML = nil
+		span.RecordError(err)
+		return result, err
+	}
+	return result, nil
 }

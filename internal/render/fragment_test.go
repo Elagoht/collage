@@ -215,8 +215,11 @@ func TestRender_FragmentFailurePolicy(t *testing.T) {
 						t.Errorf("Render() error = %v, want it to wrap %v", err, want)
 					}
 				}
-				if result != nil {
-					t.Errorf("Render() result = %+v, want nil alongside an error", result)
+				if result == nil || result.Metadata == nil {
+					t.Fatalf("Render() result = %+v, want a non-nil Result carrying metadata", result)
+				}
+				if result.HTML != nil {
+					t.Errorf("Render() HTML = %q, want nil alongside an error", result.HTML)
 				}
 				return
 			}
@@ -270,8 +273,8 @@ func TestRender_RequiredChildIsNotAbsorbedByAnAncestorFallback(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("Render() error = %v, want the required child's failure to reach the caller", err)
 	}
-	if result != nil {
-		t.Errorf("Render() result = %+v, want nil alongside an error", result)
+	if result.HTML != nil {
+		t.Errorf("Render() HTML = %q, want nil alongside an error", result.HTML)
 	}
 }
 
@@ -292,30 +295,82 @@ func TestRender_FailedFragmentStillContributesItsTags(t *testing.T) {
 	}
 }
 
-func TestRender_DevModeShowsFailuresInTheOutput(t *testing.T) {
-	engine := newEngine(t, Options{DevMode: true})
+// renderFailingChild renders a layout wrapping one failing fragment and returns the
+// page's HTML, so the DevMode tests differ only in the inputs that matter.
+func renderFailingChild(t *testing.T, devMode bool, childName string, childErr error) string {
+	t.Helper()
+	engine := newEngine(t, Options{DevMode: devMode})
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
-	child := fragment("child", "leaf.html")
-	child.DataHandler = failingHandler(errors.New("collage: <script>--></script>"))
+	child := fragment(childName, "leaf.html")
+	child.DataHandler = failingHandler(childErr)
 	bind(t, layout, "content", child)
 
 	result, err := renderPage(t, engine, pageWith(layout))
 	if err != nil {
-		t.Fatalf("Render() error = %v", err)
+		t.Fatalf("Render() error = %v, want the failure to be contained", err)
 	}
+	return string(result.HTML)
+}
 
-	html := string(result.HTML)
-	if !strings.Contains(html, "<!-- collage: fragment child failed:") {
-		t.Errorf("Render() HTML = %q, want a dev-mode comment naming the failed fragment", html)
+func TestRender_DevModeShowsFailuresInTheOutput(t *testing.T) {
+	t.Run("the comment names the fragment and its error", func(t *testing.T) {
+		html := renderFailingChild(t, true, "child", errors.New("collage: upstream refused"))
+		if !strings.Contains(html, "<!-- collage: fragment child failed:") {
+			t.Errorf("Render() HTML = %q, want a dev-mode comment naming the failed fragment", html)
+		}
+		if !strings.Contains(html, "upstream refused") {
+			t.Errorf("Render() HTML = %q, want the error text in the comment", html)
+		}
+	})
+
+	t.Run("an error text cannot close the comment early", func(t *testing.T) {
+		html := renderFailingChild(t, true, "child", errors.New("collage: <script>--></script>"))
+		if !strings.Contains(html, "&lt;script&gt;--&gt;&lt;/script&gt;") {
+			t.Errorf("Render() HTML = %q, want the error text HTML-escaped", html)
+		}
+		// Escaping is what keeps the error inside the comment: a comment can only
+		// end at a ">", and there are none left. The only terminator in the page is
+		// the one devComment wrote itself.
+		if got := strings.Count(html, "-->"); got != 1 {
+			t.Errorf("Render() HTML = %q, want exactly one comment terminator, got %d", html, got)
+		}
+	})
+
+	t.Run("a fragment name cannot close the comment early", func(t *testing.T) {
+		html := renderFailingChild(t, true, `evil--><script>alert(1)</script>`, errors.New("collage: boom"))
+		if !strings.Contains(html, "evil--&gt;&lt;script&gt;") {
+			t.Errorf("Render() HTML = %q, want the fragment name HTML-escaped", html)
+		}
+		if strings.Contains(html, "<script>") {
+			t.Errorf("Render() HTML = %q, want no live markup to have escaped the comment", html)
+		}
+		if got := strings.Count(html, "-->"); got != 1 {
+			t.Errorf("Render() HTML = %q, want exactly one comment terminator, got %d", html, got)
+		}
+	})
+}
+
+// TestRender_WithoutDevModeFailuresAreSilent is the other half of the DevMode
+// contract: outside dev mode a failed fragment leaks nothing into the page. Its name
+// and its error can both carry internal detail, and a production page must not
+// whisper either of them to a visitor.
+func TestRender_WithoutDevModeFailuresAreSilent(t *testing.T) {
+	const (
+		name     = "internal-pricing-service"
+		errText  = "collage: dsn=postgres://user:hunter2@db.internal refused"
+		wantHTML = "<html><body></body></html>"
+	)
+
+	html := renderFailingChild(t, false, name, errors.New(errText))
+
+	if html != wantHTML {
+		t.Errorf("Render() HTML = %q, want exactly %q", html, wantHTML)
 	}
-	if !strings.Contains(html, "&lt;script&gt;--&gt;&lt;/script&gt;") {
-		t.Errorf("Render() HTML = %q, want the error text HTML-escaped", html)
-	}
-	// Escaping the error is also what keeps it from closing the comment early: the
-	// only "-->" left in the page is the one devComment wrote itself.
-	if got := strings.Count(html, "-->"); got != 1 {
-		t.Errorf("Render() HTML = %q, want exactly one comment terminator, got %d", html, got)
+	for _, leak := range []string{name, errText, "hunter2", "<!--", "-->", "collage:"} {
+		if strings.Contains(html, leak) {
+			t.Errorf("Render() HTML = %q, want no trace of %q outside dev mode", html, leak)
+		}
 	}
 }
 

@@ -103,9 +103,10 @@ func TestRender_RejectsUnrenderableInput(t *testing.T) {
 	engine := newEngine(t, Options{})
 
 	tests := []struct {
-		name string
-		rc   *types.RenderContext
-		want error
+		name     string
+		rc       *types.RenderContext
+		want     error
+		wantPage string
 	}{
 		{
 			name: "nil render context",
@@ -118,9 +119,10 @@ func TestRender_RejectsUnrenderableInput(t *testing.T) {
 			want: ErrNilRenderContext,
 		},
 		{
-			name: "page without any fragment",
-			rc:   types.NewRenderContext(context.Background(), nil, &types.Page{Name: "empty"}, "en", nil),
-			want: ErrNoRootFragment,
+			name:     "page without any fragment",
+			rc:       types.NewRenderContext(context.Background(), nil, &types.Page{Name: "empty"}, "en", nil),
+			want:     ErrNoRootFragment,
+			wantPage: "empty",
 		},
 	}
 
@@ -130,8 +132,16 @@ func TestRender_RejectsUnrenderableInput(t *testing.T) {
 			if !errors.Is(err, test.want) {
 				t.Fatalf("Render() error = %v, want %v", err, test.want)
 			}
-			if result != nil {
-				t.Errorf("Render() result = %+v, want nil alongside an error", result)
+			// Even a rejected request gets a Result: callers read Metadata
+			// unconditionally and must not have to nil-check it first.
+			if result == nil || result.Metadata == nil {
+				t.Fatalf("Render() result = %+v, want a non-nil Result carrying metadata", result)
+			}
+			if result.HTML != nil {
+				t.Errorf("Render() HTML = %q, want nil alongside an error", result.HTML)
+			}
+			if result.Metadata.Page != test.wantPage {
+				t.Errorf("Metadata.Page = %q, want %q", result.Metadata.Page, test.wantPage)
 			}
 		})
 	}
@@ -348,4 +358,58 @@ func TestRender_ConcurrentRendersOfOnePage(t *testing.T) {
 		}()
 	}
 	group.Wait()
+}
+
+// TestRender_FailedRenderStillReportsMetadata covers the guarantee that every render
+// has timing metadata, including the ones that failed: a fatal failure is exactly the
+// render an operator needs to see timings and per-fragment detail for, and dropping
+// them would leave the observability layer blind to it.
+func TestRender_FailedRenderStillReportsMetadata(t *testing.T) {
+	metrics := observability.NewRecordingMetrics()
+	engine := newEngine(t, Options{Metrics: metrics})
+	boom := errors.New("collage: critical data missing")
+
+	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
+	child := fragment("child", "leaf.html")
+	child.Required = true
+	child.DataHandler = func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+		time.Sleep(time.Millisecond)
+		return nil, []string{"post:7"}, boom
+	}
+	bind(t, layout, "content", child)
+
+	result, err := renderPage(t, engine, pageWith(layout))
+	if !errors.Is(err, boom) {
+		t.Fatalf("Render() error = %v, want the required fragment's failure", err)
+	}
+	if result == nil || result.Metadata == nil {
+		t.Fatalf("Render() result = %+v, want a non-nil Result carrying metadata", result)
+	}
+	if result.HTML != nil {
+		t.Errorf("Render() HTML = %q, want nil: a failed render must not hand back markup", result.HTML)
+	}
+
+	if result.Metadata.Timing.Total <= 0 {
+		t.Errorf("Timing.Total = %v, want the time the failed render consumed", result.Metadata.Timing.Total)
+	}
+	if result.Metadata.Page != "test-page" {
+		t.Errorf("Metadata.Page = %q, want %q", result.Metadata.Page, "test-page")
+	}
+	if names := fragmentNames(result); !slices.Equal(names, []string{"layout", "child"}) {
+		t.Errorf("Metadata.Fragments names = %v, want everything visited before the failure", names)
+	}
+	if meta := fragmentMetadata(t, result, "child"); !meta.Failed || !errors.Is(meta.Err, boom) {
+		t.Errorf("FragmentMetadata for child = %+v, want the failure recorded", meta)
+	}
+	if !result.Degraded() {
+		t.Error("Degraded() = false, want true for a render that failed")
+	}
+
+	snapshot := metrics.Snapshot()
+	if len(snapshot.RenderDurations) != 1 {
+		t.Fatalf("RenderDuration calls = %d, want 1 even though the render failed", len(snapshot.RenderDurations))
+	}
+	if call := snapshot.RenderDurations[0]; call.Page != "test-page" || call.Duration <= 0 {
+		t.Errorf("RenderDuration call = %+v, want page test-page with a positive duration", call)
+	}
 }
