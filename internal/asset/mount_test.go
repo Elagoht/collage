@@ -212,7 +212,6 @@ func TestMount_FailsLoudlyOnNonReadSeeker(t *testing.T) {
 
 // errorFS returns an error for Open even though the file would exist.
 type errorFS struct {
-	inner fs.FS
 }
 
 func (efs *errorFS) Open(name string) (fs.File, error) {
@@ -234,5 +233,29 @@ func TestMount_Returns404ForErrorFS(t *testing.T) {
 	}
 	if !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("Content-Type = %q, want text/plain", rec.Header().Get("Content-Type"))
+	}
+}
+
+func TestMount_Handles(t *testing.T) {
+	m := mustMount(t)
+
+	tests := []struct {
+		path   string
+		want   bool
+		reason string
+	}{
+		{"/static/app.css", true, "path under the prefix"},
+		{"/api/data", false, "path outside the prefix"},
+		{"/staticsibling/app.css", false, "prefix confusion: /static/ must not claim /staticsibling/"},
+		{"/static/", false, "exact prefix itself with no trailing segment"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.path, func(t *testing.T) {
+			got := m.Handles(tc.path)
+			if got != tc.want {
+				t.Fatalf("Handles(%q) = %v, want %v — %s", tc.path, got, tc.want, tc.reason)
+			}
+		})
 	}
 }

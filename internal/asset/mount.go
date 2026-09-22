@@ -76,9 +76,17 @@ func (m *Mount) FS() fs.FS { return m.fsys }
 // BuildCopy reports whether a static build should copy this mount into its output.
 func (m *Mount) BuildCopy() bool { return m.buildCopy }
 
-// Handles reports whether urlPath falls under this mount's prefix.
+// Handles reports whether urlPath falls under this mount's prefix and has
+// a valid path segment to serve. It returns false for the bare prefix itself.
 func (m *Mount) Handles(urlPath string) bool {
-	return strings.HasPrefix(urlPath, m.prefix)
+	if !strings.HasPrefix(urlPath, m.prefix) {
+		return false
+	}
+	// The bare prefix itself has nothing to serve.
+	if urlPath == m.prefix {
+		return false
+	}
+	return true
 }
 
 // ServeHTTP implements http.Handler.
@@ -132,7 +140,7 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // cleaned path must still be a valid fs path, which fs.ValidPath enforces by
 // rejecting "..", absolute paths and empty elements.
 func (m *Mount) resolve(urlPath string) (string, bool) {
-	if !strings.HasPrefix(urlPath, m.prefix) {
+	if !m.Handles(urlPath) {
 		return "", false
 	}
 	name := path.Clean(strings.TrimPrefix(urlPath, m.prefix))
