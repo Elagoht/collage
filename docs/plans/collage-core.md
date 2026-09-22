@@ -1260,6 +1260,68 @@ dispatched on 404 and 500; `-race` with concurrent requests.
 
 Global Constraints gate plus `go test ./internal/httpx/... -race -count=1`.
 
+## Task 10a: `ErrNotFound` — make per-page 404 pages reachable
+
+Discovered during Task 10's implementation: the spec's per-page `NotFoundPage` (used in
+its own advanced example via `WithNotFoundPage(blog404Page)`) is **unreachable**. The
+router returns `Page: nil` whenever `IsNotFound` is true — correctly, since nothing
+matched — so the handler's "does the matched page have a custom 404?" branch can never
+fire for a real router. The feature is dead code.
+
+The missing mechanism is a way for a `DataHandler` to distinguish **"this content does
+not exist"** from **"something went wrong"**. `/blog/no-such-slug` matches the route
+`/blog/{slug}` perfectly; it is the *lookup* that fails, and that is a 404, not a 500.
+Without this, every missing article returns 500 and the custom 404 page is unusable.
+
+### Files
+
+- `internal/types/errors.go` — add the sentinel.
+- `internal/render/engine.go`, `internal/render/fragment.go` — propagate it distinguishably.
+- `internal/httpx/handler.go` — map it to the 404 path.
+- Tests in each of the three packages.
+
+### The sentinel
+
+```go
+// ErrNotFound reports that a fragment's data does not exist, as distinct from a failure
+// to fetch it. A DataHandler returns an error wrapping ErrNotFound to make the page
+// render as 404 rather than 500.
+var ErrNotFound = errors.New("collage: not found")
+```
+
+### Render engine
+
+`Result` gains `NotFound bool`, set when a **required** fragment's handler returned an
+error satisfying `errors.Is(err, types.ErrNotFound)`. The error still propagates and
+still fails the render — this is a classification, not a new success path. A *non*-required
+fragment returning `ErrNotFound` follows the ordinary optional-failure policy (fallback or
+empty) and does **not** set the flag: a missing sidebar does not make the page missing.
+
+`ErrNotFound` is non-absorbable in the same way a required error is, so an optional
+ancestor's fallback cannot silently convert a 404 into a degraded 200.
+
+### HTTP handler
+
+On a render error, check `result.NotFound` (the result is non-nil on every path) before
+treating it as a 500. When set: resolve the 404 page — the matched page's own
+`NotFoundPage`, else the global, else the built-in — write **404**, set
+`Cache-Control: no-store`, dispatch `OnError`, and never cache. This is the branch that
+makes `Page.NotFoundPage` reachable, so it needs an end-to-end test through the real
+router, not a stub.
+
+### Tests
+
+Types: the sentinel exists and is distinct. Render: a required handler returning
+`ErrNotFound` sets `NotFound` and still errors; a non-required one does not set it; an
+optional ancestor's fallback cannot absorb it; an ordinary error does not set it. Handler:
+an end-to-end request through the **real** router to a registered dynamic route whose
+handler returns `ErrNotFound` produces 404 with the page's own `NotFoundPage`, falls back
+to the global when the page has none, is not cached, and carries `no-store`.
+
+### Verification
+
+Global Constraints gate, plus `-race` on all three touched packages.
+
 ## Task 11: Application orchestrator
 
 Ties every subsystem together and provides the public `App`. Depends on all prior tasks.
