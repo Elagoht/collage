@@ -62,3 +62,15 @@ var ErrInvalidPath = errors.New("collage: invalid path")
 // failure to fetch it. A DataHandler returns an error wrapping ErrNotFound to make
 // the page render as 404 rather than 500.
 var ErrNotFound = errors.New("collage: not found")
+
+// ErrNilDocument reports that a nil document was supplied where one was required.
+var ErrNilDocument = errors.New("collage: nil document")
+
+// ErrEmptyContentType reports that a document declared no content type. A
+// document's content type is static and required: the framework writes it on every
+// response and never guesses it.
+var ErrEmptyContentType = errors.New("collage: empty content type")
+
+// ErrNoDocumentHandler reports that a document declared no handler. Unlike a page,
+// a document has no template to fall back on, so a handler is mandatory.
+var ErrNoDocumentHandler = errors.New("collage: document has no handler")
