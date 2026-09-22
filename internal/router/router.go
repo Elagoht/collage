@@ -89,13 +89,19 @@ type Router interface {
 	// Register adds page's paths, across every locale in page.Paths, and its
 	// Redirects to the router. It returns ErrInvalidPattern for a malformed
 	// pattern, ErrDuplicateRoute when a path or redirect source is already
-	// registered, ErrRedirectShadowsPage when a redirect's From collides with a
-	// registered page path, and ErrUnsubstitutedPlaceholder when a redirect's To
-	// references a placeholder its From does not capture.
+	// registered — including by an already-registered document —
+	// ErrRedirectShadowsPage when a redirect's From collides with a registered
+	// page or document path, and ErrUnsubstitutedPlaceholder when a redirect's
+	// To references a placeholder its From does not capture.
 	Register(page *types.Page) error
-	// RegisterDocument adds a document's paths and redirects to the router. It
-	// returns ErrDuplicateRoute when any of them collides with an already-registered
-	// page or document.
+	// RegisterDocument adds document's paths, across every locale in
+	// document.Paths, and its Redirects to the router. It returns
+	// ErrInvalidPattern for a malformed pattern, ErrDuplicateRoute when a path
+	// or redirect source is already registered — including by an
+	// already-registered page — ErrRedirectShadowsPage when a redirect's From
+	// collides with a registered page or document path, and
+	// ErrUnsubstitutedPlaceholder when a redirect's To references a
+	// placeholder its From does not capture.
 	RegisterDocument(doc *types.Document) error
 	// RegisterNotFound sets the page served when a request resolves to no
 	// content.

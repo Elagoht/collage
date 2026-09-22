@@ -9,11 +9,13 @@ import (
 )
 
 // ErrDuplicateRoute is returned at registration time when a pattern is already
-// registered and a second registration targets the same structural position: two
-// pages sharing a path pattern for the same locale, or two redirects sharing a
-// From pattern. Both collisions leave the router unable to determine which
-// registration should win, and a caller fixes either the same way — by removing
-// the duplicate — so they deliberately share this one sentinel.
+// registered and a second registration targets the same structural position:
+// two pages, two documents, or a page and a document sharing a path pattern
+// for the same locale (see occupantName, the single place both occupant
+// fields are read), or two redirects sharing a From pattern. Every one of
+// those collisions leaves the router unable to determine which registration
+// should win, and a caller fixes any of them the same way — by removing the
+// duplicate — so they deliberately share this one sentinel.
 var ErrDuplicateRoute = errors.New("collage: duplicate route")
 
 // ErrAmbiguousParameterName is returned at registration time when a dynamic or
