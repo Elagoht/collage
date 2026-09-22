@@ -7,6 +7,7 @@ import (
 	"html/template"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -126,16 +127,30 @@ func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path stri
 // Reload discards the current template set and reparses every template under
 // cfg.Root from disk. It is safe to call concurrently with Render and
 // RenderWithFuncs.
+//
+// Two overlapping Reload calls (e.g. two concurrent DevMode renders) may finish in
+// either order; whichever pointer swap happens last under e.mu wins, even if it was
+// the one that started first. This can silently discard a newer parse in favour of
+// a stale one already in flight. That's a lost-update race on which parse "wins",
+// not a data race — e.mu still makes every read/write of e.tmpl/e.names safe — and
+// it's deliberately left unserialized: DevMode reloads are frequent and cheap, and
+// the next Render (in DevMode) or the next explicit Reload call corrects it.
 func (e *HTMLEngine) Reload() error {
 	info, err := os.Stat(e.cfg.Root)
 	if err != nil || !info.IsDir() {
 		return fmt.Errorf("%w: %s", ErrTemplateRootMissing, e.cfg.Root)
 	}
 
-	funcs := DefaultFuncs()
-	for name, fn := range e.cfg.Funcs {
-		funcs[name] = fn
+	// Resolved once per Reload (not per file) and compared against each file's own
+	// resolved target below, so a symlinked Root itself (e.g. macOS's /tmp ->
+	// /private/tmp) doesn't cause every legitimate template to be rejected.
+	rootResolved, err := filepath.EvalSymlinks(e.cfg.Root)
+	if err != nil {
+		return fmt.Errorf("collage: resolve template root %s: %w", e.cfg.Root, err)
 	}
+
+	funcs := DefaultFuncs()
+	maps.Copy(funcs, e.cfg.Funcs)
 
 	root := template.New("").Funcs(funcs)
 	var names []string
@@ -153,6 +168,15 @@ func (e *HTMLEngine) Reload() error {
 
 		name, err := templateName(e.cfg.Root, p)
 		if err != nil {
+			return err
+		}
+
+		// templateName only checks the walked path string, which WalkDir guarantees
+		// is lexically under Root. That's not enough: p itself may be a symlink
+		// whose target resolves outside Root, and os.ReadFile below follows
+		// symlinks transparently. Re-verify against the resolved target before
+		// reading it.
+		if err := verifyResolvesWithinRoot(rootResolved, p); err != nil {
 			return err
 		}
 
@@ -201,4 +225,27 @@ func templateName(root, path string) (string, error) {
 		return "", fmt.Errorf("%w: %s", ErrTemplateEscapesRoot, path)
 	}
 	return filepath.ToSlash(rel), nil
+}
+
+// verifyResolvesWithinRoot follows any symlinks in path and confirms the resolved
+// location still falls inside rootResolved, which must already be symlink-resolved
+// (see Reload). This closes the gap templateName's lexical check cannot see: path
+// can be lexically under Root while being a symlink whose target is not, and
+// os.ReadFile follows that symlink transparently. Containment is decided with
+// filepath.Rel rather than a string prefix check, so a sibling directory that merely
+// shares Root as a string prefix (e.g. "/root" vs "/rootsibling") is not mistaken
+// for being inside it.
+func verifyResolvesWithinRoot(rootResolved, path string) error {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("%w: %s: %v", ErrTemplateEscapesRoot, path, err)
+	}
+	rel, err := filepath.Rel(rootResolved, resolved)
+	if err != nil {
+		return fmt.Errorf("%w: %s", ErrTemplateEscapesRoot, path)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("%w: %s", ErrTemplateEscapesRoot, path)
+	}
+	return nil
 }

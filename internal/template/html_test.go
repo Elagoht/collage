@@ -182,15 +182,40 @@ func TestHTMLEngine_NonDevMode_DoesNotReloadUntilExplicit(t *testing.T) {
 }
 
 func TestHTMLEngine_RootEscape(t *testing.T) {
-	// filepath.WalkDir never yields a path outside the root it was given (it does not
-	// follow symlinked directories), so this boundary can't be exercised end-to-end
-	// through NewHTML/Reload with an ordinary filesystem layout. It is still a real
-	// security check Reload applies to every walked path, so it is unit-tested
-	// directly against the helper Reload calls.
+	// filepath.WalkDir never yields a path lexically outside the root it was given
+	// (it does not follow symlinked directories), so templateName's lexical check
+	// can't be exercised end-to-end through NewHTML/Reload with an ordinary
+	// filesystem layout. It is still a real check Reload applies to every walked
+	// path, so it is unit-tested directly here. The other half of the boundary — a
+	// file that is lexically inside Root but a symlink to somewhere that isn't — is
+	// exercised end-to-end in TestHTMLEngine_RootEscape_SymlinkedFile below.
 	root := t.TempDir()
 	_, err := templateName(root, filepath.Join(filepath.Dir(root), "outside.html"))
 	if !errors.Is(err, ErrTemplateEscapesRoot) {
 		t.Fatalf("templateName() error = %v, want ErrTemplateEscapesRoot", err)
+	}
+}
+
+func TestHTMLEngine_RootEscape_SymlinkedFile(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	outside := filepath.Join(base, "outside")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("Mkdir(root): %v", err)
+	}
+	if err := os.Mkdir(outside, 0o755); err != nil {
+		t.Fatalf("Mkdir(outside): %v", err)
+	}
+	writeFixture(t, filepath.Join(outside, "secret.html"), "TOP SECRET")
+
+	link := filepath.Join(root, "leak.html")
+	if err := os.Symlink(filepath.Join(outside, "secret.html"), link); err != nil {
+		t.Skipf("symlink creation not supported on this platform: %v", err)
+	}
+
+	_, err := NewHTML(HTMLConfig{Root: root, Extension: ".html"})
+	if !errors.Is(err, ErrTemplateEscapesRoot) {
+		t.Fatalf("NewHTML() error = %v, want ErrTemplateEscapesRoot (leak.html is lexically inside root but resolves outside it)", err)
 	}
 }
 
@@ -225,20 +250,16 @@ func TestHTMLEngine_ConcurrentRenders(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			var buf bytes.Buffer
 			_ = engine.Render(context.Background(), &buf, "pages/home.html", struct{ Heading string }{Heading: "x"})
-		}()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		})
+		wg.Go(func() {
 			if err := engine.Reload(); err != nil {
 				t.Errorf("Reload() error = %v", err)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
