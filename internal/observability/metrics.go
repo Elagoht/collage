@@ -27,7 +27,11 @@ type Metrics interface {
 	// path, and how long it took to produce.
 	HTTPResponse(ctx context.Context, status int, path string, d time.Duration)
 	// Invalidation reports a cache invalidation: the tags it was requested for and
-	// how many cache keys it actually removed.
+	// how many cache keys it reached. keys counts the keys the caller resolved from
+	// tags and issued a removal for. It is deliberately not "entries that were
+	// live": Cache.InvalidateKey succeeds on a key holding nothing and reports no
+	// distinction, so a key whose entry had already expired is counted like any
+	// other, and keys is an upper bound on live entries removed.
 	Invalidation(ctx context.Context, tags []string, keys int)
 }
 

@@ -113,7 +113,7 @@ func (a *App) prepare(p *types.Page) error {
 		return fmt.Errorf("%w: %q", ErrDuplicatePage, p.Name)
 	}
 
-	if err := bindContent(p); err != nil {
+	if err := a.bindContent(p); err != nil {
 		return err
 	}
 	if err := p.Validate(); err != nil {
@@ -168,32 +168,44 @@ func (a *App) remember(p *types.Page) {
 //
 // Binding also happens exactly once per page. The slot's fills render in binding
 // order, so binding the same content fragment twice would render the page's content
-// twice; bindContent returns without doing anything when p's layout already holds
-// p's content fragment, which is what lets a page registered with RegisterPage be
-// designated as another page's error page afterwards.
-func bindContent(p *types.Page) error {
+// twice. The "already done" test is a.bound — the set of pages whose layout this App
+// has already replaced with their own copy — and deliberately not "the slot already
+// holds this content fragment": a caller who hand-bound the content into a shared
+// layout satisfies the latter while still pointing at the shared layout, so taking
+// that as done would leave the page sharing its slot table and make the next page on
+// that layout fail. What a hand-bound layout does skip is the Bind itself, since the
+// copy already carries the fill.
+//
+// It must be called with a.mu held.
+func (a *App) bindContent(p *types.Page) error {
 	if p.LayoutFragment == nil {
 		return nil
 	}
 	if p.ContentFragment == nil {
 		return fmt.Errorf("collage: page %q: %w", p.Name, types.ErrMissingContent)
 	}
-
-	if slot, ok := p.LayoutFragment.Slot(types.DefaultContentSlot); ok {
-		if slices.Contains(slot.Fill, p.ContentFragment) {
-			return nil
-		}
+	if a.bound[p] {
+		return nil
 	}
 
 	layout := copyLayout(p.LayoutFragment)
-	if err := layout.Bind(types.DefaultContentSlot, p.ContentFragment); err != nil {
-		return fmt.Errorf(
-			"collage: page %q: binding content fragment %q into layout fragment %q slot %q: %w",
-			p.Name, p.ContentFragment.Name, p.LayoutFragment.Name, types.DefaultContentSlot, err,
-		)
+	if !contentBound(layout, p.ContentFragment) {
+		if err := layout.Bind(types.DefaultContentSlot, p.ContentFragment); err != nil {
+			return fmt.Errorf(
+				"collage: page %q: binding content fragment %q into layout fragment %q slot %q (registration fills the content slot itself, so a layout must not have it filled already): %w",
+				p.Name, p.ContentFragment.Name, p.LayoutFragment.Name, types.DefaultContentSlot, err,
+			)
+		}
 	}
 	p.LayoutFragment = layout
+	a.bound[p] = true
 	return nil
+}
+
+// contentBound reports whether layout's content slot already holds content.
+func contentBound(layout, content *types.Fragment) bool {
+	slot, ok := layout.Slot(types.DefaultContentSlot)
+	return ok && slices.Contains(slot.Fill, content)
 }
 
 // copyLayout returns a shallow copy of f carrying a slot table of its own: a fresh
@@ -272,6 +284,49 @@ func walkFragments(f *types.Fragment, visited map[*types.Fragment]bool, visit fu
 		}
 	}
 	return walkFragments(f.Fallback, visited, visit)
+}
+
+// checkErrorPagesRegistered reports ErrUnregisteredErrorPage for the first
+// registered page — including the global not-found and error pages, which are
+// registered like any other — that references a NotFoundPage or ErrorPage never
+// registered in its own right.
+//
+// A referenced page is served straight off the Page's field, so an unregistered one
+// never goes through registration's binding step: its content fragment is never put
+// into its layout's content slot. The layout then renders with an empty slot, the
+// handler logs "error page rendered empty", and the visitor gets the built-in page
+// instead of the author's — a custom error page that silently never appears, with
+// the only signal a log line on a request that was already failing. Requiring
+// registration is what makes that a startup error instead.
+//
+// Identity, not just the name, is what counts: the registered page must be the same
+// object the field points at, since registration binds the layout copy into that
+// object and a same-named impostor would not have been bound.
+func (a *App) checkErrorPagesRegistered() error {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	for _, name := range a.order {
+		page := a.pages[name]
+		if err := a.checkReferencedPage(page, page.NotFoundPage, "not-found page"); err != nil {
+			return err
+		}
+		if err := a.checkReferencedPage(page, page.ErrorPage, "error page"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkReferencedPage reports ErrUnregisteredErrorPage, naming both the referring
+// page and the referenced one, unless referenced is nil or is itself registered. It
+// must be called with a.mu held.
+func (a *App) checkReferencedPage(from, referenced *types.Page, role string) error {
+	if referenced == nil || a.pages[referenced.Name] == referenced {
+		return nil
+	}
+	return fmt.Errorf("%w: page %q references the %s %q, which was never registered",
+		ErrUnregisteredErrorPage, from.Name, role, referenced.Name)
 }
 
 // RegisterPlugin registers p with the application's plugin registry. Plugins must be

@@ -130,6 +130,12 @@ var ErrDuplicatePage = core.ErrDuplicatePage
 // reached.
 var ErrTemplateNotFound = core.ErrTemplateNotFound
 
+// ErrUnregisteredErrorPage is returned when the application starts and a registered
+// page references a NotFoundPage or ErrorPage that was never registered itself. An
+// unregistered error page never has its content bound into its layout, so it would
+// silently render empty at the moment it was needed.
+var ErrUnregisteredErrorPage = core.ErrUnregisteredErrorPage
+
 // ErrPageNotFound is returned by App.RenderPath when a path resolves to no page.
 var ErrPageNotFound = core.ErrPageNotFound
 

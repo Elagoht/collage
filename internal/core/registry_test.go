@@ -245,6 +245,61 @@ func TestRegisterPage_SharedLayoutKeepsEverythingElseShared(t *testing.T) {
 	}
 }
 
+// TestRegisterPage_HandBoundLayoutStillGetsItsOwnCopy: a caller who binds the
+// content into the layout themselves must still end up with a private copy. Taking
+// "the slot already holds this content" as proof that binding is done would leave
+// the page pointing at the shared layout, sharing its slot table with every other
+// page built on it.
+func TestRegisterPage_HandBoundLayoutStillGetsItsOwnCopy(t *testing.T) {
+	app := newTestApp(t, nil)
+	shared := newLayout("shared-layout")
+
+	page := newHomePage()
+	page.LayoutFragment = shared
+	if err := shared.Bind(types.DefaultContentSlot, page.ContentFragment); err != nil {
+		t.Fatalf("hand-binding the content: %v", err)
+	}
+
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+
+	if page.LayoutFragment == shared {
+		t.Fatal("the page still points at the shared layout, want its own copy")
+	}
+	if got := len(page.LayoutFragment.Slots[types.DefaultContentSlot].Fill); got != 1 {
+		t.Fatalf("content slot has %d fills, want exactly 1", got)
+	}
+	if got := strings.Count(get(app.Handler(), "/").Body.String(), "Welcome Home"); got != 1 {
+		t.Fatalf("rendered content appears %d times, want once", got)
+	}
+}
+
+// TestRegisterPage_RejectsAPreFilledContentSlot: registration fills the content slot
+// itself, so a layout arriving with something already in it is a configuration
+// error — and the message has to say which, since the caller put it there.
+func TestRegisterPage_RejectsAPreFilledContentSlot(t *testing.T) {
+	app := newTestApp(t, nil)
+	layout := newLayout("layout")
+	if err := layout.Bind(types.DefaultContentSlot, &types.Fragment{
+		Name:         "someone-elses-content",
+		TemplatePath: "pages/about.html",
+	}); err != nil {
+		t.Fatalf("pre-filling the slot: %v", err)
+	}
+
+	page := newHomePage()
+	page.LayoutFragment = layout
+
+	err := app.RegisterPage(page)
+	if !errors.Is(err, types.ErrSlotOccupied) {
+		t.Fatalf("RegisterPage = %v, want ErrSlotOccupied", err)
+	}
+	if !strings.Contains(err.Error(), "registration fills the content slot itself") {
+		t.Fatalf("error %q does not explain what to do about it", err)
+	}
+}
+
 // TestRegisterPage_RejectsMissingTemplate: a typo in a template path must be a
 // startup error naming the fragment, not a 500 on the first request that reaches
 // it. Both the layout and the content fragment are checked, and so is a fragment
@@ -392,10 +447,156 @@ func TestRegisterPage_AcceptsSoundErrorPages(t *testing.T) {
 		t.Fatalf("RegisterPage: %v", err)
 	}
 	// The referenced pages are checked, not registered: they get no routes and no
-	// entry of their own until they are registered in their own right.
+	// entry of their own until they are registered in their own right. Startup then
+	// insists that they are — see TestApp_RejectsUnregisteredErrorPage.
 	if _, ok := app.Page("page-404"); ok {
 		t.Fatal("a referenced not-found page was registered as a page of its own")
 	}
+}
+
+// blogFixture is the specification's advanced example: a blog post page and its own
+// 404 and 500 pages, all three built on one shared layout fragment.
+type blogFixture struct {
+	// layout is the one layout fragment all three pages are built on.
+	layout *types.Fragment
+	// post is the blog post page, referencing the other two.
+	post *types.Page
+	// notFound is post's own not-found page.
+	notFound *types.Page
+	// errorPage is post's own error page.
+	errorPage *types.Page
+}
+
+// newBlogFixture builds the three pages and wires post's error-page references.
+func newBlogFixture() blogFixture {
+	layout := newLayout("layout")
+	fixture := blogFixture{
+		layout: layout,
+		post: &types.Page{
+			Name:            "blog-post",
+			LayoutFragment:  layout,
+			ContentFragment: &types.Fragment{Name: "blog-post-content", TemplatePath: "pages/home.html", DataHandler: homeDataHandler},
+			Paths:           map[string]string{"en": "/blog/{slug}"},
+		},
+		notFound: &types.Page{
+			Name:            "blog-404",
+			LayoutFragment:  layout,
+			ContentFragment: &types.Fragment{Name: "blog-404-content", TemplatePath: "pages/about.html"},
+		},
+		errorPage: &types.Page{
+			Name:            "blog-500",
+			LayoutFragment:  layout,
+			ContentFragment: &types.Fragment{Name: "blog-500-content", TemplatePath: "pages/contact.html"},
+		},
+	}
+	fixture.post.NotFoundPage = fixture.notFound
+	fixture.post.ErrorPage = fixture.errorPage
+	return fixture
+}
+
+// TestApp_RejectsUnregisteredErrorPage is the startup close-out check. An error page
+// reached only through a Page field never goes through registration, so its content
+// is never bound into its layout: it would render as an empty layout, the handler
+// would log "error page rendered empty", and the visitor would get the built-in page
+// instead of the author's — a custom error page that silently never appears, at the
+// one moment it was needed.
+//
+// The fixture is the specification's advanced example: three pages on one shared
+// layout, which is exactly the shape that has a layout to render empty.
+func TestApp_RejectsUnregisteredErrorPage(t *testing.T) {
+	t.Run("unregistered", func(t *testing.T) {
+		for _, testCase := range []struct {
+			name     string
+			register func(*App, blogFixture) error
+			missing  string
+			role     string
+		}{
+			{
+				name:     "not-found page",
+				register: func(app *App, f blogFixture) error { return app.RegisterPage(f.errorPage) },
+				missing:  "blog-404",
+				role:     "not-found page",
+			},
+			{
+				name:     "error page",
+				register: func(app *App, f blogFixture) error { return app.RegisterPage(f.notFound) },
+				missing:  "blog-500",
+				role:     "error page",
+			},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				app := newTestApp(t, nil)
+				fixture := newBlogFixture()
+				if err := app.RegisterPage(fixture.post); err != nil {
+					t.Fatalf("RegisterPage(blog-post): %v", err)
+				}
+				if err := testCase.register(app, fixture); err != nil {
+					t.Fatalf("registering the other error page: %v", err)
+				}
+
+				recorder := get(app.Handler(), "/blog/hello")
+				if recorder.Code != http.StatusServiceUnavailable {
+					t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+				}
+
+				err := listenAndServeErr(t, app)
+				if !errors.Is(err, ErrUnregisteredErrorPage) {
+					t.Fatalf("ListenAndServe = %v, want ErrUnregisteredErrorPage", err)
+				}
+				for _, want := range []string{`page "blog-post"`, testCase.role, testCase.missing} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("error %q does not mention %q", err, want)
+					}
+				}
+			})
+		}
+	})
+
+	t.Run("registered", func(t *testing.T) {
+		app := newTestApp(t, nil)
+		fixture := newBlogFixture()
+		for _, page := range []*types.Page{fixture.post, fixture.notFound, fixture.errorPage} {
+			if err := app.RegisterPage(page); err != nil {
+				t.Fatalf("RegisterPage(%s): %v", page.Name, err)
+			}
+		}
+
+		if recorder := get(app.Handler(), "/blog/hello"); recorder.Code != http.StatusOK {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+		}
+
+		// The point of requiring registration: each error page's content really is
+		// in its own layout copy, so it renders its own markup rather than an empty
+		// layout when it is finally needed.
+		for _, page := range []*types.Page{fixture.post, fixture.notFound, fixture.errorPage} {
+			if page.LayoutFragment == fixture.layout {
+				t.Fatalf("page %q still points at the shared layout", page.Name)
+			}
+			fill := page.LayoutFragment.Slots[types.DefaultContentSlot].Fill
+			if len(fill) != 1 || fill[0] != page.ContentFragment {
+				t.Fatalf("page %q content slot = %v, want exactly its own content fragment", page.Name, fill)
+			}
+		}
+	})
+
+	t.Run("an impostor under the same name is not enough", func(t *testing.T) {
+		app := newTestApp(t, nil)
+		fixture := newBlogFixture()
+		impostor := &types.Page{
+			Name:            "blog-404",
+			ContentFragment: &types.Fragment{Name: "impostor-content", TemplatePath: "pages/about.html"},
+		}
+		fixture.post.ErrorPage = nil
+		for _, page := range []*types.Page{fixture.post, impostor} {
+			if err := app.RegisterPage(page); err != nil {
+				t.Fatalf("RegisterPage(%s): %v", page.Name, err)
+			}
+		}
+
+		if err := listenAndServeErr(t, app); !errors.Is(err, ErrUnregisteredErrorPage) {
+			t.Fatalf("ListenAndServe = %v, want ErrUnregisteredErrorPage: the registered page is a different object", err)
+		}
+	})
 }
 
 // TestRegisterPage_RejectsDuplicateName: two pages cannot share a name, since the

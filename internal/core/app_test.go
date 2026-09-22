@@ -504,12 +504,30 @@ func TestApp_RenderPathRejectsRedirect(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestApp_HandlerIsMemoised checks the handler is built once, which is what makes
-// "the first Handler call closes registration" a coherent rule.
+// "the first Handler call closes registration" a coherent rule. The failed build is
+// memoised too, so a caller polling Handler on a broken App does not allocate a
+// fresh stand-in per call.
 func TestApp_HandlerIsMemoised(t *testing.T) {
-	app := newTestApp(t, nil)
-	if first, second := app.Handler(), app.Handler(); first != second {
-		t.Fatal("Handler returned a different handler on the second call, want the memoised one")
-	}
+	t.Run("built", func(t *testing.T) {
+		app := newTestApp(t, nil)
+		if first, second := app.Handler(), app.Handler(); first != second {
+			t.Fatal("Handler returned a different handler on the second call, want the memoised one")
+		}
+	})
+
+	t.Run("failed", func(t *testing.T) {
+		app := newTestApp(t, nil)
+		if err := app.RegisterPlugin(&failingPlugin{err: errors.New("no")}); err != nil {
+			t.Fatalf("RegisterPlugin: %v", err)
+		}
+		first, second := app.Handler(), app.Handler()
+		if first != second {
+			t.Fatal("Handler returned a different stand-in on the second call, want the memoised one")
+		}
+		if recorder := get(second, "/"); recorder.Code != http.StatusServiceUnavailable {
+			t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+		}
+	})
 }
 
 // TestApp_HandlerRunsPluginInit checks Init runs on the first Handler call — so a
@@ -546,7 +564,7 @@ func TestApp_HandlerReportsPluginInitFailure(t *testing.T) {
 	if recorder.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
 	}
-	if err := app.ListenAndServe(); !errors.Is(err, boom) {
+	if err := listenAndServeErr(t, app); !errors.Is(err, boom) {
 		t.Fatalf("ListenAndServe = %v, want the plugin's own error", err)
 	}
 }
@@ -679,14 +697,40 @@ func TestApp_ListenAndServeAfterShutdown(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("ListenAndServe blocked although the App was already shut down")
 	}
+
+	// Nothing will ever listen on this path, and a waiter has to learn that rather
+	// than wait for a server that is never coming.
+	waitListening(t, app)
 }
 
 // TestApp_ListenAndServeReportsBindFailure: a port that cannot be bound is a real
 // failure and must be reported, not swallowed by the clean-shutdown mapping.
 func TestApp_ListenAndServeReportsBindFailure(t *testing.T) {
 	app := newTestApp(t, func(cfg *Config) { cfg.Server.Host = "203.0.113.1" })
-	if err := app.ListenAndServe(); err == nil {
+	if err := listenAndServeErr(t, app); err == nil {
 		t.Fatal("ListenAndServe on an unbindable address = nil, want an error")
+	}
+}
+
+// listenAndServeErr runs app.ListenAndServe and returns its error. It is for the
+// cases where ListenAndServe is expected to refuse immediately: on correct code it
+// returns at once, and under a regression that lets it serve instead, the test fails
+// in a few seconds rather than blocking the whole suite forever.
+func listenAndServeErr(t *testing.T, app *App) error {
+	t.Helper()
+
+	served := make(chan error, 1)
+	go func() { served <- app.ListenAndServe() }()
+
+	select {
+	case err := <-served:
+		return err
+	case <-time.After(5 * time.Second):
+		if err := app.Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown: %v", err)
+		}
+		t.Fatal("ListenAndServe started serving, want an immediate refusal")
+		return nil
 	}
 }
 

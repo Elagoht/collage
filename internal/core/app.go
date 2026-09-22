@@ -61,6 +61,11 @@ var ErrDuplicatePage = errors.New("collage: duplicate page name")
 // back to startup, which is the point.
 var ErrTemplateNotFound = template.ErrTemplateNotFound
 
+// ErrUnregisteredErrorPage is returned when the application starts and a registered
+// page references a NotFoundPage or ErrorPage that was never registered itself. See
+// App.checkErrorPagesRegistered for why that has to be a startup failure.
+var ErrUnregisteredErrorPage = errors.New("collage: error page not registered")
+
 // ErrPageNotFound is returned by RenderPath when the path resolves to no page —
 // either nothing matched, or what matched is a redirect rather than a page. Both
 // mean the same thing to the caller: there is nothing at that path to render.
@@ -233,6 +238,10 @@ type App struct {
 	// order holds the registered page names in registration order, so Pages is
 	// deterministic.
 	order []string
+	// bound holds the pages whose LayoutFragment this App has already replaced with
+	// a copy of their own. It is what makes the layout binding happen exactly once
+	// per page; see bindContent for why the slot's contents cannot answer that.
+	bound map[*types.Page]bool
 	// commands holds the CLI subcommands plugins contributed through
 	// RegisterCommand.
 	commands []plugin.Command
@@ -245,8 +254,11 @@ type App struct {
 	// server is the running http.Server, or nil before ListenAndServe has started
 	// one.
 	server *http.Server
-	// listening is closed once the server is accepting connections. It exists so
-	// the lifecycle tests can wait for a real listener instead of sleeping.
+	// listening is closed once ListenAndServe has finished deciding whether to
+	// serve — either because the server is accepting connections, or because the
+	// App was already shut down and it will not serve at all. Both paths close it,
+	// so a waiter never blocks forever. It exists so the lifecycle tests can wait
+	// for a real listener instead of sleeping.
 	listening chan struct{}
 	// listenOnce guards closing listening. ListenAndServe is meant to be called
 	// once; the Once is what keeps a second call from panicking on a closed
@@ -360,6 +372,7 @@ func New(cfg Config) (*App, error) {
 		tracer:    tracer,
 		vary:      varyHeaders(cfg.Locale),
 		pages:     make(map[string]*types.Page),
+		bound:     make(map[*types.Page]bool),
 		listening: make(chan struct{}),
 	}
 	return app, nil
@@ -407,18 +420,30 @@ func (a *App) Logger() *slog.Logger {
 // because plugin Init has by then already seen the pages that were registered.
 //
 // Handler has no error return because http.Handler is what its callers need. When
-// the build fails — in practice, when a plugin's Init fails — the failure is logged
-// once, at error level, and Handler returns a handler that answers every request
-// with 503. ListenAndServe surfaces the same failure as a returned error instead,
-// so a program that starts a server never loses it.
+// the build fails — a plugin's Init failing, or a page referencing an unregistered
+// error page — the failure is logged once, at error level, and Handler returns a
+// memoised handler that answers every request with 503. ListenAndServe surfaces the
+// same failure as a returned error instead, so a program that starts a server never
+// loses it.
 func (a *App) Handler() http.Handler {
-	handler, err := a.buildHandler()
-	if err != nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "collage: application failed to start", http.StatusServiceUnavailable)
-		})
-	}
+	// The error is dropped deliberately: buildHandler has already logged it once and
+	// memoised unavailableHandler in the real handler's place, so every call returns
+	// the same value and none of them allocates.
+	handler, _ := a.buildHandler()
 	return handler
+}
+
+// unavailableHandler answers every request with 503. It stands in for the real
+// handler when the build failed, so an App whose startup failed serves a clear
+// status rather than panicking on a nil handler. It is an empty struct rather than a
+// closure so that it costs nothing and so two of them compare equal.
+type unavailableHandler struct{}
+
+var _ http.Handler = unavailableHandler{}
+
+// ServeHTTP writes 503 with a message naming the framework.
+func (unavailableHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	http.Error(w, "collage: application failed to start", http.StatusServiceUnavailable)
 }
 
 // buildHandler builds the HTTP handler once and memoises the result, successful or
@@ -440,6 +465,13 @@ func (a *App) buildHandler() (http.Handler, error) {
 	a.started = true
 	a.mu.Unlock()
 
+	// Run once registration is closed and before any plugin sees the application:
+	// an unregistered error page is a configuration error, not something a plugin
+	// should be initialised into the middle of.
+	if err := a.checkErrorPagesRegistered(); err != nil {
+		return a.buildFailed(err)
+	}
+
 	handler, err := httpx.New(httpx.Deps{
 		Router:     a.routes,
 		Renderer:   a.renderer,
@@ -454,21 +486,27 @@ func (a *App) buildHandler() (http.Handler, error) {
 		Vary:       a.vary,
 	})
 	if err != nil {
-		a.handlerErr = err
-		a.logger.Error("collage: building the HTTP handler failed", "error", err)
-		return nil, err
+		return a.buildFailed(err)
 	}
 
 	// context.Background, not a request context: Init is startup work whose
 	// lifetime is the process, and every plugin's Shutdown is what ends it.
 	if err := a.plugins.Init(context.Background(), a); err != nil {
-		a.handlerErr = err
-		a.logger.Error("collage: plugin initialisation failed", "error", err)
-		return nil, err
+		return a.buildFailed(err)
 	}
 
 	a.handler = handler
 	return handler, nil
+}
+
+// buildFailed memoises a failed handler build: it logs err once, installs the
+// unavailable handler so Handler has something to return, and hands the error back
+// for ListenAndServe to surface. It must be called with buildMu held.
+func (a *App) buildFailed(err error) (http.Handler, error) {
+	a.handler = unavailableHandler{}
+	a.handlerErr = err
+	a.logger.Error("collage: starting the application failed", "error", err)
+	return a.handler, err
 }
 
 // ListenAndServe builds the handler, starts an HTTP server on Config.Server's host
@@ -514,8 +552,11 @@ func (a *App) ListenAndServe() error {
 	if a.closing {
 		// Shutdown already ran. Serving now would start something nothing is left
 		// to stop, so close the listener and report the clean stop we were asked
-		// for rather than blocking forever.
+		// for rather than blocking forever. listening is closed on this path too:
+		// nothing will ever listen, and a waiter must learn that rather than wait
+		// for a server that is never coming.
 		a.mu.Unlock()
+		a.listenOnce.Do(func() { close(a.listening) })
 		return listener.Close()
 	}
 	a.server = server
@@ -597,8 +638,16 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 // The dependency tracker is the authority: it resolves tags to the cache keys built
 // from them, each key is dropped from the cache, plugins are told through
 // OnCacheInvalidate, the keys are forgotten so they cannot resolve again, and the
-// count is reported to Metrics. An empty tags invalidates nothing and is not an
-// error.
+// count is reported to Metrics.Invalidation. An empty tags invalidates nothing and
+// is not an error.
+//
+// The count is the number of keys the tracker resolved from tags and the cache
+// accepted an invalidation for — not a count of entries that were live at the time.
+// Cache.InvalidateKey is documented to succeed on a key that holds no entry, and
+// reports no distinction either way, so a key whose entry had already expired is
+// counted like any other. The count is therefore exactly what the tag reached
+// according to the authority on that question, and an upper bound on live entries
+// removed.
 //
 // A key that the cache fails to drop is not counted and does not stop the rest:
 // every other key is still invalidated and the failures are joined into the
