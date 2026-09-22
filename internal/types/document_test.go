@@ -33,6 +33,10 @@ func TestDocument_Validate(t *testing.T) {
 		{"path without leading slash", func(d *Document) { d.Paths = map[string]string{"en": "sitemap.xml"} }, ErrInvalidPath},
 		{"negative ttl", func(d *Document) { d.CacheTTL = -time.Second }, ErrInvalidTTL},
 		{"incremental without ttl", func(d *Document) { d.Strategy = StrategyIncremental }, ErrMissingTTL},
+		{"negative ttl with incremental strategy reports the negative first", func(d *Document) {
+			d.CacheTTL = -time.Second
+			d.Strategy = StrategyIncremental
+		}, ErrInvalidTTL},
 	}
 
 	for _, test := range tests {
