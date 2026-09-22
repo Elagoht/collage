@@ -220,9 +220,21 @@ type Page struct {
   are validated when registered in their own right) — but `NotFoundPage` and
   `ErrorPage` must not be the page itself (`ErrSelfErrorPage`).
 
-**Layout/content binding rule:** when `LayoutFragment` is non-nil, the content
-fragment is bound to the layout's slot named `"content"`. This binding is performed
-once, by the registration path in Task 11 — `types.Page` itself never mutates. Add
+**Layout/content binding rule:** when `LayoutFragment` is non-nil, the content fragment
+is bound to the layout's slot named `"content"` by the registration path in Task 11.
+
+**Registration MUST bind into a per-page copy of the layout, never the shared layout
+itself.** `Bind` appends to `SlotDefinition.Fill`, so binding directly would mean two
+pages sharing one layout accumulate two fills in the same slot and every page renders
+every other page's content. A layout is the single most reusable thing in a
+component framework — the specification's own advanced example shares one `layout`
+across three pages — so refusing to share it is not an acceptable resolution.
+
+At registration, shallow-copy the layout `Fragment` and give the copy a fresh `Slots`
+map holding fresh `SlotDefinition` values with copied `Fill` slices. Template paths,
+data handlers and nested child fragments stay shared by pointer; only the per-page slot
+bindings are private. Replace the page's `LayoutFragment` with the copy so `Page.Root()`
+returns it, and document that registration does this. Add
 `Page.ContentSlotName() string` returning the constant `DefaultContentSlot = "content"`
 so no other package hard-codes the string.
 
