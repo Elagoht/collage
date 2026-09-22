@@ -1,0 +1,14 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+
+# Worktrees / SDD scratch
+/.worktrees/
+/.superpowers/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
