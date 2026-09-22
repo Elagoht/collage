@@ -278,6 +278,14 @@ var ErrNoRoute = httpx.ErrNoRoute
 // still receives a plausible-looking built-in page.
 var ErrEmptyErrorPage = httpx.ErrEmptyErrorPage
 
+// ErrPanic is the error a plugin's ErrorHook receives, under the stage "panic", when
+// something panicked while serving a request and the framework recovered it into a
+// 500. It covers a panic anywhere the request touches code the framework did not
+// write — a Router, Cache, Metrics, or Tracer implementation, or a plugin hook — but
+// not one inside a data handler or a template function, which the render engine
+// recovers itself as a PanicError.
+var ErrPanic = httpx.ErrPanic
+
 // New builds an App from cfg: it applies the framework's defaults to every field
 // left at its zero value, validates the result, converts it into the internal
 // configuration, and constructs the application.

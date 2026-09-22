@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -1159,5 +1160,109 @@ func TestNew_MaxKeysPerTag_NegativeMeansUnlimited(t *testing.T) {
 				t.Fatalf("MaxKeysPerTag = %d, want %d", tracker.MaxKeysPerTag, c.want)
 			}
 		})
+	}
+}
+
+// taggedSpy is a cache.TaggedCache that records the tags every Invalidate call
+// carried, wrapping a real MemoryCache so the rest of the request path behaves
+// normally.
+type taggedSpy struct {
+	*cache.MemoryCache
+
+	mu         sync.Mutex
+	invalidate [][]string
+}
+
+var _ cache.TaggedCache = (*taggedSpy)(nil)
+
+// Invalidate records tags and forwards to the wrapped cache.
+func (s *taggedSpy) Invalidate(ctx context.Context, tags []string) error {
+	s.mu.Lock()
+	s.invalidate = append(s.invalidate, append([]string(nil), tags...))
+	s.mu.Unlock()
+	return s.MemoryCache.Invalidate(ctx, tags)
+}
+
+// invalidations returns a copy of the tag slices Invalidate received, in order.
+func (s *taggedSpy) invalidations() [][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][]string(nil), s.invalidate...)
+}
+
+// TestInvalidateTags_ReachesATaggedCache is the I4 regression. Tag resolution used to
+// go through the in-process tracker alone, so Cache.Invalidate was never called and
+// TaggedCache.SetTagged's whole purpose — letting a store index tags itself — was
+// written and never read. With a store shared between instances that means instance
+// A cannot invalidate what instance B cached, and a restart makes every existing
+// entry permanently unreachable by tag.
+func TestInvalidateTags_ReachesATaggedCache(t *testing.T) {
+	store := &taggedSpy{MemoryCache: cache.NewMemory(cache.MemoryConfig{})}
+	app := newTestApp(t, func(cfg *Config) { cfg.Cache.Store = store })
+	if err := app.RegisterPage(newHomePage()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	handler := app.Handler()
+
+	if recorder := get(handler, "/"); recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", recorder.Code)
+	}
+
+	// A key the tracker cannot resolve: it stands for an entry another instance
+	// wrote, or one this instance wrote before a restart. Only the store's own tag
+	// index can reach it.
+	if _, err := store.SetTagged(context.Background(), "written-elsewhere", []byte("x"), time.Minute, []string{"homepage"}); err != nil {
+		t.Fatalf("SetTagged: %v", err)
+	}
+
+	if _, err := app.InvalidateTagsN(context.Background(), "homepage"); err != nil {
+		t.Fatalf("InvalidateTagsN: %v", err)
+	}
+
+	got := store.invalidations()
+	if len(got) != 1 || len(got[0]) != 1 || got[0][0] != "homepage" {
+		t.Fatalf("Invalidate calls = %v, want one call carrying [homepage]", got)
+	}
+	if _, _, found := store.Get(context.Background(), "written-elsewhere"); found {
+		t.Error("the entry the tracker could not name survived: a shared store is still uninvalidatable")
+	}
+}
+
+// TestApp_RenderPath_LocaleCannotDisagreeWithThePage is the I7 regression.
+// RenderPath used to render for whatever locale the caller named, while the page it
+// rendered was whatever the router matched — so "/tr/blog" with the locale "en"
+// served the tr page and told every fragment on it that the locale was "en". The
+// router picks the page; the locale that page renders for has to be the one the
+// router picked it under.
+func TestApp_RenderPath_LocaleCannotDisagreeWithThePage(t *testing.T) {
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.Locale.Supported = []string{"en", "tr"}
+	})
+
+	en := newHomePage()
+	en.Paths = map[string]string{"en": "/"}
+	if err := app.RegisterPage(en); err != nil {
+		t.Fatalf("RegisterPage(en): %v", err)
+	}
+
+	tr := newHomePage()
+	tr.Name = "home-tr"
+	tr.LayoutFragment = newLayout("layout-tr")
+	tr.Paths = map[string]string{"tr": "/"}
+	if err := app.RegisterPage(tr); err != nil {
+		t.Fatalf("RegisterPage(tr): %v", err)
+	}
+
+	// "/tr" resolves the tr page however it is asked for, so the render must report
+	// tr — not the "en" the caller passed.
+	result, err := app.RenderPath(context.Background(), "/tr", "en", nil)
+	if err != nil {
+		t.Fatalf("RenderPath(/tr, en): %v", err)
+	}
+	if result.Metadata.Locale != "tr" {
+		t.Fatalf("RenderPath(/tr, \"en\") locale = %q, want tr: the tr page rendered as en", result.Metadata.Locale)
+	}
+	if result.Metadata.Page != "home-tr" {
+		t.Fatalf("RenderPath(/tr, \"en\") page = %q, want home-tr", result.Metadata.Page)
 	}
 }

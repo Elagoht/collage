@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -46,6 +47,18 @@ var ErrNoRoute = errors.New("collage: no route matched the request")
 // falls through to the built-in page either way.
 var ErrEmptyErrorPage = errors.New("collage: error page rendered empty")
 
+// ErrPanic is the error reported to plugins through ErrorHook, under the stage
+// "panic", when a collaborator panicked while serving a request and the handler
+// recovered it into a 500. It is deliberately distinct from every other failure: a
+// panic is a bug in the code that raised it, not a condition the request ran into,
+// and an operator triaging one needs to tell it apart at a glance. The wrapped
+// message carries the panic value and the stack it was raised on.
+//
+// A panic inside a data handler or a template function is not this: the render
+// engine recovers those itself, as render.PanicError, and they follow the ordinary
+// fragment failure policy.
+var ErrPanic = errors.New("collage: panic recovered while serving the request")
+
 // Pipeline stages, as reported to plugins through ErrorEvent.Stage. The field is
 // documented as caller-defined rather than an enum, so these are the names this
 // handler happens to use.
@@ -58,6 +71,7 @@ const (
 	stageAfterRender  = "after_render"
 	stageCacheWrite   = "cache_write"
 	stageErrorPage    = "error_page"
+	stagePanic        = "panic"
 )
 
 // contentTypeHTML is the Content-Type every rendered page and built-in error page
@@ -68,6 +82,19 @@ const contentTypeHTML = "text/html; charset=utf-8"
 // dev mode only, so production responses never advertise how long a page took to
 // build.
 const renderTimeHeader = "X-Collage-Render-Time"
+
+// staticCacheTTL is the TTL a StrategyStatic page's cache entry is written with when
+// the page sets no CacheTTL of its own: a hundred years, which is "until explicitly
+// invalidated" as closely as the Cache interface can say it.
+//
+// It is not zero because zero already means something else. Cache.Set documents a
+// ttl of zero or less as "use the cache's own configured default", and an
+// application's own Cache implementation is entitled to read it that way — so
+// passing zero would hand a static page whatever default that cache happens to
+// carry, which is exactly the bug this constant exists to fix. A century is longer
+// than any process this will run in and still an ordinary time.Duration, so no
+// implementation has to special-case it.
+const staticCacheTTL = 100 * 365 * 24 * time.Hour
 
 // Deps are the collaborators a Handler needs. Router, Renderer, Tracker, and Logger
 // are required; Cache, Metrics, Tracer, and Plugins may be left nil.
@@ -179,10 +206,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	span.SetAttribute("http.path", r.URL.Path)
 	r = r.WithContext(ctx)
 
-	status := h.serve(w, r)
+	status := h.serveGuarded(w, r)
 
 	span.SetAttribute("http.status_code", strconv.Itoa(status))
 	h.metrics.HTTPResponse(ctx, status, r.URL.Path, time.Since(start))
+}
+
+// serveGuarded runs serve and turns a panic escaping it into a 500 on the normal
+// error path — logged, dispatched to every ErrorHook, and counted by the metric
+// ServeHTTP reports — instead of letting it unwind into net/http, which closes the
+// connection with no status line at all.
+//
+// The render engine already recovers a panic inside a data handler or a template
+// function, and turns it into an ordinary fragment failure. This covers everywhere
+// else a request touches code the framework did not write: a Router of the
+// application's own, a Cache implementation, a Metrics or Tracer implementation, and
+// a plugin hook.
+//
+// A panic raised after the response headers are already on the wire — from inside
+// the body write — cannot be turned into a 500 any more; serveFailure will try, and
+// net/http will log the superfluous WriteHeader. That is still better than dropping
+// the connection, and there is nothing else left to do at that point.
+func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request) (status int) {
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		status = h.serveFailure(w, r, failure{
+			status: http.StatusInternalServerError,
+			err:    fmt.Errorf("%w: %v\n%s", ErrPanic, recovered, debug.Stack()),
+			stage:  stagePanic,
+		})
+	}()
+	return h.serve(w, r)
 }
 
 // serve runs the request lifecycle and returns the status code it wrote.
@@ -370,7 +427,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 		header.Set(renderTimeHeader, renderTime.String())
 	}
 	w.WriteHeader(http.StatusOK)
-	writeBody(w, r, content)
+	writeBody(w, content)
 
 	return http.StatusOK
 }
@@ -392,7 +449,7 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 
 	header.Set("Content-Type", contentTypeHTML)
 	w.WriteHeader(http.StatusOK)
-	writeBody(w, r, content)
+	writeBody(w, content)
 
 	return http.StatusOK
 }
@@ -449,11 +506,24 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	return etag
 }
 
-// ttlFor returns the cache TTL for page: its own CacheTTL when set, otherwise the
-// handler's DefaultTTL, which may itself be zero to defer to the cache's default.
+// ttlFor returns the cache TTL for page: its own CacheTTL when set, then
+// staticCacheTTL for a StrategyStatic page, otherwise the handler's DefaultTTL,
+// which may itself be zero to defer to the cache's default.
+//
+// The StrategyStatic case is what makes that strategy mean what it says. "Render
+// once and serve until explicitly invalidated" is its documented contract, but
+// Static() sets no CacheTTL, so without this a static page fell through to
+// DefaultTTL — which pkg/collage's own defaulting forces to five minutes — and every
+// static page silently re-rendered on that cycle.
 func (h *Handler) ttlFor(page *types.Page) time.Duration {
-	if page != nil && page.CacheTTL > 0 {
+	if page == nil {
+		return h.defaultTTL
+	}
+	if page.CacheTTL > 0 {
 		return page.CacheTTL
+	}
+	if page.Strategy == types.StrategyStatic {
+		return staticCacheTTL
 	}
 	return h.defaultTTL
 }
@@ -492,10 +562,17 @@ func (h *Handler) cacheControl(page *types.Page) string {
 	}
 }
 
-// writeBody writes content unless r is a HEAD request, which carries the headers of
-// the response it would have received and no body at all.
-func writeBody(w http.ResponseWriter, r *http.Request, content []byte) {
-	if r.Method == http.MethodHead || len(content) == 0 {
+// writeBody writes content, including for a HEAD request.
+//
+// Writing on a HEAD looks wrong and is not: net/http discards a HEAD response's body
+// itself, and it derives Content-Length from what the handler wrote. Returning early
+// instead — which is what this did — left every HEAD response advertising
+// "Content-Length: 0" for a resource whose GET reports its real size, which is
+// exactly what HEAD exists to tell a client. The body is built either way, since the
+// page has already rendered; what is skipped is only the copy onto the socket, and
+// net/http is the one positioned to skip it.
+func writeBody(w http.ResponseWriter, content []byte) {
+	if len(content) == 0 {
 		return
 	}
 	// The error is deliberately unchecked: the status line and headers are

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -229,18 +228,30 @@ func TestEmptyErrorPageFallsBackToBuiltinPage(t *testing.T) {
 	}
 }
 
+// TestErrorPageBodyOmittedForHead checks that an error response follows the same HEAD
+// rule as a successful one: no body on the wire, and the Content-Length the matching
+// GET would report.
 func TestErrorPageBodyOmittedForHead(t *testing.T) {
 	home := testPage("home", "/", types.StrategyStatic)
 	env := newEnv(t, []*types.Page{home})
 	env.engine.set("home", fakeRender{err: errBoom})
+	srv := env.server(t)
 
-	res := env.do(httptest.NewRequest(http.MethodHead, "/", nil))
+	res, body := request(t, srv, http.MethodHead, "/")
 
-	if res.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want %d", res.Code, http.StatusInternalServerError)
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusInternalServerError)
 	}
-	if res.Body.Len() != 0 {
-		t.Errorf("body = %q, want empty for a HEAD", res.Body.String())
+	if len(body) != 0 {
+		t.Errorf("body = %q, want empty for a HEAD", body)
+	}
+
+	get, getBody := request(t, srv, http.MethodGet, "/")
+	if len(getBody) == 0 {
+		t.Fatal("GET body is empty: there is no length for the HEAD to agree with")
+	}
+	if res.ContentLength != get.ContentLength {
+		t.Errorf("HEAD Content-Length = %d, want the GET's %d", res.ContentLength, get.ContentLength)
 	}
 }
 

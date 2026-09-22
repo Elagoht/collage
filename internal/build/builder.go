@@ -5,8 +5,16 @@
 // testable against a fake.
 //
 // Build renders every static-eligible page through the same render engine the HTTP
-// server uses (Renderer.RenderPath), so the files this package writes are
-// byte-identical to what a live request would produce.
+// server uses, by way of Renderer.RenderPath — the same template set, the same
+// fragment tree, the same data handlers, and the same sequential walk.
+//
+// It does not go through the HTTP handler, and that difference is visible in the
+// output: a static build never runs plugin Init and never fires a render hook, so
+// nothing a PageResolvedHook, BeforeRenderHook, AfterRenderHook, or CacheWriteHook
+// would have contributed appears in the files written here. A plugin that stamps
+// every page from OnAfterRender stamps nothing in a static build. The rendered
+// fragment output is what a live request would produce; whatever the plugin layer
+// adds on top of it is not.
 package build
 
 import (
@@ -15,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -46,6 +55,27 @@ var ErrPathEscapesOutDir = errors.New("collage: resolved path escapes the output
 // pattern for a locale contains a "{param}" segment and Options.PathProvider is nil.
 // Such a page has no way to enumerate the concrete paths a static build must write.
 var ErrDynamicPathUnresolved = errors.New("collage: dynamic path pattern requires a path provider")
+
+// ErrBuildPanic is recorded in Report.Errors when rendering or writing one page
+// panicked. The build worker recovers it, records it against that page, and carries
+// on with the rest: a static build is often the last step of a deploy, and letting
+// one page's panic take the process down leaves an output directory that Clean has
+// already emptied.
+var ErrBuildPanic = errors.New("collage: panic while building a page")
+
+// ErrDegradedRender is recorded in Report.Errors when a page rendered with at least
+// one failed fragment and Options.AllowDegraded is false. The HTTP handler refuses
+// to *cache* a degraded render precisely because it would pin one request's
+// transient failure in front of every later one; a static build has no TTL to
+// recover through, so writing it would pin that failure until the next deploy.
+var ErrDegradedRender = errors.New("collage: refusing to write a degraded render")
+
+// ErrEmptyRender is recorded in Report.Errors when a page rendered successfully but
+// produced no markup at all — what an optional root fragment failing with no
+// fallback produces, and what used to reach disk as a zero-byte index.html and an
+// exit status of zero. Unlike a degraded render it is never written:
+// Options.AllowDegraded is about serving a partial page, not an absent one.
+var ErrEmptyRender = errors.New("collage: refusing to write an empty render")
 
 // Renderer is the narrow surface Builder needs from an application: the registered
 // pages, and a way to render one of them by path outside the HTTP request path. It
@@ -107,6 +137,18 @@ type Options struct {
 	// "{param}" segment. A dynamic page with no PathProvider is recorded as
 	// skipped rather than failing the build.
 	PathProvider PathProvider
+	// AllowDegraded writes a page whose render had at least one failed fragment
+	// instead of recording ErrDegradedRender against it. It is off by default:
+	// a static file has no TTL, so a degraded page written to disk stays degraded
+	// until the next build, which is the opposite of the HTTP handler's rule that
+	// a degraded render is served but never cached.
+	//
+	// Turn it on when a partially rendered page is genuinely better than no page —
+	// a site whose sidebar depends on an API that is down, say — and read
+	// Report.Errors either way: enabling this does not make the failures invisible,
+	// it only stops them from withholding the file. A render that produced no
+	// markup at all is still refused, with ErrEmptyRender.
+	AllowDegraded bool
 }
 
 // SkipRecord describes one page, or one page's locale, that a static build could not
@@ -175,10 +217,15 @@ type buildTask struct {
 // A page using a non-cacheable render strategy is skipped, recorded in the report,
 // rather than built. A page whose path pattern for a locale contains a "{param}"
 // segment is expanded through Options.PathProvider when one is configured, or
-// skipped with ErrDynamicPathUnresolved otherwise. A failure resolving paths,
-// rendering, or writing one page does not stop the rest of the build: every such
-// failure is recorded in Report.Errors, and the error Build returns is
-// errors.Join(report.Errors...) — nil when there were none.
+// skipped with ErrDynamicPathUnresolved otherwise. A page that renders with a failed
+// fragment is refused with ErrDegradedRender unless Options.AllowDegraded is set,
+// and a page that renders no markup at all is always refused with ErrEmptyRender: a
+// static file has no TTL to recover through, so writing either one pins it until the
+// next build. A failure resolving paths, rendering, or writing one page does not stop
+// the rest of the build: every such failure is recorded in Report.Errors, and the
+// error Build returns is errors.Join(report.Errors...) — nil when there were none. A
+// panic in a data handler is caught per page and recorded the same way; see the build
+// worker in Build itself.
 //
 // Build writes each rendered page to "<OutDir>/<path>/index.html", creating
 // directories as needed; the root path "/" writes "<OutDir>/index.html". Every
@@ -215,6 +262,21 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		go func(i int, task buildTask) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// Registered last, so it runs first: a panic must land in taskErrs
+			// before wg.Done releases Build to read that slot.
+			//
+			// Without it a panic in a data handler is process-fatal in the middle
+			// of a build — and worst of all under Options.Clean, which has already
+			// emptied OutDir by the time the first page renders. The render engine
+			// recovers a panic inside Execute, but a PathProvider's data, a
+			// fragment reached outside it, or a caller's own Renderer can still
+			// panic here, and one page is not the whole site.
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					taskErrs[i] = fmt.Errorf("%w: page %q locale %q path %q: %v\n%s",
+						ErrBuildPanic, task.page.Name, task.locale, task.path, recovered, debug.Stack())
+				}
+			}()
 			target, err := b.renderAndWrite(ctx, outDirResolved, task)
 			if err != nil {
 				taskErrs[i] = err
@@ -333,6 +395,17 @@ func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, tas
 		return "", fmt.Errorf("collage: render page %q locale %q path %q: %w", task.page.Name, task.locale, task.path, err)
 	}
 
+	// A render can succeed and still be unfit to write. Both checks run before the
+	// filesystem is touched at all, so a refused page leaves no file behind — not
+	// even an empty one, which is what a caller running with Options.Clean would
+	// otherwise be left serving.
+	if result.Degraded() && !b.opts.AllowDegraded {
+		return "", fmt.Errorf("%w: page %q locale %q path %q: %s", ErrDegradedRender, task.page.Name, task.locale, task.path, degradedSummary(result))
+	}
+	if len(result.HTML) == 0 {
+		return "", fmt.Errorf("%w: page %q locale %q path %q", ErrEmptyRender, task.page.Name, task.locale, task.path)
+	}
+
 	// resolveTarget's containment check is purely lexical: it proves the *string*
 	// target stays inside outDirResolved and nothing about the filesystem. A
 	// symlink planted anywhere under OutDir — a directory component or the leaf
@@ -351,6 +424,25 @@ func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, tas
 		return "", fmt.Errorf("collage: write %q: %w", target, err)
 	}
 	return target, nil
+}
+
+// degradedSummary names the fragments whose failure made result degraded, and the
+// error each failed with, so Report.Errors says which component to go and look at
+// rather than only that something went wrong. A result with no Metadata reports
+// nothing to name, which Result.Degraded already treats as not degraded.
+func degradedSummary(result *render.Result) string {
+	if result == nil || result.Metadata == nil {
+		return "no fragment metadata"
+	}
+	var failed []string
+	for i := range result.Metadata.Fragments {
+		fragment := result.Metadata.Fragments[i]
+		if !fragment.Failed {
+			continue
+		}
+		failed = append(failed, fmt.Sprintf("%s: %v", fragment.Name, fragment.Err))
+	}
+	return "failed fragments: " + strings.Join(failed, "; ")
 }
 
 // resolveTarget turns urlPath into the file it is written to under outDirResolved

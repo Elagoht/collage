@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -422,6 +423,12 @@ func newEnv(t *testing.T, pages []*types.Page, opts ...envOption) *testEnv {
 		t.Fatalf("New() = %v, want nil", err)
 	}
 
+	// An option may have replaced the cache; testEnv.cache must follow it, or a
+	// test's assertions would be made against a cache the handler never touched.
+	if replaced, ok := deps.Cache.(*cache.MemoryCache); ok {
+		memoryCache = replaced
+	}
+
 	return &testEnv{
 		handler: handler,
 		engine:  engine,
@@ -465,6 +472,13 @@ func withDefaultTTL(ttl time.Duration) envOption {
 	return func(d *Deps) { d.DefaultTTL = ttl }
 }
 
+// withCacheConfig replaces the environment's memory cache with one built from cfg,
+// so a test can inject a clock or a default TTL. newEnv picks the replacement back up
+// for testEnv.cache.
+func withCacheConfig(cfg cache.MemoryConfig) envOption {
+	return func(d *Deps) { d.Cache = cache.NewMemory(cfg) }
+}
+
 // get issues a GET for path and returns the recorded response.
 func (e *testEnv) get(path string) *httptest.ResponseRecorder {
 	return e.do(httptest.NewRequest(http.MethodGet, path, nil))
@@ -480,6 +494,42 @@ func (e *testEnv) do(req *http.Request) *httptest.ResponseRecorder {
 // cacheEntries returns how many entries the environment's cache currently holds.
 func (e *testEnv) cacheEntries() uint64 {
 	return e.cache.Stats().Entries
+}
+
+// server starts a real HTTP server over the environment's handler, closed when the
+// test ends.
+//
+// It exists for the questions httptest.ResponseRecorder cannot answer. The recorder
+// records exactly what the handler wrote and invents no headers; a real server is
+// what discards a HEAD response's body and what derives Content-Length from the
+// bytes the handler produced. A HEAD assertion made against the recorder is an
+// assertion about the recorder.
+func (e *testEnv) server(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(e.handler)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// request issues method against srv's path through a real client and returns the
+// response and its body, both already read and closed.
+func request(t *testing.T, srv *httptest.Server, method, path string) (*http.Response, []byte) {
+	t.Helper()
+
+	req, err := http.NewRequest(method, srv.URL+path, nil)
+	if err != nil {
+		t.Fatalf("NewRequest(%s %s) = %v, want nil", method, path, err)
+	}
+	res, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("Do(%s %s) = %v, want nil", method, path, err)
+	}
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatalf("read body of %s %s: %v", method, path, err)
+	}
+	return res, body
 }
 
 // ---------------------------------------------------------------------------
@@ -592,20 +642,31 @@ func TestServeRedirect(t *testing.T) {
 	}
 }
 
+// TestServeHeadWritesHeadersWithoutBody checks HEAD against a real server, on both
+// the fresh and the cached path: no body, and the same Content-Length the matching
+// GET reports. The length is the point — a HEAD exists to tell a client how large the
+// representation is, and this handler used to answer "0" for every one of them by
+// skipping the write itself instead of letting net/http discard it.
 func TestServeHeadWritesHeadersWithoutBody(t *testing.T) {
+	const html = "<html>home</html>"
+
 	page := testPage("home", "/", types.StrategyStatic)
 	env := newEnv(t, []*types.Page{page})
-	env.engine.set("home", fakeRender{html: "<html>home</html>"})
+	env.engine.set("home", fakeRender{html: html})
+	srv := env.server(t)
 
-	fresh := env.do(httptest.NewRequest(http.MethodHead, "/", nil))
+	fresh, freshBody := request(t, srv, http.MethodHead, "/")
 
-	if fresh.Code != http.StatusOK {
-		t.Fatalf("fresh HEAD status = %d, want %d", fresh.Code, http.StatusOK)
+	if fresh.StatusCode != http.StatusOK {
+		t.Fatalf("fresh HEAD status = %d, want %d", fresh.StatusCode, http.StatusOK)
 	}
-	if fresh.Body.Len() != 0 {
-		t.Errorf("fresh HEAD body = %q, want empty", fresh.Body.String())
+	if len(freshBody) != 0 {
+		t.Errorf("fresh HEAD body = %q, want empty", freshBody)
 	}
-	if got := fresh.Header().Get("ETag"); got == "" {
+	if fresh.ContentLength != int64(len(html)) {
+		t.Errorf("fresh HEAD Content-Length = %d, want %d", fresh.ContentLength, len(html))
+	}
+	if got := fresh.Header.Get("ETag"); got == "" {
 		t.Error("fresh HEAD ETag = \"\", want the rendered page's ETag")
 	}
 
@@ -614,14 +675,21 @@ func TestServeHeadWritesHeadersWithoutBody(t *testing.T) {
 		t.Errorf("cache entries after HEAD = %d, want 0", entries)
 	}
 
-	env.get("/")
-	cached := env.do(httptest.NewRequest(http.MethodHead, "/", nil))
-
-	if cached.Code != http.StatusOK {
-		t.Fatalf("cached HEAD status = %d, want %d", cached.Code, http.StatusOK)
+	get, getBody := request(t, srv, http.MethodGet, "/")
+	if string(getBody) != html {
+		t.Fatalf("GET body = %q, want %q", getBody, html)
 	}
-	if cached.Body.Len() != 0 {
-		t.Errorf("cached HEAD body = %q, want empty", cached.Body.String())
+
+	cached, cachedBody := request(t, srv, http.MethodHead, "/")
+
+	if cached.StatusCode != http.StatusOK {
+		t.Fatalf("cached HEAD status = %d, want %d", cached.StatusCode, http.StatusOK)
+	}
+	if len(cachedBody) != 0 {
+		t.Errorf("cached HEAD body = %q, want empty", cachedBody)
+	}
+	if cached.ContentLength != get.ContentLength {
+		t.Errorf("cached HEAD Content-Length = %d, want the GET's %d", cached.ContentLength, get.ContentLength)
 	}
 }
 
@@ -1298,5 +1366,134 @@ func TestRouteMissLogsAtDebugAndContentMissAtError(t *testing.T) {
 	}
 	if records[1].fragment != "post" {
 		t.Errorf("content miss record fragment = %q, want the failing fragment named", records[1].fragment)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Strategy semantics
+// ---------------------------------------------------------------------------
+
+// panickingRouter is a router.Router whose Match panics, standing in for any
+// collaborator the framework did not write — an application's own Router, Cache,
+// Metrics, or Tracer — blowing up in the middle of a request.
+type panickingRouter struct {
+	stubRouter
+}
+
+var _ router.Router = (*panickingRouter)(nil)
+
+// Match panics instead of returning.
+func (p *panickingRouter) Match(*http.Request) (*router.MatchResult, error) {
+	panic("router exploded")
+}
+
+// TestStaticPageDoesNotExpireAtTheDefaultTTL is the I3 regression. StrategyStatic is
+// documented as "render once and serve until explicitly invalidated", but Static()
+// sets no CacheTTL, so the write fell through to DefaultTTL — which the framework's
+// own defaulting forces to five minutes — and every static page silently re-rendered
+// on that cycle. The cache's injected clock is what makes the elapsed time real
+// without waiting for it.
+func TestStaticPageDoesNotExpireAtTheDefaultTTL(t *testing.T) {
+	const defaultTTL = 5 * time.Minute
+
+	now := time.Now()
+	clock := func() time.Time { return now }
+
+	page := testPage("home", "/", types.StrategyStatic)
+	env := newEnv(t, []*types.Page{page},
+		withCacheConfig(cache.MemoryConfig{DefaultTTL: defaultTTL, Now: clock}),
+		withDefaultTTL(defaultTTL),
+	)
+	env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+	env.get("/")
+	if calls := env.engine.pageCalls("home"); calls != 1 {
+		t.Fatalf("render calls after the first request = %d, want 1", calls)
+	}
+
+	// Far past the default TTL, and past any plausible one.
+	now = now.Add(100 * defaultTTL)
+
+	env.get("/")
+	if calls := env.engine.pageCalls("home"); calls != 1 {
+		t.Fatalf("render calls after %v = %d, want 1: a static page re-rendered on the default TTL", 100*defaultTTL, calls)
+	}
+}
+
+// TestIncrementalPageStillExpiresAtTheDefaultTTL is the control for the test above:
+// the static special case must not have turned every cached page into a permanent
+// one. An incremental page with no CacheTTL of its own still expires on DefaultTTL.
+func TestIncrementalPageStillExpiresAtTheDefaultTTL(t *testing.T) {
+	const defaultTTL = 5 * time.Minute
+
+	now := time.Now()
+	clock := func() time.Time { return now }
+
+	page := testPage("home", "/", types.StrategyIncremental)
+	env := newEnv(t, []*types.Page{page},
+		withCacheConfig(cache.MemoryConfig{DefaultTTL: defaultTTL, Now: clock}),
+		withDefaultTTL(defaultTTL),
+	)
+	env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+	env.get("/")
+	now = now.Add(defaultTTL + time.Second)
+	env.get("/")
+
+	if calls := env.engine.pageCalls("home"); calls != 2 {
+		t.Fatalf("render calls after the TTL elapsed = %d, want 2", calls)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Panic safety
+// ---------------------------------------------------------------------------
+
+// TestPanicInACollaboratorBecomesA500 is the I5 regression for the HTTP side. The
+// render engine recovers a panic inside a data handler, but a panic anywhere else —
+// here in a Router of the application's own — used to unwind into net/http and drop
+// the connection with no status line, no ErrorHook dispatch, and no metric.
+func TestPanicInACollaboratorBecomesA500(t *testing.T) {
+	spy := &recordingPlugin{}
+	env := newEnv(t, nil, withRouter(&panickingRouter{}), withPlugins(t, spy))
+	srv := env.server(t)
+
+	res, body := request(t, srv, http.MethodGet, "/anything")
+
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", res.StatusCode, http.StatusInternalServerError)
+	}
+	if len(body) == 0 {
+		t.Error("body is empty: the client got a status with no page")
+	}
+
+	if got := spy.recorded(); len(got) != 1 || got[0] != "Error:"+stagePanic {
+		t.Fatalf("hooks = %v, want one Error:%s", got, stagePanic)
+	}
+	reported := spy.reportedErrors()
+	if len(reported) != 1 || !errors.Is(reported[0], ErrPanic) {
+		t.Fatalf("reported errors = %v, want one ErrPanic", reported)
+	}
+	if !strings.Contains(reported[0].Error(), "router exploded") {
+		t.Errorf("reported error = %q, want it to carry the panic value", reported[0])
+	}
+
+	responses := env.metrics.Snapshot().HTTPResponses
+	if len(responses) != 1 || responses[0].Status != http.StatusInternalServerError {
+		t.Fatalf("HTTPResponse metrics = %+v, want one 500", responses)
+	}
+}
+
+// TestPanicInACollaboratorDoesNotLeakDiagnosticsOutsideDevMode checks that a
+// recovered panic goes through the same built-in page as every other 500: the stack
+// it carries is for the log and the ErrorHook, never for the response body.
+func TestPanicInACollaboratorDoesNotLeakDiagnosticsOutsideDevMode(t *testing.T) {
+	env := newEnv(t, nil, withRouter(&panickingRouter{}))
+	srv := env.server(t)
+
+	_, body := request(t, srv, http.MethodGet, "/anything")
+
+	if strings.Contains(string(body), "router exploded") {
+		t.Errorf("body = %q, want no panic value in a production response", body)
 	}
 }

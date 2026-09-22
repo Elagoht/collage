@@ -167,7 +167,7 @@ func (h *Handler) writeErrorResponse(w http.ResponseWriter, r *http.Request, sta
 	header.Set("Content-Type", contentTypeHTML)
 	header.Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
-	writeBody(w, r, content)
+	writeBody(w, content)
 }
 
 // failedFragment returns the name of the first fragment in result that failed, or

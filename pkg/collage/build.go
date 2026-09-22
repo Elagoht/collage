@@ -51,6 +51,21 @@ var ErrPathEscapesOutDir = build.ErrPathEscapesOutDir
 // BuildOptions.PathProvider is nil.
 var ErrDynamicPathUnresolved = build.ErrDynamicPathUnresolved
 
+// ErrDegradedRender is recorded in BuildReport.Errors, and no file is written,
+// when a page renders with at least one failed fragment and
+// BuildOptions.AllowDegraded is false.
+var ErrDegradedRender = build.ErrDegradedRender
+
+// ErrEmptyRender is recorded in BuildReport.Errors, and no file is written, when
+// a page renders successfully but produces no markup at all. It is refused
+// regardless of BuildOptions.AllowDegraded.
+var ErrEmptyRender = build.ErrEmptyRender
+
+// ErrBuildPanic is recorded in BuildReport.Errors when rendering or writing one
+// page panicked. The build recovers it, records it against that page, and
+// continues with the rest.
+var ErrBuildPanic = build.ErrBuildPanic
+
 // NewBuilder returns a static-site builder that renders app's pages according
 // to opts, ready for Build. It returns ErrNilRenderer when app is nil and
 // ErrInvalidOutDir when opts.OutDir is empty.

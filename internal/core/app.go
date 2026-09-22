@@ -485,6 +485,26 @@ func (a *App) Handler() http.Handler {
 	return handler
 }
 
+// Start builds the application's HTTP handler and runs every registered plugin's
+// Init, returning the error that startup produced — a plugin's Init failing, or a
+// page referencing an unregistered error page — or nil.
+//
+// It is what Handler and ListenAndServe each do first, memoised the same way: calling
+// it more than once, or calling it and then either of them, runs the work exactly
+// once and every caller sees the same outcome. Like them it closes registration, so
+// RegisterPage, RegisterNotFoundPage, RegisterErrorPage, and RegisterPlugin return
+// ErrAppStarted afterwards.
+//
+// It exists because plugins register their CLI commands from inside Init, so
+// Commands is empty until Init has run — and Handler, which has to return an
+// http.Handler, cannot hand back the reason it did not. A program that wants to
+// dispatch a plugin command, or simply wants startup failures before it does anything
+// else, calls this.
+func (a *App) Start() error {
+	_, err := a.buildHandler()
+	return err
+}
+
 // unavailableHandler answers every request with 503. It stands in for the real
 // handler when the build failed, so an App whose startup failed serves a clear
 // status rather than panicking on a nil handler. It is an empty struct rather than a
@@ -697,6 +717,23 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 // count is reported to Metrics.Invalidation. An empty tags invalidates nothing and
 // is not an error.
 //
+// When the store also implements cache.TaggedCache, Cache.Invalidate is called with
+// the tags as well. That is not redundant with the tracker walk, and it is the only
+// thing that makes a shared store invalidatable at all. The tracker is per process
+// and in memory: it knows the keys this instance wrote and nothing else, so with a
+// store shared between instances — a Redis, say — instance A's tracker cannot name
+// the keys instance B wrote, and a restart leaves every key written before it
+// permanently unreachable by tag. A store that indexes tags itself, which is exactly
+// what TaggedCache declares, can resolve them for the keys the tracker never saw.
+// SetTagged already hands it those tags on every write; this is the call that
+// finally reads them back.
+//
+// The count therefore remains what the tracker resolved and the cache accepted a
+// per-key invalidation for. Entries dropped by the store's own tag index are not
+// counted: the Cache contract gives Invalidate no count to report, and inventing one
+// would make the number mean something different depending on which cache was
+// configured.
+//
 // The count is the number of keys the tracker resolved from tags and the cache
 // accepted an invalidation for — not a count of entries that were live at the time.
 // Cache.InvalidateKey is documented to succeed on a key that holds no entry, and
@@ -732,6 +769,16 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 		invalidated++
 	}
 
+	// After the per-key walk, so a store that indexes tags itself and a tracker
+	// that indexes them separately cannot disagree about a key both of them know:
+	// the key-level invalidation has already run by the time the tag-level one
+	// does, and both are idempotent.
+	if tagged, ok := a.store.(cache.TaggedCache); ok {
+		if err := tagged.Invalidate(ctx, tags); err != nil {
+			failures = errors.Join(failures, fmt.Errorf("collage: invalidate tags %v: %w", tags, err))
+		}
+	}
+
 	// The event carries its own copy of tags: CacheInvalidateEvent documents Tags
 	// as the event's own, and a plugin must not be able to reach back into the
 	// caller's slice through it.
@@ -756,14 +803,20 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 // the static site builder consumes through its own narrow interface.
 //
 // The page is resolved through the router, from a synthetic GET request for path,
-// so a path reaches exactly the page it would reach over HTTP. When locale is
-// non-empty it is the locale the page renders for, and it is also offered to the
-// router through the Accept-Language header and the locale cookie — whichever of
-// those sources the configuration leaves enabled — so a path carrying no locale
-// prefix still resolves to the requested locale. An empty locale renders for
-// whatever locale the router resolves. With both of those sources disabled, a path
-// must carry its own locale prefix to reach a page registered only under that
-// locale — which is the only URL that reaches it over HTTP either way.
+// so a path reaches exactly the page it would reach over HTTP. A non-empty locale is
+// a *request* for that locale, offered to the router through the Accept-Language
+// header and the locale cookie — whichever of those sources the configuration leaves
+// enabled — so a path carrying no locale prefix still resolves to it. With both of
+// those sources disabled, a path must carry its own locale prefix to reach a page
+// registered only under that locale, which is the only URL that reaches it over HTTP
+// either way.
+//
+// The locale the page actually renders for is whatever the router resolved, not the
+// argument, and the two are the same thing whenever the argument had any effect. It
+// matters when they differ: "/tr/blog" resolves to the tr page whatever the caller
+// asked for, and rendering it with a RenderContext.Locale of "en" would put every
+// locale-dependent fragment on that page into the wrong language. The router picked
+// the page; the page's locale is the router's to report.
 //
 // params overlay the path parameters the router captured, so a caller that already
 // knows the concrete values (a static build enumerating slugs) does not depend on
@@ -789,16 +842,16 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 		return nil, fmt.Errorf("%w: %q", ErrPageNotFound, path)
 	}
 
-	resolved := locale
-	if resolved == "" {
-		resolved = match.Locale
-	}
-
 	merged := make(map[string]string, len(match.PathParams)+len(params))
 	maps.Copy(merged, match.PathParams)
 	maps.Copy(merged, params)
 
-	return a.renderer.Render(ctx, types.NewRenderContext(ctx, req, match.Page, resolved, merged))
+	// match.Locale, not the locale argument: the router resolved a specific page for
+	// a specific locale, and the page it chose is the page being rendered. Taking
+	// the argument instead let the two disagree — RenderPath(ctx, "/tr/blog", "en",
+	// nil) served the tr page with a RenderContext.Locale of "en", so every
+	// locale-dependent fragment on it rendered in the wrong language.
+	return a.renderer.Render(ctx, types.NewRenderContext(ctx, req, match.Page, match.Locale, merged))
 }
 
 // syntheticRequest builds the GET request RenderPath resolves and renders through.

@@ -29,6 +29,18 @@ type fakeRenderer struct {
 	// sleeps for before returning, used to force goroutines to finish out of
 	// dispatch order under a concurrent Build.
 	delays map[string]time.Duration
+	// degrade maps a call key (see renderKey) to the name of a fragment that
+	// failed during that render. RenderPath then returns a successful Result
+	// carrying failed fragment metadata — a *degraded* render, which is a success
+	// with a nil error and is the shape this fake could not previously produce.
+	degrade map[string]string
+	// empty holds the call keys (see renderKey) whose render succeeds and produces
+	// no markup at all, the way an optional root fragment failing with no fallback
+	// does.
+	empty map[string]bool
+	// panics holds the call keys (see renderKey) whose render panics, standing in
+	// for a data handler or a caller-supplied Renderer that panics mid-build.
+	panics map[string]bool
 }
 
 type renderCall struct {
@@ -46,22 +58,61 @@ func (f *fakeRenderer) Pages() []*types.Page {
 }
 
 func (f *fakeRenderer) RenderPath(_ context.Context, path, locale string, params map[string]string) (*render.Result, error) {
+	key := renderKey(path, locale)
+
 	f.mu.Lock()
 	f.calls = append(f.calls, renderCall{path: path, locale: locale, params: params})
-	failErr, shouldFail := f.fail[renderKey(path, locale)]
-	delay := f.delays[renderKey(path, locale)]
+	failErr, shouldFail := f.fail[key]
+	delay := f.delays[key]
+	degradedFragment, degraded := f.degrade[key]
+	empty := f.empty[key]
+	shouldPanic := f.panics[key]
 	f.mu.Unlock()
 
 	if delay > 0 {
 		time.Sleep(delay)
 	}
+	if shouldPanic {
+		panic("fakeRenderer: deliberate panic for " + key)
+	}
 	if shouldFail {
 		return nil, failErr
 	}
 
-	return &render.Result{
+	result := &render.Result{
 		HTML: fmt.Appendf(nil, "<html>%s|%s</html>", locale, path),
-	}, nil
+	}
+	if empty {
+		// Not an error: Render documents a nil HTML with a nil error as what an
+		// optional root fragment failing with no fallback produces.
+		result.HTML = nil
+	}
+	if degraded {
+		result.Metadata = &render.Metadata{
+			Page:   page(f, path, locale),
+			Locale: locale,
+			Fragments: []render.FragmentMetadata{
+				{Name: degradedFragment, Failed: true, Err: errFragmentFailed},
+			},
+		}
+	}
+	return result, nil
+}
+
+// errFragmentFailed is the error the fake reports on a degraded render's failed
+// fragment, so an assertion can check the summary names the real cause.
+var errFragmentFailed = errors.New("sidebar backend unreachable")
+
+// page returns the name of the page f would have rendered at path for locale, or
+// the path itself when no registered page claims it. It exists only so a degraded
+// Result carries plausible Metadata.
+func page(f *fakeRenderer, path, locale string) string {
+	for _, p := range f.pages {
+		if pattern, ok := p.PathFor(locale); ok && pattern == path {
+			return p.Name
+		}
+	}
+	return path
 }
 
 var _ Renderer = (*fakeRenderer)(nil)
@@ -821,5 +872,150 @@ func TestBuild_ConcurrencyPreservesDeterministicOrder(t *testing.T) {
 		if seqContent != concContent {
 			t.Fatalf("output mismatch at index %d: sequential = %q, concurrent = %q", i, seqContent, concContent)
 		}
+	}
+}
+
+// TestBuild_DegradedRenderIsNotWritten is the I1 regression. The HTTP handler
+// refuses to cache a degraded render because caching pins one request's transient
+// failure in front of every later one; a static file has no TTL at all, so writing a
+// degraded render pins it until the next build. It must be recorded, not written.
+func TestBuild_DegradedRenderIsNotWritten(t *testing.T) {
+	out := resolvedTempDir(t)
+	good := newTestPage("about", types.StrategyStatic, map[string]string{"en": "/about"})
+	bad := newTestPage("home", types.StrategyStatic, map[string]string{"en": "/home"})
+	app := &fakeRenderer{
+		pages:   []*types.Page{good, bad},
+		degrade: map[string]string{renderKey("/home", "en"): "sidebar"},
+	}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+
+	if !errors.Is(err, ErrDegradedRender) {
+		t.Fatalf("Build error = %v, want ErrDegradedRender", err)
+	}
+	if len(report.Errors) != 1 || !errors.Is(report.Errors[0], ErrDegradedRender) {
+		t.Fatalf("Report.Errors = %v, want one ErrDegradedRender", report.Errors)
+	}
+	// The recorded error has to say which fragment failed, or an operator reading
+	// the report learns only that something did.
+	if !strings.Contains(report.Errors[0].Error(), "sidebar") ||
+		!strings.Contains(report.Errors[0].Error(), errFragmentFailed.Error()) {
+		t.Errorf("Report.Errors[0] = %q, want it to name the failed fragment and its error", report.Errors[0])
+	}
+	if _, statErr := os.Stat(filepath.Join(out, "home", "index.html")); !os.IsNotExist(statErr) {
+		t.Errorf("the degraded page was written to disk: stat error = %v, want not-exist", statErr)
+	}
+	// The rest of the build still happens: one bad page does not withhold the site.
+	if len(report.Written) != 1 || report.Written[0] != filepath.Join(out, "about", "index.html") {
+		t.Errorf("Report.Written = %v, want only the healthy page", report.Written)
+	}
+}
+
+// TestBuild_DegradedRenderIsWrittenWithAllowDegraded checks the explicit opt-out:
+// with Options.AllowDegraded the page reaches disk, and the build still succeeds.
+func TestBuild_DegradedRenderIsWrittenWithAllowDegraded(t *testing.T) {
+	out := resolvedTempDir(t)
+	page := newTestPage("home", types.StrategyStatic, map[string]string{"en": "/home"})
+	app := &fakeRenderer{
+		pages:   []*types.Page{page},
+		degrade: map[string]string{renderKey("/home", "en"): "sidebar"},
+	}
+
+	b, err := New(app, Options{OutDir: out, AllowDegraded: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	target := filepath.Join(out, "home", "index.html")
+	if got := readFile(t, target); got != "<html>en|/home</html>" {
+		t.Fatalf("content = %q", got)
+	}
+	if len(report.Written) != 1 || report.Written[0] != target {
+		t.Fatalf("Report.Written = %v, want %q", report.Written, target)
+	}
+}
+
+// TestBuild_EmptyRenderIsNotWritten covers the other half: an optional root fragment
+// that fails with no fallback renders nil HTML and a nil error, which used to reach
+// disk as a zero-byte index.html and an exit status of zero. It is refused even with
+// AllowDegraded, which is about a partial page rather than an absent one.
+func TestBuild_EmptyRenderIsNotWritten(t *testing.T) {
+	for _, allowDegraded := range []bool{false, true} {
+		t.Run(fmt.Sprintf("AllowDegraded=%v", allowDegraded), func(t *testing.T) {
+			out := resolvedTempDir(t)
+			page := newTestPage("home", types.StrategyStatic, map[string]string{"en": "/home"})
+			app := &fakeRenderer{
+				pages: []*types.Page{page},
+				empty: map[string]bool{renderKey("/home", "en"): true},
+			}
+
+			b, err := New(app, Options{OutDir: out, AllowDegraded: allowDegraded})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			report, err := b.Build(context.Background())
+
+			if !errors.Is(err, ErrEmptyRender) {
+				t.Fatalf("Build error = %v, want ErrEmptyRender", err)
+			}
+			if len(report.Written) != 0 {
+				t.Errorf("Report.Written = %v, want nothing written", report.Written)
+			}
+			if _, statErr := os.Stat(filepath.Join(out, "home", "index.html")); !os.IsNotExist(statErr) {
+				t.Errorf("a zero-byte page was written: stat error = %v, want not-exist", statErr)
+			}
+		})
+	}
+}
+
+// TestBuild_PanicInOnePageDoesNotKillTheBuild is the I5 regression for the build
+// side. A build worker was a bare goroutine, so a panic anywhere under it was
+// process-fatal — worst under Options.Clean, which has already emptied OutDir by
+// then. It must be recorded against the page and the rest of the build must finish.
+func TestBuild_PanicInOnePageDoesNotKillTheBuild(t *testing.T) {
+	out := resolvedTempDir(t)
+	first := newTestPage("home", types.StrategyStatic, map[string]string{"en": "/home"})
+	exploding := newTestPage("about", types.StrategyStatic, map[string]string{"en": "/about"})
+	last := newTestPage("contact", types.StrategyStatic, map[string]string{"en": "/contact"})
+	app := &fakeRenderer{
+		pages:  []*types.Page{first, exploding, last},
+		panics: map[string]bool{renderKey("/about", "en"): true},
+	}
+
+	b, err := New(app, Options{OutDir: out, Clean: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+
+	if !errors.Is(err, ErrBuildPanic) {
+		t.Fatalf("Build error = %v, want ErrBuildPanic", err)
+	}
+	if len(report.Errors) != 1 || !errors.Is(report.Errors[0], ErrBuildPanic) {
+		t.Fatalf("Report.Errors = %v, want one ErrBuildPanic", report.Errors)
+	}
+	if !strings.Contains(report.Errors[0].Error(), `page "about"`) {
+		t.Errorf("Report.Errors[0] = %q, want it to name the page that panicked", report.Errors[0])
+	}
+	want := []string{
+		filepath.Join(out, "home", "index.html"),
+		filepath.Join(out, "contact", "index.html"),
+	}
+	if len(report.Written) != len(want) {
+		t.Fatalf("Report.Written = %v, want %v", report.Written, want)
+	}
+	for i, path := range want {
+		if report.Written[i] != path {
+			t.Fatalf("Report.Written[%d] = %q, want %q", i, report.Written[i], path)
+		}
+		readFile(t, path)
 	}
 }

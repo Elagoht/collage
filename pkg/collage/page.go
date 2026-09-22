@@ -73,7 +73,10 @@ func (b *PageBuilder) WithErrorPage(p *Page) *PageBuilder {
 }
 
 // Static sets the page's strategy to StrategyStatic: render once and serve from
-// cache until explicitly invalidated.
+// cache until explicitly invalidated. The page's cache entry is written with no
+// practical expiry, so Config.Cache.DefaultTTL does not apply to it — only
+// InvalidateTags, or a cache eviction at MaxEntries, causes a re-render. A page
+// that should expire on a clock wants Incremental instead.
 func (b *PageBuilder) Static() *PageBuilder {
 	b.page.Strategy = StrategyStatic
 	return b
