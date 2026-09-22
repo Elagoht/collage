@@ -250,7 +250,19 @@ doc comment.
 Sentinel errors, all prefixed `collage: `: `ErrNilFragment`, `ErrUnknownSlot`,
 `ErrSlotOccupied`, `ErrFragmentCycle`, `ErrMissingContent`, `ErrMissingTTL`,
 `ErrInvalidRedirectStatus`, `ErrSelfErrorPage`, `ErrEmptyName`, `ErrEmptyTemplatePath`,
-`ErrInvalidPath`.
+`ErrInvalidPath`, `ErrInvalidTimeout`, `ErrInvalidTTL`, `ErrRequiredSlotUnfilled`,
+`ErrInvalidSlotDefinition`.
+
+**One sentinel per distinct failure — never reuse one for an unrelated condition.**
+Callers branch with `errors.Is`, so overloading a sentinel silently merges two failures a
+caller needs to tell apart. Specifically: `ErrInvalidTimeout` for `Fragment.Timeout < 0`;
+`ErrInvalidTTL` for `Page.CacheTTL < 0` (distinct from `ErrMissingTTL`, which is the
+incremental-strategy-without-TTL case); `ErrRequiredSlotUnfilled` for a `Required` slot
+with no fill (NOT `ErrMissingContent`, which is a page with no content fragment);
+`ErrInvalidSlotDefinition` for a malformed declaration (empty slot name, or a map key
+that does not equal the definition's `Name`). Every failure mode in `Validate` must be
+reachable by `errors.Is` with its own sentinel — a test asserting only `err != nil` is a
+defect.
 
 ### Tests
 
