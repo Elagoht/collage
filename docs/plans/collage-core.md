@@ -1433,6 +1433,29 @@ names the page and the specific problem.
   `type Metrics = observability.Metrics`, `type Tracer = observability.Tracer` aliases so
   users can implement these without importing internal packages.
 
+**The static builder must be re-exported too.** `internal/build` is unreachable from any
+consumer of this module — Go forbids importing `internal/` across module boundaries — so
+without aliases a user's own project cannot run a static build at all, and a scaffolded
+project would have to hand-roll a file writer. That is not a theoretical concern: such a
+hand-rolled writer would lack the symlink-containment and dangerous-target refusals that
+took two Critical fix rounds to get right in `internal/build`, and the scaffold is copied
+into every new project. Export:
+
+```go
+type Builder = build.Builder
+type BuildOptions = build.Options
+type BuildReport = build.Report
+type PathProvider = build.PathProvider
+type PathInstance = build.PathInstance
+type SkipRecord = build.SkipRecord
+
+// NewBuilder returns a static-site builder for app.
+func NewBuilder(app *App, opts BuildOptions) (*Builder, error)
+```
+
+plus the package's sentinel errors. The scaffolded `main.go` calls `collage.NewBuilder`
+and inherits every safety check rather than reimplementing a weaker one.
+
 ### Tests
 
 Build an App over a temporary template directory; register the spec's minimal example
