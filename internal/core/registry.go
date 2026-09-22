@@ -413,6 +413,15 @@ func (a *App) Page(name string) (*types.Page, bool) {
 // redirects but not mutating one through a shared element pointer, so the values are
 // copied too.
 //
+// The SEO copy is one level deep, and deliberately so. Page.SEO is a
+// map[string]any whose values are opaque to the framework: adding, replacing, or
+// deleting a top-level key on the returned copy cannot reach the original, but a
+// value that is itself a map, a slice, or a pointer is the same object the original
+// holds, and writing *through* one of those reaches live framework state. Going
+// deeper would need reflection, which this project does not use, and there is no
+// type information to recurse on without it. A plugin that has to modify nested SEO
+// metadata should replace the whole top-level value rather than mutate it in place.
+//
 // What stays shared, deliberately: LayoutFragment, ContentFragment, NotFoundPage,
 // and ErrorPage. Fragment trees are not deep-copied — a plugin that mutates a
 // fragment reached through one of these pointers is mutating live framework state,

@@ -107,8 +107,10 @@ pointers inside it (`LayoutFragment`, `ContentFragment`, `NotFoundPage`,
 every render would defeat a cache-first framework's hot path.
 
 A plugin holding an event's `*Page` can write straight through it, and doing so
-mutates the same page every other request and hook sees. The framework does not
-defend against that and does not claim to. In-process Go plugins are trusted code,
+mutates the same page every other request and hook sees — concurrently with those
+requests reading it. That is a data race in the precise sense: `go test -race`
+reports it, and without the detector it corrupts whatever container was written to.
+The framework does not defend against that and does not claim to. In-process Go plugins are trusted code,
 not a sandbox: the goal is to make accidental mutation hard and deliberate
 mutation obvious. Where mutation *is* intended it is explicit —
 `AfterRenderEvent.HTML`, and `CacheWriteEvent`'s `Skip`, `TTL`, and `Tags`.

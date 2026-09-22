@@ -188,12 +188,23 @@ render that created it.
 | `Request` | The inbound `*http.Request` |
 | `Locale` | The resolved locale |
 | `PathParams`, `Param(name)` | Route parameters captured from the path |
-| `Page` | The page being rendered |
+| `Page` | The page being rendered — **read-only, see below** |
 | `SharedData`, `Get`, `Set` | Values exchanged between fragments in one render |
 | `Context()` | The underlying `context.Context` |
 
 `SharedData` works because the render is sequential: a fragment can read what an
 ancestor rendered earlier in the same walk.
+
+> **`rc.Page` is not yours to write to.** Every other member of the render context
+> is request-scoped; `Page` is a pointer to the one `*collage.Page` the framework
+> registered, shared by every request that reaches it and by every goroutine
+> serving them. A data handler that writes `rc.Page.SEO["title"] = ...`, appends to
+> `rc.Page.DependencyTags`, or edits `rc.Page.Paths` is not customising one
+> response — it is mutating live framework state while other requests read it,
+> which is a data race in the precise sense: `go test -race` will report it, and
+> without the race detector it corrupts a map sooner or later. Read from it freely;
+> put anything you want to vary per request in `SharedData` or in the data your
+> handler returns.
 
 ## Failure policy
 

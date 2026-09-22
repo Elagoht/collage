@@ -141,6 +141,15 @@ therefore receives a `collage.Host` — `DevMode`, `Pages`, `Page`,
 no way to reach the router, the cache, the render engine, the template set, or any
 page it was not explicitly handed.
 
+That is enforced by *what is passed*, not by the parameter's type. A method set
+travels with a value through an interface, so handing `Init` the `*App` under a
+`Host` parameter would leave `Shutdown`, `ListenAndServe`, `Handler`, and
+`RenderPath` one type assertion away — an assertion that needs no name for the
+concrete type and no import of `pkg/collage`, so narrowing what the public package
+exports would not have closed it either. `Init` receives a narrow forwarding value
+that has Host's six methods and nothing else, so there is nothing for the
+assertion to find.
+
 **`Host` limits reachability, not mutability, and the framework does not pretend
 otherwise.** `*collage.Page` is a plain struct of exported fields. `Host.Pages`
 and `Host.Page` return a defensive copy (the struct, plus its `Paths`,
@@ -148,8 +157,11 @@ and `Host.Page` return a defensive copy (the struct, plus its `Paths`,
 types deliberately carry the framework's *live* `*Page` — copying a page and its
 fragment tree on every render would defeat a cache-first framework's hot path. A
 plugin holding an event's `*Page` can write straight through it, and doing so
-mutates the same page every other request sees. That is undefined behaviour the
-framework does not defend against.
+mutates the same page every other request sees — concurrently with every other
+request reading it. That is a data race, not merely something the framework leaves
+undefined: `go test -race` will report it, and without the detector it silently
+corrupts whatever container was written to. The framework does not defend against
+it, so do not do it.
 
 This is deliberate rather than an oversight: in-process Go plugins are trusted
 code, not a sandbox boundary. The goal is to make accidental mutation hard and

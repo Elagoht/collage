@@ -68,9 +68,10 @@ type PageResolvedEvent struct {
 	// event does not copy it, deliberately: copying a page (and its fragment
 	// tree) on every request would defeat a cache-first framework's hot path.
 	// Nothing in this package stops a plugin from writing through it, but doing
-	// so mutates the same Page every other request and hook sees; that is
-	// undefined behaviour this package does not defend against. Treat it as
-	// read-only by convention, not by enforcement. See the package doc comment.
+	// so mutates the same Page every other request and hook sees, concurrently
+	// with those requests reading it: that is a data race, which -race reports and
+	// which silently corrupts a map or slice without it. Treat it as read-only by
+	// convention, not by enforcement. See the package doc comment.
 	Page *types.Page
 	// Locale is the resolved locale for the request.
 	Locale string

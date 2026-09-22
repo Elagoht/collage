@@ -9,8 +9,9 @@ app, err := collage.New(&collage.Config{
 	Cache: collage.CacheConfig{
 		Enabled:    true,
 		Type:       "memory",
-		DefaultTTL: 5 * time.Minute,
-		MaxEntries: 10000,
+		DefaultTTL:    5 * time.Minute,
+		MaxEntries:    10000,
+		MaxKeysPerTag: 10000,
 	},
 })
 ```
@@ -37,6 +38,11 @@ page := collage.NewPage("blog-post").
 
 `Incremental` without a positive TTL is a registration error
 (`collage.ErrMissingTTL`), not a page that silently never expires.
+
+`Static()` means what it says: its cache entry is written with no practical
+expiry, so `DefaultTTL` does not apply to it. Only `InvalidateTags`, or eviction
+at `MaxEntries`, causes a static page to render again. If you want a page to
+expire on a clock, that is `Incremental`.
 
 Only `GET` and `HEAD` are ever served from cache, and a `HEAD` never populates it:
 it produced no body to store.
@@ -98,6 +104,30 @@ return data, []string{"post:" + slug}, nil
 The union is stored with the cache entry and recorded in the dependency tracker,
 which maps tag → the keys built from it.
 
+### The tracker is in-process, and bounded
+
+Two properties of the tracker are worth knowing before you rely on tag
+invalidation.
+
+**It is per process, and in memory.** It records the keys *this* instance wrote,
+and nothing else. Behind a load balancer with a shared store, instance A's
+tracker cannot name the keys instance B wrote; after a restart, no tracker can
+name anything written before it. The framework closes this as far as it can by
+also calling `Cache.Invalidate(ctx, tags)` whenever your store implements
+`collage.TaggedCache` — a store that indexes tags itself can resolve what the
+tracker never saw — but with a store that does not, tag invalidation reaches only
+what the running process happens to remember.
+
+**It is bounded by `MaxKeysPerTag`.** Nothing removes a key from the tracker when
+the cache evicts or expires it, and the cache key carries the request's query
+string, so any client can mint unlimited distinct keys for one page. Without a
+cap the tracker would grow without bound behind a cache that stays at
+`MaxEntries`. When a tag reaches the cap, recording a new key under it drops the
+oldest key recorded under that tag: the cache entry itself is untouched and keeps
+being served until it expires, but `InvalidateTags` no longer reaches it. The
+default is 10000, matching `MaxEntries`; a negative value means unlimited, which
+is a deliberate choice to accept unbounded growth rather than ever drop.
+
 ## Invalidating
 
 ```go
@@ -119,6 +149,12 @@ A key the cache fails to drop is not counted and does not stop the rest — ever
 other key is still invalidated and the failures are joined into the returned
 error, because a partial invalidation that reports success is how stale pages
 survive a deploy.
+
+When your store implements `collage.TaggedCache`, `Cache.Invalidate(ctx, tags)` is
+called as well as the per-key removals the tracker resolved. Entries it drops are
+not included in the returned count — the `Cache` contract gives `Invalidate` no
+count to report, and inventing one would make the number mean different things for
+different caches.
 
 Plugins observe invalidation through `OnCacheInvalidate`, and a plugin triggers
 one through `Host.InvalidateTags`.
@@ -165,6 +201,21 @@ hook adjusted, so the value a client sees does not change from request to reques
 Set `CacheConfig.Store`. A non-nil `Store` is used exactly as given, and
 `Cache.Type` is then ignored (including by validation). `Enabled` stays the master
 switch: a `Store` on a disabled cache is not silently turned on.
+
+> **Do not assign a nil pointer to `Store`.** A nil `*myCache` assigned to a
+> `Cache`-typed field is *not* a nil interface — it is a non-nil interface holding
+> a nil pointer, and `store != nil` is true for it. The framework cannot tell that
+> apart from a real implementation without reflection, which it does not use, so
+> it will call straight through and panic on the first cache lookup. This bites
+> most often via a constructor that returns a concrete pointer type:
+>
+> ```go
+> func newRedisCache(c *redis.Client) *redisCache { ... } // may return nil
+>
+> Cache: collage.CacheConfig{Enabled: true, Store: newRedisCache(client)} // nil is now "non-nil"
+> ```
+>
+> Leave the field unset when you have no cache, or check for nil before assigning.
 
 ```go
 app, err := collage.New(&collage.Config{

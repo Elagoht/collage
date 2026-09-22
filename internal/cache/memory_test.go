@@ -446,3 +446,130 @@ func TestMemoryCache_Concurrent(t *testing.T) {
 		t.Fatal("Get() found = false for key set after concurrent access")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// FIFO queue integrity
+//
+// The eviction queue is a hand-rolled doubly linked list, and the tests above only
+// ever remove from its head — which is the one case where a broken unlink is
+// invisible, because head removal never has to patch a predecessor. These three pin
+// the rest of it: removing from the middle, removing the tail, and re-Setting a key,
+// which removes it from wherever it is and pushes it back as a new insertion. Each
+// one asserts through subsequent eviction order, since that is the only observable
+// the queue has.
+// ---------------------------------------------------------------------------
+
+// fill writes keys in order with a long TTL, failing the test on any error.
+func fill(t *testing.T, c *MemoryCache, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		if _, err := c.Set(context.Background(), key, []byte(key), time.Hour); err != nil {
+			t.Fatalf("Set(%q) error = %v", key, err)
+		}
+	}
+}
+
+// present reports which of keys the cache still holds, in the order given.
+func present(t *testing.T, c *MemoryCache, keys ...string) []string {
+	t.Helper()
+	var live []string
+	for _, key := range keys {
+		if _, _, found := c.Get(context.Background(), key); found {
+			live = append(live, key)
+		}
+	}
+	return live
+}
+
+// equalKeys reports whether got and want hold the same keys in the same order.
+func equalKeys(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestMemoryCache_FIFOQueueSurvivesMiddleRemoval(t *testing.T) {
+	ctx := context.Background()
+	c := NewMemory(MemoryConfig{MaxEntries: 3})
+	fill(t, c, "a", "b", "c")
+
+	// "b" is neither head nor tail: unlinking it has to patch both neighbours.
+	if err := c.InvalidateKey(ctx, "b"); err != nil {
+		t.Fatalf("InvalidateKey(b) error = %v", err)
+	}
+
+	// Two more insertions take the cache back over the cap twice, which must evict
+	// "a" then "c" — in that order — and never revisit the removed "b".
+	fill(t, c, "d", "e")
+
+	if got := present(t, c, "a", "b", "c", "d", "e"); !equalKeys(got, []string{"c", "d", "e"}) {
+		t.Fatalf("live keys = %v, want [c d e]", got)
+	}
+
+	fill(t, c, "f")
+	if got := present(t, c, "c", "d", "e", "f"); !equalKeys(got, []string{"d", "e", "f"}) {
+		t.Fatalf("live keys after one more insertion = %v, want [d e f]", got)
+	}
+}
+
+func TestMemoryCache_FIFOQueueSurvivesTailRemoval(t *testing.T) {
+	ctx := context.Background()
+	c := NewMemory(MemoryConfig{MaxEntries: 3})
+	fill(t, c, "a", "b", "c")
+
+	// "c" is the tail: unlinking it has to move the tail pointer back to "b", or
+	// the next insertion appends to a node that is no longer in the queue.
+	if err := c.InvalidateKey(ctx, "c"); err != nil {
+		t.Fatalf("InvalidateKey(c) error = %v", err)
+	}
+	fill(t, c, "d", "e")
+
+	if got := present(t, c, "a", "b", "c", "d", "e"); !equalKeys(got, []string{"b", "d", "e"}) {
+		t.Fatalf("live keys = %v, want [b d e]", got)
+	}
+
+	// Removing the only entry leaves both pointers nil, and the queue has to be
+	// usable again afterwards.
+	single := NewMemory(MemoryConfig{MaxEntries: 1})
+	fill(t, single, "solo")
+	if err := single.InvalidateKey(ctx, "solo"); err != nil {
+		t.Fatalf("InvalidateKey(solo) error = %v", err)
+	}
+	fill(t, single, "next")
+	if got := present(t, single, "solo", "next"); !equalKeys(got, []string{"next"}) {
+		t.Fatalf("live keys after emptying and refilling = %v, want [next]", got)
+	}
+}
+
+func TestMemoryCache_ReSetRefreshesFIFOPosition(t *testing.T) {
+	c := NewMemory(MemoryConfig{MaxEntries: 3})
+	fill(t, c, "a", "b", "c")
+
+	// Re-Setting "a" replaces the entry entirely, which SetTagged documents as a
+	// new insertion: "a" moves to the tail and "b" becomes the oldest.
+	fill(t, c, "a")
+	if entries := c.Stats().Entries; entries != 3 {
+		t.Fatalf("Stats().Entries after re-Set = %d, want 3: the replacement was counted as a new entry", entries)
+	}
+
+	fill(t, c, "d")
+	if got := present(t, c, "a", "b", "c", "d"); !equalKeys(got, []string{"a", "c", "d"}) {
+		t.Fatalf("live keys = %v, want [a c d]: a re-Set key must not still be the oldest", got)
+	}
+
+	// Reading is not a refresh: this cache is FIFO, not LRU, so touching "c" must
+	// not save it from being next.
+	if _, _, found := c.Get(context.Background(), "c"); !found {
+		t.Fatal("Get(c) found nothing, want the entry")
+	}
+	fill(t, c, "e")
+	if got := present(t, c, "a", "c", "d", "e"); !equalKeys(got, []string{"a", "d", "e"}) {
+		t.Fatalf("live keys = %v, want [a d e]: a Get must not refresh FIFO position", got)
+	}
+}

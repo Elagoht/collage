@@ -77,11 +77,11 @@ func TestFragmentBuilder_MinimalApp(t *testing.T) {
 // either returns the post tagged "post:<slug>" or an error that would trigger the
 // page's custom 500. fetchPost is a local stand-in for the spec's external function.
 func TestFragmentBuilder_BlogPostContent(t *testing.T) {
-	fetchPost := func(slug string) (any, error) {
+	fetchPost := func(slug string) (*fetchedPost, error) {
 		if slug == "" {
 			return nil, errors.New("post not found")
 		}
-		return map[string]any{"Slug": slug}, nil
+		return &fetchedPost{Slug: slug}, nil
 	}
 
 	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").
@@ -200,4 +200,14 @@ func TestFragmentBuilder_BuildErr_NilWhenNoErrors(t *testing.T) {
 	if err := b.BuildErr(); err != nil {
 		t.Fatalf("BuildErr() = %v, want nil", err)
 	}
+}
+
+// fetchedPost is what the blog-post fixtures' stand-in store returns. It is a
+// concrete type rather than an "any" or a map[string]any so that the stand-in states
+// what it hands back: only the DataHandler signature itself has a genuine reason to
+// be untyped, since html/template renders arbitrary data, and a test helper borrowing
+// that looseness would be borrowing an exception it has no claim to.
+type fetchedPost struct {
+	// Slug is the post's URL slug, which is all these fixtures read.
+	Slug string
 }

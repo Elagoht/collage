@@ -14,8 +14,11 @@
 // page (and, transitively, its fragment tree) on every render would defeat a
 // cache-first framework's hot path; see the Host doc comment for where a defensive
 // copy is required instead (Pages and Page, both startup/CLI-path calls where the
-// allocation is free). Mutating a live Page through either path is undefined
-// behaviour this package does not defend against.
+// allocation is free). Mutating a live Page is a data race, not merely something
+// this package leaves undefined: hooks run on request goroutines, so a write to a
+// live Page races every concurrent request reading it. Under -race the detector
+// reports it; without the detector it corrupts whichever map or slice was written
+// to. This package does not defend against it.
 //
 // This is deliberate, not an oversight: in-process Go plugins are trusted code,
 // not a sandbox boundary. The goal is to make accidental mutation hard and
@@ -72,7 +75,13 @@ type Plugin interface {
 // and ErrorPage pointers are left shared with the original, not deep-copied —
 // fragment mutation is a separate concern this interface does not attempt to
 // guard against either, and these two calls are startup/CLI-path, so the
-// shallow-copy cost is irrelevant. Task 11 implements Host and is held to this.
+// shallow-copy cost is irrelevant. internal/core's hostView implements Host and is
+// held to this.
+//
+// A copied container is copied one level deep, which is as far as this can go
+// without reflection: replacing a Page.SEO entry on the copy is safe, but writing
+// through a value that entry holds — SEO values are opaque to the framework, so
+// one may be a map, a slice, or a pointer — reaches the original.
 //
 // The per-request event types in hooks.go are a deliberate exception: they carry
 // the framework's live *types.Page rather than a copy, to avoid that allocation
@@ -83,7 +92,10 @@ type Host interface {
 	DevMode() bool
 	// Pages returns every page registered with the application, each a defensive
 	// copy — see the Host doc comment for exactly what "defensive copy" means
-	// here. Mutating a returned Page does not affect the framework's own.
+	// here. Mutating a returned Page does not affect the framework's own, with the
+	// one limit that a copied container is copied one level deep: replacing a
+	// Page.SEO entry on the copy is safe, but writing through a value that entry
+	// holds — a nested map, slice, or pointer — reaches the original.
 	Pages() []*types.Page
 	// Page returns the page registered under name, and whether one was found.
 	// The returned Page is a defensive copy, on the same terms as Pages.

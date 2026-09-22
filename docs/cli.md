@@ -52,18 +52,74 @@ hot-reload Go code: a change to a `.go` file still needs a restart.
 ## Plugin commands
 
 A plugin registers a subcommand from its `Init`, through `Host.RegisterCommand`.
-Those commands are dispatched by name alongside the built-ins. A command with an
-empty name, a duplicate name, or a name that collides with a built-in (`new`,
-`dev`, `build`, `version`, `help`) makes the CLI refuse the whole invocation with
-exit code `2` rather than silently drop the offender. See [plugins](plugins.md).
+
+**The `collage` binary does not run them.** It never loads your application — its
+`dev` and `build` commands shell out to `go run .` in your project directory — so
+it has no way to reach a command that only exists once your plugins have been
+initialised. Your own `main` dispatches them, with `collage.DispatchCommands`:
+
+```go
+func main() {
+	app, err := collage.New(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	registerPages(app)
+	app.RegisterPlugin(sitemap.New())
+
+	// Starts the application (running every plugin's Init, which is what
+	// registers their commands) and dispatches args[0] against them.
+	code, err := collage.DispatchCommands(context.Background(), app, os.Args[1:])
+	if !errors.Is(err, collage.ErrUnknownCommand) {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		os.Exit(code)
+	}
+
+	// Nothing claimed it: carry on and serve.
+	log.Fatal(app.ListenAndServe())
+}
+```
+
+`ErrUnknownCommand` is the fall-through signal — no arguments, or a name no plugin
+claimed — so the program carries on with whatever it does by default. A command
+that ran and failed returns exit code `1` with its own error wrapped; a nil `*App`
+or an unclaimed name returns `2`. `DispatchCommands` has no built-ins of its own:
+`dev` and `build` belong to the `collage` binary, which invokes your program rather
+than the other way round, and `App.Commands()` gives you the list if you want to
+print one.
+
+Dispatching starts the application, which closes registration — so call it after
+everything is registered. A later `ListenAndServe` reuses that start rather than
+repeating it.
+
+Within the application, a command with an empty name or a name another command
+already holds is rejected at `RegisterCommand` (`collage.ErrEmptyCommandName`,
+`collage.ErrDuplicateCommand`). See [plugins](plugins.md).
 
 ## The static builder
 
 The `-collage-build` half of the contract is `collage.NewBuilder` — the same
 builder the CLI documentation refers to, reached through the public API. It
-renders through `App.RenderPath`, which is the same render engine the HTTP server
-uses, so the files it writes are byte-identical to what a live request would
-produce.
+renders through `App.RenderPath`: the same render engine the HTTP server uses, the
+same template set, the same fragment tree, the same data handlers.
+
+**A static build renders without plugins.** It does not go through `App.Handler()`,
+so plugin `Init` never runs and no render hook fires: nothing an
+`OnPageResolved`, `OnBeforeRender`, `OnAfterRender`, or `OnCacheWrite` would have
+contributed appears in the files it writes. A plugin that stamps every page from
+`OnAfterRender` stamps nothing here. What you get is the fragment output a live
+request would produce, without whatever the plugin layer adds on top of it.
+
+A page that renders with a failed fragment is **not written**: the failure is
+recorded in `report.Errors` as `collage.ErrDegradedRender`, because a static file
+has no TTL to recover through and would keep serving that failure until the next
+build. Set `BuildOptions.AllowDegraded` if a partial page is genuinely better than
+no page. A page that renders no markup at all is always refused, as
+`collage.ErrEmptyRender` — that used to reach disk as a zero-byte `index.html` and
+an exit status of zero. A panic while building one page is recovered as
+`collage.ErrBuildPanic` and the rest of the build continues.
 
 ```go
 func staticBuild(app *collage.App, outDir string, clean bool) error {

@@ -75,11 +75,11 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		WithContent(blog500Content).
 		Build()
 
-	fetchPost := func(slug string) (any, error) {
+	fetchPost := func(slug string) (*fetchedPost, error) {
 		if slug == "" {
 			return nil, errors.New("post not found")
 		}
-		return map[string]any{"Slug": slug}, nil
+		return &fetchedPost{Slug: slug}, nil
 	}
 
 	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").
