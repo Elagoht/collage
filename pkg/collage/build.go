@@ -2,6 +2,7 @@ package collage
 
 import (
 	"github.com/Elagoht/collage/internal/build"
+	"github.com/Elagoht/collage/internal/httpx"
 )
 
 // Builder renders an application's static-eligible pages to files under
@@ -69,9 +70,16 @@ var ErrDegradedRender = build.ErrDegradedRender
 var ErrEmptyRender = build.ErrEmptyRender
 
 // ErrBuildPanic is recorded in BuildReport.Errors when rendering or writing one
-// page panicked. The build recovers it, records it against that page, and
-// continues with the rest.
+// page or document panicked. The build recovers it, records it against that page
+// or document, and continues with the rest.
 var ErrBuildPanic = build.ErrBuildPanic
+
+// ErrEmptyDocumentBody is recorded in BuildReport.Errors, and no file is written,
+// when a document renders successfully but produces no body — the same condition
+// internal/httpx serves as a 500 for a live request, reused here rather than a
+// second sentinel for the same failure mode. See DocumentHandlerFunc: a handler
+// that genuinely wants to serve an empty document can return a single newline.
+var ErrEmptyDocumentBody = httpx.ErrEmptyDocumentBody
 
 // NewBuilder returns a static-site builder that renders app's pages and
 // documents, and copies app's mounted assets, according to opts, ready for
@@ -80,17 +88,14 @@ var ErrBuildPanic = build.ErrBuildPanic
 //
 // This is a thin wrapper, not a second implementation: *App (an alias for
 // *internal/core.App) already satisfies internal/build's own narrow Renderer
-// interface — Pages, RenderPath, Documents and RenderDocumentPath — so
-// NewBuilder does nothing beyond handing app to build.New. Every safety check
-// Build performs (symlink-escape containment, the dangerous-output-directory
-// refusals) is internal/build's own, not reimplemented here.
-//
-// opts.Mounts is populated from app.Mounts() here, overwriting whatever the
-// caller set: BuildOptions.Mounts exists so internal/build's own tests can
-// supply mounts directly against a fake Renderer, not as a second, parallel
-// way for an application to register a mount alongside App.Mount. A mounted
-// asset a static build should copy is always one the application itself
-// mounted.
+// interface — Pages, RenderPath, Documents, RenderDocumentPath and Mounts —
+// so NewBuilder does nothing beyond handing app to build.New. Every safety
+// check Build performs (symlink-escape containment, the dangerous-output-
+// directory refusals) is internal/build's own, not reimplemented here. Which
+// mounts a build copies is answered entirely by app.Mounts(), reached through
+// Renderer, not by anything on BuildOptions: a caller cannot hand New one
+// application's pages alongside a different application's mounts, because
+// there is no field through which to do so.
 //
 // The nil check here is not redundant with build.New's own: app arrives as
 // the concrete *App, and handing a nil *App to build.New's Renderer parameter
@@ -102,6 +107,5 @@ func NewBuilder(app *App, opts BuildOptions) (*Builder, error) {
 	if app == nil {
 		return nil, ErrNilRenderer
 	}
-	opts.Mounts = app.Mounts()
 	return build.New(app, opts)
 }

@@ -78,16 +78,23 @@ var ErrDegradedRender = errors.New("collage: refusing to write a degraded render
 // Options.AllowDegraded is about serving a partial page, not an absent one.
 var ErrEmptyRender = errors.New("collage: refusing to write an empty render")
 
-// Renderer is the narrow surface Builder needs from an application: the registered
-// pages and documents, and a way to render one of them by path outside the HTTP
-// request path. It is declared here, rather than imported from internal/core, so
-// this package can be tested against a fake and so the dependency between the two
-// packages points from core to build.
+// Renderer is the narrow surface Builder needs from an application: what it
+// contains — pages, documents, and mounted asset file systems — and a way to
+// render a page or document by path outside the HTTP request path. It is
+// declared here, rather than imported from internal/core, so this package can be
+// tested against a fake and so the dependency between the two packages points from
+// core to build.
+//
+// Pages, Documents, and Mounts are grouped on one interface, rather than Mounts
+// living on Options instead, because all three answer the same question — what
+// does this application contain — and a caller must not be able to hand New one
+// application's Renderer alongside a different application's mounts: putting
+// Mounts on Options would let exactly that happen, silently.
 //
 // Renderer is internal-only — it is not re-exported through pkg/collage, unlike
-// PathProvider and DocumentPathProvider — so widening it to cover documents here
-// breaks no external implementation of it; only *core.App itself has to satisfy the
-// wider surface, and it already does.
+// PathProvider and DocumentPathProvider — so widening it to cover documents and
+// mounts here breaks no external implementation of it; only *core.App itself has
+// to satisfy the wider surface, and it already does.
 //
 // *core.App satisfies Renderer.
 type Renderer interface {
@@ -103,6 +110,9 @@ type Renderer interface {
 	// overlaying params onto whatever path parameters the router itself captures,
 	// and bypasses any render cache. It is RenderPath's sibling for documents.
 	RenderDocumentPath(ctx context.Context, path, locale string, params map[string]string) (*render.DocumentResult, error)
+	// Mounts returns every mounted asset file system. A static build copies each
+	// one whose BuildCopy is true into its output; see copyAssets.
+	Mounts() []*asset.Mount
 }
 
 // PathProvider supplies the concrete paths a dynamic page's pattern expands to. A
@@ -156,13 +166,6 @@ type Options struct {
 	// a dynamic page without a PathProvider records: the failure mode is
 	// identical, only the kind of route differs.
 	DocumentPathProvider DocumentPathProvider
-	// Mounts lists the mounted asset file systems a static build copies into its
-	// output, alongside pages and documents. pkg/collage.NewBuilder populates
-	// this automatically from the application's own Mounts; internal/build's own
-	// tests set it directly, since they build against a fake Renderer rather than
-	// a real *core.App. A mount whose BuildCopy is false is left out of the copy
-	// entirely — see asset.WithoutBuildCopy.
-	Mounts []*asset.Mount
 	// AllowDegraded writes a page whose render had at least one failed fragment
 	// instead of recording ErrDegradedRender against it. It is off by default:
 	// a static file has no TTL, so a degraded page written to disk stays degraded
@@ -242,8 +245,9 @@ type buildTask struct {
 }
 
 // Build renders every static-eligible page and document of the application to
-// files under Options.OutDir, copies every Options.Mounts entry whose BuildCopy is
-// true into it, and returns a Report describing what happened.
+// files under Options.OutDir, copies every mount the application reports through
+// Renderer.Mounts whose BuildCopy is true into it, and returns a Report describing
+// what happened.
 //
 // A page or document using a non-cacheable render strategy is skipped, recorded in
 // the report, rather than built. A path pattern for a locale that contains a

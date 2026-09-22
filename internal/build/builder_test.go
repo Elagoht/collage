@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -53,6 +54,8 @@ type fakeRenderer struct {
 	docBodies map[string][]byte
 	// docPanics holds the call keys (see renderKey) whose document render panics.
 	docPanics map[string]bool
+
+	mounts []*asset.Mount
 }
 
 type renderCall struct {
@@ -154,6 +157,10 @@ func (f *fakeRenderer) RenderDocumentPath(_ context.Context, path, locale string
 		Body:        body,
 		ContentType: "application/octet-stream",
 	}, nil
+}
+
+func (f *fakeRenderer) Mounts() []*asset.Mount {
+	return f.mounts
 }
 
 var _ Renderer = (*fakeRenderer)(nil)

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -277,5 +278,54 @@ func TestBuild_ARefusedDocumentDoesNotStopTheBuild(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(out, "broken.json")); err == nil {
 		t.Fatal("the failing document's file should not exist")
+	}
+}
+
+// TestBuild_EmptyDocumentBodyIsNotWritten covers the fix-round-1 parity gap: a
+// document handler returning "nil, nil, nil" — a successful render with no body —
+// must not reach disk as a zero-byte file the way it used to. internal/httpx
+// refuses to *serve* exactly this as ErrEmptyDocumentBody, a 500, because a
+// document has no equivalent of a page's deliberate empty render; a static build
+// reusing that same sentinel means the built artifact matches what the live server
+// would have done, rather than silently shipping a broken sitemap or feed. It must
+// be recorded, not written, and — like a document whose render fails outright — the
+// build must continue: a second, healthy document still gets written.
+func TestBuild_EmptyDocumentBodyIsNotWritten(t *testing.T) {
+	out := resolvedTempDir(t)
+	empty := newTestDocument("empty", types.StrategyStatic, map[string]string{"en": "/empty.json"})
+	ok := newTestDocument("ok", types.StrategyStatic, map[string]string{"en": "/ok.json"})
+	app := &fakeRenderer{
+		documents: []*types.Document{empty, ok},
+		// A nil entry for this key is exactly "nil, nil, nil": hasBody is true (the
+		// key is present) and body is nil, so RenderDocumentPath returns a
+		// successful *render.DocumentResult with a nil Body and a nil error — the
+		// shape a handler that forgot to populate its body produces.
+		docBodies: map[string][]byte{renderKey("/empty.json", "en"): nil},
+	}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, buildErr := b.Build(context.Background())
+
+	if !errors.Is(buildErr, httpx.ErrEmptyDocumentBody) {
+		t.Fatalf("Build error = %v, want it to wrap httpx.ErrEmptyDocumentBody", buildErr)
+	}
+	if len(report.Errors) != 1 || !errors.Is(report.Errors[0], httpx.ErrEmptyDocumentBody) {
+		t.Fatalf("Report.Errors = %v, want one ErrEmptyDocumentBody", report.Errors)
+	}
+	if _, statErr := os.Stat(filepath.Join(out, "empty.json")); !os.IsNotExist(statErr) {
+		t.Errorf("a zero-byte document was written: stat error = %v, want not-exist", statErr)
+	}
+
+	// The rest of the build still happens: one refused document does not withhold
+	// the rest of the site.
+	want := filepath.Join(out, "ok.json")
+	if len(report.Written) != 1 || report.Written[0] != want {
+		t.Fatalf("Report.Written = %v, want only [%s]", report.Written, want)
+	}
+	if _, err := os.Stat(want); err != nil {
+		t.Fatalf("stat %s: %v", want, err)
 	}
 }

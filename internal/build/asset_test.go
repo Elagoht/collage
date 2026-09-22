@@ -26,8 +26,8 @@ func TestBuild_CopiesMountedAssets(t *testing.T) {
 		t.Fatalf("asset.New: %v", err)
 	}
 
-	app := &fakeRenderer{}
-	b, err := New(app, Options{OutDir: out, Mounts: []*asset.Mount{mount}})
+	app := &fakeRenderer{mounts: []*asset.Mount{mount}}
+	b, err := New(app, Options{OutDir: out})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -66,8 +66,8 @@ func TestBuild_HonoursWithoutBuildCopy(t *testing.T) {
 		t.Fatalf("asset.New: %v", err)
 	}
 
-	app := &fakeRenderer{}
-	b, err := New(app, Options{OutDir: out, Mounts: []*asset.Mount{mount}})
+	app := &fakeRenderer{mounts: []*asset.Mount{mount}}
+	b, err := New(app, Options{OutDir: out})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -92,8 +92,8 @@ func TestBuild_AssetCopyCannotEscapeOutDir(t *testing.T) {
 		t.Fatalf("asset.New: %v", err)
 	}
 
-	app := &fakeRenderer{}
-	b, err := New(app, Options{OutDir: out, Mounts: []*asset.Mount{mount}})
+	app := &fakeRenderer{mounts: []*asset.Mount{mount}}
+	b, err := New(app, Options{OutDir: out})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

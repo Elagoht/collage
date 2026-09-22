@@ -8,9 +8,10 @@ import (
 	"path/filepath"
 )
 
-// copyAssets copies every mount in Options.Mounts whose BuildCopy is true into
-// outDirResolved, at "<OutDir>/<mount prefix><file name>", and returns the
-// absolute paths written and any errors encountered.
+// copyAssets copies every mount the application reports through Renderer.Mounts
+// whose BuildCopy is true into outDirResolved, at
+// "<OutDir>/<mount prefix><file name>", and returns the absolute paths written
+// and any errors encountered.
 //
 // A mount's fs.FS is user-supplied — the embedding application can mount any
 // implementation, including one whose fs.WalkDir yields an adversarial file name —
@@ -29,7 +30,7 @@ func (b *Builder) copyAssets(outDirResolved string) ([]string, []error) {
 	var written []string
 	var errs []error
 
-	for _, mount := range b.opts.Mounts {
+	for _, mount := range b.app.Mounts() {
 		if mount == nil || !mount.BuildCopy() {
 			continue
 		}

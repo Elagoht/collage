@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"sync"
 
+	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -186,6 +187,20 @@ func (b *Builder) renderAndWriteDocument(ctx context.Context, outDirResolved str
 	result, err := b.app.RenderDocumentPath(ctx, task.path, task.locale, task.params)
 	if err != nil {
 		return "", fmt.Errorf("collage: render document %q locale %q path %q: %w", task.doc.Name, task.locale, task.path, err)
+	}
+
+	// A render can succeed and still be unfit to write. internal/httpx refuses to
+	// *serve* an empty document body — ErrEmptyDocumentBody, a 500 — because a
+	// document has no equivalent of a page's optional root fragment, whose empty
+	// render is deliberate; an empty body is indistinguishable from a handler
+	// that forgot to populate it. RenderDocumentPath bypasses httpx entirely, so
+	// that check has to be repeated here, reusing the same sentinel rather than
+	// inventing a second one for what is the same failure mode: a static build
+	// must not silently write the zero-byte file the live server would have
+	// refused to serve. This runs before anything touches the filesystem, the
+	// same way renderAndWrite's own degraded/empty checks do for a page.
+	if len(result.Body) == 0 {
+		return "", fmt.Errorf("%w: document %q locale %q path %q", httpx.ErrEmptyDocumentBody, task.doc.Name, task.locale, task.path)
 	}
 
 	// Same reasoning as renderAndWrite: this filesystem-aware check must run
