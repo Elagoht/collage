@@ -1,16 +1,18 @@
 package collage
 
 import (
+	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
-
-	"github.com/Elagoht/collage/internal/observability"
 )
 
 // templateRoot writes the minimal template set the tests below render and returns
@@ -143,11 +145,14 @@ func TestNew_Rejections(t *testing.T) {
 // allowed here — so this test is what makes a field that was added to one and
 // forgotten in the conversion visible.
 func TestToCoreConfig_CarriesEveryField(t *testing.T) {
-	metrics := observability.NewRecordingMetrics()
-	tracer := observability.NoopTracer{}
+	metrics := &countingMetrics{}
+	tracer := inertTracer{}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	cfg := &Config{
 		DevMode: true,
+		Logger:  logger,
 		Server: ServerConfig{
 			Host:            "0.0.0.0",
 			Port:            8080,
@@ -183,6 +188,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 
 	if !core.DevMode {
 		t.Error("DevMode did not carry over")
+	}
+	if core.Logger != logger {
+		t.Error("Logger did not carry over")
 	}
 	if core.Server.Host != "0.0.0.0" || core.Server.Port != 8080 {
 		t.Errorf("Server address = %s:%d, want 0.0.0.0:8080", core.Server.Host, core.Server.Port)
@@ -225,5 +233,271 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	}
 	if core.Observability.Tracer != tracer {
 		t.Error("Observability.Tracer did not carry over")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The plugin surface, implemented from outside
+//
+// Every identifier below that is not from the standard library is exported by this
+// package. That is the point of the test: internal/ is unimportable outside the
+// module, so if a hook interface or an event type were reachable only from there,
+// an external user could not write a plugin at all — and this file would not
+// compile. It imports nothing but the standard library.
+// ---------------------------------------------------------------------------
+
+// hookPlugin implements Plugin and every one of the six hooks, recording which ones
+// fired and appending a marker to the rendered HTML.
+type hookPlugin struct {
+	mu    sync.Mutex
+	fired map[string]int
+}
+
+var (
+	_ Plugin              = (*hookPlugin)(nil)
+	_ PageResolvedHook    = (*hookPlugin)(nil)
+	_ BeforeRenderHook    = (*hookPlugin)(nil)
+	_ AfterRenderHook     = (*hookPlugin)(nil)
+	_ CacheWriteHook      = (*hookPlugin)(nil)
+	_ CacheInvalidateHook = (*hookPlugin)(nil)
+	_ ErrorHook           = (*hookPlugin)(nil)
+)
+
+// Name identifies the plugin.
+func (p *hookPlugin) Name() string { return "hooks" }
+
+// Version reports the plugin's version.
+func (p *hookPlugin) Version() string { return "1.0.0" }
+
+// Init registers a command, exercising the Host surface.
+func (p *hookPlugin) Init(_ context.Context, host Host) error {
+	p.record("Init")
+	return host.RegisterCommand(Command{
+		Name: "hooks",
+		Run:  func(context.Context, []string) error { return nil },
+	})
+}
+
+// Shutdown records the call.
+func (p *hookPlugin) Shutdown(context.Context) error {
+	p.record("Shutdown")
+	return nil
+}
+
+// OnPageResolved records the call.
+func (p *hookPlugin) OnPageResolved(_ context.Context, _ *PageResolvedEvent) error {
+	p.record("OnPageResolved")
+	return nil
+}
+
+// OnBeforeRender records the call.
+func (p *hookPlugin) OnBeforeRender(_ context.Context, _ *BeforeRenderEvent) error {
+	p.record("OnBeforeRender")
+	return nil
+}
+
+// OnAfterRender records the call and appends a marker to the page, which is the
+// post-processing the hook exists for.
+func (p *hookPlugin) OnAfterRender(_ context.Context, ev *AfterRenderEvent) error {
+	p.record("OnAfterRender")
+	ev.HTML = append(ev.HTML, []byte("<!--plugin-->")...)
+	return nil
+}
+
+// OnCacheWrite records the call.
+func (p *hookPlugin) OnCacheWrite(_ context.Context, _ *CacheWriteEvent) error {
+	p.record("OnCacheWrite")
+	return nil
+}
+
+// OnCacheInvalidate records the call.
+func (p *hookPlugin) OnCacheInvalidate(_ context.Context, _ *CacheInvalidateEvent) error {
+	p.record("OnCacheInvalidate")
+	return nil
+}
+
+// OnError records the call.
+func (p *hookPlugin) OnError(_ context.Context, _ *ErrorEvent) error {
+	p.record("OnError")
+	return nil
+}
+
+// record counts one call to the named hook.
+func (p *hookPlugin) record(hook string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.fired == nil {
+		p.fired = make(map[string]int)
+	}
+	p.fired[hook]++
+}
+
+// count returns how many times the named hook fired.
+func (p *hookPlugin) count(hook string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.fired[hook]
+}
+
+// TestPlugin_ImplementableFromThePublicPackage registers a plugin that implements
+// every hook using only this package's exported types, drives one request, one miss
+// and one invalidation through it, and checks each hook fired.
+func TestPlugin_ImplementableFromThePublicPackage(t *testing.T) {
+	app, err := New(&Config{
+		Template: TemplateConfig{Root: templateRoot(t)},
+		Cache:    CacheConfig{Enabled: true},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	hooks := &hookPlugin{}
+	if err := app.RegisterPlugin(hooks); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+
+	page := NewPage("home").
+		WithLayout(NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()).
+		WithContent(NewFragment("home-content", "pages/home.html").Build()).
+		WithPath("en", "/").
+		Static().
+		WithDependency("homepage").
+		Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+
+	handler := app.Handler()
+
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if !strings.Contains(recorder.Body.String(), "<!--plugin-->") {
+		t.Fatalf("body = %q, want the marker OnAfterRender appended", recorder.Body.String())
+	}
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/missing", nil))
+
+	if err := app.InvalidateTags(t.Context(), "homepage"); err != nil {
+		t.Fatalf("InvalidateTags: %v", err)
+	}
+	if err := app.Shutdown(t.Context()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	for _, hook := range []string{
+		"Init", "OnPageResolved", "OnBeforeRender", "OnAfterRender",
+		"OnCacheWrite", "OnCacheInvalidate", "OnError", "Shutdown",
+	} {
+		if got := hooks.count(hook); got == 0 {
+			t.Errorf("%s never fired", hook)
+		}
+	}
+
+	if commands := app.Commands(); len(commands) != 1 || commands[0].Name != "hooks" {
+		t.Fatalf("Commands = %v, want the one the plugin registered", commands)
+	}
+}
+
+// countingMetrics is a Metrics implementation written with nothing but this
+// package's exported types, which is what a user bridging the framework into a
+// metrics backend has to be able to do.
+type countingMetrics struct {
+	mu     sync.Mutex
+	events int
+}
+
+var _ Metrics = (*countingMetrics)(nil)
+
+// RenderDuration records the call.
+func (m *countingMetrics) RenderDuration(context.Context, string, time.Duration, bool) { m.bump() }
+
+// FragmentDuration records the call.
+func (m *countingMetrics) FragmentDuration(context.Context, string, string, time.Duration, error) {
+	m.bump()
+}
+
+// CacheEvent records the call.
+func (m *countingMetrics) CacheEvent(_ context.Context, event CacheEvent, _ string) {
+	if event == CacheHit || event == CacheMiss || event == CacheSet || event == CacheInvalidate {
+		m.bump()
+	}
+}
+
+// HTTPResponse records the call.
+func (m *countingMetrics) HTTPResponse(context.Context, int, string, time.Duration) { m.bump() }
+
+// Invalidation records the call.
+func (m *countingMetrics) Invalidation(context.Context, []string, int) { m.bump() }
+
+// bump counts one reported event.
+func (m *countingMetrics) bump() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events++
+}
+
+// total returns how many events were reported.
+func (m *countingMetrics) total() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.events
+}
+
+// inertTracer is a Tracer implementation written with nothing but this package's
+// exported types. Implementing Tracer requires Span, so it is the check that Span is
+// reachable from outside too.
+type inertTracer struct{}
+
+var _ Tracer = inertTracer{}
+
+// StartSpan returns ctx unchanged and an inert span.
+func (inertTracer) StartSpan(ctx context.Context, _ string) (context.Context, Span) {
+	return ctx, inertSpan{}
+}
+
+// inertSpan is a Span that does nothing.
+type inertSpan struct{}
+
+var _ Span = inertSpan{}
+
+// SetAttribute does nothing.
+func (inertSpan) SetAttribute(string, string) {}
+
+// RecordError does nothing.
+func (inertSpan) RecordError(error) {}
+
+// End does nothing.
+func (inertSpan) End() {}
+
+// TestObservability_ImplementableFromThePublicPackage wires the two
+// implementations above into an application and checks they actually receive
+// events, so the aliases are not merely present but usable.
+func TestObservability_ImplementableFromThePublicPackage(t *testing.T) {
+	metrics := &countingMetrics{}
+	app, err := New(&Config{
+		Template:      TemplateConfig{Root: templateRoot(t)},
+		Cache:         CacheConfig{Enabled: true},
+		Observability: ObservabilityConfig{Metrics: metrics, Tracer: inertTracer{}},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	page := NewPage("home").
+		WithContent(NewFragment("home-content", "pages/home.html").Build()).
+		WithPath("en", "/").
+		Static().
+		Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+
+	httpRecorder := httptest.NewRecorder()
+	app.Handler().ServeHTTP(httpRecorder, httptest.NewRequest(http.MethodGet, "/", nil))
+	if httpRecorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", httpRecorder.Code, http.StatusOK)
+	}
+	if metrics.total() == 0 {
+		t.Fatal("the Metrics implementation received nothing")
 	}
 }

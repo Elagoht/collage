@@ -34,6 +34,52 @@ type Host = plugin.Host
 // Command is a CLI subcommand a plugin contributes through Host.RegisterCommand.
 type Command = plugin.Command
 
+// PageResolvedHook is implemented by a plugin that wants to observe a request
+// having been resolved to a page, before rendering begins.
+type PageResolvedHook = plugin.PageResolvedHook
+
+// BeforeRenderHook is implemented by a plugin that wants to observe a render about
+// to start. Unlike PageResolvedHook it does not fire when a cached render is served
+// instead of a fresh one.
+type BeforeRenderHook = plugin.BeforeRenderHook
+
+// AfterRenderHook is implemented by a plugin that wants to observe, or post-process,
+// a render that just completed. It may replace the event's HTML.
+type AfterRenderHook = plugin.AfterRenderHook
+
+// CacheWriteHook is implemented by a plugin that wants to observe, or adjust, a
+// render result about to be written to the cache. It may suppress the write or
+// change its TTL and tags.
+type CacheWriteHook = plugin.CacheWriteHook
+
+// CacheInvalidateHook is implemented by a plugin that wants to observe a cache
+// invalidation.
+type CacheInvalidateHook = plugin.CacheInvalidateHook
+
+// ErrorHook is implemented by a plugin that wants to observe a failure encountered
+// while serving a request.
+type ErrorHook = plugin.ErrorHook
+
+// PageResolvedEvent describes a request having been resolved to a page.
+type PageResolvedEvent = plugin.PageResolvedEvent
+
+// BeforeRenderEvent describes a render about to start.
+type BeforeRenderEvent = plugin.BeforeRenderEvent
+
+// AfterRenderEvent describes a render that just completed. A plugin may replace its
+// HTML field to post-process the page.
+type AfterRenderEvent = plugin.AfterRenderEvent
+
+// CacheWriteEvent describes a render result about to be written to the cache. A
+// plugin may set its Skip field or adjust its TTL and Tags.
+type CacheWriteEvent = plugin.CacheWriteEvent
+
+// CacheInvalidateEvent describes a cache invalidation that has just happened.
+type CacheInvalidateEvent = plugin.CacheInvalidateEvent
+
+// ErrorEvent describes a failure encountered while serving a request.
+type ErrorEvent = plugin.ErrorEvent
+
 // Cache stores rendered pages keyed by request identity. Implement it to replace
 // the built-in in-memory cache.
 type Cache = cache.Cache
@@ -45,6 +91,28 @@ type Metrics = observability.Metrics
 // Tracer starts one span per request, render, and fragment. Implement it to bridge
 // the framework into a tracing backend; a nil Tracer means no-op.
 type Tracer = observability.Tracer
+
+// Span is the unit of work a Tracer starts. A Tracer implementation returns one, so
+// this alias is required to implement Tracer at all.
+type Span = observability.Span
+
+// CacheEvent identifies a single kind of cache operation reported to Metrics. A
+// Metrics implementation receives one, so this alias is required to implement
+// Metrics at all.
+type CacheEvent = observability.CacheEvent
+
+const (
+	// CacheHit means a lookup found a live entry.
+	CacheHit = observability.CacheHit
+	// CacheMiss means a lookup found no live entry.
+	CacheMiss = observability.CacheMiss
+	// CacheSet means an entry was written.
+	CacheSet = observability.CacheSet
+	// CacheEvict means an entry was removed because it expired or was displaced.
+	CacheEvict = observability.CacheEvict
+	// CacheInvalidate means an entry was removed by an explicit invalidation.
+	CacheInvalidate = observability.CacheInvalidate
+)
 
 // ErrAppStarted is returned by the registration methods once the application has
 // started.
@@ -105,6 +173,7 @@ func New(cfg *Config) (*App, error) {
 func toCoreConfig(cfg *Config) core.Config {
 	return core.Config{
 		DevMode: cfg.DevMode,
+		Logger:  cfg.Logger,
 		Server: core.ServerConfig{
 			Host:            cfg.Server.Host,
 			Port:            cfg.Server.Port,

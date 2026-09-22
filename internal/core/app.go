@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -96,6 +97,9 @@ type Config struct {
 	// DevMode enables development-mode behaviour across the framework. The
 	// effective value is this or Template.DevMode; see App.DevMode.
 	DevMode bool
+	// Logger is the structured logger the framework writes through and hands to
+	// plugins via Host.Logger. A nil Logger means slog.Default().
+	Logger *slog.Logger
 	// Server configures the HTTP server.
 	Server ServerConfig
 	// Template configures template loading and rendering.
@@ -298,7 +302,10 @@ func New(cfg Config) (*App, error) {
 	}
 
 	devMode := cfg.DevMode || cfg.Template.DevMode
-	logger := slog.Default()
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	tmpl, err := template.NewHTML(template.HTMLConfig{
 		Root:      cfg.Template.Root,
@@ -683,12 +690,8 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	}
 
 	merged := make(map[string]string, len(match.PathParams)+len(params))
-	for name, value := range match.PathParams {
-		merged[name] = value
-	}
-	for name, value := range params {
-		merged[name] = value
-	}
+	maps.Copy(merged, match.PathParams)
+	maps.Copy(merged, params)
 
 	return a.renderer.Render(ctx, types.NewRenderContext(ctx, req, match.Page, resolved, merged))
 }

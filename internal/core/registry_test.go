@@ -136,37 +136,112 @@ func TestRegisterPage_WithoutLayout(t *testing.T) {
 	}
 }
 
-// TestRegisterPage_RejectsSharedLayout: a Fragment is a value in a tree, not a
-// template handle, so a layout shared between two pages would have to hold both
-// their content fragments in one single-fill slot. That is rejected at startup,
-// with an error that says what to do about it.
-func TestRegisterPage_RejectsSharedLayout(t *testing.T) {
+// TestRegisterPage_SharedLayoutRendersEachPagesOwnContent is the specification's
+// advanced example: one layout fragment reused by three pages. A layout is the most
+// reusable object a component framework has, so sharing one must work — and it only
+// works because registration binds each page's content into a private copy of the
+// layout's slot table. Bound into the shared SlotDefinition instead, all three
+// pages' content would pile up in one slot and every page would render all three.
+func TestRegisterPage_SharedLayoutRendersEachPagesOwnContent(t *testing.T) {
 	app := newTestApp(t, nil)
 	shared := newLayout("shared-layout")
 
-	first := newHomePage()
-	first.LayoutFragment = shared
-	if err := app.RegisterPage(first); err != nil {
-		t.Fatalf("RegisterPage(first): %v", err)
+	pages := []*types.Page{
+		{
+			Name:           "home",
+			LayoutFragment: shared,
+			ContentFragment: &types.Fragment{
+				Name:         "home-content",
+				TemplatePath: "pages/home.html",
+				DataHandler:  homeDataHandler,
+			},
+			Paths: map[string]string{"en": "/"},
+		},
+		{
+			Name:            "about",
+			LayoutFragment:  shared,
+			ContentFragment: &types.Fragment{Name: "about-content", TemplatePath: "pages/about.html"},
+			Paths:           map[string]string{"en": "/about"},
+		},
+		{
+			Name:            "contact",
+			LayoutFragment:  shared,
+			ContentFragment: &types.Fragment{Name: "contact-content", TemplatePath: "pages/contact.html"},
+			Paths:           map[string]string{"en": "/contact"},
+		},
 	}
-
-	second := newHomePage()
-	second.Name = "about"
-	second.LayoutFragment = shared
-	second.ContentFragment = &types.Fragment{Name: "about-content", TemplatePath: "pages/about.html"}
-	second.Paths = map[string]string{"en": "/about"}
-
-	err := app.RegisterPage(second)
-	if !errors.Is(err, types.ErrSlotOccupied) {
-		t.Fatalf("RegisterPage(second) = %v, want ErrSlotOccupied", err)
-	}
-	for _, want := range []string{`page "about"`, "one per page"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error %q does not mention %q", err, want)
+	for _, page := range pages {
+		if err := app.RegisterPage(page); err != nil {
+			t.Fatalf("RegisterPage(%s): %v", page.Name, err)
 		}
 	}
-	if len(shared.Slots[types.DefaultContentSlot].Fill) != 1 {
-		t.Fatal("the rejected registration left a second fill in the shared layout")
+
+	// The shared layout itself is left exactly as the caller built it: every
+	// binding went into a copy.
+	if got := len(shared.Slots[types.DefaultContentSlot].Fill); got != 0 {
+		t.Fatalf("the shared layout has %d fills, want 0: registration must bind into a copy", got)
+	}
+
+	handler := app.Handler()
+	for _, testCase := range []struct {
+		path    string
+		own     string
+		foreign []string
+	}{
+		{path: "/", own: "Welcome Home", foreign: []string{"About Us", "Contact"}},
+		{path: "/about", own: "About Us", foreign: []string{"Welcome Home", "Contact"}},
+		{path: "/contact", own: "Contact", foreign: []string{"Welcome Home", "About Us"}},
+	} {
+		t.Run(testCase.path, func(t *testing.T) {
+			recorder := get(handler, testCase.path)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+			}
+			body := recorder.Body.String()
+			if !strings.Contains(body, "<main>") {
+				t.Fatalf("body = %q, want it wrapped in the shared layout", body)
+			}
+			if got := strings.Count(body, testCase.own); got != 1 {
+				t.Fatalf("body = %q contains its own content %d times, want once", body, got)
+			}
+			for _, foreign := range testCase.foreign {
+				if strings.Contains(body, foreign) {
+					t.Fatalf("body = %q contains another page's content %q", body, foreign)
+				}
+			}
+		})
+	}
+}
+
+// TestRegisterPage_SharedLayoutKeepsEverythingElseShared pins the boundary of the
+// copy: only the layout's slot table becomes private. The template path, the data
+// handler, the fallback, and every fragment the caller bound into another slot stay
+// shared by pointer, so a shared layout stays one layout in every way that matters.
+func TestRegisterPage_SharedLayoutKeepsEverythingElseShared(t *testing.T) {
+	app := newTestApp(t, nil)
+
+	sidebar := &types.Fragment{Name: "sidebar", TemplatePath: "pages/about.html"}
+	shared := newLayout("shared-layout")
+	shared.Slots["sidebar"] = &types.SlotDefinition{Name: "sidebar", Fill: []*types.Fragment{sidebar}}
+
+	page := newHomePage()
+	page.LayoutFragment = shared
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+
+	bound := page.LayoutFragment
+	if bound == shared {
+		t.Fatal("the page still points at the shared layout, want its own copy")
+	}
+	if bound.Name != shared.Name || bound.TemplatePath != shared.TemplatePath {
+		t.Fatalf("copy = %+v, want the same name and template as the original", bound)
+	}
+	if got := bound.Slots["sidebar"].Fill; len(got) != 1 || got[0] != sidebar {
+		t.Fatalf("the copy's sidebar slot = %v, want the caller's own fragment by pointer", got)
+	}
+	if bound.Slots["sidebar"] == shared.Slots["sidebar"] {
+		t.Fatal("the copy shares a SlotDefinition with the original, want a fresh one")
 	}
 }
 
@@ -217,6 +292,109 @@ func TestRegisterPage_RejectsMissingTemplate(t *testing.T) {
 				t.Fatalf("error %q does not name the page", err)
 			}
 		})
+	}
+}
+
+// TestRegisterPage_ChecksErrorPageTemplates: a page's own NotFoundPage and
+// ErrorPage are served straight off its fields, whether or not they were ever
+// registered in their own right. A typo in a 500 page's template would otherwise
+// surface only once the site is already failing, which is the worst possible moment
+// to find it — so their templates are checked here too.
+//
+// The referenced page has a layout of its own and has not been through binding, so
+// its content fragment is not in that layout's slot. Checking only Root would miss
+// it; both trees are walked.
+func TestRegisterPage_ChecksErrorPageTemplates(t *testing.T) {
+	for _, testCase := range []struct {
+		name     string
+		attach   func(*types.Page, *types.Page)
+		mentions string
+	}{
+		{
+			name:     "not-found page",
+			attach:   func(p, referenced *types.Page) { p.NotFoundPage = referenced },
+			mentions: "not-found page",
+		},
+		{
+			name:     "error page",
+			attach:   func(p, referenced *types.Page) { p.ErrorPage = referenced },
+			mentions: "error page",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			for _, broken := range []struct {
+				name     string
+				page     func() *types.Page
+				fragment string
+			}{
+				{
+					name: "content",
+					page: func() *types.Page {
+						return &types.Page{
+							Name:            "broken",
+							LayoutFragment:  newLayout("broken-layout"),
+							ContentFragment: &types.Fragment{Name: "broken-content", TemplatePath: "pages/typo.html"},
+						}
+					},
+					fragment: "broken-content",
+				},
+				{
+					name: "layout",
+					page: func() *types.Page {
+						layout := newLayout("broken-layout")
+						layout.TemplatePath = "layouts/typo.html"
+						return &types.Page{
+							Name:            "broken",
+							LayoutFragment:  layout,
+							ContentFragment: &types.Fragment{Name: "broken-content", TemplatePath: "pages/about.html"},
+						}
+					},
+					fragment: "broken-layout",
+				},
+			} {
+				t.Run(broken.name, func(t *testing.T) {
+					app := newTestApp(t, nil)
+					page := newHomePage()
+					testCase.attach(page, broken.page())
+
+					err := app.RegisterPage(page)
+					if !errors.Is(err, ErrTemplateNotFound) {
+						t.Fatalf("RegisterPage = %v, want ErrTemplateNotFound", err)
+					}
+					for _, want := range []string{testCase.mentions, broken.fragment, `page "broken"`} {
+						if !strings.Contains(err.Error(), want) {
+							t.Fatalf("error %q does not mention %q", err, want)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestRegisterPage_AcceptsSoundErrorPages is the other half: a page whose error
+// pages name templates that do exist registers cleanly, so the check above cannot
+// pass by rejecting everything.
+func TestRegisterPage_AcceptsSoundErrorPages(t *testing.T) {
+	app := newTestApp(t, nil)
+	page := newHomePage()
+	page.NotFoundPage = &types.Page{
+		Name:            "page-404",
+		LayoutFragment:  newLayout("404-layout"),
+		ContentFragment: &types.Fragment{Name: "404-content", TemplatePath: "pages/about.html"},
+	}
+	page.ErrorPage = &types.Page{
+		Name:            "page-500",
+		ContentFragment: &types.Fragment{Name: "500-content", TemplatePath: "pages/contact.html"},
+	}
+
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	// The referenced pages are checked, not registered: they get no routes and no
+	// entry of their own until they are registered in their own right.
+	if _, ok := app.Page("page-404"); ok {
+		t.Fatal("a referenced not-found page was registered as a page of its own")
 	}
 }
 
@@ -473,6 +651,7 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 	app := newTestApp(t, nil)
 
 	page := newHomePage()
+	page.DependencyTags = []string{"homepage"}
 	page.Redirects = []*types.Redirect{{From: "/old", To: "/", Permanent: true}}
 	// Page.SEO is a map[string]any, and this test may not spell that type.
 	// RenderContext.SharedData is the same type, so borrowing one is how a

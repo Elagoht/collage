@@ -3,6 +3,7 @@ package collage
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -50,6 +51,13 @@ type Config struct {
 	// DevMode enables development-mode behaviour across the framework. See IsDevMode
 	// for the effective value, which also considers Template.DevMode.
 	DevMode bool
+	// Logger is the structured logger the framework writes through, and the one
+	// plugins receive from Host.Logger. A nil Logger means slog.Default().
+	//
+	// ApplyDefaults deliberately leaves it nil rather than filling in
+	// slog.Default(): nil is already unambiguous, and resolving it at construction
+	// keeps a Config comparable and free of a pointer the caller never supplied.
+	Logger *slog.Logger
 	// Server configures the HTTP server.
 	Server ServerConfig
 	// Template configures template loading and rendering.

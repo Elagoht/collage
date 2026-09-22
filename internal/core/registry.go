@@ -26,6 +26,13 @@ import (
 //   - a name another page already holds (ErrDuplicatePage);
 //   - registration after the application has started (ErrAppStarted).
 //
+// The templates of the page's own NotFoundPage and ErrorPage are checked here too.
+// Those pages are reached straight off the Page's fields, whether or not they were
+// ever registered in their own right, and a typo in a 500 page's template would
+// otherwise surface only once the site is already failing — the worst possible
+// moment to discover it. Only their templates are checked: they get no routes of
+// their own here, and their own error pages are not recursed into.
+//
 // The order of those checks is deliberate. Binding happens before Validate because a
 // layout that declares its content slot Required — which is the idiomatic way to
 // write one — does not validate until the content fragment is actually in it.
@@ -112,7 +119,20 @@ func (a *App) prepare(p *types.Page) error {
 	if err := p.Validate(); err != nil {
 		return fmt.Errorf("collage: page %q: %w", p.Name, err)
 	}
-	return a.checkTemplates(p)
+	if err := a.checkTemplates(p); err != nil {
+		return err
+	}
+	if p.NotFoundPage != nil {
+		if err := a.checkTemplates(p.NotFoundPage); err != nil {
+			return fmt.Errorf("collage: page %q not-found page: %w", p.Name, err)
+		}
+	}
+	if p.ErrorPage != nil {
+		if err := a.checkTemplates(p.ErrorPage); err != nil {
+			return fmt.Errorf("collage: page %q error page: %w", p.Name, err)
+		}
+	}
+	return nil
 }
 
 // remember records p in the page registry under its name, preserving registration
@@ -126,19 +146,31 @@ func (a *App) remember(p *types.Page) {
 	a.order = append(a.order, p.Name)
 }
 
-// bindContent binds p's content fragment into its layout fragment's content slot,
-// exactly once. A page with no layout fragment needs no binding: its content
-// fragment is already the root.
+// bindContent gives p its own private copy of its layout fragment and binds p's
+// content fragment into that copy's content slot, replacing p.LayoutFragment with
+// it so Page.Root returns the bound copy. A page with no layout fragment needs no
+// binding: its content fragment is already the root.
 //
-// "Exactly once" is load-bearing. The slot's fills render in binding order, so
-// binding the same content fragment twice would render the page's content twice.
-// bindContent therefore returns without doing anything when the slot already holds
-// this page's content fragment, which makes a retried registration safe.
+// The copy is what makes a layout shareable, and a layout is the most reusable
+// object a component framework has — the specification's own advanced example uses
+// one layout for a blog post page and its 404 and 500 pages. types.Fragment.Bind
+// appends to the SlotDefinition's Fill, and a SlotDefinition reached through a
+// shared layout is one object: binding three pages' content into it would leave
+// three fills in one slot and render all three pages' content on every one of them.
+// Copying the slot table per page makes each page's bindings private.
 //
-// Binding a second, different content fragment into the slot is a genuine error and
-// is reported as one. In practice it means a layout fragment is being shared between
-// pages: a Fragment is a value in a tree, not a template handle, so each page needs
-// its own layout fragment even when both are built from the same template file.
+// Only the layout's own slot table is copied — a fresh Slots map holding fresh
+// SlotDefinition values with copied Fill slices. Everything else stays shared by
+// pointer: the template path, the data handler, the fallback, and every child
+// fragment already bound into a slot. Registration therefore snapshots the layout's
+// bindings: a fragment bound into the shared layout after a page was registered
+// does not appear on that page.
+//
+// Binding also happens exactly once per page. The slot's fills render in binding
+// order, so binding the same content fragment twice would render the page's content
+// twice; bindContent returns without doing anything when p's layout already holds
+// p's content fragment, which is what lets a page registered with RegisterPage be
+// designated as another page's error page afterwards.
 func bindContent(p *types.Page) error {
 	if p.LayoutFragment == nil {
 		return nil
@@ -153,28 +185,65 @@ func bindContent(p *types.Page) error {
 		}
 	}
 
-	if err := p.LayoutFragment.Bind(types.DefaultContentSlot, p.ContentFragment); err != nil {
+	layout := copyLayout(p.LayoutFragment)
+	if err := layout.Bind(types.DefaultContentSlot, p.ContentFragment); err != nil {
 		return fmt.Errorf(
-			"collage: page %q: binding content fragment %q into layout fragment %q slot %q (a layout fragment cannot be shared between pages; build one per page): %w",
+			"collage: page %q: binding content fragment %q into layout fragment %q slot %q: %w",
 			p.Name, p.ContentFragment.Name, p.LayoutFragment.Name, types.DefaultContentSlot, err,
 		)
 	}
+	p.LayoutFragment = layout
 	return nil
 }
 
-// checkTemplates reports ErrTemplateNotFound for the first fragment reachable from
-// p's root whose TemplatePath the engine has not loaded, naming the page, the
-// fragment, and the path. It runs after binding, so the content fragment and
-// everything below it is reachable from the root and checked too.
+// copyLayout returns a shallow copy of f carrying a slot table of its own: a fresh
+// Slots map, a fresh SlotDefinition value per entry, and a copied Fill slice per
+// slot. Nothing else is duplicated — the copy renders the same template, runs the
+// same data handler, and holds the same child fragments — so the only state that
+// becomes private is which fragments this page binds into which slot. See
+// bindContent for why that is the boundary.
+func copyLayout(f *types.Fragment) *types.Fragment {
+	copied := *f
+	if f.Slots == nil {
+		return &copied
+	}
+
+	copied.Slots = make(map[string]*types.SlotDefinition, len(f.Slots))
+	for name, slot := range f.Slots {
+		if slot == nil {
+			copied.Slots[name] = nil
+			continue
+		}
+		value := *slot
+		value.Fill = slices.Clone(slot.Fill)
+		copied.Slots[name] = &value
+	}
+	return &copied
+}
+
+// checkTemplates reports ErrTemplateNotFound for the first fragment of p whose
+// TemplatePath the engine has not loaded, naming the page, the fragment, and the
+// path.
+//
+// It walks the layout tree and the content tree separately rather than just
+// p.Root(): p is not always a page being registered in its own right — it may be
+// another page's NotFoundPage or ErrorPage, which has not been through binding yet,
+// so its content fragment is not in its layout's slot and Root alone would miss it.
+// The shared visited set means a fragment reachable both ways is still checked once.
 func (a *App) checkTemplates(p *types.Page) error {
 	visited := make(map[*types.Fragment]bool)
-	return walkFragments(p.Root(), visited, func(f *types.Fragment) error {
+	visit := func(f *types.Fragment) error {
 		if a.tmpl.Lookup(f.TemplatePath) {
 			return nil
 		}
 		return fmt.Errorf("%w: page %q fragment %q references %q",
 			ErrTemplateNotFound, p.Name, f.Name, f.TemplatePath)
-	})
+	}
+
+	if err := walkFragments(p.LayoutFragment, visited, visit); err != nil {
+		return err
+	}
+	return walkFragments(p.ContentFragment, visited, visit)
 }
 
 // walkFragments calls visit on f and on every fragment reachable from it, through

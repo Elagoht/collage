@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -26,13 +28,9 @@ import (
 // dependency tracker. There are no stubs, because the thing under test is the
 // wiring, and a stub would be exactly the part that is not being checked.
 //
-// No fragment in these fixtures declares a DataHandler. types.DataHandlerFunc's
-// signature contains "any", and a function literal can only be assigned to it by
-// spelling that signature out — which this task is not permitted to do. The
-// dependency tags a data handler would emit are supplied through
-// Page.DependencyTags instead: the render engine folds both into the same
-// Result.DependencyTags, so every path downstream of the render — cache write,
-// tracker, invalidation — is exercised identically. See the task report.
+// The home page fixture carries a real DataHandler, so the dependency tags the
+// cache is keyed on and the data the template renders both come from where they
+// come from in a real application, rather than being planted on the Page.
 // ---------------------------------------------------------------------------
 
 const (
@@ -40,12 +38,34 @@ const (
 	// <main> marker makes it visible in an assertion that the layout actually
 	// rendered, rather than the content alone.
 	layoutTemplate = `<!doctype html><title>collage</title><main>{{slot "content"}}</main>`
-	// homeTemplate is the home page's content.
-	homeTemplate = `<h1>Welcome Home</h1>`
+	// homeTemplate is the home page's content. It renders the data its fragment's
+	// DataHandler returns, so a page that reaches the browser proves the handler
+	// ran and its data arrived.
+	homeTemplate = `<h1>{{.Title}}</h1>`
 	// aboutTemplate is a second page's content, deliberately distinguishable from
 	// homeTemplate so a test cannot mistake one page's output for the other's.
 	aboutTemplate = `<h1>About Us</h1>`
+	// contactTemplate is a third page's content, for the shared-layout test.
+	contactTemplate = `<h1>Contact</h1>`
 )
+
+// homeData is what homeDataHandler returns and homeTemplate renders.
+type homeData struct {
+	// Title is the heading the home page renders.
+	Title string
+}
+
+// homeDataHandler is the home page fixture's data handler: it returns the data the
+// template renders and the dependency tag that data was derived from, which is the
+// tag every cache-invalidation assertion below invalidates.
+//
+// The "any" in the signature is not a new exception. types.DataHandlerFunc is
+// declared with it — with its own justification, since html/template renders
+// arbitrary data — and a function literal can only be assigned to that type by
+// restating its signature verbatim.
+func homeDataHandler(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	return homeData{Title: "Welcome Home"}, []string{"homepage"}, nil
+}
 
 // defaultTemplates returns the template set every fixture app is built over,
 // keyed by the path a fragment names.
@@ -54,6 +74,7 @@ func defaultTemplates() map[string]string {
 		"layouts/default.html": layoutTemplate,
 		"pages/home.html":      homeTemplate,
 		"pages/about.html":     aboutTemplate,
+		"pages/contact.html":   contactTemplate,
 	}
 }
 
@@ -140,16 +161,20 @@ func newLayout(name string) *types.Fragment {
 }
 
 // newHomePage returns the framework's minimal example page: a layout, a content
-// fragment, one path, an incremental strategy, and one dependency tag.
+// fragment with a data handler, one path, and an incremental strategy. Its only
+// dependency tag comes from the data handler, not from the Page.
 func newHomePage() *types.Page {
 	return &types.Page{
-		Name:            "home",
-		LayoutFragment:  newLayout("layout"),
-		ContentFragment: &types.Fragment{Name: "home-content", TemplatePath: "pages/home.html"},
-		Paths:           map[string]string{"en": "/"},
-		Strategy:        types.StrategyIncremental,
-		CacheTTL:        5 * time.Minute,
-		DependencyTags:  []string{"homepage"},
+		Name:           "home",
+		LayoutFragment: newLayout("layout"),
+		ContentFragment: &types.Fragment{
+			Name:         "home-content",
+			TemplatePath: "pages/home.html",
+			DataHandler:  homeDataHandler,
+		},
+		Paths:    map[string]string{"en": "/"},
+		Strategy: types.StrategyIncremental,
+		CacheTTL: 5 * time.Minute,
 	}
 }
 
@@ -358,21 +383,17 @@ func TestApp_ConcurrentUse(t *testing.T) {
 
 	var workers sync.WaitGroup
 	for range 8 {
-		workers.Add(3)
-		go func() {
-			defer workers.Done()
+		workers.Go(func() {
 			if recorder := get(handler, "/"); recorder.Code != http.StatusOK {
 				t.Errorf("status = %d, want %d", recorder.Code, http.StatusOK)
 			}
-		}()
-		go func() {
-			defer workers.Done()
+		})
+		workers.Go(func() {
 			if err := app.InvalidateTags(context.Background(), "homepage"); err != nil {
 				t.Errorf("InvalidateTags: %v", err)
 			}
-		}()
-		go func() {
-			defer workers.Done()
+		})
+		workers.Go(func() {
 			if pages := app.Pages(); len(pages) != 1 {
 				t.Errorf("Pages = %d entries, want 1", len(pages))
 			}
@@ -383,7 +404,7 @@ func TestApp_ConcurrentUse(t *testing.T) {
 				!errors.Is(err, ErrDuplicateCommand) {
 				t.Errorf("RegisterCommand: %v", err)
 			}
-		}()
+		})
 	}
 	workers.Wait()
 }
@@ -565,13 +586,11 @@ func TestApp_ShutdownIsIdempotentUnderConcurrency(t *testing.T) {
 
 	var wait sync.WaitGroup
 	for range 8 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			if err := app.Shutdown(context.Background()); err != nil {
 				t.Errorf("Shutdown: %v", err)
 			}
-		}()
+		})
 	}
 	wait.Wait()
 
@@ -775,6 +794,27 @@ func TestApp_VaryFollowsLocaleSources(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestApp_Logger: a configured logger is what the framework writes through and what
+// a plugin receives from Host.Logger. A nil one falls back to the process default,
+// which is the only behaviour a framework embedded in a real service must not be
+// stuck with.
+func TestApp_Logger(t *testing.T) {
+	t.Run("configured", func(t *testing.T) {
+		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+		app := newTestApp(t, func(cfg *Config) { cfg.Logger = logger })
+		if app.Logger() != logger {
+			t.Fatal("Logger() is not the configured logger")
+		}
+	})
+
+	t.Run("nil falls back to the default", func(t *testing.T) {
+		app := newTestApp(t, nil)
+		if app.Logger() != slog.Default() {
+			t.Fatal("Logger() is not slog.Default() for a nil Config.Logger")
+		}
+	})
 }
 
 // TestApp_CacheDisabled: with caching off every request renders, and the App is
