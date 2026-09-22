@@ -391,9 +391,18 @@ func resolveTarget(outDirResolved, urlPath string) (string, error) {
 }
 
 // verifyNoSymlinksBeneath confirms that no path component from outDirResolved down
-// to and including target — the very file about to be created — already exists as
-// a symlink. outDirResolved must itself be symlink-free (see prepareOutDir), so
-// only the components rel adds beyond it need checking.
+// to and including target — the very file about to be created — resolves, via a
+// symlink, to somewhere outside outDirResolved. outDirResolved must itself be
+// symlink-free (see prepareOutDir), so only the components rel adds beyond it need
+// checking.
+//
+// A symlink component is not rejected outright merely for being a symlink:
+// legitimate static-site layouts use them — a shared assets directory symlinked
+// into the output, or artifacts carried between builds under Options.Clean: false
+// — so a symlink is followed with filepath.EvalSymlinks and checked with the same
+// filepath.Rel containment test resolveTarget uses. Only a symlink that resolves
+// outside outDirResolved is rejected, with ErrPathEscapesOutDir; one that resolves
+// back inside outDirResolved is allowed, and the write proceeds through it.
 //
 // A component that does not exist yet is not a symlink — there is nothing there to
 // be one — so it is skipped rather than rejected: Build is expected to create fresh
@@ -403,8 +412,12 @@ func resolveTarget(outDirResolved, urlPath string) (string, error) {
 // process from replacing a component with a symlink between this check and the
 // os.MkdirAll/os.WriteFile calls that follow it in renderAndWrite. Closing that
 // window portably (e.g. with O_NOFOLLOW, which is not available in a portable form
-// from the standard library) is out of scope here; this closes the case where the
-// symlink was already there.
+// from the standard library) is out of scope here. The threat model this closes is
+// a symlink planted in advance of the build — by a malicious or buggy
+// PathProvider, a misbehaving plugin, or a stale artifact left on disk from an
+// earlier run — not a live local attacker racing the build process itself, which
+// is a different and far less relevant threat for a builder the developer runs on
+// their own machine.
 func verifyNoSymlinksBeneath(outDirResolved, target string) error {
 	rel, err := filepath.Rel(outDirResolved, target)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -424,8 +437,17 @@ func verifyNoSymlinksBeneath(outDirResolved, target string) error {
 			}
 			return fmt.Errorf("collage: stat %q: %w", current, err)
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%w: %s is a symlink", ErrPathEscapesOutDir, current)
+		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+
+		resolvedSymlink, err := filepath.EvalSymlinks(current)
+		if err != nil {
+			return fmt.Errorf("collage: resolve symlink %q: %w", current, err)
+		}
+		symlinkRel, err := filepath.Rel(outDirResolved, resolvedSymlink)
+		if err != nil || symlinkRel == ".." || strings.HasPrefix(symlinkRel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("%w: %s resolves to %s, outside the output directory", ErrPathEscapesOutDir, current, resolvedSymlink)
 		}
 	}
 	return nil

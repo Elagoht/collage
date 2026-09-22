@@ -402,7 +402,9 @@ func TestBuild_PathProvider_Escape(t *testing.T) {
 // symlink planted under OutDir — here, OutDir/escaped pointing at a sibling
 // directory entirely outside OutDir — must still be rejected before any bytes are
 // written through it, by the separate, filesystem-aware verifyNoSymlinksBeneath
-// check.
+// check. This is the "resolves outside OutDir, must be rejected" half of that
+// check's behaviour; TestBuild_PathProvider_SymlinkWithinOutDir_Allowed below is
+// the other half ("resolves inside OutDir, must be allowed").
 func TestBuild_PathProvider_SymlinkEscape(t *testing.T) {
 	requireSymlinkSupport(t)
 
@@ -448,6 +450,58 @@ func TestBuild_PathProvider_SymlinkEscape(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("external has unexpected entries: %v", entries)
+	}
+}
+
+// TestBuild_PathProvider_SymlinkWithinOutDir_Allowed is the fix-round-2 test: a
+// symlink is not rejected merely for being a symlink — only one that resolves
+// outside OutDir is. Legitimate layouts rely on this (a shared assets directory
+// symlinked into the output, or artifacts carried between builds under
+// Options.Clean: false). Here OutDir/shortcut is a symlink to OutDir/realdir, both
+// inside OutDir, and the write through it must succeed.
+func TestBuild_PathProvider_SymlinkWithinOutDir_Allowed(t *testing.T) {
+	requireSymlinkSupport(t)
+
+	out := resolvedTempDir(t)
+	realDir := filepath.Join(out, "realdir")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(realDir): %v", err)
+	}
+	shortcut := filepath.Join(out, "shortcut")
+	if err := os.Symlink(realDir, shortcut); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/shortcut/{slug}"})
+	app := &fakeRenderer{pages: []*types.Page{page}}
+	provider := &fakePathProvider{instances: map[string][]PathInstance{
+		"post|en": {
+			{Path: "/shortcut/hello", Params: map[string]string{"slug": "hello"}},
+		},
+	}}
+
+	b, err := New(app, Options{OutDir: out, PathProvider: provider})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v (a symlink resolving inside OutDir must be allowed, not rejected)", err)
+	}
+	if len(report.Written) != 1 {
+		t.Fatalf("Written = %v, want 1 entry", report.Written)
+	}
+
+	// Readable through the lexical path Build recorded in Report.Written...
+	content := readFile(t, report.Written[0])
+	if content != "<html>en|/shortcut/hello</html>" {
+		t.Fatalf("content = %q", content)
+	}
+	// ...and physically present under the symlink's real target, since writing
+	// through a symlink and writing to its target are the same file on disk.
+	viaRealTarget := filepath.Join(realDir, "hello", "index.html")
+	if got := readFile(t, viaRealTarget); got != content {
+		t.Fatalf("content via the symlink's real target = %q, want %q", got, content)
 	}
 }
 
