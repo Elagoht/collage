@@ -59,12 +59,31 @@ func (s *renderState) addTags(tags []string) {
 // render and pageTags.
 func (s *renderState) sortedTags(pageTags []string) []string {
 	s.addTags(pageTags)
-	tags := make([]string, 0, len(s.tags))
+	all := make([]string, 0, len(s.tags))
 	for tag := range s.tags {
-		tags = append(tags, tag)
+		all = append(all, tag)
 	}
-	sort.Strings(tags)
-	return tags
+	return sortedTags(all)
+}
+
+// sortedTags returns tags deduplicated, sorted and with empty entries dropped.
+// Determinism here is a framework invariant: the same input must always produce
+// the same tag slice, so cache invalidation is reproducible.
+func sortedTags(tags []string) []string {
+	seen := make(map[string]struct{}, len(tags))
+	unique := make([]string, 0, len(tags))
+	for _, tag := range tags {
+		if tag == "" {
+			continue
+		}
+		if _, ok := seen[tag]; ok {
+			continue
+		}
+		seen[tag] = struct{}{}
+		unique = append(unique, tag)
+	}
+	sort.Strings(unique)
+	return unique
 }
 
 // chain renders the fragment stack as a readable path, for ErrMaxDepthExceeded.

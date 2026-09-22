@@ -1,0 +1,62 @@
+package render
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/Elagoht/collage/internal/observability"
+	"github.com/Elagoht/collage/internal/types"
+)
+
+// DocumentResult is one document execution's output. Like Result, it is non-nil on
+// every path including a failure, so a caller can always read Timing and NotFound.
+// Check the error before reading Body.
+type DocumentResult struct {
+	// Body is the bytes to serve. It is nil whenever ExecuteDocument returned an
+	// error.
+	Body []byte
+	// ContentType is copied from the document, for the caller to write verbatim.
+	ContentType string
+	// Tags are the dependency tags this response was derived from, deduplicated,
+	// sorted and with empty entries dropped.
+	Tags []string
+	// NotFound reports that the handler failed with an error wrapping
+	// types.ErrNotFound, meaning the response is a 404 rather than a 500. It is a
+	// classification of the failure, not a success.
+	NotFound bool
+	// Timing records how long the handler took.
+	Timing observability.Timing
+}
+
+// ExecuteDocument runs doc's handler with panic containment and doc's effective
+// timeout, and returns its body, content type and collected tags. The handler runs
+// on the calling goroutine — see Execute for why a spawned one would leak, and for
+// the limitation that a handler ignoring its context can still overrun.
+func (e *SlotEngine) ExecuteDocument(ctx context.Context, doc *types.Document, rc *types.RenderContext) (*DocumentResult, error) {
+	started := time.Now()
+	result := &DocumentResult{ContentType: doc.ContentType}
+
+	var (
+		body []byte
+		tags []string
+	)
+	err := Execute(ctx, e.defaultTimeout, func(ctx context.Context) error {
+		var handlerErr error
+		body, tags, handlerErr = doc.Handler(ctx, rc.WithContext(ctx))
+		return handlerErr
+	})
+
+	result.Timing.Total = time.Since(started)
+	result.Timing.Data = result.Timing.Total
+	e.metrics.RenderDuration(ctx, doc.Name, result.Timing.Total, false)
+
+	if err != nil {
+		result.NotFound = errors.Is(err, types.ErrNotFound)
+		return result, err
+	}
+
+	result.Body = body
+	result.Tags = sortedTags(append(append([]string(nil), tags...), doc.DependencyTags...))
+	return result, nil
+}
