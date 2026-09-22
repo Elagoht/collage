@@ -680,7 +680,12 @@ kept consistent under one `sync.RWMutex`.
   removes it from tags it no longer belongs to. **Test the re-track case explicitly.**
 - `Resolve` returns a de-duplicated, sorted slice — determinism matters for tests and
   for the invalidation order. Unknown tags contribute nothing and are not an error.
-- Empty tag lists are no-ops, never errors.
+- Empty tag lists are no-ops, never errors — **except `Track`**, whose `tags` argument is
+  a *replacement* set rather than a target set. `Track(ctx, key, nil)` means "this key now
+  depends on nothing" and must actively clear the key's previous tags. Treating it as a
+  no-op would let a page that stopped depending on a tag keep resolving from it forever,
+  which is precisely the stale-invalidation failure the re-tracking property guards
+  against.
 - `MaxKeysPerTag int` on `MemoryTracker` (0 = unlimited) guards unbounded growth; when
   exceeded, the oldest key for that tag is dropped and a counter incremented, exposed as
   `Stats() Stats{Keys, Tags, Dropped uint64}`.
