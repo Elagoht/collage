@@ -11,8 +11,22 @@ page := collage.NewPage("blog-post").
 	Build()
 ```
 
-There is one radix tree per locale for page paths, and one tree shared across
-locales for redirects.
+A [document](documents.md) declares its paths the same way, with the same
+`WithPath(locale, pattern)`, and everything on this page applies to it unchanged
+— patterns, locales, redirects, and the registration errors below.
+
+There is one radix tree per locale, holding **page and document paths together**,
+and one tree shared across locales for redirects. Sharing one tree is the point:
+a collision between `/sitemap.xml` and a page's `/{slug}` is a startup error
+rather than a coin toss at request time.
+
+[Mounted assets](assets.md) are not in that tree at all. A mount claims its whole
+URL prefix and is checked **before** the router runs, so nothing under
+`/static/` ever reaches a route — which is safe only because a startup check
+refuses a mount prefix that would swallow a registered page or document path
+(`collage.ErrMountShadowsRoute`), in either registration order. A request under a
+mount prefix that names no file is the mount's own plain-text 404, not the
+site-wide not-found page, and a method other than `GET` or `HEAD` is a 405.
 
 ## Path patterns
 
@@ -105,11 +119,12 @@ page := collage.NewPage("blog-post").
 - A placeholder in the destination must be captured by the source pattern, or
   registration fails with `collage.ErrUnsubstitutedPlaceholder` — such a
   placeholder could never be substituted at match time.
-- A redirect whose source collides with a registered page path is rejected in
-  either registration order (`collage.ErrRedirectShadowsPage`): one of the two
-  would be unreachable.
-- Redirects are matched **before** pages, and the redirect tree is shared across
-  locales, since a `Redirect` carries no locale of its own.
+- A redirect whose source collides with a registered page *or document* path is
+  rejected in either registration order (`collage.ErrRedirectShadowsPage`): one
+  of the two would be unreachable. The sentinel's name predates documents
+  sharing the tree; it covers both.
+- Redirects are matched **before** pages and documents, and the redirect tree is
+  shared across locales, since a `Redirect` carries no locale of its own.
 
 The response is written by hand rather than through `http.Redirect`: a `Location`
 header and the status, with no body. A redirect carries its destination in the
@@ -117,7 +132,13 @@ header, and a body only makes `GET` and `HEAD` behave differently for no benefit
 
 ## Error pages
 
-Two levels, and the more specific one wins:
+Error pages are a *page* mechanism. A [document](documents.md) answers a failure
+with `text/plain` and a [mounted asset](assets.md) answers a missing file the
+same way, both bypassing everything in this section: an HTML error page handed to
+a crawler fetching `sitemap.xml`, or to a browser fetching a stylesheet, is the
+same mistake in either direction.
+
+For pages, two levels, and the more specific one wins:
 
 ```go
 // Page-specific.
@@ -195,11 +216,16 @@ client.
 | `collage.ErrUnregisteredErrorPage` | An error page referenced but never registered |
 | `collage.ErrAppStarted` | Registering after the handler was built |
 | `collage.ErrInvalidPattern` | A malformed path or redirect pattern |
-| `collage.ErrDuplicateRoute` | Two pages, or two redirects, at one path |
+| `collage.ErrDuplicateRoute` | Any two of {page, document} at one path, or two redirects at one source |
 | `collage.ErrAmbiguousParameterName` | Two parameter names at one position |
-| `collage.ErrRedirectShadowsPage` | A redirect source that is also a page path |
+| `collage.ErrRedirectShadowsPage` | A redirect source that is also a page or document path |
 | `collage.ErrUnsubstitutedPlaceholder` | A redirect destination placeholder the source does not capture |
 | `collage.ErrTemplateRootMissing` | `New`: `Template.Root` does not exist |
 
 Every one of them is matchable with `errors.Is`, and the wrapped message names the
-page, the pattern, and the locale.
+page or document, the pattern, and the locale. A document adds a few of its own —
+`collage.ErrNilDocument`, `collage.ErrEmptyContentType`,
+`collage.ErrNoDocumentHandler`, `collage.ErrDuplicateDocument` — listed in
+[documents.md](documents.md); a mount adds `collage.ErrInvalidPrefix`,
+`collage.ErrNilFS`, `collage.ErrMountShadowsRoute` and
+`collage.ErrMountConflict`, listed in [assets.md](assets.md).

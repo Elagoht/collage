@@ -79,7 +79,8 @@ prefix matches, and a document runs the same steps minus 4, 5 and 6:
 
 1. **Route.** The router resolves the locale (path prefix, then `Accept-Language`,
    then cookie, then the default) and matches the remaining path in that locale's
-   radix tree. A redirect match wins over a page match at the same path.
+   radix tree. A redirect match wins over a page or document match at the same
+   path.
 2. **`OnPageResolved`.** Plugins observe the resolved page.
 3. **Cache lookup.** Only for a `GET`/`HEAD` on a page whose strategy is
    cacheable. On a hit, an `If-None-Match` that matches the stored ETag answers
