@@ -1222,6 +1222,23 @@ func New(d Deps) (*Handler, error)
 9. Write `200` with `Content-Type: text/html; charset=utf-8`, `ETag`, `Cache-Control`,
    and in dev mode an `X-Collage-Render-Time` header.
 
+**`Vary` is mandatory on every `public` response.** The resolved locale can come from
+`Accept-Language` or from the locale cookie, and it is part of the framework's own cache
+key — but a shared cache (CDN, corporate proxy) keys on the URL alone. Without `Vary`,
+one visitor's language is served to the next. `Deps` carries a `Vary []string` that the
+app layer populates from the router's enabled locale sources (`Accept-Language` when
+header-locale is on, `Cookie` when cookie-locale is on); the handler joins and sets it
+whenever it writes a `public` `Cache-Control`. The framework's internal cache was already
+safe; this closes the wire contract.
+
+**The cache key includes the query string.** Fragments receive the whole `*http.Request`
+via `RenderContext.Request`, so a data handler may read `r.URL.Query()` — which means two
+requests differing only in query can legitimately render differently. Keying without it
+serves `/search?q=a`'s body for `/search?q=b`. Feed `r.URL.RawQuery` into
+`KeyInput.Vary`. This trades cache fragmentation (every `utm_*` variant gets its own
+entry) for correctness, which is the right way round; a per-page query allowlist is a
+reasonable later enhancement and should be noted as such, not built now.
+
 **HEAD requests** are served by rendering (or cache) and writing headers with no body.
 
 ### Error pages
