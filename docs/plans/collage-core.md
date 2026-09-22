@@ -387,16 +387,35 @@ type CacheConfig struct {
 	Enabled    bool
 	Type       string        // "memory" (default when empty and Enabled)
 	DefaultTTL time.Duration // default 5m
-	MaxEntries int           // default 10000, 0 = unlimited
+	// MaxEntries caps stored entries. Zero means "use the default" (10000); a
+	// negative value means unlimited. Zero cannot mean unlimited — ApplyDefaults could
+	// not then distinguish it from an unset field.
+	MaxEntries int
 }
 
 type LocaleConfig struct {
 	Default   string   // default "en"
 	Supported []string // default []string{Default}
-	FromPath   bool    // default true: /tr/blog/post
-	FromHeader bool    // default true: Accept-Language
-	FromCookie string  // cookie name, default "locale"
+	// DisablePathLocale turns off the /tr/blog/post prefix source. The zero value
+	// keeps it enabled, which is the default behaviour.
+	DisablePathLocale bool
+	// DisableHeaderLocale turns off the Accept-Language source. The zero value keeps
+	// it enabled.
+	DisableHeaderLocale bool
+	// CookieName is the cookie consulted for a locale. Empty means "locale"; set
+	// DisableCookieLocale to turn the source off entirely.
+	CookieName          string
+	DisableCookieLocale bool
 }
+```
+
+**Boolean defaults must be expressed as negative flags, as above.** A `bool` field
+documented as "default true" is unusable: `ApplyDefaults` cannot distinguish "the caller
+left it zero" from "the caller explicitly set false", so the caller can never turn the
+feature off. Inverting the flag makes the zero value the desired default and leaves the
+opt-out expressible. The same rule applies anywhere else in the project.
+
+```go
 
 type ObservabilityConfig struct {
 	Metrics observability.Metrics // nil -> no-op
@@ -418,8 +437,10 @@ use that everywhere else in the codebase.
 
 ### Tests
 
-Builder happy paths mirroring the spec's two usage examples verbatim (minimal app and
-the blog example) and asserting the resulting struct fields; `BuildErr` populated for
+Builder happy paths mirroring the two canonical usage examples in
+`docs/spec/usage-examples.md` (minimal app and the blog example) and asserting the
+resulting struct fields — those examples are the API's authority and must keep
+compiling verbatim; `BuildErr` populated for
 duplicate slot, unknown slot binding, negative timeout, missing content;
 `ApplyDefaults` idempotence (apply twice, same result); `Validate` rejecting each bad
 field; `IsDevMode` true when either flag is set.

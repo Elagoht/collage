@@ -3,6 +3,7 @@ package collage
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -85,12 +86,19 @@ type CacheConfig struct {
 	// DefaultTTL is the cache entry lifetime used when a page does not set its own.
 	// Defaults to 5m.
 	DefaultTTL time.Duration
-	// MaxEntries caps the number of cache entries; 0 means unlimited. Defaults to
-	// 10000.
+	// MaxEntries caps the number of cache entries. Zero means "use the default"
+	// (ApplyDefaults sets it to 10000); a negative value means unlimited, and is left
+	// untouched by ApplyDefaults.
 	MaxEntries int
 }
 
-// LocaleConfig configures locale resolution.
+// LocaleConfig configures locale resolution. Each locale source is enabled by
+// default (the zero value keeps it on); set the matching Disable* field to turn a
+// source off. The fields are inverted this way deliberately: a bool documented as
+// "default true" can never be turned off through ApplyDefaults, because the zero
+// value (false) is indistinguishable from "caller left it unset" — ApplyDefaults
+// would flip it back to true every time. Making the zero value the enabled state
+// avoids that trap.
 type LocaleConfig struct {
 	// Default is the locale used when none can be resolved from the request.
 	// Defaults to "en".
@@ -98,15 +106,19 @@ type LocaleConfig struct {
 	// Supported lists the locales the application serves. Defaults to a slice
 	// containing only Default.
 	Supported []string
-	// FromPath resolves the locale from the request path, e.g. /tr/blog/post.
-	// Defaults to true.
-	FromPath bool
-	// FromHeader resolves the locale from the Accept-Language header. Defaults to
-	// true.
-	FromHeader bool
-	// FromCookie is the name of the cookie the locale is read from. Defaults to
-	// "locale".
-	FromCookie string
+	// DisablePathLocale turns off resolving the locale from the request path, e.g.
+	// /tr/blog/post. The zero value keeps this source enabled.
+	DisablePathLocale bool
+	// DisableHeaderLocale turns off resolving the locale from the Accept-Language
+	// header. The zero value keeps this source enabled.
+	DisableHeaderLocale bool
+	// CookieName is the name of the cookie the locale is read from. Empty means
+	// "locale" (ApplyDefaults fills this in); set DisableCookieLocale to turn this
+	// source off entirely regardless of CookieName.
+	CookieName string
+	// DisableCookieLocale turns off resolving the locale from a cookie. The zero
+	// value keeps this source enabled.
+	DisableCookieLocale bool
 }
 
 // ApplyDefaults fills every zero-valued field of c with the framework's default. It
@@ -157,14 +169,8 @@ func (c *Config) ApplyDefaults() {
 	if len(c.Locale.Supported) == 0 {
 		c.Locale.Supported = []string{c.Locale.Default}
 	}
-	if !c.Locale.FromPath {
-		c.Locale.FromPath = true
-	}
-	if !c.Locale.FromHeader {
-		c.Locale.FromHeader = true
-	}
-	if c.Locale.FromCookie == "" {
-		c.Locale.FromCookie = "locale"
+	if c.Locale.CookieName == "" {
+		c.Locale.CookieName = "locale"
 	}
 }
 
@@ -191,14 +197,7 @@ func (c *Config) Validate() error {
 	if c.Locale.Default == "" {
 		return ErrEmptyLocaleDefault
 	}
-	defaultSupported := false
-	for _, locale := range c.Locale.Supported {
-		if locale == c.Locale.Default {
-			defaultSupported = true
-			break
-		}
-	}
-	if !defaultSupported {
+	if !slices.Contains(c.Locale.Supported, c.Locale.Default) {
 		return fmt.Errorf("%w: %q", ErrLocaleDefaultNotSupported, c.Locale.Default)
 	}
 

@@ -3,60 +3,37 @@ package collage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
 
-// TestFragmentBuilder_MinimalApp mirrors the framework's minimal single-fragment
-// usage: a data handler attached in one fluent chain and built directly, as in the
-// package doc comment's example (collage.NewFragment(...).WithDataHandler(h).Build()).
+// TestFragmentBuilder_MinimalApp mirrors the fragment-building portion of
+// docs/spec/usage-examples.md's "Minimal application" example verbatim: a layout
+// fragment declaring a required content slot, and a home-content fragment with a
+// DataHandler returning a data map and a tag slice. The spec writes the handler's
+// return type as interface{}; any and interface{} are the same type (see that file's
+// closing note), so it compiles unchanged against DataHandlerFunc's any.
 func TestFragmentBuilder_MinimalApp(t *testing.T) {
-	handler := func(ctx context.Context, rc *RenderContext) (any, []string, error) {
-		return "hello", nil, nil
-	}
-
-	f := NewFragment("home", "pages/home.html").WithDataHandler(handler).Build()
-
-	if f == nil {
-		t.Fatal("Build() = nil, want non-nil Fragment")
-	}
-	if f.Name != "home" {
-		t.Errorf("Name = %q, want %q", f.Name, "home")
-	}
-	if f.TemplatePath != "pages/home.html" {
-		t.Errorf("TemplatePath = %q, want %q", f.TemplatePath, "pages/home.html")
-	}
-	if f.DataHandler == nil {
-		t.Error("DataHandler = nil, want set")
-	}
-}
-
-// TestFragmentBuilder_BlogLayout mirrors a blog-style layout: a layout fragment
-// declaring a required "content" slot, with a required post fragment bound into that
-// slot, carrying its own fallback and DataHandler timeout.
-func TestFragmentBuilder_BlogLayout(t *testing.T) {
-	fallback := NewFragment("post-fallback", "pages/post_fallback.html").Build()
-
-	post := NewFragment("post", "pages/post.html").
-		WithDataHandler(func(ctx context.Context, rc *RenderContext) (any, []string, error) {
-			return nil, []string{"post:slug"}, nil
-		}).
-		Required().
-		WithFallback(fallback).
-		WithTimeout(2 * time.Second).
+	layout := NewFragment("layout", "layouts/default.html").
+		WithSlot("content", true, false).
 		Build()
 
-	layoutBuilder := NewFragment("layout", "layout.html").
-		WithSlot("content", true, false).
-		WithSlotFragment("content", post)
-	layout := layoutBuilder.Build()
-
-	if err := layoutBuilder.BuildErr(); err != nil {
-		t.Fatalf("BuildErr() = %v, want nil", err)
-	}
+	homeContent := NewFragment("home-content", "pages/home.html").
+		WithDataHandler(func(ctx context.Context, rc *RenderContext) (any, []string, error) {
+			data := map[string]any{
+				"Title": "Welcome Home",
+			}
+			tags := []string{"homepage"}
+			return data, tags, nil
+		}).
+		Build()
 
 	if layout.Name != "layout" {
 		t.Errorf("layout.Name = %q, want %q", layout.Name, "layout")
+	}
+	if layout.TemplatePath != "layouts/default.html" {
+		t.Errorf("layout.TemplatePath = %q, want %q", layout.TemplatePath, "layouts/default.html")
 	}
 	slot, ok := layout.Slot("content")
 	if !ok {
@@ -65,18 +42,85 @@ func TestFragmentBuilder_BlogLayout(t *testing.T) {
 	if !slot.Required {
 		t.Error("slot.Required = false, want true")
 	}
-	if len(slot.Fill) != 1 || slot.Fill[0] != post {
-		t.Fatalf("slot.Fill = %v, want [post]", slot.Fill)
+	if slot.AllowMultiple {
+		t.Error("slot.AllowMultiple = true, want false")
+	}
+	if len(slot.Fill) != 0 {
+		t.Errorf("slot.Fill = %v, want empty — the builder never binds content into the layout, registration does", slot.Fill)
 	}
 
-	if !post.Required {
-		t.Error("post.Required = false, want true")
+	if homeContent.Name != "home-content" {
+		t.Errorf("homeContent.Name = %q, want %q", homeContent.Name, "home-content")
 	}
-	if post.Fallback != fallback {
-		t.Errorf("post.Fallback = %v, want %v", post.Fallback, fallback)
+	if homeContent.TemplatePath != "pages/home.html" {
+		t.Errorf("homeContent.TemplatePath = %q, want %q", homeContent.TemplatePath, "pages/home.html")
 	}
-	if post.Timeout != 2*time.Second {
-		t.Errorf("post.Timeout = %v, want 2s", post.Timeout)
+	if homeContent.DataHandler == nil {
+		t.Fatal("homeContent.DataHandler = nil, want set")
+	}
+	data, tags, err := homeContent.DataHandler(context.Background(), &RenderContext{})
+	if err != nil {
+		t.Fatalf("DataHandler() error = %v, want nil", err)
+	}
+	dataMap, ok := data.(map[string]any)
+	if !ok || dataMap["Title"] != "Welcome Home" {
+		t.Errorf("DataHandler() data = %v, want map[Title:Welcome Home]", data)
+	}
+	if len(tags) != 1 || tags[0] != "homepage" {
+		t.Errorf("DataHandler() tags = %v, want [homepage]", tags)
+	}
+}
+
+// TestFragmentBuilder_BlogPostContent mirrors the content fragment from
+// docs/spec/usage-examples.md's "Advanced example: redirects and custom error pages":
+// a Required() fragment whose DataHandler reads a path parameter, fetches a post, and
+// either returns the post tagged "post:<slug>" or an error that would trigger the
+// page's custom 500. fetchPost is a local stand-in for the spec's external function.
+func TestFragmentBuilder_BlogPostContent(t *testing.T) {
+	fetchPost := func(slug string) (any, error) {
+		if slug == "" {
+			return nil, errors.New("post not found")
+		}
+		return map[string]any{"Slug": slug}, nil
+	}
+
+	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").
+		WithDataHandler(func(ctx context.Context, rc *RenderContext) (any, []string, error) {
+			slug := rc.PathParams["slug"]
+			post, err := fetchPost(slug)
+			if err != nil {
+				return nil, nil, err // Will trigger custom 500 page
+			}
+			return post, []string{fmt.Sprintf("post:%s", slug)}, nil
+		}).
+		Required().
+		Build()
+
+	if blogPostContent.Name != "blog-post" {
+		t.Errorf("Name = %q, want %q", blogPostContent.Name, "blog-post")
+	}
+	if blogPostContent.TemplatePath != "pages/blog-post.html" {
+		t.Errorf("TemplatePath = %q, want %q", blogPostContent.TemplatePath, "pages/blog-post.html")
+	}
+	if !blogPostContent.Required {
+		t.Error("Required = false, want true")
+	}
+
+	rc := &RenderContext{PathParams: map[string]string{"slug": "hello-world"}}
+	data, tags, err := blogPostContent.DataHandler(context.Background(), rc)
+	if err != nil {
+		t.Fatalf("DataHandler() error = %v, want nil for a known slug", err)
+	}
+	if data == nil {
+		t.Error("DataHandler() data = nil, want the fetched post")
+	}
+	if len(tags) != 1 || tags[0] != "post:hello-world" {
+		t.Errorf("DataHandler() tags = %v, want [post:hello-world]", tags)
+	}
+
+	rcMissing := &RenderContext{PathParams: map[string]string{}}
+	if _, _, err := blogPostContent.DataHandler(context.Background(), rcMissing); err == nil {
+		t.Error("DataHandler() error = nil, want an error for a missing slug (triggers the 500 page)")
 	}
 }
 

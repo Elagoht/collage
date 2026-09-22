@@ -1,104 +1,184 @@
 package collage
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
 
-// TestPageBuilder_MinimalApp mirrors the framework's minimal-app usage: a single page
-// with a content fragment and one path, using the default (dynamic) strategy.
+// TestPageBuilder_MinimalApp mirrors the page-building portion of
+// docs/spec/usage-examples.md's "Minimal application" example verbatim: a
+// layout-wrapped home page with one localized path and incremental caching.
 func TestPageBuilder_MinimalApp(t *testing.T) {
-	home := NewFragment("home", "pages/home.html").Build()
+	layout := NewFragment("layout", "layouts/default.html").
+		WithSlot("content", true, false).
+		Build()
 
-	pageBuilder := NewPage("home").
-		WithContent(home).
-		WithPath("en", "/")
-	page := pageBuilder.Build()
+	homeContent := NewFragment("home-content", "pages/home.html").
+		WithDataHandler(func(ctx context.Context, rc *RenderContext) (any, []string, error) {
+			return map[string]any{"Title": "Welcome Home"}, []string{"homepage"}, nil
+		}).
+		Build()
 
-	if err := pageBuilder.BuildErr(); err != nil {
-		t.Fatalf("BuildErr() = %v, want nil", err)
+	homePage := NewPage("home").
+		WithLayout(layout).
+		WithContent(homeContent).
+		WithPath("en", "/").
+		Incremental(5 * time.Minute).
+		Build()
+
+	if homePage.Name != "home" {
+		t.Errorf("Name = %q, want %q", homePage.Name, "home")
 	}
-	if page.Name != "home" {
-		t.Errorf("Name = %q, want %q", page.Name, "home")
+	if homePage.LayoutFragment != layout {
+		t.Errorf("LayoutFragment = %v, want %v", homePage.LayoutFragment, layout)
 	}
-	if page.ContentFragment != home {
-		t.Errorf("ContentFragment = %v, want %v", page.ContentFragment, home)
+	if homePage.ContentFragment != homeContent {
+		t.Errorf("ContentFragment = %v, want %v", homePage.ContentFragment, homeContent)
 	}
-	if got, ok := page.PathFor("en"); !ok || got != "/" {
+	if got, ok := homePage.PathFor("en"); !ok || got != "/" {
 		t.Errorf("PathFor(en) = (%q, %v), want (\"/\", true)", got, ok)
 	}
-	if page.Strategy != StrategyDynamic {
-		t.Errorf("Strategy = %v, want StrategyDynamic (the default)", page.Strategy)
+	if homePage.Strategy != StrategyIncremental {
+		t.Errorf("Strategy = %v, want StrategyIncremental", homePage.Strategy)
+	}
+	if homePage.CacheTTL != 5*time.Minute {
+		t.Errorf("CacheTTL = %v, want 5m", homePage.CacheTTL)
 	}
 }
 
-// TestPageBuilder_BlogExample mirrors a blog-style page: a layout-wrapped post page,
-// localized paths, a permanent and a temporary redirect, page-specific 404/500 pages,
-// incremental caching with dependency tags, and SEO metadata.
+// TestPageBuilder_BlogExample mirrors docs/spec/usage-examples.md's "Advanced
+// example: redirects and custom error pages" verbatim: a blog post page wrapped in
+// the shared layout, two localized paths, a permanent (301) and a temporary (302)
+// redirect, page-specific 404/500 pages, incremental caching, and a dependency tag —
+// plus the two global error pages the example builds alongside it.
 func TestPageBuilder_BlogExample(t *testing.T) {
-	layout := NewFragment("layout", "layout.html").
+	layout := NewFragment("layout", "layouts/default.html").
 		WithSlot("content", true, false).
 		Build()
-	post := NewFragment("post", "pages/post.html").Required().Build()
 
-	notFound := NewPage("blog-404").WithContent(NewFragment("404", "404.html").Build()).Build()
-	serverError := NewPage("blog-500").WithContent(NewFragment("500", "500.html").Build()).Build()
+	blog404Content := NewFragment("blog-404", "errors/blog-404.html").
+		Build()
 
-	pageBuilder := NewPage("blog-post").
+	blog404Page := NewPage("blog-404").
 		WithLayout(layout).
-		WithContent(post).
+		WithContent(blog404Content).
+		Build()
+
+	blog500Content := NewFragment("blog-500", "errors/blog-500.html").
+		Build()
+
+	blog500Page := NewPage("blog-500").
+		WithLayout(layout).
+		WithContent(blog500Content).
+		Build()
+
+	fetchPost := func(slug string) (any, error) {
+		if slug == "" {
+			return nil, errors.New("post not found")
+		}
+		return map[string]any{"Slug": slug}, nil
+	}
+
+	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").
+		WithDataHandler(func(ctx context.Context, rc *RenderContext) (any, []string, error) {
+			slug := rc.PathParams["slug"]
+			post, err := fetchPost(slug)
+			if err != nil {
+				return nil, nil, err // Will trigger custom 500 page
+			}
+			return post, []string{fmt.Sprintf("post:%s", slug)}, nil
+		}).
+		Required().
+		Build()
+
+	blogPostPage := NewPage("blog-post").
+		WithLayout(layout).
+		WithContent(blogPostContent).
 		WithPath("en", "/blog/{slug}").
 		WithPath("tr", "/blog/{slug}").
-		WithPermanentRedirect("/posts/{slug}", "/blog/{slug}").
-		WithRedirect("/old-blog/{slug}", "/blog/{slug}", 302).
-		WithNotFoundPage(notFound).
-		WithErrorPage(serverError).
-		Incremental(10*time.Minute).
-		WithDependency("post:slug", "blog:posts").
-		WithSEO("title", "A blog post").
-		WithSEO("views", 42)
-	page := pageBuilder.Build()
+		WithRedirect("/old-blog/{slug}", "/blog/{slug}", 301).  // Permanent
+		WithRedirect("/temp-blog/{slug}", "/blog/{slug}", 302). // Temporary
+		WithNotFoundPage(blog404Page).
+		WithErrorPage(blog500Page).
+		Incremental(10 * time.Minute).
+		WithDependency("blog:posts").
+		Build()
 
-	if err := pageBuilder.BuildErr(); err != nil {
-		t.Fatalf("BuildErr() = %v, want nil", err)
-	}
+	globalNotFound := NewPage("global-404").
+		WithContent(NewFragment("404", "errors/404.html").Build()).
+		Build()
 
-	if page.LayoutFragment != layout {
-		t.Errorf("LayoutFragment = %v, want %v", page.LayoutFragment, layout)
+	globalError := NewPage("global-500").
+		WithContent(NewFragment("500", "errors/500.html").Build()).
+		Build()
+
+	if blogPostPage.LayoutFragment != layout {
+		t.Errorf("LayoutFragment = %v, want %v", blogPostPage.LayoutFragment, layout)
 	}
-	if page.ContentFragment != post {
-		t.Errorf("ContentFragment = %v, want %v", page.ContentFragment, post)
+	if blogPostPage.ContentFragment != blogPostContent {
+		t.Errorf("ContentFragment = %v, want %v", blogPostPage.ContentFragment, blogPostContent)
 	}
 	wantLocales := []string{"en", "tr"}
-	if locales := page.Locales(); len(locales) != 2 || locales[0] != wantLocales[0] || locales[1] != wantLocales[1] {
+	if locales := blogPostPage.Locales(); len(locales) != 2 || locales[0] != wantLocales[0] || locales[1] != wantLocales[1] {
 		t.Errorf("Locales() = %v, want %v", locales, wantLocales)
 	}
-	if len(page.Redirects) != 2 {
-		t.Fatalf("len(Redirects) = %d, want 2", len(page.Redirects))
+	if len(blogPostPage.Redirects) != 2 {
+		t.Fatalf("len(Redirects) = %d, want 2", len(blogPostPage.Redirects))
 	}
-	if !page.Redirects[0].Permanent || page.Redirects[0].From != "/posts/{slug}" {
-		t.Errorf("Redirects[0] = %+v, want permanent redirect from /posts/{slug}", page.Redirects[0])
+	if blogPostPage.Redirects[0].From != "/old-blog/{slug}" || blogPostPage.Redirects[0].To != "/blog/{slug}" || blogPostPage.Redirects[0].StatusCode != 301 {
+		t.Errorf("Redirects[0] = %+v, want {From:/old-blog/{slug} To:/blog/{slug} StatusCode:301}", blogPostPage.Redirects[0])
 	}
-	if page.Redirects[1].StatusCode != 302 || page.Redirects[1].From != "/old-blog/{slug}" {
-		t.Errorf("Redirects[1] = %+v, want 302 redirect from /old-blog/{slug}", page.Redirects[1])
+	if blogPostPage.Redirects[1].From != "/temp-blog/{slug}" || blogPostPage.Redirects[1].To != "/blog/{slug}" || blogPostPage.Redirects[1].StatusCode != 302 {
+		t.Errorf("Redirects[1] = %+v, want {From:/temp-blog/{slug} To:/blog/{slug} StatusCode:302}", blogPostPage.Redirects[1])
 	}
-	if page.NotFoundPage != notFound {
-		t.Errorf("NotFoundPage = %v, want %v", page.NotFoundPage, notFound)
+	if blogPostPage.NotFoundPage != blog404Page {
+		t.Errorf("NotFoundPage = %v, want %v", blogPostPage.NotFoundPage, blog404Page)
 	}
-	if page.ErrorPage != serverError {
-		t.Errorf("ErrorPage = %v, want %v", page.ErrorPage, serverError)
+	if blogPostPage.ErrorPage != blog500Page {
+		t.Errorf("ErrorPage = %v, want %v", blogPostPage.ErrorPage, blog500Page)
 	}
-	if page.Strategy != StrategyIncremental {
-		t.Errorf("Strategy = %v, want StrategyIncremental", page.Strategy)
+	if blogPostPage.Strategy != StrategyIncremental {
+		t.Errorf("Strategy = %v, want StrategyIncremental", blogPostPage.Strategy)
 	}
-	if page.CacheTTL != 10*time.Minute {
-		t.Errorf("CacheTTL = %v, want 10m", page.CacheTTL)
+	if blogPostPage.CacheTTL != 10*time.Minute {
+		t.Errorf("CacheTTL = %v, want 10m", blogPostPage.CacheTTL)
 	}
-	wantTags := []string{"post:slug", "blog:posts"}
-	if len(page.DependencyTags) != 2 || page.DependencyTags[0] != wantTags[0] || page.DependencyTags[1] != wantTags[1] {
-		t.Errorf("DependencyTags = %v, want %v", page.DependencyTags, wantTags)
+	if len(blogPostPage.DependencyTags) != 1 || blogPostPage.DependencyTags[0] != "blog:posts" {
+		t.Errorf("DependencyTags = %v, want [blog:posts]", blogPostPage.DependencyTags)
 	}
+
+	if !blogPostContent.Required {
+		t.Error("blogPostContent.Required = false, want true")
+	}
+
+	if blog404Page.LayoutFragment != layout || blog404Page.ContentFragment != blog404Content {
+		t.Errorf("blog404Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", blog404Page.LayoutFragment, blog404Page.ContentFragment, layout, blog404Content)
+	}
+	if blog500Page.LayoutFragment != layout || blog500Page.ContentFragment != blog500Content {
+		t.Errorf("blog500Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", blog500Page.LayoutFragment, blog500Page.ContentFragment, layout, blog500Content)
+	}
+	if globalNotFound.Name != "global-404" || globalNotFound.ContentFragment == nil {
+		t.Errorf("globalNotFound = %+v, want Name=global-404 and a non-nil ContentFragment", globalNotFound)
+	}
+	if globalError.Name != "global-500" || globalError.ContentFragment == nil {
+		t.Errorf("globalError = %+v, want Name=global-500 and a non-nil ContentFragment", globalError)
+	}
+}
+
+// TestPageBuilder_WithSEO is not part of either spec example — WithSEO is exercised
+// separately here since it carries the one permitted new `any` in this package.
+func TestPageBuilder_WithSEO(t *testing.T) {
+	content := NewFragment("c", "c.html").Build()
+
+	page := NewPage("p").
+		WithContent(content).
+		WithSEO("title", "A blog post").
+		WithSEO("views", 42).
+		Build()
+
 	if page.SEO["title"] != "A blog post" {
 		t.Errorf(`SEO["title"] = %v, want "A blog post"`, page.SEO["title"])
 	}

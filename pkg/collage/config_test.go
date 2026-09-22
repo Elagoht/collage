@@ -32,9 +32,7 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 		Locale: LocaleConfig{
 			Default:    "en",
 			Supported:  []string{"en"},
-			FromPath:   true,
-			FromHeader: true,
-			FromCookie: "locale",
+			CookieName: "locale",
 		},
 	}
 
@@ -91,6 +89,70 @@ func TestConfig_ApplyDefaults_PreservesExplicitValues(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cfg.Locale.Supported, []string{"tr", "en"}) {
 		t.Errorf("Locale.Supported = %v, want [tr en] (explicit value preserved)", cfg.Locale.Supported)
+	}
+}
+
+// TestConfig_ApplyDefaults_PreservesOptOuts is the point of inverting LocaleConfig's
+// booleans and redefining CacheConfig.MaxEntries: a caller who explicitly opts out of
+// every locale source and asks for an unlimited cache must have that survive
+// ApplyDefaults, not get silently reverted because the opted-out value happens to
+// look like a zero value.
+func TestConfig_ApplyDefaults_PreservesOptOuts(t *testing.T) {
+	cfg := Config{
+		Locale: LocaleConfig{
+			Default:             "en",
+			Supported:           []string{"en"},
+			DisablePathLocale:   true,
+			DisableHeaderLocale: true,
+			DisableCookieLocale: true,
+		},
+		Cache: CacheConfig{MaxEntries: -1},
+	}
+
+	cfg.ApplyDefaults()
+
+	if !cfg.Locale.DisablePathLocale {
+		t.Error("ApplyDefaults cleared DisablePathLocale")
+	}
+	if !cfg.Locale.DisableHeaderLocale {
+		t.Error("ApplyDefaults cleared DisableHeaderLocale")
+	}
+	if !cfg.Locale.DisableCookieLocale {
+		t.Error("ApplyDefaults cleared DisableCookieLocale")
+	}
+	if cfg.Cache.MaxEntries != -1 {
+		t.Errorf("Cache.MaxEntries = %d, want -1 (unlimited, unchanged)", cfg.Cache.MaxEntries)
+	}
+}
+
+// TestConfig_MinimalAppExample mirrors the Config literal from
+// docs/spec/usage-examples.md's "Minimal application" example verbatim, proving it
+// still compiles against this package's field names and passes ApplyDefaults and
+// Validate unchanged.
+func TestConfig_MinimalAppExample(t *testing.T) {
+	cfg := &Config{
+		Server: ServerConfig{
+			Host: "localhost",
+			Port: 3000,
+		},
+		Template: TemplateConfig{
+			Root:      "./templates",
+			Extension: ".html",
+			DevMode:   true,
+		},
+		Cache: CacheConfig{
+			Enabled:    true,
+			Type:       "memory",
+			DefaultTTL: 5 * time.Minute,
+		},
+	}
+
+	cfg.ApplyDefaults()
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() = %v, want nil", err)
+	}
+	if !cfg.IsDevMode() {
+		t.Error("IsDevMode() = false, want true (Template.DevMode was set)")
 	}
 }
 
