@@ -1495,8 +1495,27 @@ interface satisfied by `*core.App` (`Pages()`, and a render entry point) — dec
   `PathProvider`, and with no provider record a skip with `ErrDynamicPathUnresolved`).
 - Renders through the same render engine as the server, so output is identical.
 - Writes `<OutDir>/<path>/index.html`, creating directories. The root path writes
-  `<OutDir>/index.html`. **Path safety: reject any resolved path that escapes `OutDir`
-  after `filepath.Clean`** — a `PathProvider` is user code and `..` in a param must not
+  `<OutDir>/index.html`.
+
+  **Path safety is not a lexical problem.** A `filepath.Clean` + `filepath.Rel`
+  containment check proves only that the *string* stays inside `OutDir`. It says nothing
+  about the filesystem: a symlink at any component under `OutDir` pointing outside it
+  makes `os.MkdirAll`/`os.WriteFile` follow it and write elsewhere. Before writing, walk
+  the target's components from `OutDir` downwards and `os.Lstat` each one that exists,
+  refusing with `ErrPathEscapesOutDir` if any is a symlink; only then create directories
+  and write. Check the components *before* `MkdirAll`, since `MkdirAll` itself traverses
+  symlinks. Keep the lexical check too — it is cheap and catches the common case.
+
+  **The dangerous-target refusal must run on the symlink-resolved path.** Resolve
+  `OutDir` with `filepath.EvalSymlinks` first, then test *that* value for filesystem root
+  and repository root. Testing the unresolved string means an `OutDir` that is a symlink
+  to `/` passes the refusal and `Clean: true` then deletes the real target's contents —
+  the check fails open on the one operation where failing open destroys data. The
+  filesystem-root refusal applies to every build, not only `Clean: true`; the
+  repository-root refusal applies to `Clean: true`.
+
+  The superseded original wording: reject any resolved path that escapes `OutDir`
+  after `filepath.Clean` — a `PathProvider` is user code and `..` in a param must not
   write outside the output directory. This is a required test.
 - `Clean: true` removes only the contents of `OutDir`, and refuses to run when `OutDir`
   is `/`, empty, or the repository root.
