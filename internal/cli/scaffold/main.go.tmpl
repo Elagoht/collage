@@ -15,7 +15,9 @@
 // parsing -collage-build, -out, and -clean below and, when -collage-build is
 // set, rendering every statically-buildable page to <dir> — through
 // collage.NewBuilder, the same static builder the collage CLI's own
-// documentation refers to — instead of starting a server.
+// documentation refers to — instead of starting a server. That build also
+// copies this project's mounted static files into <dir>, under the prefix they
+// are mounted at.
 //
 // If you rewrite this file, keep both halves of the contract working, or
 // "collage dev" and "collage build" will stop doing anything useful here.
@@ -57,6 +59,9 @@ func main() {
 	if err := app.RegisterPage(homePage()); err != nil {
 		log.Fatalf("@@NAME@@: register home page: %v", err)
 	}
+	if err := mountStatic(app); err != nil {
+		log.Fatalf("@@NAME@@: mount static files: %v", err)
+	}
 
 	if *buildFlag {
 		if err := staticBuild(app, *outFlag, *cleanFlag); err != nil {
@@ -88,6 +93,36 @@ func homePage() *collage.Page {
 		WithPath("en", "/").
 		Static().
 		Build()
+}
+
+// mountStatic serves this project's "static" directory at the URL prefix
+// "/static/", so templates can link "/static/app.css". A static build copies
+// the whole mount into its output directory too, unless the mount is
+// registered with collage.WithoutBuildCopy().
+//
+// os.OpenRoot, not os.DirFS, and the difference is a security one rather than a
+// stylistic one. Go's own documentation for os.DirFS states that it does not
+// prevent access to files outside the directory: a symlink planted inside
+// "static" — by a build step, a dependency, a CMS upload, an editor — resolves
+// through it, and the file it points at is served. os.Root is enforced by the
+// kernel: every path it opens is resolved relative to the directory it holds,
+// and a symlink leaving that directory fails to open at all.
+//
+// The *os.Root is deliberately never closed. Its fs.FS is what serves every
+// request for the life of the process, so closing it would break the mount;
+// the operating system reclaims the descriptor when the process exits.
+//
+// The path is relative, so it resolves against the working directory — which
+// is this project's own directory when started by "go run .", "collage dev" or
+// "collage build". A program started from elsewhere (a systemd unit, a
+// container with a different WORKDIR) should be given an absolute path, or
+// embed its assets with //go:embed instead.
+func mountStatic(app *collage.App) error {
+	root, err := os.OpenRoot("static")
+	if err != nil {
+		return err
+	}
+	return app.Mount("/static/", root.FS())
 }
 
 // staticBuild renders every statically-buildable page to files under outDir,

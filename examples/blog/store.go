@@ -41,9 +41,10 @@ type Post struct {
 // files — and is safe for concurrent use, because the framework serves every
 // request on its own goroutine.
 //
-// It also counts how many times each post was loaded. That counter is what the
-// end-to-end test uses to tell a cache hit from a re-render: both answer 200 with
-// the same body, so a status code cannot distinguish them.
+// It also counts how many times each post was loaded, and how many times the
+// sitemap document asked for the index. Those counters are what the end-to-end
+// test uses to tell a cache hit from a re-render: both answer 200 with the same
+// body, so a status code cannot distinguish them.
 type PostStore struct {
 	mu sync.RWMutex
 	// posts holds the index, in the order the home page lists it.
@@ -54,6 +55,9 @@ type PostStore struct {
 	// loads counts the Post calls made for each slug, including the ones that
 	// failed.
 	loads map[string]int
+	// sitemaps counts the Sitemap calls made, which is how the end-to-end test
+	// tells a cached sitemap document from a regenerated one.
+	sitemaps int
 }
 
 // NewPostStore returns a store seeded with the example's posts, plus the one
@@ -125,6 +129,28 @@ func (s *PostStore) Post(ctx context.Context, slug string) (Post, error) {
 		return Post{}, fmt.Errorf("blog: load post %q: %w", slug, ErrStorageUnavailable)
 	}
 	return post, nil
+}
+
+// Sitemap returns the posts the sitemap document lists, newest last, and counts
+// the call.
+//
+// It is List with a counter rather than a different query: the sitemap and the
+// home page list the same posts. The counter is the point — a document served
+// from the cache never reaches its handler, so this is what distinguishes a
+// cached sitemap from a regenerated one. See SitemapRenders.
+func (s *PostStore) Sitemap() []Post {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.sitemaps++
+	return append([]Post(nil), s.posts...)
+}
+
+// SitemapRenders returns how many times Sitemap has been called.
+func (s *PostStore) SitemapRenders() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.sitemaps
 }
 
 // Loads returns how many times Post has been called for slug. A cached response

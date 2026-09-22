@@ -7,6 +7,11 @@ fragment is a template plus an optional data handler plus the slots it exposes t
 its children. Fragments compose; pages are configuration. Output is cached by
 dependency tag and invalidated by tag, not by guessing TTLs.
 
+Not everything a site serves is HTML, so two things beside pages: **documents** —
+routed, cacheable non-HTML responses such as a sitemap, a feed or a `robots.txt`,
+whose handler returns bytes — and **assets**, a mounted `fs.FS` served with
+`Range` support and its own `Cache-Control`.
+
 No dependencies: the standard library, and nothing else. Go 1.26.
 
 ## Install
@@ -105,7 +110,8 @@ err := app.InvalidateTags(ctx, "homepage")
 ```
 
 For the full version of this — shared layouts, `/blog/{slug}`, page-specific 404
-and 500 pages, redirects, incremental caching, and a plugin — see
+and 500 pages, redirects, incremental caching, a plugin, a sitemap document, a
+robots.txt and a mounted stylesheet — see
 [`examples/blog`](examples/blog), which is also the framework's end-to-end test.
 
 ## What it guarantees
@@ -132,6 +138,15 @@ and 500 pages, redirects, incremental caching, and a plugin — see
   one visitor's language to the next.
 - **Invalidation reports what it did.** `InvalidateTagsN` returns the number of
   keys it reached, and a partial failure is an error rather than a silent success.
+- **A non-HTML route fails as a non-HTML route.** A document's failure, and a
+  missing asset, answer `text/plain` — a crawler asking for `sitemap.xml` and a
+  browser asking for a stylesheet never get a web page back.
+- **Assets are files, not cache entries.** A mount is served with
+  `http.ServeContent`, so `Range` and `206` work and audio seeks; it never enters
+  the page cache, so a 50 MB download cannot evict thousands of pages.
+- **A mount cannot silently shadow a route.** A mount prefix that would swallow a
+  registered page or document path is refused at startup, naming both, in either
+  registration order.
 
 ## Extending the framework
 
@@ -171,6 +186,33 @@ app, err := collage.New(&collage.Config{
 })
 ```
 
+**Documents and assets.** Neither is an extension point so much as a second and
+third kind of route, reachable from `pkg/collage` alone.
+
+```go
+sitemap := collage.NewDocument("sitemap", "application/xml").
+	WithPath("en", "/sitemap.xml").
+	WithHandler(func(ctx context.Context, rc *collage.RenderContext) ([]byte, []string, error) {
+		body, err := buildSitemap(store.List())
+		return body, []string{"blog:posts"}, err
+	}).
+	Incremental(time.Hour).
+	WithDependency("blog:posts").
+	Build()
+
+err := app.RegisterDocument(sitemap)
+
+// os.OpenRoot, not os.DirFS: os.DirFS does not prevent symlink traversal.
+root, err := os.OpenRoot("./static")
+if err != nil {
+	log.Fatal(err)
+}
+err = app.Mount("/static/", root.FS(), collage.WithCacheControl("public, max-age=3600"))
+```
+
+[docs/documents.md](docs/documents.md) and [docs/assets.md](docs/assets.md) cover
+both, including what they deliberately do not do.
+
 **A plugin.** Implement `collage.Plugin` and whichever hooks you need; the
 registry finds them by type assertion, so assert the interfaces you meant to
 implement.
@@ -206,6 +248,8 @@ Details in [docs/caching.md](docs/caching.md),
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | Package layout, the request lifecycle, why rendering is sequential, why plugins get a `Host` — and the deviations from the original specification |
 | [docs/fragments.md](docs/fragments.md) | Fragments, slots, layouts, data handlers, timeouts, the failure policy, template functions |
+| [docs/documents.md](docs/documents.md) | `Document`: non-HTML responses, the handler contract, plain-text errors, the three hooks, static builds |
+| [docs/assets.md](docs/assets.md) | `App.Mount`: `fs.FS` assets, `Range` and ETags, why `os.OpenRoot` rather than `os.DirFS`, and the limitations |
 | [docs/caching.md](docs/caching.md) | Render strategies, the cache key, ETags, `Vary`, dependency tags, invalidation, custom caches |
 | [docs/plugins.md](docs/plugins.md) | The `Plugin` contract, the `Host`, every hook, dispatch and error semantics, lifecycle |
 | [docs/routing.md](docs/routing.md) | Path patterns, locales, redirects, error-page resolution, registration errors |

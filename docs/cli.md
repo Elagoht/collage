@@ -17,8 +17,14 @@ command, a malformed plugin command), `1` for a command that parsed but failed.
 
 ## `collage new`
 
-Scaffolds a runnable project: a `go.mod`, a `main.go` wiring one page, a layout
-and a home template, a `.gitignore`, and a README.
+Scaffolds a runnable project: a `go.mod`, a `main.go` wiring one page and mounting
+one static directory, a layout and a home template, a starter stylesheet under
+`static/`, a `.gitignore`, and a README.
+
+The scaffolded `main.go` mounts `static/` with `os.OpenRoot`, **not** `os.DirFS`.
+That is not a style preference: `os.DirFS` does not prevent symlink traversal, so
+a symlink planted inside the mounted directory escapes it, while an `os.Root` is
+enforced by the kernel. See [assets.md](assets.md).
 
 ```
 collage new myblog                       # into ./myblog, module "myblog"
@@ -102,15 +108,18 @@ already holds is rejected at `RegisterCommand` (`collage.ErrEmptyCommandName`,
 
 The `-collage-build` half of the contract is `collage.NewBuilder` — the same
 builder the CLI documentation refers to, reached through the public API. It
-renders through `App.RenderPath`: the same render engine the HTTP server uses, the
-same template set, the same fragment tree, the same data handlers.
+renders pages through `App.RenderPath` and documents through
+`App.RenderDocumentPath`: the same render engine the HTTP server uses, the same
+template set, the same fragment tree, the same data handlers, the same document
+handlers.
 
-**A static build renders without plugins.** It does not go through `App.Handler()`,
-so plugin `Init` never runs and no render hook fires: nothing an
-`OnPageResolved`, `OnBeforeRender`, `OnAfterRender`, or `OnCacheWrite` would have
-contributed appears in the files it writes. A plugin that stamps every page from
-`OnAfterRender` stamps nothing here. What you get is the fragment output a live
-request would produce, without whatever the plugin layer adds on top of it.
+**A static build renders without plugins — pages and documents alike.** It does
+not go through `App.Handler()`, so plugin `Init` never runs and no hook fires:
+nothing an `OnPageResolved`, `OnBeforeRender`, `OnAfterRender`, or `OnCacheWrite`
+would have contributed appears in the files it writes. A plugin that stamps every
+page from `OnAfterRender` stamps nothing here. What you get is the fragment output
+a live request would produce, and the bytes a document handler returned, without
+whatever the plugin layer adds on top of them.
 
 A page that renders with a failed fragment is **not written**: the failure is
 recorded in `report.Errors` as `collage.ErrDegradedRender`, because a static file
@@ -153,6 +162,7 @@ func staticBuild(app *collage.App, outDir string, clean bool) error {
 | `Clean` | Remove `OutDir`'s contents (not `OutDir` itself) first |
 | `Concurrency` | How many pages render and write at once. `<= 1` is sequential |
 | `PathProvider` | Supplies the concrete paths for a page whose pattern has a `{param}` |
+| `DocumentPathProvider` | The same, for a document whose pattern has a `{param}`. A separate interface, not a widening of `PathProvider`, so an existing implementation keeps compiling |
 
 `Report` contents are deterministic regardless of `Concurrency`: tasks are merged
 back into enumeration order.
@@ -166,6 +176,19 @@ back into enumeration order.
 - A page whose pattern for a locale contains `{param}` needs a `PathProvider`, or
   it is skipped with `ErrDynamicPathUnresolved`. It is a skip, not a failure: a
   build is not wrong for containing pages that cannot be prerendered.
+- **A document is written to its literal path.** `/sitemap.xml` becomes
+  `<OutDir>/sitemap.xml`, not `<OutDir>/sitemap.xml/index.html`, because a crawler
+  asking for `/sitemap.xml` must not receive a directory. The same strategy rule
+  applies — a `Dynamic()` document is skipped — and a dynamic pattern needs a
+  `DocumentPathProvider` rather than a `PathProvider`. A document handler that
+  returns an empty body is refused with `collage.ErrEmptyDocumentBody` and no file
+  is written, the same condition a live request answers with a 500.
+- **Every mounted asset file system is copied**, under the prefix it is mounted
+  at: `/static/app.css` becomes `<OutDir>/static/app.css`. Copying is the default;
+  `collage.WithoutBuildCopy()` on a mount turns it off, for a mount served from a
+  CDN in production or one too large to duplicate. Which mounts are copied comes
+  from the application's own `Mounts()` — there is no `BuildOptions` field for it,
+  so a caller cannot pair one application's pages with another's assets.
 - The output path comes from the page's pattern for that locale, with no locale
   prefix added. Two locales sharing one pattern therefore write to the same file —
   give each locale its own path (`"/blog/{slug}"` and `"/tr/blog/{slug}"`) if you
@@ -203,8 +226,11 @@ handler sees the same parameters a live request would have.
 
 ### Safety
 
-A `PathProvider` is your code, and a path built from an unsanitised parameter must
-not be able to write outside `OutDir`. The builder therefore:
+A `PathProvider`, a `DocumentPathProvider`, and a mount's `fs.FS` are all your
+code, and a path built from an unsanitised parameter — or a file name an
+adversarial `fs.FS` yields from a walk — must not be able to write outside
+`OutDir`. Pages, documents and copied asset files all go through the same checks
+rather than three copies of them. The builder:
 
 - refuses to run at all when `OutDir` resolves — after following symlinks — to a
   filesystem root, and refuses to `Clean` (though it still writes) when it

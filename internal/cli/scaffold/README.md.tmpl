@@ -30,7 +30,8 @@ CLI relies on:
   collage-core's own static builder, so this project gets the same
   output-directory safety checks (symlink-escape containment, refusing a
   dangerous `-out`) as every other project built from this scaffold, rather
-  than a copy of its own.
+  than a copy of its own. The same build copies `static/` into `<dir>/static/`,
+  under the prefix it is mounted at.
 
 If you rewrite `main.go`, keep both halves of that contract working, or
 `collage dev` / `collage build` will stop doing anything useful for this
@@ -44,6 +45,10 @@ project.
 - `templates/layouts/default.html` — the page shell; `{{slot "content"}}`
   marks where a page's content fragment is rendered.
 - `templates/pages/home.html` — the home page's content, served at `/`.
+- `static/app.css` — static files, served at `/static/`. `main.go` mounts this
+  directory with `os.OpenRoot`, **not** `os.DirFS`: `os.DirFS` does not prevent
+  symlink traversal, so a symlink planted inside `static/` would escape it,
+  while an `os.Root` is enforced by the kernel.
 
 ## Next steps
 
@@ -51,4 +56,8 @@ project.
   of the builders in `pkg/collage`.
 - Give the home page's content fragment a `DataHandler` once it needs to
   render something dynamic.
+- Add a `robots.txt`, a sitemap or a feed with `collage.NewDocument` — a routed,
+  cached response whose handler returns bytes instead of rendering templates.
+- Drop more files into `static/`; they are served, and copied into a static
+  build, without any further wiring.
 - Read the collage documentation at https://github.com/Elagoht/collage.

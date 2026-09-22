@@ -19,8 +19,11 @@ something.
 | --- | --- |
 | `main.go` | The whole application: config, fragments, pages, registration |
 | `store.go` | An in-memory post store, and the two ways a data fetch can fail |
+| `documents.go` | `/sitemap.xml` and `/robots.txt`: routed, cached, non-HTML responses |
+| `assets.go` | The `/static/` mount, served from an `embed.FS` |
 | `plugin.go` | A plugin that post-processes every render and adds a CLI subcommand |
 | `templates/` | A shared layout, two page templates, four error templates |
+| `static/` | The stylesheet the layout links, embedded into the binary |
 | `main_test.go` | `httptest` against `app.Handler()` |
 
 ## The routes
@@ -32,6 +35,10 @@ something.
 | `/tr/`, `/tr/blog/{slug}` | The same pages, resolved to the `tr` locale from the path prefix |
 | `/old-blog/{slug}` | `301` to `/blog/{slug}` |
 | `/temp-blog/{slug}` | `302` to `/blog/{slug}` |
+| `/sitemap.xml` | A document: `application/xml`, incrementally cached for an hour, tagged `blog:posts` |
+| `/robots.txt` | A document: `text/plain`, static, its body a constant |
+| `/static/app.css` | A mounted file: served from the `embed.FS`, with a content-hash `ETag` |
+| `/static/nope.css` | `404` in `text/plain` — a missing stylesheet is not answered with a web page |
 | `/blog/no-such-post` | `404`, rendered by the blog's own not-found page |
 | `/blog/storage-outage` | `500`, rendered by the blog's own error page |
 | anything else | `404`, rendered by the site-wide not-found page |
@@ -60,6 +67,35 @@ All four of the layout-bearing pages — home, post, blog 404, blog 500 — are 
 from the same `layout` fragment value. That is safe: registration gives each page
 a private copy of the layout's slot table before binding that page's content into
 it, so the pages do not render each other's content out of one shared slot.
+
+## Documents are not pages
+
+`/sitemap.xml` and `/robots.txt` are `collage.Document`s, not pages. They share a
+page's routing, cache key, ETag, conditional responses and tag invalidation, and
+share none of its rendering: a document's handler returns bytes.
+
+That is deliberate, and `documents.go` builds its sitemap with `encoding/xml` to
+show why. `html/template` applies HTML escaping rules, which are wrong for XML
+and for JSON, so a sitemap generated through the page pipeline would be silently
+malformed at exactly the characters that need escaping most.
+
+The sitemap declares `WithDependency("blog:posts")` — the same tag the home page
+and the post page declare — so publishing a post invalidates all three with one
+call. `main_test.go` asserts that by counting handler executions rather than
+status codes: a cache hit and a re-render are both `200` with the same body.
+
+## Assets are neither
+
+`/static/` is a mount: an `fs.FS` served with `http.ServeContent`, which brings
+`Range`, `If-Range`, `206` and `Last-Modified` with it. A mounted file never
+enters the page cache — its freshness is the mount's `Cache-Control` and the
+client's business — and a missing one answers `text/plain`, never HTML.
+
+The example mounts an `embed.FS` so `go run ./examples/blog` works from any
+directory. An application serving files from disk should use
+`os.OpenRoot("./static")` and its `FS()`, never `os.DirFS`, which Go's own
+documentation states does not prevent symlink traversal. See
+[docs/assets.md](../../docs/assets.md).
 
 ## Error pages must be registered
 

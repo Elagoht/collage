@@ -1,7 +1,8 @@
 # Caching and invalidation
 
-collage caches *rendered page output*, keyed by request identity and indexed by
-the dependency tags the render declared. Nothing is cached until you turn it on:
+collage caches *rendered page output* and *document bodies*, keyed by request
+identity and indexed by the dependency tags the render declared. Nothing is
+cached until you turn it on:
 
 ```go
 app, err := collage.New(&collage.Config{
@@ -46,6 +47,12 @@ expire on a clock, that is `Incremental`.
 
 Only `GET` and `HEAD` are ever served from cache, and a `HEAD` never populates it:
 it produced no body to store.
+
+[Documents](documents.md) use exactly this machinery: the same three strategies,
+the same builder calls, the same key, the same ETag, the same tags. Only the body
+is cached — a document's content type is static, read from the matched document
+at serve time, so it never has to be stored beside the bytes and the `Cache`
+interface did not change to accommodate documents at all.
 
 ## The cache key
 
@@ -165,8 +172,36 @@ one through `Host.InvalidateTags`.
   — the output is served but not stored. Caching it would pin one request's
   transient failure in front of every later request.
 - **Any error response.** 404s and 500s are written `no-store`, and a rendered
-  error page's own dependency tags are dropped.
+  error page's own dependency tags are dropped. That includes a document's
+  plain-text failure and an asset mount's plain-text 404.
 - **Anything but `GET`.** An unsafe method's response is never a cached page.
+- **A mounted asset.** See below.
+
+## Mounted assets never enter the page cache
+
+A file served from an [asset mount](assets.md) is not stored by `collage.Cache`,
+not keyed by the cache key above, not tagged, and not reachable by
+`InvalidateTags`. `MaxEntries` does not apply to it and it cannot evict a page.
+
+That separation is the whole reason assets are a separate mechanism rather than a
+`Document` returning file bytes, and it follows from two properties of this
+cache. It is **in memory and bounded by entry count, not by bytes**: one 50 MB zip
+stored in it would displace thousands of pages under a `MaxEntries` that was
+chosen for pages. And its ETag is a **content hash of the whole body**, which is
+the right thing for a rendered page and not viable to recompute over a 500 MB
+file on every request.
+
+Mounted files are served with `http.ServeContent` instead, which brings `Range`,
+`If-Range`, `206` and `Last-Modified` with it, and with a lazily computed,
+memoised content-hash ETag — the hash alone is remembered, never the body, so the
+memory cost is bounded by file count.
+
+**The freshness of a mounted file is the mount's `Cache-Control` and the client's
+business, not the framework's.** There is no server-side entry to expire and no
+invalidation call that reaches one. If a file changes and its URL does not, every
+client that cached it keeps the old copy until its `max-age` elapses — which is
+what fingerprinted filenames exist to solve, and which this framework does not do
+for you.
 
 ## Adjusting a write from a plugin
 

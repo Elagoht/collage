@@ -1,0 +1,40 @@
+/* The blog example's one stylesheet. It is served from the "/static/" mount,
+   out of the embed.FS in assets.go, so "go run ./examples/blog" works from any
+   working directory. */
+
+:root {
+  --ink: #1a1a1a;
+  --paper: #fdfdfb;
+  --rule: #d8d8d0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: Georgia, "Times New Roman", serif;
+  line-height: 1.6;
+  margin: 0 auto;
+  max-width: 42rem;
+  padding: 2rem 1rem;
+}
+
+header a {
+  color: inherit;
+  font-size: 1.5rem;
+  font-weight: bold;
+  text-decoration: none;
+}
+
+main {
+  border-top: 1px solid var(--rule);
+  margin-top: 1rem;
+  padding-top: 1rem;
+}
+
+footer {
+  border-top: 1px solid var(--rule);
+  color: #6a6a66;
+  font-size: 0.875rem;
+  margin-top: 2rem;
+  padding-top: 1rem;
+}

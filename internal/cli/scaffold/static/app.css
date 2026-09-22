@@ -1,0 +1,20 @@
+/* @@NAME@@'s stylesheet.
+
+   It is served from the "/static/" mount main.go registers, straight off disk
+   through os.OpenRoot — so editing this file is visible on the next request,
+   with no rebuild. */
+
+:root {
+  --ink: #1a1a1a;
+  --paper: #fdfdfb;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: system-ui, sans-serif;
+  line-height: 1.6;
+  margin: 0 auto;
+  max-width: 42rem;
+  padding: 2rem 1rem;
+}

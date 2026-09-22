@@ -139,6 +139,7 @@ func TestRun_New_ScaffoldsExpectedFiles(t *testing.T) {
 		".gitignore",
 		filepath.Join("templates", "layouts", "default.html"),
 		filepath.Join("templates", "pages", "home.html"),
+		filepath.Join("static", "app.css"),
 	} {
 		if _, err := os.Stat(filepath.Join(target, want)); err != nil {
 			t.Errorf("expected file %s not written: %v", want, err)
@@ -205,9 +206,17 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	// builder rather than some weaker stand-in the scaffold carries on its
 	// own — see docs/plans/collage-core.md's "re-export the static builder"
 	// amendment for why this distinction matters.
+	// Two files: the one page's index.html, and the one file in the mounted
+	// static directory. A mount is copied into the build output by default, so
+	// a scaffolded project's stylesheet is in dist/ without any further wiring.
 	buildOut := runIn(goBin, "run", ".", "-collage-build", "-out", "dist")
-	if !strings.Contains(buildOut, "build complete, 1 file(s) written") {
-		t.Fatalf("build output = %q, want it to report exactly one file written", buildOut)
+	if !strings.Contains(buildOut, "build complete, 2 file(s) written") {
+		t.Fatalf("build output = %q, want it to report two files written", buildOut)
+	}
+
+	stylesheetPath := filepath.Join(target, "dist", "static", "app.css")
+	if _, err := os.Stat(stylesheetPath); err != nil {
+		t.Fatalf("the mounted stylesheet was not copied into the build output: %v", err)
 	}
 
 	indexPath := filepath.Join(target, "dist", "index.html")

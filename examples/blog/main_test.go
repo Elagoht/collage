@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/xml"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -316,4 +318,148 @@ func TestLocalePrefixReachesTheSamePages(t *testing.T) {
 		t.Fatalf("GET %s: status = %d, want %d\n%s", path, status, http.StatusOK, body)
 	}
 	assertContains(t, path, body, "Hello, collage")
+}
+
+// TestSitemapRendersAndCarriesItsContentType proves the document path end to
+// end: the sitemap registered into the same router the pages did, its handler's
+// bytes reached the client unchanged, and the Content-Type it was declared with
+// is the one written — not the text/html the framework writes for every page.
+func TestSitemapRendersAndCarriesItsContentType(t *testing.T) {
+	server, store, _ := blog(t)
+
+	status, body, header := get(t, server, "/sitemap.xml")
+	if status != http.StatusOK {
+		t.Fatalf("GET /sitemap.xml: status = %d, want %d\n%s", status, http.StatusOK, body)
+	}
+	if got := header.Get("Content-Type"); got != sitemapContentType {
+		t.Errorf("GET /sitemap.xml: Content-Type = %q, want %q", got, sitemapContentType)
+	}
+
+	// Every post the store lists is in the sitemap, at its absolute URL.
+	for _, post := range store.List() {
+		assertContains(t, "/sitemap.xml", body, "<loc>"+siteBaseURL+"/blog/"+post.Slug+"</loc>")
+	}
+	assertContains(t, "/sitemap.xml", body, "<loc>"+siteBaseURL+"/</loc>")
+
+	// A document renders no templates, so nothing the layout contributes — and
+	// nothing the plugin's OnAfterRender stamps onto a page — can reach it.
+	assertMissing(t, "/sitemap.xml", body, "<html")
+	assertMissing(t, "/sitemap.xml", body, StampMarker)
+
+	// The body really is the XML the handler produced: it parses.
+	var parsed struct {
+		URLs []struct {
+			Location string `xml:"loc"`
+		} `xml:"url"`
+	}
+	if err := xml.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatalf("GET /sitemap.xml: body is not well-formed XML: %v\n%s", err, body)
+	}
+	if want := len(store.List()) + 1; len(parsed.URLs) != want {
+		t.Errorf("GET /sitemap.xml: %d <url> entries, want %d", len(parsed.URLs), want)
+	}
+}
+
+// TestSitemapRegeneratesAfterInvalidateTags is the document half of the
+// incremental-cache test. As with a page, a status code cannot tell a cache hit
+// from a re-render — both are 200 with the same body — so the assertion is on the
+// store's counter, which only advances when the document's handler actually runs.
+func TestSitemapRegeneratesAfterInvalidateTags(t *testing.T) {
+	server, store, app := blog(t)
+
+	if status, body, _ := get(t, server, "/sitemap.xml"); status != http.StatusOK {
+		t.Fatalf("GET /sitemap.xml: status = %d, want %d\n%s", status, http.StatusOK, body)
+	}
+	if got := store.SitemapRenders(); got != 1 {
+		t.Fatalf("after the first request, store.SitemapRenders() = %d, want 1", got)
+	}
+
+	if status, body, _ := get(t, server, "/sitemap.xml"); status != http.StatusOK {
+		t.Fatalf("GET /sitemap.xml (second): status = %d, want %d\n%s", status, http.StatusOK, body)
+	}
+	if got := store.SitemapRenders(); got != 1 {
+		t.Fatalf("after the second request, store.SitemapRenders() = %d, want 1: the document was regenerated instead of served from the incremental cache", got)
+	}
+
+	if err := app.InvalidateTags(context.Background(), "blog:posts"); err != nil {
+		t.Fatalf("InvalidateTags: %v", err)
+	}
+
+	if status, body, _ := get(t, server, "/sitemap.xml"); status != http.StatusOK {
+		t.Fatalf("GET /sitemap.xml (after invalidation): status = %d, want %d\n%s", status, http.StatusOK, body)
+	}
+	if got := store.SitemapRenders(); got != 2 {
+		t.Fatalf("after invalidating blog:posts, store.SitemapRenders() = %d, want 2: the invalidated document was served from cache anyway", got)
+	}
+}
+
+// TestRobotsTxtRenders proves a static document serves exactly the bytes its
+// handler returned, under the content type it declared.
+func TestRobotsTxtRenders(t *testing.T) {
+	server, _, _ := blog(t)
+
+	status, body, header := get(t, server, "/robots.txt")
+	if status != http.StatusOK {
+		t.Fatalf("GET /robots.txt: status = %d, want %d\n%s", status, http.StatusOK, body)
+	}
+	if got := header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("GET /robots.txt: Content-Type = %q, want it to start with %q", got, "text/plain")
+	}
+	if body != robotsBody {
+		t.Errorf("GET /robots.txt: body = %q, want %q", body, robotsBody)
+	}
+	// The directives themselves, so a future edit that empties the constant
+	// cannot pass the equality check above by agreeing with itself.
+	for _, want := range []string{"User-agent: *", "Disallow: /old-blog/", "Sitemap: " + siteBaseURL + "/sitemap.xml"} {
+		assertContains(t, "/robots.txt", body, want)
+	}
+}
+
+// TestStylesheetIsServedFromTheMount proves the mount serves the embedded file
+// byte for byte, types it from its extension, and advertises an ETag — which is a
+// content hash rather than a size-and-mtime validator precisely because every
+// embed.FS file reports a zero ModTime.
+func TestStylesheetIsServedFromTheMount(t *testing.T) {
+	server, _, _ := blog(t)
+
+	want, err := fs.ReadFile(assetsFS, "static/app.css")
+	if err != nil {
+		t.Fatalf("read embedded stylesheet: %v", err)
+	}
+
+	status, body, header := get(t, server, stylesheetPath)
+	if status != http.StatusOK {
+		t.Fatalf("GET %s: status = %d, want %d\n%s", stylesheetPath, status, http.StatusOK, body)
+	}
+	if got := header.Get("Content-Type"); !strings.HasPrefix(got, "text/css") {
+		t.Errorf("GET %s: Content-Type = %q, want it to start with %q", stylesheetPath, got, "text/css")
+	}
+	if body != string(want) {
+		t.Errorf("GET %s: body does not match the embedded file", stylesheetPath)
+	}
+	if header.Get("ETag") == "" {
+		t.Errorf("GET %s: no ETag; a zero-ModTime embed.FS file has nothing else to revalidate with", stylesheetPath)
+	}
+	if got := header.Get("Cache-Control"); got == "" {
+		t.Errorf("GET %s: no Cache-Control; a mounted file never enters the page cache, so this header is all a client has", stylesheetPath)
+	}
+}
+
+// TestUnknownAssetIsPlainTextNotHTML proves a missing asset is answered by the
+// mount, not by the page router: a stylesheet that 404s must not come back as a
+// web page. The mount claims its whole prefix, so the request never reaches the
+// site-wide not-found page.
+func TestUnknownAssetIsPlainTextNotHTML(t *testing.T) {
+	server, _, _ := blog(t)
+
+	path := assetPrefix + "nope.css"
+	status, body, header := get(t, server, path)
+	if status != http.StatusNotFound {
+		t.Fatalf("GET %s: status = %d, want %d\n%s", path, status, http.StatusNotFound, body)
+	}
+	if got := header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("GET %s: Content-Type = %q, want it to start with %q", path, got, "text/plain")
+	}
+	assertMissing(t, path, body, "<html")
+	assertMissing(t, path, body, globalNotFoundText)
 }

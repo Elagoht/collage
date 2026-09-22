@@ -13,7 +13,11 @@
 //     ways a data handler can fail, plus site-wide defaults for every other page;
 //   - a permanent (301) and a temporary (302) redirect from older URL shapes;
 //   - a plugin that post-processes every rendered page and contributes a CLI
-//     subcommand.
+//     subcommand;
+//   - "/sitemap.xml" and "/robots.txt" as documents: routed, cached, non-HTML
+//     responses whose handlers return bytes rather than rendering templates;
+//   - "/static/" as a mounted asset file system, served from an embed.FS with
+//     Range support and its own Cache-Control, outside the page cache entirely.
 //
 // It imports nothing but the standard library and
 // github.com/Elagoht/collage/pkg/collage. If this program ever needed an
@@ -243,6 +247,22 @@ func newBlog(root string) (*collage.App, *PostStore, error) {
 	}
 	if err := app.RegisterPlugin(&stamp{store: store}); err != nil {
 		return nil, nil, fmt.Errorf("register plugin: %w", err)
+	}
+
+	// The two non-HTML routes. They register into the same router the pages
+	// above did, so "/sitemap.xml" colliding with a page path would be a startup
+	// error here rather than a coin toss at request time.
+	for _, doc := range []*collage.Document{newSitemapDocument(store), newRobotsDocument()} {
+		if err := app.RegisterDocument(doc); err != nil {
+			return nil, nil, fmt.Errorf("register document: %w", err)
+		}
+	}
+
+	// The stylesheet the layout links. A mount claims its whole URL prefix, so a
+	// prefix that would shadow a registered page or document is refused when the
+	// handler is built — whichever of the two was registered first.
+	if err := mountAssets(app); err != nil {
+		return nil, nil, fmt.Errorf("mount assets: %w", err)
 	}
 
 	return app, store, nil

@@ -2,21 +2,25 @@
 
 collage renders HTML on the server by composing *fragments* — a template plus an
 optional data handler — into *pages*, and caching the result by dependency tag.
-This document describes how the pieces fit together, why the load-bearing design
-decisions were made, and where the implementation deliberately departs from the
-original specification.
+It also serves two things that are not composed HTML: *documents*, which are
+routed, cacheable, non-HTML responses whose handler returns bytes, and *assets*,
+which are mounted `fs.FS` file systems served with file semantics. This document
+describes how the pieces fit together, why the load-bearing design decisions were
+made, and where the implementation deliberately departs from the original
+specification.
 
 ## Package layout
 
 ```
 pkg/collage        the only package you import: builders, config, and type aliases
 cmd/collage        the CLI binary
-internal/types     the domain types: Fragment, Page, Redirect, RenderContext
+internal/types     the domain types: Fragment, Page, Document, Redirect, RenderContext
 internal/template  html/template loading, the function map, per-render funcs
 internal/render    the fragment tree walk, the failure policy, timeouts, panics
 internal/cache     the Cache interface, the cache key, the in-memory cache
 internal/dependency  tag -> cache key index
 internal/router    radix routing per locale, redirects, locale resolution
+internal/asset     mounted fs.FS assets: ServeContent, per-mount Cache-Control, ETags
 internal/httpx     the HTTP request lifecycle
 internal/plugin    the Plugin contract, the Host, hook dispatch
 internal/observability  the Metrics and Tracer interfaces
@@ -37,9 +41,41 @@ field into `internal/core.Config`. That conversion is written out by hand
 (`toCoreConfig`) precisely so that adding a field to one and forgetting the other
 is visible in a diff.
 
+## The three kinds of route
+
+A request reaches exactly one of three things, and they are deliberately
+different mechanisms rather than one generalised one.
+
+| | `Page` | `Document` | Asset mount |
+| --- | --- | --- | --- |
+| Produces | Composed HTML | Whatever its handler returns | A file from an `fs.FS` |
+| Content type | Always `text/html; charset=utf-8` | Static, declared, required | From the extension, else sniffed |
+| Templates | Fragments and slots | None | None |
+| Page cache | Yes | Yes — same key, same ETag, same tags | Never |
+| `Range` requests | No | No | Yes, via `http.ServeContent` |
+| Plugin hooks | All six | `OnCacheWrite`, `OnCacheInvalidate`, `OnError` | None |
+| A failure renders | The page's error page, in HTML | `text/plain` | `text/plain` |
+
+A generated payload (sitemap, feed, JWKS) is small, computed from application
+state and wants tag invalidation; a served file (audio, video, a zip, a
+stylesheet) sits on disk or in an embed, is potentially large, and wants `Range`
+and `Last-Modified`. Forcing the second through the first breaks in three
+specific ways: a `[]byte`-returning API cannot do `Range` without hand-rolling
+RFC 9110 range parsing; the page cache is bounded by entry count, so one 50 MB
+zip would evict thousands of pages; and the framework's content-hash ETag is not
+viable over 500 MB per request.
+
+Documents register into the *same* radix tree as pages, so a collision between
+`/sitemap.xml` and `/{slug}` is a startup error. Mounts claim a URL prefix
+instead, checked before routing — which is safe only because a startup check
+refuses a mount prefix that would shadow any registered page or document path.
+
+See [documents.md](documents.md) and [assets.md](assets.md).
+
 ## The request lifecycle
 
-For one GET, in order:
+For one GET on a page, in order — a mount claims the request before step 1 if its
+prefix matches, and a document runs the same steps minus 4, 5 and 6:
 
 1. **Route.** The router resolves the locale (path prefix, then `Accept-Language`,
    then cookie, then the default) and matches the remaining path in that locale's
@@ -201,6 +237,15 @@ Each of these is a deliberate departure, with the reason it was made.
   negotiated from a header or a cookie is not in the URL, so a shared cache would
   hand one visitor's language to the next; and a data handler may render from
   `r.URL.Query()`, so two queries against one path are two representations.
+- **`Document` and asset mounts added; the specification described only HTML
+  pages.** The spec had one response shape — composed HTML with a constant
+  content type — so `robots.txt`, `sitemap.xml`, a feed, a JWKS document and any
+  static file were not merely unimplemented but unexpressible. `Document` adds a
+  routed, cacheable non-HTML response that reuses every piece of a page's
+  machinery except rendering; `App.Mount` adds an `fs.FS` served with
+  `http.ServeContent`. They are two mechanisms rather than one because a
+  generated payload and a served file want opposite things — see "The three kinds
+  of route".
 - **Registration binds into a per-page copy of the layout.** `Bind` appends to a
   slot's fill, and a shared layout is one object — binding three pages into it
   would render all three pages' content on every one of them. Copying the slot
@@ -209,6 +254,8 @@ Each of these is a deliberate departure, with the reason it was made.
 ## Further reading
 
 - [Fragments and pages](fragments.md)
+- [Documents](documents.md)
+- [Assets](assets.md)
 - [Caching and invalidation](caching.md)
 - [Plugins](plugins.md)
 - [Routing, locales, redirects](routing.md)
