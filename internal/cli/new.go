@@ -1,0 +1,142 @@
+package cli
+
+import (
+	"errors"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// ErrMissingProjectName is returned by the "new" command when it is called
+// with no project name.
+var ErrMissingProjectName = errors.New("collage: missing project name")
+
+// ErrTargetNotEmpty is returned by the "new" command when its target
+// directory already has contents and -force was not given.
+var ErrTargetNotEmpty = errors.New("collage: target directory is not empty")
+
+// newUsage is "collage help new"'s own usage text.
+const newUsage = `Usage: collage new <name> [-dir path] [-module path] [-force]
+
+Scaffolds a new, runnable collage project named <name>: a go.mod, a main.go
+wiring one page, a layout and a home template, a .gitignore, and a README.
+
+  -dir path      directory to scaffold into (default: ./<name>)
+  -module path   the scaffolded go.mod's module path (default: <name>)
+  -force         scaffold into a non-empty directory anyway
+`
+
+// newValueFlags names the "new" command's flags that consume a following
+// argument, for splitPositional.
+var newValueFlags = map[string]bool{"dir": true, "module": true}
+
+// runNew implements the "new" command.
+func (c *CLI) runNew(args []string) int {
+	fs := flag.NewFlagSet("new", flag.ContinueOnError)
+	fs.SetOutput(c.stderr())
+	fs.Usage = func() { fmt.Fprint(c.stderr(), newUsage) }
+	dir := fs.String("dir", "", "directory to scaffold into")
+	module := fs.String("module", "", "the scaffolded go.mod's module path")
+	force := fs.Bool("force", false, "scaffold into a non-empty directory anyway")
+
+	// The stdlib flag package stops parsing at the first non-flag argument, so
+	// a flag placed after <name> — which is exactly how newUsage documents
+	// this command — would otherwise never be seen. positional and flagArgs
+	// separate the project name from the flags surrounding it before Parse
+	// ever runs, so their order relative to each other does not matter.
+	positional, flagArgs := splitPositional(args, newValueFlags)
+
+	if err := fs.Parse(flagArgs); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	if len(positional) != 1 {
+		fmt.Fprintln(c.stderr(), ErrMissingProjectName)
+		fmt.Fprintln(c.stderr())
+		fs.Usage()
+		return 2
+	}
+	name := positional[0]
+
+	targetDir := *dir
+	if targetDir == "" {
+		targetDir = filepath.Join(".", name)
+	}
+	modulePath := *module
+	if modulePath == "" {
+		modulePath = name
+	}
+
+	if err := checkTarget(targetDir, *force); err != nil {
+		fmt.Fprintf(c.stderr(), "collage: %v\n", err)
+		return 1
+	}
+	if err := writeScaffold(targetDir, modulePath, name); err != nil {
+		fmt.Fprintf(c.stderr(), "collage: scaffold: %v\n", err)
+		return 1
+	}
+
+	out := c.stdout()
+	fmt.Fprintf(out, "Scaffolded %q in %s\n\n", name, targetDir)
+	fmt.Fprintln(out, "Next steps:")
+	fmt.Fprintf(out, "  cd %s\n", targetDir)
+	fmt.Fprintln(out, "  go mod tidy")
+	fmt.Fprintln(out, "  go run .")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, `("collage dev" and "collage build" also work from inside that directory.)`)
+	return 0
+}
+
+// splitPositional splits args into its non-flag arguments and its flags (plus
+// the values that follow a flag in valueFlags), preserving each group's
+// relative order. A flag given as "-name=value" is recognised without
+// consulting valueFlags at all, since it carries its own value; a flag given
+// as "-name value" consumes the following argument only when valueFlags[name]
+// is true, so a boolean flag's own value is never mistaken for one.
+//
+// This exists because the stdlib flag package parses only a leading run of
+// flags and treats everything from the first non-flag argument on as
+// positional — so "collage new demo -dir x", with the positional argument
+// first, would otherwise leave -dir unparsed. Splitting first, then handing
+// flagArgs alone to a FlagSet, makes the argument order flag.Parse expects
+// irrelevant to the command's own users.
+func splitPositional(args []string, valueFlags map[string]bool) (positional, flagArgs []string) {
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positional = append(positional, arg)
+			continue
+		}
+
+		flagArgs = append(flagArgs, arg)
+		if strings.Contains(arg, "=") {
+			continue
+		}
+		name := strings.TrimLeft(arg, "-")
+		if valueFlags[name] && i+1 < len(args) {
+			i++
+			flagArgs = append(flagArgs, args[i])
+		}
+	}
+	return positional, flagArgs
+}
+
+// checkTarget refuses a non-empty dir unless force is set. A directory that
+// does not exist yet, or exists and is empty, is always fine.
+func checkTarget(dir string, force bool) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	if len(entries) > 0 && !force {
+		return fmt.Errorf("%w: %s", ErrTargetNotEmpty, dir)
+	}
+	return nil
+}

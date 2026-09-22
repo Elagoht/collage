@@ -1,0 +1,49 @@
+# @@NAME@@
+
+A [collage](https://github.com/Elagoht/collage) project, scaffolded by
+`collage new`.
+
+## Running
+
+```
+go mod tidy
+go run .
+```
+
+Or, using the collage CLI from inside this directory: `collage dev`.
+
+## The collage CLI contract
+
+This project's `main.go` implements both halves of the contract the `collage`
+CLI relies on:
+
+- **`collage dev`** runs `go run .` in this directory with `COLLAGE_DEV=1` set
+  in the process environment. `main.go` reads that variable and turns on
+  development mode, which reloads templates from disk on every request. It
+  does **not** hot-reload Go code — a change to `main.go`, or any other `.go`
+  file here, still requires stopping and re-running `collage dev` (or
+  `go run .`).
+- **`collage build`** runs `go run . -collage-build -out <dir>`. `main.go`
+  parses those two flags and, when `-collage-build` is set, renders every
+  statically-buildable page to `<dir>` instead of starting a server.
+
+If you rewrite `main.go`, keep both halves of that contract working, or
+`collage dev` / `collage build` will stop doing anything useful for this
+project.
+
+## Layout
+
+- `go.mod` — this project's own module, depending on `pkg/collage`.
+- `main.go` — wires the app and its one page, and implements the CLI contract
+  above.
+- `templates/layouts/default.html` — the page shell; `{{slot "content"}}`
+  marks where a page's content fragment is rendered.
+- `templates/pages/home.html` — the home page's content, served at `/`.
+
+## Next steps
+
+- Add more pages with `collage.NewPage`, `collage.NewFragment`, and the rest
+  of the builders in `pkg/collage`.
+- Give the home page's content fragment a `DataHandler` once it needs to
+  render something dynamic.
+- Read the collage documentation at https://github.com/Elagoht/collage.

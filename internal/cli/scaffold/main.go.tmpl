@@ -1,0 +1,176 @@
+// Command @@NAME@@ serves this collage application, or — when invoked with
+// -collage-build — renders it to static files instead of serving it.
+//
+// # The collage CLI contract
+//
+// "collage dev" runs `go run .` in this directory with COLLAGE_DEV=1 set in
+// the process environment. This file honours that by turning on development
+// mode whenever COLLAGE_DEV=1 is set: templates are reloaded from disk on
+// every request. Development mode does NOT hot-reload Go code — a change to
+// this file, or any other .go file in this project, still requires stopping
+// and re-running `collage dev` (or `go run .`).
+//
+// "collage build" runs `go run . -collage-build -out <dir>`. This file
+// honours that by parsing -collage-build and -out below and, when
+// -collage-build is set, rendering every statically-buildable page to <dir>
+// instead of starting a server.
+//
+// If you rewrite this file, keep both halves of the contract working, or
+// "collage dev" and "collage build" will stop doing anything useful here.
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+func main() {
+	buildFlag := flag.Bool("collage-build", false, "render the app to static files instead of serving it")
+	outFlag := flag.String("out", "dist", "output directory for -collage-build")
+	flag.Parse()
+
+	devMode := os.Getenv("COLLAGE_DEV") == "1"
+
+	cfg := &collage.Config{
+		DevMode: devMode,
+		Server: collage.ServerConfig{
+			Host: "localhost",
+			Port: 3000,
+		},
+		Template: collage.TemplateConfig{
+			Root: "templates",
+		},
+	}
+
+	app, err := collage.New(cfg)
+	if err != nil {
+		log.Fatalf("@@NAME@@: %v", err)
+	}
+	if err := app.RegisterPage(homePage()); err != nil {
+		log.Fatalf("@@NAME@@: register home page: %v", err)
+	}
+
+	if *buildFlag {
+		if err := staticBuild(app, *outFlag); err != nil {
+			log.Fatalf("@@NAME@@: static build: %v", err)
+		}
+		return
+	}
+
+	fmt.Printf("@@NAME@@: serving on http://%s:%d (dev mode: %v)\n", cfg.Server.Host, cfg.Server.Port, devMode)
+	if err := app.ListenAndServe(); err != nil {
+		log.Fatalf("@@NAME@@: %v", err)
+	}
+}
+
+// homePage wires the one page this scaffold ships: a shared layout and a
+// static home page, served at "/". Its content fragment has no DataHandler,
+// so it renders with no data — add one (see collage.FragmentBuilder's
+// WithDataHandler) once this page needs to render something dynamic.
+func homePage() *collage.Page {
+	layout := collage.NewFragment("layout", "layouts/default.html").
+		WithSlot("content", true, false).
+		Build()
+
+	content := collage.NewFragment("home-content", "pages/home.html").Build()
+
+	return collage.NewPage("home").
+		WithLayout(layout).
+		WithContent(content).
+		WithPath("en", "/").
+		Static().
+		Build()
+}
+
+// staticBuild renders every statically-buildable page to files under outDir.
+//
+// This is a minimal, single-page-project version of what collage-core's own
+// internal/build.Builder does: that package is internal to the collage-core
+// module and cannot be imported from here, so this scaffold reimplements just
+// enough of it, against pkg/collage's public surface (App.Pages,
+// App.RenderPath), to make "collage build" produce real output. It only
+// handles pages whose path pattern is already concrete for every locale — a
+// page with a "{param}" segment is skipped with a message rather than built,
+// since building one needs a way to enumerate the concrete paths it expands
+// to (internal/build calls this a PathProvider) that this scaffold does not
+// implement. Add that yourself if this project grows dynamic pages you want
+// to build statically.
+func staticBuild(app *collage.App, outDir string) error {
+	absOut, err := filepath.Abs(outDir)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(absOut, 0o755); err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	written := 0
+
+	for _, page := range app.Pages() {
+		if !page.Strategy.Cacheable() {
+			fmt.Printf("@@NAME@@: skip %s: %s pages are not statically buildable\n", page.Name, page.Strategy)
+			continue
+		}
+
+		for _, locale := range page.Locales() {
+			pattern, ok := page.PathFor(locale)
+			if !ok {
+				continue
+			}
+			if strings.Contains(pattern, "{") {
+				fmt.Printf("@@NAME@@: skip %s (%s): dynamic path %q needs a path provider this scaffold does not implement\n", page.Name, locale, pattern)
+				continue
+			}
+
+			result, err := app.RenderPath(ctx, pattern, locale, nil)
+			if err != nil {
+				return fmt.Errorf("render %s (%s): %w", page.Name, locale, err)
+			}
+
+			target, err := staticTarget(absOut, pattern)
+			if err != nil {
+				return err
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := os.WriteFile(target, result.HTML, 0o644); err != nil {
+				return err
+			}
+
+			fmt.Println("@@NAME@@: wrote", target)
+			written++
+		}
+	}
+
+	fmt.Printf("@@NAME@@: build complete, %d file(s) written to %s\n", written, absOut)
+	return nil
+}
+
+// staticTarget turns a URL path into the file it is written to under outDir
+// ("<outDir>/<path>/index.html", or "<outDir>/index.html" for the root path
+// "/"), refusing a path that would resolve outside outDir.
+func staticTarget(outDir, urlPath string) (string, error) {
+	trimmed := strings.TrimPrefix(urlPath, "/")
+
+	var target string
+	if trimmed == "" {
+		target = filepath.Join(outDir, "index.html")
+	} else {
+		target = filepath.Join(outDir, filepath.FromSlash(trimmed), "index.html")
+	}
+
+	rel, err := filepath.Rel(outDir, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path %q escapes output directory %q", urlPath, outDir)
+	}
+	return target, nil
+}
