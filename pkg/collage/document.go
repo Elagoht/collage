@@ -1,0 +1,132 @@
+package collage
+
+import (
+	"errors"
+	"time"
+
+	"github.com/Elagoht/collage/internal/core"
+	"github.com/Elagoht/collage/internal/types"
+)
+
+// Document is a routed, cacheable response that is not HTML: a sitemap, a feed, a
+// robots.txt, a JWKS. It reuses a page's routing, caching, ETag and dependency-tag
+// machinery, but renders no templates and composes no fragments — its handler
+// returns bytes directly.
+type Document = types.Document
+
+// DocumentHandlerFunc produces a document's body. It returns the bytes to serve,
+// the dependency tags the body was derived from, and an error. Returning an error
+// that wraps ErrNotFound makes the response a 404 rather than a 500.
+type DocumentHandlerFunc = types.DocumentHandlerFunc
+
+// ErrNilDocument is returned by RegisterDocument when passed a nil document.
+var ErrNilDocument = types.ErrNilDocument
+
+// ErrEmptyContentType is returned when a document declares no content type. A
+// document's content type is static and required: the framework writes it on every
+// response and never guesses it.
+var ErrEmptyContentType = types.ErrEmptyContentType
+
+// ErrNoDocumentHandler is returned when a document declares no handler. Unlike a
+// page, a document has no template to fall back on, so a handler is mandatory.
+var ErrNoDocumentHandler = types.ErrNoDocumentHandler
+
+// ErrDuplicateDocument is returned when a document is registered under a name
+// another document already holds.
+var ErrDuplicateDocument = core.ErrDuplicateDocument
+
+// ErrDocumentNotFound is returned by App.RenderDocumentPath when a path resolves to
+// no document — including when it resolves to a page or a redirect instead.
+var ErrDocumentNotFound = core.ErrDocumentNotFound
+
+// DocumentBuilder builds a Document through a fluent chain of WithX calls. See the
+// package doc comment for how builder errors are accumulated and why it is safe to
+// ignore them until registration. A document built without WithHandler records
+// ErrNoDocumentHandler at Build time.
+type DocumentBuilder struct {
+	document *Document
+	errs     []error
+}
+
+// NewDocument starts building a document named name and served at contentType.
+func NewDocument(name, contentType string) *DocumentBuilder {
+	return &DocumentBuilder{
+		document: &Document{
+			Name:        name,
+			ContentType: contentType,
+			Paths:       make(map[string]string),
+		},
+	}
+}
+
+// WithPath registers the path pattern that reaches this document in locale.
+func (b *DocumentBuilder) WithPath(locale, pattern string) *DocumentBuilder {
+	b.document.Paths[locale] = pattern
+	return b
+}
+
+// WithHandler sets the function that produces the document's body.
+func (b *DocumentBuilder) WithHandler(handler DocumentHandlerFunc) *DocumentBuilder {
+	b.document.Handler = handler
+	return b
+}
+
+// WithRedirect adds a redirect from the path pattern from to the path to, using
+// status as the redirect's HTTP status code.
+func (b *DocumentBuilder) WithRedirect(from, to string, status int) *DocumentBuilder {
+	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, StatusCode: status})
+	return b
+}
+
+// WithPermanentRedirect adds a permanent redirect from the path pattern from to the
+// path to.
+func (b *DocumentBuilder) WithPermanentRedirect(from, to string) *DocumentBuilder {
+	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, Permanent: true})
+	return b
+}
+
+// Static sets the document's strategy to StrategyStatic: render once and serve from
+// cache until explicitly invalidated.
+func (b *DocumentBuilder) Static() *DocumentBuilder {
+	b.document.Strategy = StrategyStatic
+	return b
+}
+
+// Dynamic sets the document's strategy to StrategyDynamic: render on every request
+// and never serve from cache. This is the default strategy for a document no
+// strategy method is called on.
+func (b *DocumentBuilder) Dynamic() *DocumentBuilder {
+	b.document.Strategy = StrategyDynamic
+	return b
+}
+
+// Incremental sets the document's strategy to StrategyIncremental and its CacheTTL
+// to ttl: serve from cache until ttl elapses since the last render.
+func (b *DocumentBuilder) Incremental(ttl time.Duration) *DocumentBuilder {
+	b.document.Strategy = StrategyIncremental
+	b.document.CacheTTL = ttl
+	return b
+}
+
+// WithDependency appends tags to the document's cache dependency tags.
+func (b *DocumentBuilder) WithDependency(tags ...string) *DocumentBuilder {
+	b.document.DependencyTags = append(b.document.DependencyTags, tags...)
+	return b
+}
+
+// Build returns the Document constructed so far. It never panics and never returns
+// nil for a non-nil builder, even if WithX calls recorded errors along the way, or
+// if no handler was ever set (which records ErrNoDocumentHandler); call BuildErr to
+// check whether any errors were recorded.
+func (b *DocumentBuilder) Build() *Document {
+	if b.document.Handler == nil {
+		b.errs = append(b.errs, ErrNoDocumentHandler)
+	}
+	return b.document
+}
+
+// BuildErr returns the errors accumulated by prior WithX calls and by Build, joined
+// with errors.Join, or nil if none were recorded. Call it after Build.
+func (b *DocumentBuilder) BuildErr() error {
+	return errors.Join(b.errs...)
+}

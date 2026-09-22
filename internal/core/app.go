@@ -272,6 +272,13 @@ type App struct {
 	// a copy of their own. It is what makes the layout binding happen exactly once
 	// per page; see bindContent for why the slot's contents cannot answer that.
 	bound map[*types.Page]bool
+	// documents holds every registered document by name. A document has no layout
+	// to bind and no template to check, so unlike bound there is no analogous
+	// "already prepared" state to track for it.
+	documents map[string]*types.Document
+	// docOrder holds the registered document names in registration order, so
+	// Documents is deterministic.
+	docOrder []string
 	// commands holds the CLI subcommands plugins contributed through
 	// RegisterCommand.
 	commands []plugin.Command
@@ -425,6 +432,7 @@ func New(cfg Config) (*App, error) {
 		vary:      varyHeaders(cfg.Locale),
 		pages:     make(map[string]*types.Page),
 		bound:     make(map[*types.Page]bool),
+		documents: make(map[string]*types.Document),
 		listening: make(chan struct{}),
 	}
 	return app, nil
