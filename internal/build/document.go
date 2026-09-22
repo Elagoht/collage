@@ -1,0 +1,205 @@
+package build
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime/debug"
+	"sync"
+
+	"github.com/Elagoht/collage/internal/types"
+)
+
+// DocumentPathProvider supplies the concrete paths a dynamic document's pattern
+// expands to. It is optional: a build without one skips dynamic documents and
+// records why. It is deliberately separate from PathProvider rather than a widening
+// of it, so an existing PathProvider implementation keeps compiling.
+type DocumentPathProvider interface {
+	// Paths returns every concrete path a static build should render doc at, for
+	// locale. Path values are user-supplied and are validated against
+	// Options.OutDir before anything is written; see ErrPathEscapesOutDir.
+	Paths(ctx context.Context, doc *types.Document, locale string) ([]PathInstance, error)
+}
+
+// documentTask is one document, locale, and concrete path to render and write. It
+// is buildTask's sibling for documents.
+type documentTask struct {
+	doc    *types.Document
+	locale string
+	path   string
+	params map[string]string
+}
+
+// documentTarget returns the file a document's path is written to. Unlike a page,
+// a document writes to its literal path: "/sitemap.xml" becomes
+// "<OutDir>/sitemap.xml", not "<OutDir>/sitemap.xml/index.html", because a crawler
+// asking for "/sitemap.xml" must not receive a directory.
+//
+// It reuses resolveTarget's containment check rather than re-deriving it, so the
+// page and document write paths cannot drift apart on that logic: resolveTarget
+// always shapes its result as "<...>/<rel>/index.html" regardless of what rel's own
+// final segment already is, so once it has confirmed rel itself stays inside
+// outDir, the literal document path is simply that trailing "index.html" component
+// trimmed back off, not a second filepath.Rel/".." check written from scratch.
+func documentTarget(outDir, urlPath string) (string, error) {
+	pageShaped, err := resolveTarget(outDir, urlPath)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(pageShaped), nil
+}
+
+// enumerateDocuments walks every registered document and expands it into the
+// concrete document tasks buildDocuments must render, alongside the documents or
+// document locales that were skipped and the errors that came from resolving a
+// dynamic document's paths. It never renders or writes anything itself, mirroring
+// Builder.enumerate for documents.
+func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []SkipRecord, []error) {
+	var tasks []documentTask
+	var skipped []SkipRecord
+	var errs []error
+
+	allowedLocales := make(map[string]struct{}, len(b.opts.Locales))
+	for _, locale := range b.opts.Locales {
+		allowedLocales[locale] = struct{}{}
+	}
+	restrictLocales := len(allowedLocales) > 0
+
+	for _, doc := range b.app.Documents() {
+		if !doc.Strategy.Cacheable() {
+			skipped = append(skipped, SkipRecord{
+				Page:   doc.Name,
+				Reason: fmt.Sprintf("document uses the %s render strategy, which cannot be built statically", doc.Strategy),
+			})
+			continue
+		}
+
+		for _, locale := range doc.Locales() {
+			if restrictLocales {
+				if _, ok := allowedLocales[locale]; !ok {
+					continue
+				}
+			}
+
+			pattern, ok := doc.PathFor(locale)
+			if !ok {
+				continue
+			}
+
+			if !isDynamicPattern(pattern) {
+				tasks = append(tasks, documentTask{doc: doc, locale: locale, path: pattern})
+				continue
+			}
+
+			if b.opts.DocumentPathProvider == nil {
+				skipped = append(skipped, SkipRecord{
+					Page:   doc.Name,
+					Locale: locale,
+					Reason: ErrDynamicPathUnresolved.Error(),
+				})
+				continue
+			}
+
+			instances, err := b.opts.DocumentPathProvider.Paths(ctx, doc, locale)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("collage: resolve paths for document %q locale %q: %w", doc.Name, locale, err))
+				continue
+			}
+			for _, instance := range instances {
+				tasks = append(tasks, documentTask{
+					doc:    doc,
+					locale: locale,
+					path:   instance.Path,
+					params: instance.Params,
+				})
+			}
+		}
+	}
+
+	return tasks, skipped, errs
+}
+
+// buildDocuments renders every static-eligible document to a file under
+// outDirResolved and returns the absolute paths written, the documents or document
+// locales that were skipped, and any errors encountered. It mirrors Build's own
+// page loop — the same Options.Concurrency bound, the same per-task panic
+// recovery, the same "one failure does not stop the rest" behaviour — with the one
+// difference documentTarget documents: a document writes to its literal path, not
+// "<path>/index.html".
+func (b *Builder) buildDocuments(ctx context.Context, outDirResolved string) ([]string, []SkipRecord, []error) {
+	tasks, skipped, errs := b.enumerateDocuments(ctx)
+
+	written := make([]string, len(tasks))
+	taskErrs := make([]error, len(tasks))
+
+	sem := make(chan struct{}, b.opts.Concurrency)
+	var wg sync.WaitGroup
+	for i, task := range tasks {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, task documentTask) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			// See the identical comment in Build's own page worker: this must be
+			// registered before renderAndWriteDocument runs, so a panic in a
+			// document's handler lands in taskErrs rather than taking the whole
+			// build process down.
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					taskErrs[i] = fmt.Errorf("%w: document %q locale %q path %q: %v\n%s",
+						ErrBuildPanic, task.doc.Name, task.locale, task.path, recovered, debug.Stack())
+				}
+			}()
+			target, err := b.renderAndWriteDocument(ctx, outDirResolved, task)
+			if err != nil {
+				taskErrs[i] = err
+				return
+			}
+			written[i] = target
+		}(i, task)
+	}
+	wg.Wait()
+
+	var out []string
+	for i := range tasks {
+		if taskErrs[i] != nil {
+			errs = append(errs, taskErrs[i])
+			continue
+		}
+		out = append(out, written[i])
+	}
+	return out, skipped, errs
+}
+
+// renderAndWriteDocument renders one document task through the application and
+// writes the result under outDirResolved, which must already be an absolute,
+// symlink-resolved directory (see prepareOutDir). It returns the absolute path
+// written. It mirrors renderAndWrite, using documentTarget in place of
+// resolveTarget for the one behavioural difference between a page and a document.
+func (b *Builder) renderAndWriteDocument(ctx context.Context, outDirResolved string, task documentTask) (string, error) {
+	target, err := documentTarget(outDirResolved, task.path)
+	if err != nil {
+		return "", fmt.Errorf("collage: document %q locale %q: %w", task.doc.Name, task.locale, err)
+	}
+
+	result, err := b.app.RenderDocumentPath(ctx, task.path, task.locale, task.params)
+	if err != nil {
+		return "", fmt.Errorf("collage: render document %q locale %q path %q: %w", task.doc.Name, task.locale, task.path, err)
+	}
+
+	// Same reasoning as renderAndWrite: this filesystem-aware check must run
+	// before os.MkdirAll, not after, because MkdirAll itself follows symlinks
+	// when it walks existing parent directories.
+	if err := verifyNoSymlinksBeneath(outDirResolved, target); err != nil {
+		return "", fmt.Errorf("collage: document %q locale %q: %w", task.doc.Name, task.locale, err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return "", fmt.Errorf("collage: create directory for %q: %w", target, err)
+	}
+	if err := os.WriteFile(target, result.Body, 0o644); err != nil {
+		return "", fmt.Errorf("collage: write %q: %w", target, err)
+	}
+	return target, nil
+}

@@ -41,6 +41,18 @@ type fakeRenderer struct {
 	// panics holds the call keys (see renderKey) whose render panics, standing in
 	// for a data handler or a caller-supplied Renderer that panics mid-build.
 	panics map[string]bool
+
+	documents []*types.Document
+	docCalls  []renderCall
+	// docFail maps a call key (see renderKey) to the error RenderDocumentPath
+	// returns for it.
+	docFail map[string]error
+	// docBodies maps a call key (see renderKey) to the exact bytes
+	// RenderDocumentPath returns for it. A key with no entry falls back to a body
+	// derived from locale and path, mirroring RenderPath's own fallback content.
+	docBodies map[string][]byte
+	// docPanics holds the call keys (see renderKey) whose document render panics.
+	docPanics map[string]bool
 }
 
 type renderCall struct {
@@ -113,6 +125,35 @@ func page(f *fakeRenderer, path, locale string) string {
 		}
 	}
 	return path
+}
+
+func (f *fakeRenderer) Documents() []*types.Document {
+	return f.documents
+}
+
+func (f *fakeRenderer) RenderDocumentPath(_ context.Context, path, locale string, params map[string]string) (*render.DocumentResult, error) {
+	key := renderKey(path, locale)
+
+	f.mu.Lock()
+	f.docCalls = append(f.docCalls, renderCall{path: path, locale: locale, params: params})
+	failErr, shouldFail := f.docFail[key]
+	body, hasBody := f.docBodies[key]
+	shouldPanic := f.docPanics[key]
+	f.mu.Unlock()
+
+	if shouldPanic {
+		panic("fakeRenderer: deliberate document panic for " + key)
+	}
+	if shouldFail {
+		return nil, failErr
+	}
+	if !hasBody {
+		body = fmt.Appendf(nil, "%s|%s", locale, path)
+	}
+	return &render.DocumentResult{
+		Body:        body,
+		ContentType: "application/octet-stream",
+	}, nil
 }
 
 var _ Renderer = (*fakeRenderer)(nil)

@@ -28,6 +28,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -78,10 +79,15 @@ var ErrDegradedRender = errors.New("collage: refusing to write a degraded render
 var ErrEmptyRender = errors.New("collage: refusing to write an empty render")
 
 // Renderer is the narrow surface Builder needs from an application: the registered
-// pages, and a way to render one of them by path outside the HTTP request path. It
-// is declared here, rather than imported from internal/core, so this package can be
-// tested against a fake and so the dependency between the two packages points from
-// core to build.
+// pages and documents, and a way to render one of them by path outside the HTTP
+// request path. It is declared here, rather than imported from internal/core, so
+// this package can be tested against a fake and so the dependency between the two
+// packages points from core to build.
+//
+// Renderer is internal-only — it is not re-exported through pkg/collage, unlike
+// PathProvider and DocumentPathProvider — so widening it to cover documents here
+// breaks no external implementation of it; only *core.App itself has to satisfy the
+// wider surface, and it already does.
 //
 // *core.App satisfies Renderer.
 type Renderer interface {
@@ -91,6 +97,12 @@ type Renderer interface {
 	// onto whatever path parameters the router itself captures, and bypasses any
 	// render cache.
 	RenderPath(ctx context.Context, path, locale string, params map[string]string) (*render.Result, error)
+	// Documents returns every registered document.
+	Documents() []*types.Document
+	// RenderDocumentPath renders the document registered at path for locale,
+	// overlaying params onto whatever path parameters the router itself captures,
+	// and bypasses any render cache. It is RenderPath's sibling for documents.
+	RenderDocumentPath(ctx context.Context, path, locale string, params map[string]string) (*render.DocumentResult, error)
 }
 
 // PathProvider supplies the concrete paths a dynamic page's pattern expands to. A
@@ -137,6 +149,20 @@ type Options struct {
 	// "{param}" segment. A dynamic page with no PathProvider is recorded as
 	// skipped rather than failing the build.
 	PathProvider PathProvider
+	// DocumentPathProvider supplies concrete paths for documents whose pattern
+	// contains a "{param}" segment — PathProvider's sibling for documents. A
+	// dynamic document with no DocumentPathProvider is recorded as skipped
+	// rather than failing the build, wrapping the same ErrDynamicPathUnresolved
+	// a dynamic page without a PathProvider records: the failure mode is
+	// identical, only the kind of route differs.
+	DocumentPathProvider DocumentPathProvider
+	// Mounts lists the mounted asset file systems a static build copies into its
+	// output, alongside pages and documents. pkg/collage.NewBuilder populates
+	// this automatically from the application's own Mounts; internal/build's own
+	// tests set it directly, since they build against a fake Renderer rather than
+	// a real *core.App. A mount whose BuildCopy is false is left out of the copy
+	// entirely — see asset.WithoutBuildCopy.
+	Mounts []*asset.Mount
 	// AllowDegraded writes a page whose render had at least one failed fragment
 	// instead of recording ErrDegradedRender against it. It is off by default:
 	// a static file has no TTL, so a degraded page written to disk stays degraded
@@ -151,25 +177,29 @@ type Options struct {
 	AllowDegraded bool
 }
 
-// SkipRecord describes one page, or one page's locale, that a static build could not
-// produce, and why.
+// SkipRecord describes one page or document, or one locale of one, that a static
+// build could not produce, and why.
 type SkipRecord struct {
-	// Page is the skipped page's Name.
+	// Page is the skipped page's or document's Name. The field is not renamed for
+	// documents: a page and a document are never skipped in the same pass over
+	// the same registry, so one field unambiguously names whichever kind of route
+	// this record describes.
 	Page string
 	// Locale is the specific locale that was skipped. It is empty when the whole
-	// page was skipped regardless of locale (a non-cacheable render strategy).
+	// page or document was skipped regardless of locale (a non-cacheable render
+	// strategy).
 	Locale string
-	// Reason explains why the page, or the page's locale, was skipped.
+	// Reason explains why the page or document, or its locale, was skipped.
 	Reason string
 }
 
 // Report summarizes the outcome of a Build call.
 type Report struct {
 	// Written lists the absolute filesystem paths that were written, one per
-	// rendered page, locale, and concrete path.
+	// rendered page or document, plus one per copied mounted asset file.
 	Written []string
-	// Skipped lists every page, or page locale, the build could not produce
-	// statically.
+	// Skipped lists every page or document, or locale of one, the build could not
+	// produce statically.
 	Skipped []SkipRecord
 	// Errors lists every render, path-resolution, or write failure encountered.
 	// Build's returned error is errors.Join of exactly these, so a caller that
@@ -211,33 +241,42 @@ type buildTask struct {
 	params map[string]string
 }
 
-// Build renders every static-eligible page of the application to files under
-// Options.OutDir and returns a Report describing what happened.
+// Build renders every static-eligible page and document of the application to
+// files under Options.OutDir, copies every Options.Mounts entry whose BuildCopy is
+// true into it, and returns a Report describing what happened.
 //
-// A page using a non-cacheable render strategy is skipped, recorded in the report,
-// rather than built. A page whose path pattern for a locale contains a "{param}"
-// segment is expanded through Options.PathProvider when one is configured, or
-// skipped with ErrDynamicPathUnresolved otherwise. A page that renders with a failed
-// fragment is refused with ErrDegradedRender unless Options.AllowDegraded is set,
-// and a page that renders no markup at all is always refused with ErrEmptyRender: a
-// static file has no TTL to recover through, so writing either one pins it until the
-// next build. A failure resolving paths, rendering, or writing one page does not stop
-// the rest of the build: every such failure is recorded in Report.Errors, and the
-// error Build returns is errors.Join(report.Errors...) — nil when there were none. A
-// panic in a data handler is caught per page and recorded the same way; see the build
-// worker in Build itself.
+// A page or document using a non-cacheable render strategy is skipped, recorded in
+// the report, rather than built. A path pattern for a locale that contains a
+// "{param}" segment is expanded through Options.PathProvider (pages) or
+// Options.DocumentPathProvider (documents) when one is configured, or skipped with
+// ErrDynamicPathUnresolved otherwise. A page that renders with a failed fragment is
+// refused with ErrDegradedRender unless Options.AllowDegraded is set, and a page
+// that renders no markup at all is always refused with ErrEmptyRender: a static
+// file has no TTL to recover through, so writing either one pins it until the next
+// build. A failure resolving paths, rendering, writing, or copying one page,
+// document, or asset file does not stop the rest of the build: every such failure
+// is recorded in Report.Errors, and the error Build returns is
+// errors.Join(report.Errors...) — nil when there were none. A panic in a data
+// handler is caught per page or document and recorded the same way; see the build
+// worker in Build itself and its document-build sibling in buildDocuments.
 //
 // Build writes each rendered page to "<OutDir>/<path>/index.html", creating
-// directories as needed; the root path "/" writes "<OutDir>/index.html". Every
-// resolved output path is verified to stay within OutDir both lexically and on
-// disk — see ErrPathEscapesOutDir — since PathProvider is user code and a path
-// built from an unsanitised parameter, or a symlink planted anywhere under OutDir,
+// directories as needed; the root path "/" writes "<OutDir>/index.html". A
+// document, unlike a page, writes to its own literal path — "/sitemap.xml" becomes
+// "<OutDir>/sitemap.xml", not "<OutDir>/sitemap.xml/index.html" — because a
+// crawler asking for it must not receive a directory; see documentTarget. A mounted
+// asset file is written to "<OutDir>/<mount prefix><file name>", the same
+// literal-path shape. Every resolved output path is verified to stay within OutDir
+// both lexically and on disk — see ErrPathEscapesOutDir — since PathProvider,
+// DocumentPathProvider, and a mount's fs.FS are all user code, and a path or file
+// name built from unsanitised input, or a symlink planted anywhere under OutDir,
 // must not be able to redirect a write outside the output directory.
 //
-// Options.Concurrency bounds how many pages render and write at once, but
-// Report.Written, Report.Skipped, and Report.Errors are always assembled in the same
-// order Build enumerated pages in, regardless of that concurrency: this package's
-// output is deterministic by construction, not only at the default concurrency of 1.
+// Options.Concurrency bounds how many pages, and separately how many documents,
+// render and write at once, but Report.Written, Report.Skipped, and Report.Errors
+// are always assembled in the same order Build enumerated pages, then documents,
+// then mounted asset files, regardless of that concurrency: this package's output
+// is deterministic by construction, not only at the default concurrency of 1.
 func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	start := time.Now()
 	report := &Report{}
@@ -295,6 +334,16 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		}
 		report.Written = append(report.Written, written[i])
 	}
+
+	docWritten, docSkipped, docErrs := b.buildDocuments(ctx, outDirResolved)
+	report.Skipped = append(report.Skipped, docSkipped...)
+	report.Written = append(report.Written, docWritten...)
+	errs = append(errs, docErrs...)
+
+	assetWritten, assetErrs := b.copyAssets(outDirResolved)
+	report.Written = append(report.Written, assetWritten...)
+	errs = append(errs, assetErrs...)
+
 	report.Errors = errs
 	report.Duration = time.Since(start)
 

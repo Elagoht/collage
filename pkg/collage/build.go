@@ -20,6 +20,13 @@ type BuildReport = build.Report
 // without one.
 type PathProvider = build.PathProvider
 
+// DocumentPathProvider supplies the concrete paths a dynamic document's
+// pattern expands to, for BuildOptions.DocumentPathProvider. It is
+// PathProvider's sibling for documents, kept as its own interface rather than
+// a widening of PathProvider so an existing PathProvider implementation keeps
+// compiling.
+type DocumentPathProvider = build.DocumentPathProvider
+
 // PathInstance is one concrete URL a dynamic page is built for, plus the path
 // parameter values that reached it.
 type PathInstance = build.PathInstance
@@ -66,16 +73,24 @@ var ErrEmptyRender = build.ErrEmptyRender
 // continues with the rest.
 var ErrBuildPanic = build.ErrBuildPanic
 
-// NewBuilder returns a static-site builder that renders app's pages according
-// to opts, ready for Build. It returns ErrNilRenderer when app is nil and
-// ErrInvalidOutDir when opts.OutDir is empty.
+// NewBuilder returns a static-site builder that renders app's pages and
+// documents, and copies app's mounted assets, according to opts, ready for
+// Build. It returns ErrNilRenderer when app is nil and ErrInvalidOutDir when
+// opts.OutDir is empty.
 //
 // This is a thin wrapper, not a second implementation: *App (an alias for
 // *internal/core.App) already satisfies internal/build's own narrow Renderer
-// interface — Pages and RenderPath — so NewBuilder does nothing beyond handing
-// app to build.New. Every safety check Build performs (symlink-escape
-// containment, the dangerous-output-directory refusals) is internal/build's
-// own, not reimplemented here.
+// interface — Pages, RenderPath, Documents and RenderDocumentPath — so
+// NewBuilder does nothing beyond handing app to build.New. Every safety check
+// Build performs (symlink-escape containment, the dangerous-output-directory
+// refusals) is internal/build's own, not reimplemented here.
+//
+// opts.Mounts is populated from app.Mounts() here, overwriting whatever the
+// caller set: BuildOptions.Mounts exists so internal/build's own tests can
+// supply mounts directly against a fake Renderer, not as a second, parallel
+// way for an application to register a mount alongside App.Mount. A mounted
+// asset a static build should copy is always one the application itself
+// mounted.
 //
 // The nil check here is not redundant with build.New's own: app arrives as
 // the concrete *App, and handing a nil *App to build.New's Renderer parameter
@@ -87,5 +102,6 @@ func NewBuilder(app *App, opts BuildOptions) (*Builder, error) {
 	if app == nil {
 		return nil, ErrNilRenderer
 	}
+	opts.Mounts = app.Mounts()
 	return build.New(app, opts)
 }
