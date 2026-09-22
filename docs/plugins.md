@@ -133,6 +133,13 @@ Two consequences of where `OnAfterRender` sits are worth stating plainly:
 - **A rendered error page does not run it at all.** The error path renders the
   error page directly rather than through the request's render pipeline.
 
+An `ErrorHook` can classify what it receives with `errors.Is`:
+`collage.ErrNoRoute` (no route matched — a link problem), `collage.ErrNotFound`
+(a required fragment's content does not exist — a content problem),
+`collage.ErrEmptyErrorPage` (a registered error page rendered nothing),
+`collage.ErrMaxDepthExceeded`, `collage.ErrRequiredSlotEmpty`,
+`collage.ErrNoRootFragment`, and `collage.PanicError` through `errors.As`.
+
 `ErrorEvent.Stage` names where in the pipeline the failure happened (`"route"`,
 `"not_found"`, `"page_resolved"`, `"before_render"`, `"render"`,
 `"after_render"`, `"cache_write"`, `"error_page"`). It is caller-defined rather
@@ -164,7 +171,9 @@ changed.
 
 1. `RegisterPlugin` — before the application starts. Afterwards it returns
    `collage.ErrAppStarted`, since `Init` has already run and already seen the
-   registered pages. Duplicate names are rejected.
+   registered pages. A nil plugin, an empty name, and a duplicate name are
+   rejected with `collage.ErrNilPlugin`, `collage.ErrEmptyPluginName`, and
+   `collage.ErrDuplicatePlugin`.
 2. `Init` — once, in registration order, when the handler is built (which is what
    `Handler()` and `ListenAndServe()` both do first). An `Init` that fails aborts
    startup and rolls back: every already-initialised plugin gets `Shutdown`, in

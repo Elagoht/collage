@@ -133,6 +133,73 @@ and 500 pages, redirects, incremental caching, and a plugin — see
 - **Invalidation reports what it did.** `InvalidateTagsN` returns the number of
   keys it reached, and a partial failure is an error rather than a silent success.
 
+## Extending the framework
+
+Three seams, all reachable from `pkg/collage` alone.
+
+**A cache of your own.** Implement `collage.Cache` and set it on
+`CacheConfig.Store`; `Cache.Type` is then ignored. Implement
+`collage.TaggedCache` too and the framework calls `SetTagged`, so your store
+indexes the dependency tags itself.
+
+```go
+app, err := collage.New(&collage.Config{
+	Template: collage.TemplateConfig{Root: "templates"},
+	Cache: collage.CacheConfig{
+		Enabled: true,
+		Store:   newRedisCache(client), // implements collage.Cache
+	},
+})
+```
+
+Five methods, no framework internals, and `collage.ETag(content)` if you have no
+reason to derive your own ETags. [docs/caching.md](docs/caching.md) has a complete
+implementation.
+
+**Template functions of your own.** `TemplateConfig.Funcs` is merged over the
+built-ins at construction, so an entry under a built-in name replaces it. It has
+to be set before `New`, because that is where templates are parsed.
+
+```go
+app, err := collage.New(&collage.Config{
+	Template: collage.TemplateConfig{
+		Root: "templates",
+		Funcs: template.FuncMap{
+			"money": func(cents int64) string { return fmt.Sprintf("$%d.%02d", cents/100, cents%100) },
+		},
+	},
+})
+```
+
+**A plugin.** Implement `collage.Plugin` and whichever hooks you need; the
+registry finds them by type assertion, so assert the interfaces you meant to
+implement.
+
+```go
+// stamp post-processes every rendered page.
+type stamp struct{}
+
+func (s *stamp) Name() string                                 { return "stamp" }
+func (s *stamp) Version() string                              { return "1.0.0" }
+func (s *stamp) Init(_ context.Context, host collage.Host) error { return nil }
+func (s *stamp) Shutdown(_ context.Context) error             { return nil }
+
+func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) error {
+	ev.HTML = append(ev.HTML, "<!-- stamped -->"...)
+	return nil
+}
+
+var (
+	_ collage.Plugin          = (*stamp)(nil)
+	_ collage.AfterRenderHook = (*stamp)(nil)
+)
+
+err := app.RegisterPlugin(&stamp{})
+```
+
+Details in [docs/caching.md](docs/caching.md),
+[docs/fragments.md](docs/fragments.md) and [docs/plugins.md](docs/plugins.md).
+
 ## Documentation
 
 | Document | Covers |

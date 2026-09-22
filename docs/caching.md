@@ -160,13 +160,26 @@ hook adjusted, so the value a client sees does not change from request to reques
 - **Lazy expiry** — an expired entry is dropped when it is next looked up.
 - `MaxEntries: 0` means the default (10000); a negative value means unlimited.
 
-## The `Cache` interface
+## Supplying your own cache
 
-Everything above the storage layer talks to one interface, exported as
-`collage.Cache`:
+Set `CacheConfig.Store`. A non-nil `Store` is used exactly as given, and
+`Cache.Type` is then ignored (including by validation). `Enabled` stays the master
+switch: a `Store` on a disabled cache is not silently turned on.
 
 ```go
-// Cache is what the framework requires.
+app, err := collage.New(&collage.Config{
+	Template: collage.TemplateConfig{Root: "templates"},
+	Cache: collage.CacheConfig{
+		Enabled:    true,
+		Store:      newRedisCache(client),
+		DefaultTTL: 5 * time.Minute,
+	},
+})
+```
+
+The interface is `collage.Cache`:
+
+```go
 type Cache interface {
 	Get(ctx context.Context, key string) (content []byte, etag string, found bool)
 	Set(ctx context.Context, key string, content []byte, ttl time.Duration) (etag string, err error)
@@ -181,19 +194,81 @@ The contract:
 - `Get` reports `found == false` for an expired entry, and callers must not mutate
   the returned slice.
 - `Set` returns the ETag the entry is stored under; that value is what the fresh
-  response advertises.
+  response advertises, so it must be the same one `Get` will report later.
+  `collage.ETag(content)` computes the framework's own if you have no reason to
+  derive your own.
 - A `ttl <= 0` means "use your own default".
 - The only defined failure mode is context cancellation.
+- It is called from request goroutines, so it must be safe for concurrent use.
 
-There is a second, optional interface — `TaggedCache`, which adds
-`SetTagged(ctx, key, content, ttl, tags)`. The HTTP handler type-asserts for it
-and uses it when a cache implements it, so tags are indexed by the cache itself as
-well as by the dependency tracker. The two indexes are deliberately redundant: the
-tracker stays the authority for resolving tags to keys either way.
+A minimal implementation, using nothing but the public API:
 
-**Known gap.** Neither of these is usable from outside the module today.
-`Config` has no field for installing a `Cache` of your own — `Cache.Type` selects
-among the built-in implementations, and `"memory"` is the only one — and
-`TaggedCache` is not re-exported from `pkg/collage` at all. `collage.Cache` is
-exported and can be coded against; the wiring that would let you hand the
-framework your own implementation is not built yet.
+```go
+// memoStore is a Cache over a map, for illustration.
+type memoStore struct {
+	mu      sync.Mutex
+	entries map[string][]byte
+}
+
+// Get returns the stored bytes for key, if any.
+func (s *memoStore) Get(_ context.Context, key string) ([]byte, string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	content, ok := s.entries[key]
+	if !ok {
+		return nil, "", false
+	}
+	return content, collage.ETag(content), true
+}
+
+// Set stores content under key and returns its ETag.
+func (s *memoStore) Set(_ context.Context, key string, content []byte, _ time.Duration) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.entries[key] = content
+	return collage.ETag(content), nil
+}
+
+// Invalidate leaves tag resolution to the framework's tracker.
+func (s *memoStore) Invalidate(_ context.Context, _ []string) error { return nil }
+
+// InvalidateKey removes one entry.
+func (s *memoStore) InvalidateKey(_ context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	delete(s.entries, key)
+	return nil
+}
+
+// Clear removes every entry.
+func (s *memoStore) Clear(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.entries = make(map[string][]byte)
+	return nil
+}
+
+var _ collage.Cache = (*memoStore)(nil)
+```
+
+### Tag-aware writes
+
+Implement `collage.TaggedCache` as well when your store can index tags at write
+time. The framework type-asserts for it and calls `SetTagged` in place of `Set`:
+
+```go
+// SetTagged stores content under key and indexes it under each of tags.
+func (s *memoStore) SetTagged(ctx context.Context, key string, content []byte, ttl time.Duration, tags []string) (string, error) {
+	// ... index tags, then store as Set does.
+	return s.Set(ctx, key, content, ttl)
+}
+
+var _ collage.TaggedCache = (*memoStore)(nil)
+```
+
+The framework's own dependency tracker keeps working either way, and remains the
+authority for resolving tags to keys: the two indexes are deliberately redundant.

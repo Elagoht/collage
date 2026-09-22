@@ -25,6 +25,12 @@ package collage
 
 import "github.com/Elagoht/collage/internal/types"
 
+// DefaultContentSlot is the name of the slot a page's content fragment is bound to
+// when the page has a layout fragment. A layout declares it with
+// WithSlot(collage.DefaultContentSlot, true, false) and renders it with
+// {{slot "content"}}; registration fills it.
+const DefaultContentSlot = types.DefaultContentSlot
+
 // Fragment is the framework's unit of composition: a template, an optional data
 // contract, and the slots it exposes to child fragments.
 type Fragment = types.Fragment

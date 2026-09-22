@@ -28,12 +28,12 @@ one even when the dynamic branch would have matched further down.
 
 `/blog` and `/blog/` are the same route. A pattern must start with `/`, must not
 contain an empty segment or an empty placeholder name, and must not put a
-catch-all anywhere but last; anything else is rejected at registration as an
-invalid pattern.
+catch-all anywhere but last; anything else is `collage.ErrInvalidPattern` at
+registration.
 
 Two different parameter names at the same position — `/blog/{slug}` and
-`/blog/{id}/edit` — are rejected as an ambiguous parameter name: a node holds one
-dynamic edge, so the two names cannot both be right.
+`/blog/{id}/edit` — are rejected with `collage.ErrAmbiguousParameterName`: a node
+holds one dynamic edge, so the two names cannot both be right.
 
 Captured values reach the data handler through the render context:
 
@@ -103,10 +103,11 @@ page := collage.NewPage("blog-post").
   `Permanent`": `301` when permanent, `302` otherwise. Anything else is
   `collage.ErrInvalidRedirectStatus` at registration.
 - A placeholder in the destination must be captured by the source pattern, or
-  registration fails — such a placeholder could never be substituted at match
-  time.
+  registration fails with `collage.ErrUnsubstitutedPlaceholder` — such a
+  placeholder could never be substituted at match time.
 - A redirect whose source collides with a registered page path is rejected in
-  either registration order: one of the two would be unreachable.
+  either registration order (`collage.ErrRedirectShadowsPage`): one of the two
+  would be unreachable.
 - Redirects are matched **before** pages, and the redirect tree is shared across
   locales, since a `Redirect` carries no locale of its own.
 
@@ -193,9 +194,12 @@ client.
 | `collage.ErrInvalidPath` | A path pattern not starting with `/` |
 | `collage.ErrUnregisteredErrorPage` | An error page referenced but never registered |
 | `collage.ErrAppStarted` | Registering after the handler was built |
+| `collage.ErrInvalidPattern` | A malformed path or redirect pattern |
+| `collage.ErrDuplicateRoute` | Two pages, or two redirects, at one path |
+| `collage.ErrAmbiguousParameterName` | Two parameter names at one position |
+| `collage.ErrRedirectShadowsPage` | A redirect source that is also a page path |
+| `collage.ErrUnsubstitutedPlaceholder` | A redirect destination placeholder the source does not capture |
+| `collage.ErrTemplateRootMissing` | `New`: `Template.Root` does not exist |
 
-The router's own sentinels — invalid pattern, duplicate route, ambiguous
-parameter name, redirect shadows a page, unsubstituted placeholder — are not
-re-exported from `pkg/collage` today, so they can be read but not matched with
-`errors.Is` from outside the module. Their messages name the page, the pattern,
-and the locale.
+Every one of them is matchable with `errors.Is`, and the wrapped message names the
+page, the pattern, and the locale.

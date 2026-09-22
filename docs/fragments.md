@@ -259,10 +259,32 @@ Available in every template:
 | `join sep items` | `strings.Join` |
 | `formatTime t layout` | `t.Format(layout)` |
 
-`Config.Template.Funcs` is not exposed publicly: `html/template` can only call a
-function name that existed when the template was parsed, so the set is fixed at
-construction. Compute in the data handler instead — that is where the data comes
-from anyway.
+### Adding your own
+
+`Config.Template.Funcs` is merged over the built-ins at construction, so an entry
+under a built-in name replaces it:
+
+```go
+app, err := collage.New(&collage.Config{
+	Template: collage.TemplateConfig{
+		Root: "templates",
+		Funcs: template.FuncMap{
+			"money": func(cents int64) string { return fmt.Sprintf("$%d.%02d", cents/100, cents%100) },
+			"title": strings.ToTitle, // replaces the built-in
+		},
+	},
+})
+```
+
+It must be set before `New`. `html/template` resolves a function name at execution
+time but can only call a name that was already in the map when the template was
+parsed, and `New` is where parsing happens — so a template calling a name nobody
+registered fails in `New`, not at the first request, and a name added afterwards is
+never consulted. Overriding `"slot"` is possible but pointless: the render engine
+rebinds it per render.
+
+Anything that needs request state belongs in the data handler rather than in a
+function: that is where the data comes from anyway.
 
 ## Development mode
 

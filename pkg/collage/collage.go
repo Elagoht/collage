@@ -5,8 +5,12 @@ import (
 
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/core"
+	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
+	"github.com/Elagoht/collage/internal/render"
+	"github.com/Elagoht/collage/internal/router"
+	"github.com/Elagoht/collage/internal/template"
 )
 
 // ErrNilConfig is returned by New when passed a nil *Config. A nil config is a
@@ -80,9 +84,40 @@ type CacheInvalidateEvent = plugin.CacheInvalidateEvent
 // ErrorEvent describes a failure encountered while serving a request.
 type ErrorEvent = plugin.ErrorEvent
 
-// Cache stores rendered pages keyed by request identity. Implement it to replace
-// the built-in in-memory cache.
+// Result is one page's rendered output, as returned by App.RenderPath: the HTML,
+// the dependency tags the render relied on, how it performed, and whether it failed
+// because the content does not exist. A caller MUST check RenderPath's error before
+// reading HTML.
+type Result = render.Result
+
+// Metadata describes how a render performed: the page, the locale, where the time
+// went, and one entry per fragment that ran.
+type Metadata = render.Metadata
+
+// FragmentMetadata records one fragment's contribution to a render: its name, its
+// duration, whether it failed, whether its fallback stood in for it, and the error
+// it failed with.
+type FragmentMetadata = render.FragmentMetadata
+
+// Timing records where a render spent its time. It is Metadata.Timing's type, so
+// this alias is required to write a function that takes one.
+type Timing = observability.Timing
+
+// PanicError is what a panic in a data handler or a template function becomes: the
+// fragment fails like any other failure instead of taking the process down. Reach
+// it with errors.As on a render error to recover the panic value and its stack.
+type PanicError = render.PanicError
+
+// Cache stores rendered pages keyed by request identity. Implement it, and set it
+// on CacheConfig.Store, to replace the built-in in-memory cache.
 type Cache = cache.Cache
+
+// TaggedCache is the optional extension a Cache implements when it can associate
+// dependency tags with an entry at write time. The framework type-asserts for it
+// and calls SetTagged in place of Set when a cache satisfies it; a cache that does
+// not is invalidated through the framework's own tag tracker instead, which stays
+// the authority either way.
+type TaggedCache = cache.TaggedCache
 
 // Metrics receives the framework's counters and timings. Implement it to bridge the
 // framework into a metrics backend; a nil Metrics means no-op.
@@ -113,6 +148,15 @@ const (
 	// CacheInvalidate means an entry was removed by an explicit invalidation.
 	CacheInvalidate = observability.CacheInvalidate
 )
+
+// ETag returns the strong HTTP ETag the framework itself computes for content: the
+// double-quoted hex encoding of the first 16 bytes of its SHA-256 hash. A Cache
+// implementation is free to derive ETags its own way — whatever Set returns is what
+// the response advertises — but this is the one to use unless there is a reason not
+// to, since it is already known to satisfy the HTTP ETag grammar.
+func ETag(content []byte) string {
+	return cache.ETag(content)
+}
 
 // ErrAppStarted is returned by the registration methods once the application has
 // started.
@@ -146,9 +190,76 @@ var ErrEmptyCommandName = core.ErrEmptyCommandName
 // already holds.
 var ErrDuplicateCommand = core.ErrDuplicateCommand
 
-// ErrUnsupportedCache is returned by New when Cache.Enabled is set and Cache.Type
-// names an implementation the framework cannot build.
+// ErrUnsupportedCache is returned by New when Cache.Enabled is set, no Cache.Store
+// was supplied, and Cache.Type names an implementation the framework cannot build.
 var ErrUnsupportedCache = core.ErrUnsupportedCache
+
+// ErrInvalidPattern is returned when a page path or redirect source is malformed:
+// it does not start with "/", contains an empty segment, contains a placeholder
+// with an empty name, or places a catch-all ("{name...}") anywhere but last.
+var ErrInvalidPattern = router.ErrInvalidPattern
+
+// ErrDuplicateRoute is returned when a page path, or a redirect source, is already
+// registered for the same locale.
+var ErrDuplicateRoute = router.ErrDuplicateRoute
+
+// ErrAmbiguousParameterName is returned when two patterns use different parameter
+// names at the same position, such as "/blog/{slug}" and "/blog/{id}/edit": a route
+// node carries one dynamic edge, so the two names cannot both be right.
+var ErrAmbiguousParameterName = router.ErrAmbiguousParameterName
+
+// ErrRedirectShadowsPage is returned when a redirect's source path is also a
+// registered page path, in either registration order: one of the two would be
+// unreachable.
+var ErrRedirectShadowsPage = router.ErrRedirectShadowsPage
+
+// ErrUnsubstitutedPlaceholder is returned when a redirect's destination contains a
+// "{name}" its source pattern does not capture, so it could never be substituted at
+// match time.
+var ErrUnsubstitutedPlaceholder = router.ErrUnsubstitutedPlaceholder
+
+// ErrTemplateRootMissing is returned, wrapped, by New when Config.Template.Root
+// does not exist or is not a directory. It is the most common startup failure there
+// is, and it is worth telling apart from a template that exists but does not parse.
+var ErrTemplateRootMissing = template.ErrTemplateRootMissing
+
+// ErrNilPlugin is returned by App.RegisterPlugin when passed a nil Plugin.
+var ErrNilPlugin = plugin.ErrNilPlugin
+
+// ErrEmptyPluginName is returned by App.RegisterPlugin when the plugin's Name
+// method returns the empty string.
+var ErrEmptyPluginName = plugin.ErrEmptyPluginName
+
+// ErrDuplicatePlugin is returned by App.RegisterPlugin when a plugin with the same
+// Name is already registered.
+var ErrDuplicatePlugin = plugin.ErrDuplicatePlugin
+
+// ErrMaxDepthExceeded is the render failure reported when a fragment tree nests
+// deeper than the engine allows, which almost always means a fragment was bound,
+// directly or indirectly, into one of its own slots.
+var ErrMaxDepthExceeded = render.ErrMaxDepthExceeded
+
+// ErrNoRootFragment is the render failure reported for a page with neither a layout
+// fragment nor a content fragment.
+var ErrNoRootFragment = render.ErrNoRootFragment
+
+// ErrRequiredSlotEmpty is the render failure reported when a fragment declares a
+// slot Required and nothing is bound to it. It is distinct from
+// ErrRequiredSlotUnfilled, which reports the same condition at validation time: this
+// one is a per-render failure subject to the fragment failure policy.
+var ErrRequiredSlotEmpty = render.ErrRequiredSlotEmpty
+
+// ErrNoRoute is the error a plugin's ErrorHook receives when no route matched the
+// request. It is deliberately not ErrNotFound: both produce a 404, and a plugin
+// asking why needs to tell an unmatched URL (a routing or link problem) from a
+// missing record (a content one).
+var ErrNoRoute = httpx.ErrNoRoute
+
+// ErrEmptyErrorPage is the error a plugin's ErrorHook receives, under the stage
+// "error_page", when a registered error page rendered successfully but produced no
+// markup. It is the failure nobody finds out about otherwise, because the client
+// still receives a plausible-looking built-in page.
+var ErrEmptyErrorPage = httpx.ErrEmptyErrorPage
 
 // New builds an App from cfg: it applies the framework's defaults to every field
 // left at its zero value, validates the result, converts it into the internal
@@ -193,9 +304,11 @@ func toCoreConfig(cfg *Config) core.Config {
 			Extension: cfg.Template.Extension,
 			DevMode:   cfg.Template.DevMode,
 			Timeout:   cfg.Template.Timeout,
+			Funcs:     cfg.Template.Funcs,
 		},
 		Cache: core.CacheConfig{
 			Enabled:    cfg.Cache.Enabled,
+			Store:      cfg.Cache.Store,
 			Type:       cfg.Cache.Type,
 			DefaultTTL: cfg.Cache.DefaultTTL,
 			MaxEntries: cfg.Cache.MaxEntries,

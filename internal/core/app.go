@@ -13,6 +13,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	htmltemplate "html/template"
 	"log/slog"
 	"maps"
 	"net"
@@ -79,8 +80,9 @@ var ErrEmptyCommandName = errors.New("collage: empty command name")
 // Name is already registered.
 var ErrDuplicateCommand = errors.New("collage: duplicate command name")
 
-// ErrUnsupportedCache is returned by New when Config.Cache.Enabled is true and
-// Config.Cache.Type names an implementation this package cannot build.
+// ErrUnsupportedCache is returned by New when Config.Cache.Enabled is true,
+// Config.Cache.Store is nil, and Config.Cache.Type names an implementation this
+// package cannot build.
 var ErrUnsupportedCache = errors.New("collage: unsupported cache type")
 
 // ErrEmptyTemplateRoot is returned by New when Config.Template.Root is empty.
@@ -144,14 +146,22 @@ type TemplateConfig struct {
 	DevMode bool
 	// Timeout is the default DataHandler timeout used when a fragment sets none.
 	Timeout time.Duration
+	// Funcs is merged over the template engine's built-in function map at
+	// construction, so an entry under a built-in name replaces that built-in.
+	Funcs htmltemplate.FuncMap
 }
 
 // CacheConfig is internal/core's mirror of pkg/collage.CacheConfig.
 type CacheConfig struct {
 	// Enabled turns caching on. A disabled cache is a nil cache: every request
-	// renders and nothing is ever stored.
+	// renders and nothing is ever stored. It is the master switch, so a Store set
+	// alongside Enabled false is not used.
 	Enabled bool
-	// Type selects the cache implementation. Only "memory" is built in.
+	// Store is a caller-supplied cache implementation. When non-nil it is used as
+	// it stands and Type is ignored.
+	Store cache.Cache
+	// Type selects a built-in cache implementation when Store is nil. Only
+	// "memory" is built in.
 	Type string
 	// DefaultTTL is the cache entry lifetime used when a page sets none.
 	DefaultTTL time.Duration
@@ -208,8 +218,11 @@ type App struct {
 	// renderer composes a page's fragment tree into HTML.
 	renderer render.Engine
 	// store is the render output cache, or nil when caching is disabled. It is
-	// declared as the interface and only ever assigned a non-nil implementation,
-	// so "no cache" is a genuinely nil interface value, not a typed nil.
+	// declared as the interface and only ever assigned a non-nil implementation —
+	// either the built-in memory cache or Config.Cache.Store — so "no cache" is a
+	// genuinely nil interface value. A caller that assigns a nil pointer of a
+	// concrete type to Config.Cache.Store defeats that, and this package cannot
+	// tell the difference without reflection; see that field's own documentation.
 	store cache.Cache
 	// tracker resolves dependency tags back to the cache keys built from them.
 	tracker dependency.Tracker
@@ -323,6 +336,7 @@ func New(cfg Config) (*App, error) {
 		Root:      cfg.Template.Root,
 		Extension: cfg.Template.Extension,
 		DevMode:   devMode,
+		Funcs:     cfg.Template.Funcs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("collage: template engine: %w", err)
@@ -333,16 +347,25 @@ func New(cfg Config) (*App, error) {
 	metrics := observability.MetricsOrNoop(cfg.Observability.Metrics)
 	tracer := observability.TracerOrNoop(cfg.Observability.Tracer)
 
+	// A caller-supplied Store wins over Type, and is taken exactly as given: this
+	// is the one cache the application will use, so nothing here wraps, copies, or
+	// second-guesses it. Enabled remains the master switch — a Store on a disabled
+	// cache is not silently turned on, because "caching is off" must mean off.
 	var store cache.Cache
 	if cfg.Cache.Enabled {
-		switch cfg.Cache.Type {
-		case "", "memory":
-			store = cache.NewMemory(cache.MemoryConfig{
-				DefaultTTL: cfg.Cache.DefaultTTL,
-				MaxEntries: cfg.Cache.MaxEntries,
-			})
+		switch {
+		case cfg.Cache.Store != nil:
+			store = cfg.Cache.Store
 		default:
-			return nil, fmt.Errorf("%w: %q", ErrUnsupportedCache, cfg.Cache.Type)
+			switch cfg.Cache.Type {
+			case "", "memory":
+				store = cache.NewMemory(cache.MemoryConfig{
+					DefaultTTL: cfg.Cache.DefaultTTL,
+					MaxEntries: cfg.Cache.MaxEntries,
+				})
+			default:
+				return nil, fmt.Errorf("%w: %q", ErrUnsupportedCache, cfg.Cache.Type)
+			}
 		}
 	}
 

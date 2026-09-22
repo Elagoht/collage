@@ -3,6 +3,7 @@ package collage
 import (
 	"errors"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"slices"
 	"time"
@@ -92,6 +93,20 @@ type ServerConfig struct {
 type TemplateConfig struct {
 	// Root is the directory templates are loaded from. Defaults to "./templates".
 	Root string
+	// Funcs adds template functions to, and may override entries of, the
+	// framework's built-in function map (slot, safeHTML, safeURL, dict, default,
+	// upper, lower, title, join, formatTime). It is merged over the built-ins at
+	// construction, so an entry here under a built-in name replaces that built-in.
+	//
+	// It must be set before New: html/template resolves a function name at
+	// execution time but can only call a name that was already in the map when the
+	// template was parsed, and New is where parsing happens. Adding a name
+	// afterwards is not possible, and a template calling an unknown name fails to
+	// parse in New rather than at the first request.
+	//
+	// Overriding "slot" is possible but pointless: the render engine rebinds it per
+	// render, so whatever is registered here is never the implementation that runs.
+	Funcs template.FuncMap
 	// Extension is the file extension appended to template names. Defaults to
 	// ".html".
 	Extension string
@@ -105,10 +120,25 @@ type TemplateConfig struct {
 
 // CacheConfig configures the render output cache.
 type CacheConfig struct {
-	// Enabled turns caching on. Caching is off by default.
+	// Enabled turns caching on. Caching is off by default, and it is the master
+	// switch: with Enabled false nothing is cached even if Store is set.
 	Enabled bool
-	// Type selects the cache implementation. Defaults to "memory" when Enabled is
-	// true and Type is left empty.
+	// Store is the cache implementation the framework reads and writes through.
+	// A nil Store selects a built-in implementation by Type; a non-nil Store is
+	// used as-is and Type is ignored entirely, including by validation.
+	//
+	// A Store that also implements TaggedCache has its SetTagged called instead of
+	// Set, so the entry's dependency tags are indexed by the cache itself as well
+	// as by the framework's tracker.
+	//
+	// Assigning a nil pointer of a concrete type to this field produces a non-nil
+	// interface holding nil, which the framework cannot distinguish from a real
+	// implementation without reflection, and which will panic on the first lookup.
+	// Leave the field unset instead.
+	Store Cache
+	// Type selects a built-in cache implementation when Store is nil. The only
+	// built-in is "memory", which is also what an empty Type defaults to when
+	// Enabled is true and Store is nil.
 	Type string
 	// DefaultTTL is the cache entry lifetime used when a page does not set its own.
 	// Defaults to 5m.
@@ -191,7 +221,7 @@ func (c *Config) ApplyDefaults() {
 		c.Template.Timeout = 5 * time.Second
 	}
 
-	if c.Cache.Enabled && c.Cache.Type == "" {
+	if c.Cache.Enabled && c.Cache.Store == nil && c.Cache.Type == "" {
 		c.Cache.Type = "memory"
 	}
 	if c.Cache.DefaultTTL == 0 {
@@ -214,7 +244,8 @@ func (c *Config) ApplyDefaults() {
 
 // Validate reports whether c is well-formed: Server.Port is in 1..65535
 // (ErrInvalidPort), Template.Root is non-empty (ErrEmptyTemplateRoot), Cache.Type is
-// "memory" when Cache.Enabled (ErrInvalidCacheType), Locale.Default is non-empty
+// "memory" when Cache.Enabled and Cache.Store is nil (ErrInvalidCacheType; a
+// caller-supplied Store makes Type irrelevant), Locale.Default is non-empty
 // (ErrEmptyLocaleDefault) and present in Locale.Supported
 // (ErrLocaleDefaultNotSupported), and every duration field is not negative
 // (ErrNegativeDuration). It returns nil when c is well-formed.
@@ -225,7 +256,7 @@ func (c *Config) Validate() error {
 	if c.Template.Root == "" {
 		return ErrEmptyTemplateRoot
 	}
-	if c.Cache.Enabled {
+	if c.Cache.Enabled && c.Cache.Store == nil {
 		switch c.Cache.Type {
 		case "memory":
 		default:
