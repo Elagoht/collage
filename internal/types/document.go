@@ -11,6 +11,13 @@ import (
 // DocumentHandlerFunc produces a document's body. It returns the bytes to serve,
 // the dependency tags the body was derived from, and an error. Returning an error
 // that wraps ErrNotFound makes the response a 404 rather than a 500.
+//
+// Returning a nil or empty body alongside a nil error is treated as a failure, not
+// as a valid empty response: a document has no equivalent of a page's optional root
+// fragment, whose empty render is a deliberate, documented outcome, so an empty
+// success here is indistinguishable from a handler that forgot to populate its
+// body. A handler that genuinely wants to serve an empty document — a zero-byte
+// robots.txt, say — can return a single newline instead.
 type DocumentHandlerFunc func(ctx context.Context, rc *RenderContext) (body []byte, tags []string, err error)
 
 // Document is a routed, cacheable response that is not HTML: a sitemap, a feed, a
