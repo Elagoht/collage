@@ -1,7 +1,7 @@
-// Package router resolves incoming HTTP requests to pages, redirects, or a
-// not-found result: a radix tree per locale for page paths, a shared radix tree
-// for redirects, and locale resolution from the request path, Accept-Language
-// header, and a cookie.
+// Package router resolves incoming HTTP requests to pages, documents,
+// redirects, or a not-found result: a radix tree per locale shared by page and
+// document paths, a shared radix tree for redirects, and locale resolution
+// from the request path, Accept-Language header, and a cookie.
 package router
 
 import (
@@ -43,8 +43,8 @@ var ErrUnsubstitutedPlaceholder = errors.New("collage: redirect placeholder not 
 // going through a builder.
 var ErrUnsafeRedirectTarget = errors.New("collage: unsafe redirect target")
 
-// MatchResult describes what a request resolved to: a page, a redirect, or no
-// match, always alongside the resolved locale.
+// MatchResult describes what a request resolved to: a page, a document, a
+// redirect, or no match, always alongside the resolved locale.
 type MatchResult struct {
 	// Page is the matched page. It is nil when RedirectTo is set or IsNotFound is
 	// true.
@@ -57,8 +57,8 @@ type MatchResult struct {
 	// supported locales.
 	Locale string
 	// PathParams holds the dynamic and catch-all segment values captured by the
-	// matched page's pattern, keyed by placeholder name. It is nil when a
-	// redirect matched or nothing matched.
+	// matched page's or document's pattern, keyed by placeholder name. It is
+	// nil when a redirect matched or nothing matched.
 	PathParams map[string]string
 	// RedirectTo is the destination path when a redirect matched, with its
 	// placeholders already substituted and each substituted value
@@ -69,17 +69,18 @@ type MatchResult struct {
 	// RedirectStatus is the HTTP status code for RedirectTo, taken from the
 	// matched Redirect's EffectiveStatus. It is zero when no redirect matched.
 	RedirectStatus int
-	// IsNotFound reports whether neither a redirect nor a page matched the
-	// request. This is not an error: Page is nil and RedirectTo is empty, but
-	// Locale is still the request's resolved locale.
+	// IsNotFound reports whether neither a redirect, a page, nor a document
+	// matched the request. This is not an error: Page, Document, and RedirectTo
+	// are all empty, but Locale is still the request's resolved locale.
 	IsNotFound bool
 }
 
-// Router resolves incoming requests to pages, redirects, or a not-found result,
-// and holds the site's registered not-found and error pages.
+// Router resolves incoming requests to pages, documents, redirects, or a
+// not-found result, and holds the site's registered not-found and error
+// pages.
 type Router interface {
 	// Match resolves req's locale and path to a MatchResult. A redirect takes
-	// priority over a page match at the same path. Match returns an error only
+	// priority over a page or document match at the same path. Match returns an error only
 	// for conditions the caller must react to specially — currently only
 	// ErrUnsafeRedirectTarget, a redirect whose destination must not be served;
 	// malformed request input — such as a segment that fails percent-decoding —
@@ -120,9 +121,10 @@ type Router interface {
 type router struct {
 	localeOptions LocaleOptions
 
-	// pageTrees holds one radix tree per locale that has at least one
-	// registered page path.
-	pageTrees map[string]*node
+	// routeTrees holds one radix tree per locale that has at least one
+	// registered page or document path — see occupantName for how a single
+	// tree node distinguishes the two.
+	routeTrees map[string]*node
 	// redirectTree is shared across locales: Redirect carries no locale of its
 	// own, so a registered redirect applies after locale resolution regardless
 	// of which locale was resolved.
@@ -147,7 +149,7 @@ type router struct {
 func New(opts LocaleOptions) Router {
 	return &router{
 		localeOptions:       opts,
-		pageTrees:           make(map[string]*node),
+		routeTrees:          make(map[string]*node),
 		redirectTree:        &node{},
 		routedPathsByLocale: make(map[string]map[string]string),
 		redirectFroms:       make(map[string]*types.Redirect),
@@ -186,7 +188,7 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 		}, nil
 	}
 
-	if tree, ok := rt.pageTrees[locale]; ok {
+	if tree, ok := rt.routeTrees[locale]; ok {
 		if matched, params, ok := tree.match(segments); ok {
 			return &MatchResult{
 				Page:       matched.page,
@@ -216,10 +218,10 @@ func (rt *router) Register(page *types.Page) error {
 			return err
 		}
 
-		tree, ok := rt.pageTrees[locale]
+		tree, ok := rt.routeTrees[locale]
 		if !ok {
 			tree = &node{}
-			rt.pageTrees[locale] = tree
+			rt.routeTrees[locale] = tree
 		}
 		target, err := tree.insert(segments)
 		if err != nil {

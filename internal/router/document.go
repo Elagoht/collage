@@ -22,10 +22,10 @@ func (rt *router) RegisterDocument(doc *types.Document) error {
 			return err
 		}
 
-		tree, ok := rt.pageTrees[locale]
+		tree, ok := rt.routeTrees[locale]
 		if !ok {
 			tree = &node{}
-			rt.pageTrees[locale] = tree
+			rt.routeTrees[locale] = tree
 		}
 		target, err := tree.insert(segments)
 		if err != nil {

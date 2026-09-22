@@ -27,8 +27,9 @@ var ErrDuplicateRoute = errors.New("collage: duplicate route")
 // captured value reported under the first pattern's name instead of its own.
 var ErrAmbiguousParameterName = errors.New("collage: ambiguous parameter name")
 
-// node is one level of a radix tree. One tree is built per registered locale for
-// pages, plus one tree shared across locales for redirects. A node's static
+// node is one level of a radix tree. One tree is built per registered locale,
+// shared by pages and documents, plus one tree shared across locales for
+// redirects. A node's static
 // children are keyed by literal segment text; it holds at most one dynamic edge
 // and one catch-all edge besides. Matching tries static children, then the
 // dynamic edge, then the catch-all edge, backtracking to a lower-priority edge
@@ -41,7 +42,7 @@ type node struct {
 	dynamic  *edge
 	catchAll *edge
 
-	// page is set on a page-tree node that terminates a registered page path.
+	// page is set on a route-tree node that terminates a registered page path.
 	page *types.Page
 
 	// document is the document terminating at this node, if any. At most one of
