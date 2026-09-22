@@ -72,6 +72,16 @@ These bind every task. A violation is a review defect regardless of what a task 
 8. **Errors are wrapped with `%w`** and package-level sentinel errors
    (`var ErrFoo = errors.New("collage: foo")`) are used for conditions callers branch
    on. Error strings are lowercase, prefixed `collage: `.
+   **One sentinel per distinct failure *mode*, not per field.** Two checks share a
+   sentinel only when a caller would handle them identically and the difference is
+   purely which field tripped — in that case the field name goes in the wrapped message
+   (`fmt.Errorf("%w: %s", ErrX, field)`), and the sentinel's doc comment says it is
+   deliberately shared. Two checks need separate sentinels when they mean different
+   things to a caller: `ErrInvalidTimeout` (a fragment's data-fetch deadline) and
+   `ErrInvalidTTL` (a page's cache lifetime) are distinct concepts and were correctly
+   split in Task 1, whereas six config duration fields that are all simply "negative
+   duration" are one mode. When in doubt, ask: would any caller write different code for
+   these two cases? If not, share the sentinel and name the field in the message.
 9. **No panics escape a public API.** Panic recovery happens at the fragment execution
    boundary and converts to an error. `recover()` appears only where the plan says.
 10. **No goroutine leaks.** Anything started has a documented stop path. Rendering is
