@@ -866,6 +866,16 @@ untouched. `ErrMaxDepthExceeded` and a nil entry in a slot's `Fill` propagate th
 way: they indicate a malformed tree, not a runtime data failure, and a fallback must not
 mask them.
 
+**Required-ness is scoped to the primary tree, not to fallback subtrees.** If a fragment
+inside a *fallback's* own subtree is `Required` and fails, the fallback fails — and a
+fallback failure never escalates, so the page still renders with empty output for that
+slot. A `Required` fragment declares "the page cannot render without me"; a fragment
+inside a fallback declares "this *alternative* cannot render without me", which is a
+weaker claim by construction. Escalating there would let a broken fallback take down a
+page that the fallback existed to protect, which inverts its purpose. Document this on
+the fallback branch and pin it with a test, because the non-absorbability rule above and
+the never-escalate rule genuinely overlap on this shape.
+
 **Timing metadata survives failure.** The spec guarantees every render has timing
 metadata, so a fatal render error must not discard it. `Render` returns a non-nil
 `*Result` on **every** path: on failure its `HTML` is nil and its `Metadata` is populated
