@@ -430,7 +430,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 	header := w.Header()
 	header.Set("Content-Type", contentTypeHTML)
 	header.Set("ETag", etag)
-	h.setCacheHeaders(header, page)
+	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
 	if h.devMode {
 		header.Set(renderTimeHeader, renderTime.String())
 	}
@@ -446,7 +446,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *types.Page, content []byte, etag string) int {
 	header := w.Header()
 	header.Set("ETag", etag)
-	h.setCacheHeaders(header, page)
+	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
 
 	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		// No Content-Type and no body: a 304 tells the client its copy is still
@@ -484,7 +484,7 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	event := &plugin.CacheWriteEvent{
 		Key:  key,
 		Page: page,
-		TTL:  h.ttlFor(page),
+		TTL:  h.ttlFor(page.Strategy, page.CacheTTL),
 		Tags: tags,
 	}
 	if err := h.plugins.CacheWrite(ctx, event); err != nil {
@@ -514,34 +514,39 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	return etag
 }
 
-// ttlFor returns the cache TTL for page: its own CacheTTL when set, then
-// staticCacheTTL for a StrategyStatic page, otherwise the handler's DefaultTTL,
-// which may itself be zero to defer to the cache's default.
+// ttlFor returns the cache TTL for a route with the given strategy and cacheTTL:
+// cacheTTL itself when set, then staticCacheTTL for StrategyStatic, otherwise the
+// handler's DefaultTTL, which may itself be zero to defer to the cache's default.
+//
+// It is shared by the page and document paths. They are parameterized on strategy
+// and cacheTTL directly, rather than on *types.Page or *types.Document, because
+// the two types share no common field accessor to feed a single implementation
+// through, and this package uses neither an interface for that nor reflection —
+// the values themselves are all the logic below needs.
 //
 // The StrategyStatic case is what makes that strategy mean what it says. "Render
 // once and serve until explicitly invalidated" is its documented contract, but
-// Static() sets no CacheTTL, so without this a static page fell through to
+// Static() sets no CacheTTL, so without this a static route fell through to
 // DefaultTTL — which pkg/collage's own defaulting forces to five minutes — and every
-// static page silently re-rendered on that cycle.
-func (h *Handler) ttlFor(page *types.Page) time.Duration {
-	if page == nil {
-		return h.defaultTTL
+// static route silently re-rendered on that cycle.
+func (h *Handler) ttlFor(strategy types.RenderStrategy, cacheTTL time.Duration) time.Duration {
+	if cacheTTL > 0 {
+		return cacheTTL
 	}
-	if page.CacheTTL > 0 {
-		return page.CacheTTL
-	}
-	if page.Strategy == types.StrategyStatic {
+	if strategy == types.StrategyStatic {
 		return staticCacheTTL
 	}
 	return h.defaultTTL
 }
 
-// setCacheHeaders writes page's Cache-Control and, whenever that response is
-// publicly cacheable, the Vary header built from Deps.Vary. Vary belongs only on a
-// public response: it tells a shared cache which request headers select between
-// representations, and a no-store response has no representation to select.
-func (h *Handler) setCacheHeaders(header http.Header, page *types.Page) {
-	control := h.cacheControl(page)
+// setCacheHeaders writes the Cache-Control for a route with the given strategy and
+// cacheTTL, and, whenever that response is publicly cacheable, the Vary header
+// built from Deps.Vary. Vary belongs only on a public response: it tells a shared
+// cache which request headers select between representations, and a no-store
+// response has no representation to select. Shared by the page and document paths;
+// see ttlFor for why it is parameterized rather than typed on either route kind.
+func (h *Handler) setCacheHeaders(header http.Header, strategy types.RenderStrategy, cacheTTL time.Duration) {
+	control := h.cacheControl(strategy, cacheTTL)
 	header.Set("Cache-Control", control)
 
 	if h.vary == "" || !strings.HasPrefix(control, "public") {
@@ -550,17 +555,18 @@ func (h *Handler) setCacheHeaders(header http.Header, page *types.Page) {
 	header.Set("Vary", h.vary)
 }
 
-// cacheControl returns the Cache-Control value for page's render strategy: a static
-// page is cached but always revalidated, an incremental page is cached for its
-// effective TTL, and a dynamic page is never stored. The incremental value is
-// derived from the page, not from a TTL a CacheWriteHook adjusted, so the header a
-// client sees does not change from request to request.
-func (h *Handler) cacheControl(page *types.Page) string {
-	switch page.Strategy {
+// cacheControl returns the Cache-Control value for a route with the given render
+// strategy: static is cached but always revalidated, incremental is cached for its
+// effective TTL, and dynamic is never stored. The incremental value is derived from
+// cacheTTL, not from a TTL a CacheWriteHook adjusted, so the header a client sees
+// does not change from request to request. Shared by the page and document paths;
+// see ttlFor for why it is parameterized rather than typed on either route kind.
+func (h *Handler) cacheControl(strategy types.RenderStrategy, cacheTTL time.Duration) string {
+	switch strategy {
 	case types.StrategyStatic:
 		return "public, max-age=0, must-revalidate"
 	case types.StrategyIncremental:
-		seconds := int64(h.ttlFor(page) / time.Second)
+		seconds := int64(h.ttlFor(strategy, cacheTTL) / time.Second)
 		if seconds < 0 {
 			seconds = 0
 		}

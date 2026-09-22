@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
@@ -119,7 +117,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	header := w.Header()
 	header.Set("Content-Type", doc.ContentType)
 	header.Set("ETag", etag)
-	h.setDocumentCacheHeaders(header, doc)
+	h.setCacheHeaders(header, doc.Strategy, doc.CacheTTL)
 	if h.devMode {
 		header.Set(renderTimeHeader, result.Timing.Total.String())
 	}
@@ -135,7 +133,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, doc *types.Document, content []byte, etag string) int {
 	header := w.Header()
 	header.Set("ETag", etag)
-	h.setDocumentCacheHeaders(header, doc)
+	h.setCacheHeaders(header, doc.Strategy, doc.CacheTTL)
 
 	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		// No Content-Type and no body: a 304 tells the client its copy is still
@@ -166,7 +164,7 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 
 	event := &plugin.CacheWriteEvent{
 		Key:  key,
-		TTL:  h.ttlForDocument(doc),
+		TTL:  h.ttlFor(doc.Strategy, doc.CacheTTL),
 		Tags: result.Tags,
 	}
 	if err := h.plugins.CacheWrite(ctx, event); err != nil {
@@ -194,54 +192,4 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), document: doc, stage: stageCacheWrite})
 	}
 	return etag
-}
-
-// ttlForDocument returns the cache TTL for doc: its own CacheTTL when set, then
-// staticCacheTTL for a StrategyStatic document, otherwise the handler's DefaultTTL.
-// It mirrors ttlFor's page logic; the two are not fed through one shared
-// implementation because the fields they read live on *types.Document and
-// *types.Page respectively, and this package takes neither generics nor reflection.
-func (h *Handler) ttlForDocument(doc *types.Document) time.Duration {
-	if doc == nil {
-		return h.defaultTTL
-	}
-	if doc.CacheTTL > 0 {
-		return doc.CacheTTL
-	}
-	if doc.Strategy == types.StrategyStatic {
-		return staticCacheTTL
-	}
-	return h.defaultTTL
-}
-
-// setDocumentCacheHeaders writes doc's Cache-Control and, whenever that response is
-// publicly cacheable, the Vary header built from Deps.Vary. It mirrors
-// setCacheHeaders for a page; see ttlForDocument for why the two are not shared.
-func (h *Handler) setDocumentCacheHeaders(header http.Header, doc *types.Document) {
-	control := h.documentCacheControl(doc)
-	header.Set("Cache-Control", control)
-
-	if h.vary == "" || !strings.HasPrefix(control, "public") {
-		return
-	}
-	header.Set("Vary", h.vary)
-}
-
-// documentCacheControl returns the Cache-Control value for doc's render strategy: a
-// static document is cached but always revalidated, an incremental document is
-// cached for its effective TTL, and a dynamic document is never stored. It mirrors
-// cacheControl for a page; see ttlForDocument for why the two are not shared.
-func (h *Handler) documentCacheControl(doc *types.Document) string {
-	switch doc.Strategy {
-	case types.StrategyStatic:
-		return "public, max-age=0, must-revalidate"
-	case types.StrategyIncremental:
-		seconds := int64(h.ttlForDocument(doc) / time.Second)
-		if seconds < 0 {
-			seconds = 0
-		}
-		return "public, max-age=" + strconv.FormatInt(seconds, 10)
-	default:
-		return "no-store"
-	}
 }
