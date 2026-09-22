@@ -1409,6 +1409,16 @@ a comment on each points at the other.
   router. This is the entry point the static builder in Task 12 consumes through its own
   narrow `Renderer` interface; it bypasses the cache and returns the raw result.
 
+**Every referenced error page must itself be registered.** `RegisterPage` checks the
+templates of a page's `NotFoundPage`/`ErrorPage`, but a referenced error page that is
+never registered is also never *bound* — so a layout-using error page renders with an
+empty content slot and the visitor silently gets the built-in page instead of the author's.
+The only signal is a log line on a request that is already failing. `Handler()` performs a
+close-out check before building: every `NotFoundPage`/`ErrorPage` referenced by a
+registered page, and the global error pages, must themselves have been registered, or
+startup fails naming the referring page and the missing one. This is the shape the
+specification's own advanced example uses, so it must work.
+
 Validation at registration is where the framework's "no silent failures" invariant is
 enforced: a page whose template is missing, whose required slot is unfilled, or whose
 strategy/TTL combination is incoherent must fail at `RegisterPage`, with an error that
