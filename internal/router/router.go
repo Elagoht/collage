@@ -47,6 +47,10 @@ type MatchResult struct {
 	// Page is the matched page. It is nil when RedirectTo is set or IsNotFound is
 	// true.
 	Page *types.Page
+	// Document is the matched document. It is nil when a page matched, when
+	// RedirectTo is set, or when IsNotFound is true. Exactly one of Page and
+	// Document is non-nil on a successful match.
+	Document *types.Document
 	// Locale is the locale resolved for the request, always one of the router's
 	// supported locales.
 	Locale string
@@ -87,6 +91,10 @@ type Router interface {
 	// registered page path, and ErrUnsubstitutedPlaceholder when a redirect's To
 	// references a placeholder its From does not capture.
 	Register(page *types.Page) error
+	// RegisterDocument adds a document's paths and redirects to the router. It
+	// returns ErrDuplicateRoute when any of them collides with an already-registered
+	// page or document.
+	RegisterDocument(doc *types.Document) error
 	// RegisterNotFound sets the page served when a request resolves to no
 	// content.
 	RegisterNotFound(page *types.Page) error
@@ -167,9 +175,10 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 	}
 
 	if tree, ok := rt.pageTrees[locale]; ok {
-		if pageNode, params, ok := tree.match(segments); ok {
+		if matched, params, ok := tree.match(segments); ok {
 			return &MatchResult{
-				Page:       pageNode.page,
+				Page:       matched.page,
+				Document:   matched.document,
 				Locale:     locale,
 				PathParams: params,
 			}, nil
@@ -203,8 +212,9 @@ func (rt *router) Register(page *types.Page) error {
 		if err != nil {
 			return fmt.Errorf("collage: page %q path %q locale %q: %w", page.Name, pattern, locale, err)
 		}
-		if target.page != nil {
-			return fmt.Errorf("%w: pattern %q locale %q: page %q already registered, page %q attempted", ErrDuplicateRoute, pattern, locale, target.page.Name, page.Name)
+		if occupant := occupantName(target); occupant != "" {
+			return fmt.Errorf("%w: page %q and %s both claim %q for locale %q",
+				ErrDuplicateRoute, page.Name, occupant, pattern, locale)
 		}
 		target.page = page
 
@@ -216,9 +226,15 @@ func (rt *router) Register(page *types.Page) error {
 		byPath[normalized] = page
 	}
 
-	for _, redirect := range page.Redirects {
+	return rt.registerRedirects(page.Name, page.Redirects)
+}
+
+// registerRedirects adds owner's redirects to the redirect tree. owner is used
+// only to name the route in errors.
+func (rt *router) registerRedirects(owner string, redirects []*types.Redirect) error {
+	for _, redirect := range redirects {
 		if err := rt.registerRedirect(redirect); err != nil {
-			return fmt.Errorf("collage: page %q: %w", page.Name, err)
+			return fmt.Errorf("collage: %q: %w", owner, err)
 		}
 	}
 

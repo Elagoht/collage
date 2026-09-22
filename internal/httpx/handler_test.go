@@ -131,6 +131,10 @@ func (s *stubRouter) Match(*http.Request) (*router.MatchResult, error) {
 // Register does nothing: the stub matches by its programmed result alone.
 func (s *stubRouter) Register(*types.Page) error { return nil }
 
+// RegisterDocument does nothing: the stub matches by its programmed result
+// alone.
+func (s *stubRouter) RegisterDocument(*types.Document) error { return nil }
+
 // RegisterNotFound stores page as the global not-found page.
 func (s *stubRouter) RegisterNotFound(page *types.Page) error {
 	s.notFound = page

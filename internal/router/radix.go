@@ -42,6 +42,10 @@ type node struct {
 	// page is set on a page-tree node that terminates a registered page path.
 	page *types.Page
 
+	// document is the document terminating at this node, if any. At most one of
+	// page and document is ever set; occupantName is the only place both are read.
+	document *types.Document
+
 	// hasRedirect, redirectTo, redirectStatus, and redirectCatchAll are set on a
 	// redirect-tree node that terminates a registered redirect. redirectTo is the
 	// unsubstituted destination template. redirectCatchAll names the From
@@ -65,9 +69,10 @@ type edge struct {
 	node *node
 }
 
-// terminal reports whether n is the end of a registered page or redirect.
+// terminal reports whether n is the end of a registered page, document, or
+// redirect.
 func (n *node) terminal() bool {
-	return n.page != nil || n.hasRedirect
+	return n.page != nil || n.document != nil || n.hasRedirect
 }
 
 // insert walks segments from n, creating nodes as needed, and returns the
