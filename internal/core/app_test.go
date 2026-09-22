@@ -345,6 +345,49 @@ func TestApp_InvalidateTagsDispatchesToPlugins(t *testing.T) {
 	}
 }
 
+// TestApp_ConcurrentUse drives the App the way a running server does: requests
+// being served while a plugin reads the page registry and an operator invalidates
+// tags. It exists for the race detector — every one of these paths takes a lock,
+// and the point is that they are the right locks.
+func TestApp_ConcurrentUse(t *testing.T) {
+	app := newTestApp(t, nil)
+	if err := app.RegisterPage(newHomePage()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	handler := app.Handler()
+
+	var workers sync.WaitGroup
+	for range 8 {
+		workers.Add(3)
+		go func() {
+			defer workers.Done()
+			if recorder := get(handler, "/"); recorder.Code != http.StatusOK {
+				t.Errorf("status = %d, want %d", recorder.Code, http.StatusOK)
+			}
+		}()
+		go func() {
+			defer workers.Done()
+			if err := app.InvalidateTags(context.Background(), "homepage"); err != nil {
+				t.Errorf("InvalidateTags: %v", err)
+			}
+		}()
+		go func() {
+			defer workers.Done()
+			if pages := app.Pages(); len(pages) != 1 {
+				t.Errorf("Pages = %d entries, want 1", len(pages))
+			}
+			if _, ok := app.Page("home"); !ok {
+				t.Error("Page(home) not found")
+			}
+			if err := app.RegisterCommand(plugin.Command{Name: "cmd"}); err != nil &&
+				!errors.Is(err, ErrDuplicateCommand) {
+				t.Errorf("RegisterCommand: %v", err)
+			}
+		}()
+	}
+	workers.Wait()
+}
+
 // ---------------------------------------------------------------------------
 // RenderPath
 // ---------------------------------------------------------------------------
