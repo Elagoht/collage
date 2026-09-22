@@ -103,8 +103,17 @@ means `cache.Cache` — now public API — does not change.
 
 Documents write to the literal path: `/sitemap.xml` becomes
 `<OutDir>/sitemap.xml`, not `sitemap.xml/index.html`. Documents with a dynamic
-pattern require a `PathProvider` exactly as pages do; `StrategyDynamic` documents
-are skipped and recorded.
+pattern require a `PathProvider`; `StrategyDynamic` documents are skipped and
+recorded.
+
+This forces two existing signatures to widen, and the plan must say so explicitly
+rather than discovering it mid-task:
+
+- `build.PathProvider.Paths(ctx, page *types.Page, locale string)` currently takes
+  a page. It becomes route-kind-agnostic — either a second method for documents or
+  a parameter that carries both — and the choice belongs in the plan, not here.
+- `build.Renderer`, the narrow interface `*core.App` satisfies, exposes `Pages()`.
+  It gains `Documents()` and a document render entry point alongside `RenderPath`.
 
 ### Usage
 
@@ -157,7 +166,9 @@ mechanism is separate. Freshness is handled by `ServeContent` and the mount's
 **D9 — Mounts match by prefix, before routing.** An empty prefix or `/` is
 rejected. A mount prefix that shadows a registered page or document path, or
 another mount, fails at startup naming both — the same rule as
-`ErrRedirectShadowsPage`.
+`ErrRedirectShadowsPage`. Shadow detection runs at the same close-out point as the
+existing error-page check, so registration order does not matter, and `Mount`
+after the server has started is `ErrAppStarted`, like every other registration.
 
 **D10 — `os.DirFS` is documented as not a security boundary.** Go's own
 documentation states it does not prevent symlink traversal, so a symlink planted
