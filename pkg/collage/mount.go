@@ -5,6 +5,14 @@ import (
 	"github.com/Elagoht/collage/internal/core"
 )
 
+// Mount is a mounted asset file system served under a URL prefix, as returned by
+// App.Mounts. It is aliased here, not merely returned, because App.Mounts's
+// element type is otherwise unnameable outside this module: internal/asset,
+// where it actually lives, is unreachable from an external caller, who could
+// still call Mounts but could not declare a variable, a slice, or a function
+// parameter of its element type without this alias.
+type Mount = asset.Mount
+
 // MountOption configures a mounted asset file system. See WithCacheControl and
 // WithoutBuildCopy.
 type MountOption = asset.Option
