@@ -975,6 +975,19 @@ Constraint 3. `MatchResult.RedirectStatus` is added so the handler does not re-d
   `/blog/{slug}`.**
 - Duplicate registration of the same pattern for the same locale is `ErrDuplicateRoute`
   naming both pages.
+- **Two patterns that put differently-named placeholders at the same dynamic tree position
+  are `ErrAmbiguousParameterName`, rejected at registration.** A radix node holds one
+  parameter name, so `/blog/{slug}` followed by `/blog/{category}/new` would otherwise
+  capture the second route's segment under the first route's name and hand the handler a
+  silently mislabelled `PathParams`. Failing loudly at startup beats a wrong value at
+  runtime, and matches the framework's explicit-contracts stance.
+- **Percent-decoding reads `req.URL.EscapedPath()`, never `req.URL.Path`.** `net/url` has
+  already decoded `Path`, turning an encoded `%2F` into a literal separator — decoding
+  that again cannot distinguish a real separator from an injected one, defeating the
+  segment-isolation the decode exists to provide. The decode-failure-is-404 guard stays
+  even though `net/url` rejects malformed escapes upstream, so it is unreachable through
+  a normally-parsed `*http.Request`: it is defence in depth for any future caller that
+  supplies a path from another source.
 - Trailing slashes: `/blog/` and `/blog` match the same route. Normalise by trimming a
   single trailing slash except for the root `"/"`.
 - Percent-decoding: decode each segment with `url.PathUnescape` before matching, so
