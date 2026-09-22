@@ -10,10 +10,12 @@ import (
 	"log/slog"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/observability"
@@ -141,6 +143,10 @@ type Deps struct {
 	// in the URL. Without this, such a cache hands one visitor's language to the
 	// next.
 	Vary []string
+	// Mounts serves asset file systems under their own URL prefixes, checked
+	// before every request is routed. A nil or empty Mounts serves no assets. See
+	// Handler.ServeHTTP for why checking them first is safe.
+	Mounts []*asset.Mount
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
@@ -157,6 +163,7 @@ type Handler struct {
 	devMode    bool
 	defaultTTL time.Duration
 	vary       string
+	mounts     []*asset.Mount
 }
 
 var _ http.Handler = (*Handler)(nil)
@@ -192,12 +199,35 @@ func New(d Deps) (*Handler, error) {
 		// and it is copied out of d rather than aliased so a caller mutating its
 		// slice afterwards cannot change what is served.
 		vary: strings.Join(d.Vary, ", "),
+		// Cloned for the same reason: a caller mutating d.Mounts after New returns
+		// must not change what this Handler serves.
+		mounts: slices.Clone(d.Mounts),
 	}, nil
 }
 
 // ServeHTTP implements http.Handler: it runs the request lifecycle inside one span
 // and reports the completed response to Metrics.
+//
+// A mount's URL space is claimed before any of that: internal/core's
+// checkMountsDoNotShadow refuses to build a handler at all if any mount prefix
+// would shadow a registered page or document path, so by the time a Handler
+// exists every mount prefix is guaranteed to own URL space no route answers to.
+// That guarantee is what makes checking mounts first — rather than falling
+// through to the router and only trying a mount on a miss — safe: it can never
+// take a request away from a page or a document, it costs nothing but a
+// linear scan of however many mounts exist, and it is why a request for the bare
+// mount prefix gets the mount's own plain-text 404 (see asset.Mount.Handles)
+// instead of the router's HTML one. Without the close-out check enforcing that
+// guarantee elsewhere, checking mounts before routing would be a correctness
+// hazard rather than a safe optimization.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	for _, mount := range h.mounts {
+		if mount.Handles(r.URL.Path) {
+			mount.ServeHTTP(w, r)
+			return
+		}
+	}
+
 	start := time.Now()
 
 	ctx, span := h.tracer.StartSpan(r.Context(), "collage.http")

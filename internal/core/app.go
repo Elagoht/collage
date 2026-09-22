@@ -26,6 +26,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/httpx"
@@ -259,8 +260,9 @@ type App struct {
 	// cacheable responses.
 	vary []string
 
-	// mu guards everything below it: the page registry, the commands, the started
-	// and closing flags, and the running server.
+	// mu guards everything below it: the page registry, the document registry,
+	// the mount registry, the commands, the started and closing flags, and the
+	// running server.
 	mu sync.RWMutex
 	// pages holds every registered page by name, including those registered as the
 	// global not-found or error page.
@@ -279,6 +281,11 @@ type App struct {
 	// docOrder holds the registered document names in registration order, so
 	// Documents is deterministic.
 	docOrder []string
+	// mounts holds every mounted asset file system, in registration order. See
+	// mount.go for Mount, Mounts, and checkMountsDoNotShadow, the close-out check
+	// that keeps a mount from silently swallowing a page's or a document's route
+	// regardless of which was registered first.
+	mounts []*asset.Mount
 	// commands holds the CLI subcommands plugins contributed through
 	// RegisterCommand.
 	commands []plugin.Command
@@ -552,6 +559,16 @@ func (a *App) buildHandler() (http.Handler, error) {
 		return a.buildFailed(err)
 	}
 
+	// Also run at close-out, beside checkErrorPagesRegistered and for the same
+	// reason: a mount's prefix must not swallow a page's or a document's route
+	// regardless of which of the two was registered first, which only a check
+	// that runs after registration closes can guarantee. Handler.ServeHTTP relies
+	// on exactly this guarantee to check every mount before consulting the router
+	// at all — see checkMountsDoNotShadow's own doc comment.
+	if err := a.checkMountsDoNotShadow(); err != nil {
+		return a.buildFailed(err)
+	}
+
 	handler, err := httpx.New(httpx.Deps{
 		Router:     a.routes,
 		Renderer:   a.renderer,
@@ -564,6 +581,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		DevMode:    a.devMode,
 		DefaultTTL: a.cfg.Cache.DefaultTTL,
 		Vary:       a.vary,
+		Mounts:     a.Mounts(),
 	})
 	if err != nil {
 		return a.buildFailed(err)
