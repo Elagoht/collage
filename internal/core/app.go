@@ -728,19 +728,15 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 // SetTagged already hands it those tags on every write; this is the call that
 // finally reads them back.
 //
-// The count therefore remains what the tracker resolved and the cache accepted a
-// per-key invalidation for. Entries dropped by the store's own tag index are not
-// counted: the Cache contract gives Invalidate no count to report, and inventing one
-// would make the number mean something different depending on which cache was
-// configured.
-//
 // The count is the number of keys the tracker resolved from tags and the cache
-// accepted an invalidation for — not a count of entries that were live at the time.
-// Cache.InvalidateKey is documented to succeed on a key that holds no entry, and
-// reports no distinction either way, so a key whose entry had already expired is
-// counted like any other. The count is therefore exactly what the tag reached
-// according to the authority on that question, and an upper bound on live entries
-// removed.
+// accepted an invalidation for — not a count of entries that were live at the time,
+// and not a count of what the store's own tag index dropped, since Cache.Invalidate
+// reports no count and inventing one would make the number mean different things for
+// different caches. Cache.InvalidateKey is documented to succeed on a key that holds
+// no entry, and reports no distinction either way, so a key whose entry had already
+// expired is counted like any other. The count is therefore exactly what the tag
+// reached according to the authority on that question, and an upper bound on live
+// entries removed.
 //
 // A key that the cache fails to drop is not counted and does not stop the rest:
 // every other key is still invalidated and the failures are joined into the
