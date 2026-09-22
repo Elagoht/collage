@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/Elagoht/collage/internal/observability"
 )
 
 // ErrInvalidPort is returned when Config.Server.Port is outside the valid TCP port
@@ -51,6 +53,8 @@ type Config struct {
 	Cache CacheConfig
 	// Locale configures locale resolution.
 	Locale LocaleConfig
+	// Observability configures metrics and tracing.
+	Observability ObservabilityConfig
 }
 
 // ServerConfig configures the HTTP server.
@@ -129,6 +133,17 @@ type LocaleConfig struct {
 	// DisableCookieLocale turns off resolving the locale from a cookie. The zero
 	// value keeps this source enabled.
 	DisableCookieLocale bool
+}
+
+// ObservabilityConfig configures metrics and tracing. Both fields are optional: a
+// nil Metrics or Tracer is valid and means "use the no-op implementation" — see
+// observability.MetricsOrNoop and observability.TracerOrNoop, which consumers use
+// so they never have to nil-check these fields themselves.
+type ObservabilityConfig struct {
+	// Metrics receives framework counters and timings. nil means no-op.
+	Metrics observability.Metrics
+	// Tracer starts spans around framework operations. nil means no-op.
+	Tracer observability.Tracer
 }
 
 // ApplyDefaults fills every zero-valued field of c with the framework's default. It
