@@ -111,3 +111,11 @@ var ErrEmptyTemplatePath = types.ErrEmptyTemplatePath
 
 // ErrInvalidPath is returned when a path pattern does not start with "/".
 var ErrInvalidPath = types.ErrInvalidPath
+
+// ErrNotFound reports that a fragment's data does not exist, as distinct from a
+// failure to fetch it. It is the one sentinel here that application code returns
+// rather than receives: a DataHandler that wraps it — fmt.Errorf("...: %w",
+// collage.ErrNotFound) — makes a Required fragment's failure render the page's
+// NotFoundPage with a 404 instead of its ErrorPage with a 500. Without wrapping
+// it, every missing record is a 500 and a page-specific 404 page is unreachable.
+var ErrNotFound = types.ErrNotFound

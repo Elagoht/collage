@@ -1,0 +1,11 @@
+<h1>Posts</h1>
+<ul class="post-index">
+  {{range .Posts}}
+  <li>
+    <a href="/blog/{{.Slug}}">{{.Title}}</a>
+    <time>{{formatTime .Published "2006-01-02"}}</time>
+  </li>
+  {{else}}
+  <li>Nothing published yet.</li>
+  {{end}}
+</ul>
