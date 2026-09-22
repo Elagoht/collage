@@ -247,7 +247,7 @@ func TestMount_Handles(t *testing.T) {
 		{"/static/app.css", true, "path under the prefix"},
 		{"/api/data", false, "path outside the prefix"},
 		{"/staticsibling/app.css", false, "prefix confusion: /static/ must not claim /staticsibling/"},
-		{"/static/", false, "exact prefix itself with no trailing segment"},
+		{"/static/", true, "bare prefix is owned by the mount (resolve will refuse to serve it)"},
 	}
 
 	for _, tc := range tests {
@@ -257,5 +257,22 @@ func TestMount_Handles(t *testing.T) {
 				t.Fatalf("Handles(%q) = %v, want %v — %s", tc.path, got, tc.want, tc.reason)
 			}
 		})
+	}
+}
+
+func TestMount_BarePrefix_ReturnsPlainText404(t *testing.T) {
+	// A request to the bare prefix is owned by the mount (Handles returns true)
+	// but cannot be served (resolve returns false), producing a plain-text 404
+	// from the mount. This ensures Task 7's router does not fall through to the
+	// page router and return an HTML error for an asset URL.
+	m := mustMount(t)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, httptest.NewRequest("GET", "/static/", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
+		t.Fatalf("Content-Type = %q, want text/plain — bare prefix must be plain-text, not HTML", rec.Header().Get("Content-Type"))
 	}
 }

@@ -76,17 +76,16 @@ func (m *Mount) FS() fs.FS { return m.fsys }
 // BuildCopy reports whether a static build should copy this mount into its output.
 func (m *Mount) BuildCopy() bool { return m.buildCopy }
 
-// Handles reports whether urlPath falls under this mount's prefix and has
-// a valid path segment to serve. It returns false for the bare prefix itself.
+// Handles reports whether urlPath falls in this mount's URL space. A true
+// result means the mount owns the route and should handle the request; it does
+// not imply a servable file exists. The resolve method makes that second
+// decision: a request to the bare prefix (e.g., "/static/") returns true here
+// but false from resolve, causing a plain-text 404 from the mount, not the
+// page router. This semantic distinction is critical for Task 7's routing: the
+// mount must claim the URL to prevent it falling through to the page router and
+// returning an HTML error instead.
 func (m *Mount) Handles(urlPath string) bool {
-	if !strings.HasPrefix(urlPath, m.prefix) {
-		return false
-	}
-	// The bare prefix itself has nothing to serve.
-	if urlPath == m.prefix {
-		return false
-	}
-	return true
+	return strings.HasPrefix(urlPath, m.prefix)
 }
 
 // ServeHTTP implements http.Handler.
