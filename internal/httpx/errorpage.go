@@ -67,6 +67,18 @@ func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure
 // records carry the stage and the failing fragment, so neither kind of 404 is
 // logged without saying where it came from.
 //
+// A mounted asset gets the same routine-versus-real-failure split, but the stage
+// alone cannot carry it the way it does for a page: every asset failure reaches
+// here with stage "asset", 404 and 500 alike, because they share one sentinel
+// (ErrAssetFailed) and this package makes no attempt to invent a family of asset
+// stages to match. So stage "asset" is the one case where the level check also
+// reads f.status — a 4xx is bots probing for a stale link or a browser's stray
+// favicon request, the single most routine kind of noise a web server sees, and
+// belongs at debug for the same reason a page's route miss does; a 5xx means
+// something in the mount's own file system genuinely broke (a file that will not
+// seek, a permission error) and stays at error level. Every other stage keeps
+// the status out of its level decision entirely, exactly as before.
+//
 // A zero f.status means no response is being written for this failure — a cache
 // write that failed after the page rendered — which is logged and reported like any
 // other error but changes nothing the client sees.
@@ -78,7 +90,10 @@ func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure
 // public plugin struct just to carry a name for a log line is not worth it.
 func (h *Handler) reportError(r *http.Request, f failure) {
 	level := slog.LevelError
-	if f.stage == stageNotFound {
+	switch {
+	case f.stage == stageNotFound:
+		level = slog.LevelDebug
+	case f.stage == stageAsset && f.status < http.StatusInternalServerError:
 		level = slog.LevelDebug
 	}
 	if f.document != nil {

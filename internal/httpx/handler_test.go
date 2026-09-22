@@ -1636,12 +1636,78 @@ func TestAssetMethodNotAllowedDispatchesOnErrorAndMetric(t *testing.T) {
 	}
 }
 
+// nonSeekableFile is a file whose Read works but is not an io.ReadSeeker, which is
+// what forces asset.Mount into its own 500 path rather than a 404 — see
+// internal/asset/mount_test.go's TestMount_FailsLoudlyOnNonReadSeeker, which this
+// mirrors.
+type nonSeekableFile struct {
+	io.Reader
+	info fs.FileInfo
+}
+
+// Stat returns the wrapped info.
+func (f *nonSeekableFile) Stat() (fs.FileInfo, error) { return f.info, nil }
+
+// Close does nothing.
+func (f *nonSeekableFile) Close() error { return nil }
+
+// nonSeekableFS wraps an fs.FS so every file it opens loses io.ReadSeeker.
+type nonSeekableFS struct{ inner fs.FS }
+
+// Open opens name through the wrapped file system and strips io.ReadSeeker from
+// the result.
+func (n nonSeekableFS) Open(name string) (fs.File, error) {
+	f, err := n.inner.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	return &nonSeekableFile{Reader: f, info: info}, nil
+}
+
+// TestAssetLogLevelsFollowStatus is the fix-round regression for the noise a naive
+// implementation would have produced: every asset failure shares one stage,
+// "asset", so the debug/error split that keeps a page's routine route miss out of
+// the error log cannot be made on stage alone the way stageNotFound's can. A 404
+// and a 405 are the most routine kind of request a mount ever sees — a stale link,
+// a disallowed method — and must log at debug, exactly like a page's route miss.
+// A 500 means the mount's own file system genuinely broke and must stay at error.
+func TestAssetLogLevelsFollowStatus(t *testing.T) {
+	fsys := fstest.MapFS{"app.css": {Data: []byte("body{color:red}")}}
+	mount := mustMount(t, "/static/", nonSeekableFS{inner: fsys})
+	env := newEnv(t, nil, withMounts(mount))
+
+	env.get("/static/missing.css")
+	env.do(httptest.NewRequest(http.MethodPost, "/static/app.css", nil))
+	env.get("/static/app.css")
+
+	records := env.logs.recordsFor("collage: request failed")
+	if len(records) != 3 {
+		t.Fatalf("log records = %+v, want one per asset failure", records)
+	}
+	if records[0].level != slog.LevelDebug || records[0].stage != stageAsset {
+		t.Errorf("asset 404 logged as %+v, want debug level at stage %q", records[0], stageAsset)
+	}
+	if records[1].level != slog.LevelDebug || records[1].stage != stageAsset {
+		t.Errorf("asset 405 logged as %+v, want debug level at stage %q", records[1], stageAsset)
+	}
+	if records[2].level != slog.LevelError || records[2].stage != stageAsset {
+		t.Errorf("asset 500 logged as %+v, want error level: it means the mount's own file system genuinely broke", records[2])
+	}
+}
+
 // TestPanickingMountBecomesA500 is the asset-side counterpart to
 // TestPanicInACollaboratorBecomesA500: a mount's file system panicking used to
 // unwind straight into net/http, dropping the connection with no status line, no
-// hook, and no metric. It must now go through the same panic guard as everything
-// else — a 500 on the normal error path, one ErrorHook dispatch, and the process
-// left standing.
+// hook, and no metric. It must now go through a panic guard — a 500, one
+// ErrorHook dispatch, and the process left standing — but not the *same* one a
+// page or a document uses: the response must stay text/plain, matching every
+// other asset error this feature ever serves, never the framework's HTML error
+// page a page's own panic gets.
 func TestPanickingMountBecomesA500(t *testing.T) {
 	mount := mustMount(t, "/static/", panicFS{})
 	spy := &recordingPlugin{}
@@ -1655,6 +1721,12 @@ func TestPanickingMountBecomesA500(t *testing.T) {
 	}
 	if len(body) == 0 {
 		t.Error("body is empty: the client got a status with no page")
+	}
+	if got := res.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain: a mount's error surface follows the route kind, not the page router's HTML", got)
+	}
+	if strings.Contains(string(body), "<html") {
+		t.Errorf("body = %q, want the mount's own plain-text 500, never the page router's built-in HTML page", body)
 	}
 
 	if got := spy.recorded(); len(got) != 1 || got[0] != "Error:"+stagePanic {
@@ -1678,11 +1750,12 @@ func TestPanickingMountBecomesA500(t *testing.T) {
 // rather than httptest.ResponseRecorder, that wrapping the ResponseWriter to
 // capture the status never changes what the mount actually served: the real mime
 // type on a hit, and the mount's own plain-text error body — never the page
-// router's HTML — on a 404 and a 405.
+// router's HTML — on a 404, a 405, and a panic recovered mid-request.
 func TestMountContentTypeSurvivesThroughRealRequest(t *testing.T) {
 	fsys := fstest.MapFS{"app.css": {Data: []byte("body{color:red}")}}
 	mount := mustMount(t, "/static/", fsys)
-	env := newEnv(t, nil, withMounts(mount))
+	broken := mustMount(t, "/broken/", panicFS{})
+	env := newEnv(t, nil, withMounts(mount, broken))
 	srv := env.server(t)
 
 	hit, hitBody := request(t, srv, http.MethodGet, "/static/app.css")
@@ -1713,6 +1786,17 @@ func TestMountContentTypeSurvivesThroughRealRequest(t *testing.T) {
 	}
 	if strings.Contains(string(disallowedBody), "<html") {
 		t.Errorf("disallowed body = %q, want the mount's own plain-text body, not HTML", disallowedBody)
+	}
+
+	panicked, panickedBody := request(t, srv, http.MethodGet, "/broken/app.css")
+	if panicked.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("panicked status = %d, want %d", panicked.StatusCode, http.StatusInternalServerError)
+	}
+	if got := panicked.Header.Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("panicked Content-Type = %q, want text/plain, never the page router's HTML", got)
+	}
+	if strings.Contains(string(panickedBody), "<html") {
+		t.Errorf("panicked body = %q, want a plain-text 500, not the framework's built-in HTML page", panickedBody)
 	}
 }
 

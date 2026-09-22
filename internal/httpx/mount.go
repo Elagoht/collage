@@ -3,27 +3,57 @@ package httpx
 import (
 	"fmt"
 	"net/http"
+	"runtime/debug"
 
 	"github.com/Elagoht/collage/internal/asset"
 )
 
 // serveMount runs mount's ServeHTTP through a status-capturing wrapper and
 // dispatches ErrorHook for whatever it wrote, so a mounted asset request gets the
-// same observability a page or document request gets. The timing, span, and panic
-// guard are already in place by the time this is called: serve runs inside
-// serveGuarded, and ServeHTTP wraps serve in a span and reports the HTTPResponse
-// metric once it returns — this only needs to supply the status those two callers
-// cannot get any other way, since asset.Mount is an http.Handler and cannot return
-// one.
+// same observability a page or document request gets. The timing and span are
+// already in place by the time this is called: serve runs inside serveGuarded, and
+// ServeHTTP wraps serve in a span and reports the HTTPResponse metric once it
+// returns — this only needs to supply the status those two callers cannot get any
+// other way, since asset.Mount is an http.Handler and cannot return one.
 //
-// It never writes a response of its own: asset.Mount owns everything it serves,
-// including its plain-text 404, and this only observes what went out over the
-// ResponseWriter it was given.
-func (h *Handler) serveMount(w http.ResponseWriter, r *http.Request, mount *asset.Mount) int {
+// It never writes a response of its own for a normal return: asset.Mount owns
+// everything it serves, including its plain-text 404, and this only observes what
+// went out over the ResponseWriter it was given. A panic is the one case where
+// this writes something itself — see the recover below for why it cannot simply
+// defer to serveGuarded's own panic guard the way the router and cache do.
+func (h *Handler) serveMount(w http.ResponseWriter, r *http.Request, mount *asset.Mount) (status int) {
 	capture := &statusCapturingWriter{ResponseWriter: w}
+
+	// A panic inside mount.ServeHTTP — most plausibly its fs.FS's Open — is
+	// recovered here, not left to serveGuarded's outer guard. That guard is
+	// correct for a page or a document: it calls serveFailure, which renders
+	// the framework's built-in HTML error page. An asset request follows a
+	// different rule, enforced everywhere else in this feature (a document's
+	// error body, an ordinary asset 404): the error's content type follows the
+	// route kind, never the request, and a mount is never an HTML route. Left
+	// to the outer guard, a panicking mount would get the one response every
+	// other asset failure deliberately avoids. Recovering here, instead of
+	// also leaving the outer guard to try, is also what keeps this to a single
+	// recovery: a panic recovered here never reaches serveGuarded at all, so
+	// the two are not racing to write the same ResponseWriter.
+	defer func() {
+		recovered := recover()
+		if recovered == nil {
+			return
+		}
+		err := fmt.Errorf("%w: %v\n%s", ErrPanic, recovered, debug.Stack())
+		h.reportError(r, failure{
+			status: http.StatusInternalServerError,
+			err:    err,
+			stage:  stagePanic,
+		})
+		writePlainText(capture, r, http.StatusInternalServerError, h.devMode, mount.Prefix(), err)
+		status = http.StatusInternalServerError
+	}()
+
 	mount.ServeHTTP(capture, r)
 
-	status := capture.Status()
+	status = capture.Status()
 	if status >= http.StatusBadRequest {
 		h.reportError(r, failure{
 			status: status,
