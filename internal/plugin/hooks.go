@@ -60,10 +60,17 @@ type ErrorHook interface {
 	OnError(ctx context.Context, ev *ErrorEvent) error
 }
 
-// PageResolvedEvent describes a request having been resolved to a page. Every field
-// is read-only: a plugin observes the resolution, it does not redirect it.
+// PageResolvedEvent describes a request having been resolved to a page. Locale
+// and Path are this event's own copies: a plugin may overwrite them without
+// consequence beyond this dispatch. Page is not: see its own doc comment.
 type PageResolvedEvent struct {
-	// Page is the page the request resolved to.
+	// Page is the live *types.Page the framework resolved the request to — this
+	// event does not copy it, deliberately: copying a page (and its fragment
+	// tree) on every request would defeat a cache-first framework's hot path.
+	// Nothing in this package stops a plugin from writing through it, but doing
+	// so mutates the same Page every other request and hook sees; that is
+	// undefined behaviour this package does not defend against. Treat it as
+	// read-only by convention, not by enforcement. See the package doc comment.
 	Page *types.Page
 	// Locale is the resolved locale for the request.
 	Locale string
@@ -71,11 +78,13 @@ type PageResolvedEvent struct {
 	Path string
 }
 
-// BeforeRenderEvent describes a render about to start. Every field is read-only: a
-// plugin observes the render about to happen, it does not redirect it — see
-// AfterRenderEvent for the point at which a plugin may act on the output.
+// BeforeRenderEvent describes a render about to start. Locale and Path are this
+// event's own copies; Page is the live framework object — see its doc comment,
+// and PageResolvedEvent's, for what that means. See AfterRenderEvent for the
+// point at which a plugin is meant to act on the render's output.
 type BeforeRenderEvent struct {
-	// Page is the page about to be rendered.
+	// Page is the live *types.Page about to be rendered. Not copied for this
+	// event, and not defended against mutation; see PageResolvedEvent.Page.
 	Page *types.Page
 	// Locale is the locale the page is about to be rendered for.
 	Locale string
@@ -85,12 +94,13 @@ type BeforeRenderEvent struct {
 
 // AfterRenderEvent describes a render that just completed.
 type AfterRenderEvent struct {
-	// Page is the page that was rendered. Read-only.
+	// Page is the live *types.Page that was rendered. Not copied for this event,
+	// and not defended against mutation; see PageResolvedEvent.Page.
 	Page *types.Page
-	// Locale is the locale the page was rendered for. Read-only.
+	// Locale is the locale the page was rendered for. This event's own copy.
 	Locale string
-	// Degraded reports whether any fragment in the render failed, whether or not a
-	// fallback covered for it. Read-only.
+	// Degraded reports whether any fragment in the render failed, whether or not
+	// a fallback covered for it. This event's own copy.
 	Degraded bool
 	// HTML is the rendered output. A plugin implementing AfterRenderHook MAY
 	// replace this slice to add a post-process step; the replaced value is what
@@ -100,9 +110,11 @@ type AfterRenderEvent struct {
 
 // CacheWriteEvent describes a render result about to be written to the cache.
 type CacheWriteEvent struct {
-	// Key is the cache key the result would be stored under. Read-only.
+	// Key is the cache key the result would be stored under. This event's own
+	// copy; changing it does not redirect where the write goes.
 	Key string
-	// Page is the page the result was rendered from. Read-only.
+	// Page is the live *types.Page the result was rendered from. Not copied for
+	// this event, and not defended against mutation; see PageResolvedEvent.Page.
 	Page *types.Page
 	// TTL is how long the cached entry would remain valid. A plugin implementing
 	// CacheWriteHook may adjust it.
@@ -115,29 +127,28 @@ type CacheWriteEvent struct {
 	Skip bool
 }
 
-// CacheInvalidateEvent describes a cache invalidation that has just happened. Its
-// field is read-only: a plugin observes which tags were invalidated, it does not
-// choose them — a plugin that wants to trigger an invalidation uses
-// Host.InvalidateTags instead.
+// CacheInvalidateEvent describes a cache invalidation that has just happened.
 type CacheInvalidateEvent struct {
-	// Tags are the dependency tags that were invalidated.
+	// Tags are the dependency tags that were invalidated. This event's own copy;
+	// a plugin that wants to trigger an invalidation uses Host.InvalidateTags
+	// instead of trying to feed this back into one.
 	Tags []string
 }
 
-// ErrorEvent describes a failure encountered while serving a request. Every field
-// is read-only: a plugin implementing ErrorHook observes and reacts to the failure
-// — logging it, reporting it, incrementing a metric — it does not change how the
-// framework responds to it.
+// ErrorEvent describes a failure encountered while serving a request.
 type ErrorEvent struct {
-	// Err is the error that occurred.
+	// Err is the error that occurred. This event's own value.
 	Err error
-	// Page is the page being processed when the error occurred, or nil when the
-	// error occurred before a page was resolved, for example when no route
-	// matched the request.
+	// Page is the live *types.Page being processed when the error occurred, or
+	// nil when the error occurred before a page was resolved, for example when
+	// no route matched the request. When non-nil, it is not copied for this
+	// event and not defended against mutation; see PageResolvedEvent.Page.
 	Page *types.Page
-	// Path is the request path being processed when the error occurred.
+	// Path is the request path being processed when the error occurred. This
+	// event's own copy.
 	Path string
 	// Stage names where in the request pipeline the error occurred, for example
-	// "render" or "cache_write". It is caller-defined, not an exhaustive enum.
+	// "render" or "cache_write". It is caller-defined, not an exhaustive enum,
+	// and this event's own copy.
 	Stage string
 }

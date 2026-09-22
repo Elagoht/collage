@@ -1,11 +1,28 @@
 // Package plugin defines the plugin system: the Plugin contract, the narrow Host
 // capability surface plugins receive at startup, and a Registry that owns
-// registration, lifecycle, and hook dispatch. The specification says a plugin
-// "cannot mutate core state directly"; this package enforces that structurally
-// rather than by convention, by handing Init a small read-mostly Host instead of
-// the whole application, and by making mutation explicit — a field like
-// AfterRenderEvent.HTML or CacheWriteEvent.Skip — everywhere it is actually
-// intended.
+// registration, lifecycle, and hook dispatch.
+//
+// The specification says a plugin "cannot mutate core state directly." Host
+// enforces the reachability half of that structurally: Init receives Host, not
+// the whole application, so a plugin has no way to obtain the router, the cache,
+// the render engine, the template set, or any page it was not explicitly handed.
+// Host does NOT make what it hands out immutable, and this package does not
+// claim otherwise. *types.Page is a plain struct of exported fields; a plugin
+// holding one — from a Host.Page/Pages call or from an event's Page field — can
+// write straight through it. The per-request event types in hooks.go deliberately
+// carry the framework's live *types.Page rather than a copy, since copying a
+// page (and, transitively, its fragment tree) on every render would defeat a
+// cache-first framework's hot path; see the Host doc comment for where a defensive
+// copy is required instead (Pages and Page, both startup/CLI-path calls where the
+// allocation is free). Mutating a live Page through either path is undefined
+// behaviour this package does not defend against.
+//
+// This is deliberate, not an oversight: in-process Go plugins are trusted code,
+// not a sandbox boundary. The goal is to make accidental mutation hard and
+// deliberate mutation obvious — not to make mutation impossible, which Go's type
+// system cannot give us anyway without copying. Where mutation is actually
+// intended, it is explicit: AfterRenderEvent.HTML, and CacheWriteEvent's
+// Skip/TTL/Tags.
 //
 // This package must not import internal/render or pkg/collage: it is composed by
 // the app layer on top of render, not the other way around, and internal packages
@@ -39,16 +56,37 @@ type Plugin interface {
 	Shutdown(ctx context.Context) error
 }
 
-// Host is the capability surface a plugin receives in Init. It exposes what
-// plugins may read and the few things they may do; it deliberately offers no way
-// to mutate pages, fragments, or the router after startup — that is how "plugins
-// cannot mutate core state" is enforced structurally rather than by convention.
+// Host is the capability surface a plugin receives in Init. It limits
+// *reachability*: a plugin gets only what Host exposes, with no way to reach the
+// router, the cache, the render engine, the template set, or any page it was not
+// explicitly handed through Pages or Page — that is the structural half of
+// "plugins cannot mutate core state."
+//
+// It does NOT make what it hands out immutable. Pages and Page return
+// *types.Page, a plain struct of exported fields, so a plugin holding one can
+// write through it. To keep that from corrupting the framework's own registered
+// pages, implementations of Pages and Page MUST return a defensive copy: the
+// Page struct itself copied, along with its Paths, Redirects, SEO, and
+// DependencyTags containers (so mutating those on the returned value cannot
+// reach the original). The copy's LayoutFragment, ContentFragment, NotFoundPage,
+// and ErrorPage pointers are left shared with the original, not deep-copied —
+// fragment mutation is a separate concern this interface does not attempt to
+// guard against either, and these two calls are startup/CLI-path, so the
+// shallow-copy cost is irrelevant. Task 11 implements Host and is held to this.
+//
+// The per-request event types in hooks.go are a deliberate exception: they carry
+// the framework's live *types.Page rather than a copy, to avoid that allocation
+// on every render. A plugin that mutates a Page reached that way is on its own;
+// see the package doc comment.
 type Host interface {
 	// DevMode reports whether the application is running in development mode.
 	DevMode() bool
-	// Pages returns every page registered with the application.
+	// Pages returns every page registered with the application, each a defensive
+	// copy — see the Host doc comment for exactly what "defensive copy" means
+	// here. Mutating a returned Page does not affect the framework's own.
 	Pages() []*types.Page
 	// Page returns the page registered under name, and whether one was found.
+	// The returned Page is a defensive copy, on the same terms as Pages.
 	Page(name string) (*types.Page, bool)
 	// InvalidateTags invalidates every cache entry associated with any of tags.
 	InvalidateTags(ctx context.Context, tags ...string) error
