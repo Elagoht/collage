@@ -857,6 +857,21 @@ fragment error
                               FragmentMetadata, and continue
 ```
 
+**A required fragment's failure is non-absorbable.** Once a `Required` fragment fails,
+no optional ancestor may swallow the error via its own fallback — otherwise "Required
+fails the whole render" silently stops holding for every fragment below the first
+fallback in the tree, which is the opposite of what `Required` promises. Mark such an
+error as non-absorbable as it propagates and let it pass through fallback handling
+untouched. `ErrMaxDepthExceeded` and a nil entry in a slot's `Fill` propagate the same
+way: they indicate a malformed tree, not a runtime data failure, and a fallback must not
+mask them.
+
+**Timing metadata survives failure.** The spec guarantees every render has timing
+metadata, so a fatal render error must not discard it. `Render` returns a non-nil
+`*Result` on **every** path: on failure its `HTML` is nil and its `Metadata` is populated
+with whatever was gathered. Callers must check the error before reading `HTML`; say so in
+the doc comment. `Metrics.RenderDuration` is reported on the failure path too.
+
 A non-required fragment that fails still contributes the tags its handler returned
 before failing (if any), and its `FragmentMetadata.Failed` is true. This is how the
 caller can decide not to cache a degraded page — expose `Result.Degraded() bool`
