@@ -2,6 +2,8 @@ package httpx
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +33,7 @@ type fakeRender struct {
 	tags     []string
 	err      error
 	degraded string
+	notFound bool
 }
 
 // fakeEngine is a render.Engine that returns a pre-programmed outcome per page name
@@ -81,7 +84,7 @@ func (e *fakeEngine) Render(_ context.Context, rc *types.RenderContext) (*render
 	if out.degraded != "" {
 		metadata.Fragments = []render.FragmentMetadata{{Name: out.degraded, Failed: true, Err: out.err}}
 	}
-	result := &render.Result{DependencyTags: out.tags, Metadata: metadata}
+	result := &render.Result{DependencyTags: out.tags, Metadata: metadata, NotFound: out.notFound}
 	if out.err != nil {
 		return result, out.err
 	}
@@ -182,6 +185,7 @@ func (c *plainCache) Clear(ctx context.Context) error { return c.inner.Clear(ctx
 type recordingPlugin struct {
 	mu          sync.Mutex
 	events      []string
+	errs        []error
 	replaceHTML []byte
 	skipCache   bool
 }
@@ -255,17 +259,39 @@ func (p *recordingPlugin) OnCacheWrite(_ context.Context, ev *plugin.CacheWriteE
 	return nil
 }
 
-// OnError records the hook along with the stage the failure came from.
+// OnError records the hook along with the stage the failure came from, and keeps the
+// error itself so a test can assert which sentinel it carries.
 func (p *recordingPlugin) OnError(_ context.Context, ev *plugin.ErrorEvent) error {
 	p.record("Error:" + ev.Stage)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.errs = append(p.errs, ev.Err)
 	return nil
 }
 
-// countingHandler is a slog.Handler that counts records by message, so a test can
-// assert that a failure was logged exactly once.
+// reportedErrors returns a copy of the errors passed to OnError, in dispatch order.
+func (p *recordingPlugin) reportedErrors() []error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]error(nil), p.errs...)
+}
+
+// logRecord is one record a countingHandler saw, flattened to the parts tests
+// assert on.
+type logRecord struct {
+	level    slog.Level
+	message  string
+	stage    string
+	fragment string
+}
+
+// countingHandler is a slog.Handler that counts records by message and keeps their
+// level and attributes, so a test can assert that a failure was logged exactly once
+// and at the level an operator would actually see.
 type countingHandler struct {
-	mu     sync.Mutex
-	counts map[string]int
+	mu      sync.Mutex
+	counts  map[string]int
+	records []logRecord
 }
 
 var _ slog.Handler = (*countingHandler)(nil)
@@ -278,11 +304,23 @@ func newCountingHandler() *countingHandler {
 // Enabled reports true for every level, so nothing is dropped before counting.
 func (h *countingHandler) Enabled(context.Context, slog.Level) bool { return true }
 
-// Handle counts the record by its message.
+// Handle counts the record by its message and keeps its level, stage, and fragment.
 func (h *countingHandler) Handle(_ context.Context, rec slog.Record) error {
+	entry := logRecord{level: rec.Level, message: rec.Message}
+	rec.Attrs(func(attr slog.Attr) bool {
+		switch attr.Key {
+		case "stage":
+			entry.stage = attr.Value.String()
+		case "fragment":
+			entry.fragment = attr.Value.String()
+		}
+		return true
+	})
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.counts[rec.Message]++
+	h.records = append(h.records, entry)
 	return nil
 }
 
@@ -297,6 +335,19 @@ func (h *countingHandler) count(msg string) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.counts[msg]
+}
+
+// recordsFor returns every record carrying the message msg, in order.
+func (h *countingHandler) recordsFor(msg string) []logRecord {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var found []logRecord
+	for _, rec := range h.records {
+		if rec.message == msg {
+			found = append(found, rec)
+		}
+	}
+	return found
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +453,11 @@ func withPlugins(t *testing.T, p plugin.Plugin) envOption {
 // withRouter replaces the router.
 func withRouter(rt router.Router) envOption {
 	return func(d *Deps) { d.Router = rt }
+}
+
+// withVary sets the request headers the handler advertises in Vary.
+func withVary(headers ...string) envOption {
+	return func(d *Deps) { d.Vary = headers }
 }
 
 // withDefaultTTL sets the handler's fallback cache TTL.
@@ -1008,5 +1064,239 @@ func TestRedirectWithoutStatusDefaultsToFound(t *testing.T) {
 	}
 	if got := res.Header().Get("Location"); got != "/new" {
 		t.Errorf("Location = %q, want \"/new\"", got)
+	}
+}
+
+// customETagCache returns an ETag of its own rather than one derived from the
+// content the way cache.ETag derives it. Cache is an interface an application may
+// implement, and its contract is that Set returns the content's ETag, so the handler
+// must advertise what the cache returned instead of recomputing.
+type customETagCache struct {
+	inner *cache.MemoryCache
+	etag  string
+}
+
+var _ cache.TaggedCache = (*customETagCache)(nil)
+
+// Get returns the wrapped entry under the cache's own ETag.
+func (c *customETagCache) Get(ctx context.Context, key string) ([]byte, string, bool) {
+	content, _, found := c.inner.Get(ctx, key)
+	if !found {
+		return nil, "", false
+	}
+	return content, c.etag, true
+}
+
+// Set stores content and returns the cache's own ETag.
+func (c *customETagCache) Set(ctx context.Context, key string, content []byte, ttl time.Duration) (string, error) {
+	return c.SetTagged(ctx, key, content, ttl, nil)
+}
+
+// SetTagged stores content and returns the cache's own ETag.
+func (c *customETagCache) SetTagged(ctx context.Context, key string, content []byte, ttl time.Duration, tags []string) (string, error) {
+	if _, err := c.inner.SetTagged(ctx, key, content, ttl, tags); err != nil {
+		return "", err
+	}
+	return c.etag, nil
+}
+
+// Invalidate delegates to the wrapped cache.
+func (c *customETagCache) Invalidate(ctx context.Context, tags []string) error {
+	return c.inner.Invalidate(ctx, tags)
+}
+
+// InvalidateKey delegates to the wrapped cache.
+func (c *customETagCache) InvalidateKey(ctx context.Context, key string) error {
+	return c.inner.InvalidateKey(ctx, key)
+}
+
+// Clear delegates to the wrapped cache.
+func (c *customETagCache) Clear(ctx context.Context) error { return c.inner.Clear(ctx) }
+
+func TestFreshResponseAdvertisesTheCachesETag(t *testing.T) {
+	page := testPage("home", "/", types.StrategyStatic)
+	custom := &customETagCache{inner: cache.NewMemory(cache.MemoryConfig{}), etag: `"cache-chosen"`}
+	env := newEnv(t, []*types.Page{page}, func(d *Deps) { d.Cache = custom })
+	env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+	fresh := env.get("/")
+	if got := fresh.Header().Get("ETag"); got != `"cache-chosen"` {
+		t.Fatalf("fresh ETag = %q, want the ETag the cache returned: a recomputed one would not match later hits", got)
+	}
+
+	hit := env.get("/")
+	if got := hit.Header().Get("ETag"); got != `"cache-chosen"` {
+		t.Errorf("cache-hit ETag = %q, want %q", got, `"cache-chosen"`)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("If-None-Match", `"cache-chosen"`)
+	if res := env.do(req); res.Code != http.StatusNotModified {
+		t.Errorf("revalidation with the fresh response's ETag = %d, want %d", res.Code, http.StatusNotModified)
+	}
+}
+
+func TestUncachedResponseFallsBackToComputedETag(t *testing.T) {
+	page := testPage("live", "/live", types.StrategyDynamic)
+	env := newEnv(t, []*types.Page{page})
+	env.engine.set("live", fakeRender{html: "<html>live</html>"})
+
+	res := env.get("/live")
+
+	if got := res.Header().Get("ETag"); got != cache.ETag([]byte("<html>live</html>")) {
+		t.Errorf("ETag = %q, want the computed one when nothing was cached", got)
+	}
+}
+
+func TestVaryOnPubliclyCacheableResponses(t *testing.T) {
+	tests := []struct {
+		name     string
+		strategy types.RenderStrategy
+		ttl      time.Duration
+		want     string
+	}{
+		{"static", types.StrategyStatic, 0, "Accept-Language, Cookie"},
+		{"incremental", types.StrategyIncremental, time.Minute, "Accept-Language, Cookie"},
+		{"dynamic", types.StrategyDynamic, 0, ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			page := testPage("p", "/p", tc.strategy)
+			page.CacheTTL = tc.ttl
+			env := newEnv(t, []*types.Page{page}, withVary("Accept-Language", "Cookie"))
+
+			req := httptest.NewRequest(http.MethodGet, "/p", nil)
+			req.Header.Set("Accept-Language", "tr")
+			res := env.do(req)
+
+			if got := res.Header().Get("Vary"); got != tc.want {
+				t.Errorf("Vary = %q, want %q: a shared cache keys on the URL alone, and a negotiated locale is not in the URL", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestVaryOnCacheHitAndNotModified(t *testing.T) {
+	page := testPage("home", "/", types.StrategyStatic)
+	env := newEnv(t, []*types.Page{page}, withVary("Accept-Language"))
+
+	etag := env.get("/").Header().Get("ETag")
+
+	hit := env.get("/")
+	if got := hit.Header().Get("Vary"); got != "Accept-Language" {
+		t.Errorf("Vary on a cache hit = %q, want \"Accept-Language\"", got)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("If-None-Match", etag)
+	if got := env.do(req).Header().Get("Vary"); got != "Accept-Language" {
+		t.Errorf("Vary on a 304 = %q, want \"Accept-Language\": the 304 revalidates the same stored representation", got)
+	}
+}
+
+func TestNoVaryOnErrorResponses(t *testing.T) {
+	page := testPage("home", "/", types.StrategyStatic)
+	env := newEnv(t, []*types.Page{page}, withVary("Accept-Language"))
+	env.engine.set("home", fakeRender{err: errBoom})
+
+	if got := env.get("/").Header().Get("Vary"); got != "" {
+		t.Errorf("Vary on a 500 = %q, want none: a no-store response has no representation to select", got)
+	}
+	if got := env.get("/missing").Header().Get("Vary"); got != "" {
+		t.Errorf("Vary on a 404 = %q, want none", got)
+	}
+}
+
+func TestNoVaryHeaderWhenNoneConfigured(t *testing.T) {
+	page := testPage("home", "/", types.StrategyStatic)
+	env := newEnv(t, []*types.Page{page})
+
+	if got := env.get("/").Header().Get("Vary"); got != "" {
+		t.Errorf("Vary = %q, want none when Deps.Vary is empty", got)
+	}
+}
+
+func TestQueryStringIsPartOfTheCacheKey(t *testing.T) {
+	page := testPage("search", "/search", types.StrategyStatic)
+	env := newEnv(t, []*types.Page{page})
+
+	env.get("/search?q=a")
+	env.get("/search?q=b")
+
+	if calls := env.engine.pageCalls("search"); calls != 2 {
+		t.Fatalf("render calls = %d, want 2: two queries are two representations, not one", calls)
+	}
+	if entries := env.cacheEntries(); entries != 2 {
+		t.Errorf("cache entries = %d, want 2", entries)
+	}
+
+	// The same query is still a hit.
+	env.get("/search?q=a")
+	if calls := env.engine.pageCalls("search"); calls != 2 {
+		t.Errorf("render calls = %d, want 2: repeating a query must still hit the cache", calls)
+	}
+}
+
+func TestRouteMissAndContentMissCarryDistinctSentinels(t *testing.T) {
+	page := testPage("blog", "/blog", types.StrategyStatic)
+	page.NotFoundPage = errorOnlyPage("blog-404")
+	recorder := &recordingPlugin{}
+	env := newEnv(t, []*types.Page{page}, withPlugins(t, recorder))
+	env.engine.set("blog", fakeRender{err: fmt.Errorf("blog: slug: %w", types.ErrNotFound), notFound: true})
+	env.engine.set("blog-404", fakeRender{html: "<html>no such post</html>"})
+
+	routeMiss := env.get("/nowhere")
+	contentMiss := env.get("/blog")
+
+	if routeMiss.Code != http.StatusNotFound || contentMiss.Code != http.StatusNotFound {
+		t.Fatalf("statuses = %d and %d, want two 404s", routeMiss.Code, contentMiss.Code)
+	}
+	if got := contentMiss.Body.String(); got != "<html>no such post</html>" {
+		t.Errorf("body = %q, want the matched page's own NotFoundPage", got)
+	}
+
+	errs := recorder.reportedErrors()
+	if len(errs) != 2 {
+		t.Fatalf("OnError dispatches = %d, want 2", len(errs))
+	}
+	if !errors.Is(errs[0], ErrNoRoute) {
+		t.Errorf("route miss error = %v, want ErrNoRoute", errs[0])
+	}
+	if errors.Is(errs[0], types.ErrNotFound) {
+		t.Errorf("route miss error = %v, must not also satisfy types.ErrNotFound: a plugin has to tell a bad link from a missing record", errs[0])
+	}
+	if !errors.Is(errs[1], types.ErrNotFound) {
+		t.Errorf("content miss error = %v, want types.ErrNotFound", errs[1])
+	}
+	if errors.Is(errs[1], ErrNoRoute) {
+		t.Errorf("content miss error = %v, must not also satisfy ErrNoRoute", errs[1])
+	}
+}
+
+func TestRouteMissLogsAtDebugAndContentMissAtError(t *testing.T) {
+	page := testPage("blog", "/blog", types.StrategyStatic)
+	env := newEnv(t, []*types.Page{page})
+	env.engine.set("blog", fakeRender{
+		err:      fmt.Errorf("blog: slug: %w", types.ErrNotFound),
+		notFound: true,
+		degraded: "post",
+	})
+
+	env.get("/nowhere")
+	env.get("/blog")
+
+	records := env.logs.recordsFor("collage: request failed")
+	if len(records) != 2 {
+		t.Fatalf("log records = %+v, want one per 404", records)
+	}
+	if records[0].level != slog.LevelDebug || records[0].stage != stageNotFound {
+		t.Errorf("route miss logged as %+v, want debug level at stage %q", records[0], stageNotFound)
+	}
+	if records[1].level != slog.LevelError || records[1].stage != stageRender {
+		t.Errorf("content miss logged as %+v, want error level at stage %q: it is a failure inside the application", records[1], stageRender)
+	}
+	if records[1].fragment != "post" {
+		t.Errorf("content miss record fragment = %q, want the failing fragment named", records[1].fragment)
 	}
 }

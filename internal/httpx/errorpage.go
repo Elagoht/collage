@@ -2,7 +2,9 @@ package httpx
 
 import (
 	"errors"
+	"fmt"
 	"html"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -50,21 +52,31 @@ func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure
 	return f.status
 }
 
-// reportError logs f and dispatches it to every registered ErrorHook. A not-found
-// is logged at debug level: it is a routine outcome of an anonymous request, not an
-// operator's problem, and logging it at error level would bury the failures that
-// are. A zero f.status means no response is being written for this failure — a
-// cache write that failed after the page rendered — which is logged and reported
-// like any other error but changes nothing the client sees.
+// reportError logs f and dispatches it to every registered ErrorHook.
+//
+// Only a route miss is logged at debug level, and the test is the stage, not the
+// status: a route miss is a routine outcome of an anonymous request and logging it
+// at error level would bury the failures that are not. A 404 that came out of a
+// render — a data handler reporting that the content does not exist — reaches here
+// with stage "render" and stays at error level, because it is a failure inside the
+// application that an operator chasing a 404 storm has to be able to see. Both
+// records carry the stage and the failing fragment, so neither kind of 404 is
+// logged without saying where it came from.
+//
+// A zero f.status means no response is being written for this failure — a cache
+// write that failed after the page rendered — which is logged and reported like any
+// other error but changes nothing the client sees.
 func (h *Handler) reportError(r *http.Request, f failure) {
-	switch {
-	case f.status == http.StatusNotFound:
-		h.logger.Debug("collage: not found", "path", r.URL.Path, "error", f.err)
-	case f.fragment != "":
-		h.logger.Error("collage: request failed", "path", r.URL.Path, "stage", f.stage, "fragment", f.fragment, "error", f.err)
-	default:
-		h.logger.Error("collage: request failed", "path", r.URL.Path, "stage", f.stage, "error", f.err)
+	level := slog.LevelError
+	if f.stage == stageNotFound {
+		level = slog.LevelDebug
 	}
+	h.logger.Log(r.Context(), level, "collage: request failed",
+		"path", r.URL.Path,
+		"stage", f.stage,
+		"fragment", f.fragment,
+		"error", f.err,
+	)
 
 	// Error always returns nil: the registry logs and swallows a failing ErrorHook
 	// rather than handing it back, precisely so error handling cannot recurse.
@@ -119,13 +131,32 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 	result, err := h.renderer.Render(ctx, types.NewRenderContext(ctx, r, page, f.locale, nil))
 	if err != nil {
 		h.logger.Error("collage: error page render failed", "page", page.Name, "status", f.status, "error", err)
+		h.reportErrorPageFailure(r, page, err)
 		return nil, false
 	}
 	if len(result.HTML) == 0 {
 		h.logger.Error("collage: error page rendered empty", "page", page.Name, "status", f.status)
+		h.reportErrorPageFailure(r, page, fmt.Errorf("%w: page %q", ErrEmptyErrorPage, page.Name))
 		return nil, false
 	}
 	return result.HTML, true
+}
+
+// reportErrorPageFailure tells plugins that the error page itself is broken, under
+// its own stage so a reporting plugin can tell "the request failed" from "the page
+// that reports failures failed" — the second is the one nobody finds out about
+// otherwise, because the client still receives a plausible-looking error page.
+//
+// It dispatches without logging, since the caller has already logged the specific
+// failure, and it cannot recurse: Registry.Error logs and swallows a failing
+// ErrorHook by contract rather than handing it back to be handled again.
+func (h *Handler) reportErrorPageFailure(r *http.Request, page *types.Page, err error) {
+	_ = h.plugins.Error(r.Context(), &plugin.ErrorEvent{
+		Err:   err,
+		Page:  page,
+		Path:  r.URL.Path,
+		Stage: stageErrorPage,
+	})
 }
 
 // writeErrorResponse writes content as an error response of the given status. No

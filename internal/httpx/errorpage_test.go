@@ -461,3 +461,56 @@ func TestRouterReturningNoResultProduces500(t *testing.T) {
 		t.Errorf("body = %q, want the built-in 500 page", res.Body.String())
 	}
 }
+
+func TestBrokenErrorPageIsReportedToPlugins(t *testing.T) {
+	home := testPage("home", "/", types.StrategyStatic)
+	recorder := &recordingPlugin{}
+	env := newEnv(t, []*types.Page{home}, withPlugins(t, recorder))
+	if err := env.router.RegisterError(errorOnlyPage("global-500")); err != nil {
+		t.Fatalf("RegisterError() = %v, want nil", err)
+	}
+	env.engine.set("home", fakeRender{err: errBoom})
+	env.engine.set("global-500", fakeRender{err: errors.New("collage: error page exploded")})
+
+	res := env.get("/")
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusInternalServerError)
+	}
+
+	var stages []string
+	for _, event := range recorder.recorded() {
+		if strings.HasPrefix(event, "Error:") {
+			stages = append(stages, event)
+		}
+	}
+	if len(stages) != 2 || stages[0] != "Error:"+stageRender || stages[1] != "Error:"+stageErrorPage {
+		t.Fatalf("OnError dispatches = %v, want the request failure and then the error page's own, under its own stage", stages)
+	}
+
+	errs := recorder.reportedErrors()
+	if !strings.Contains(errs[1].Error(), "error page exploded") {
+		t.Errorf("error page failure reported as %v, want the error page's own error", errs[1])
+	}
+}
+
+func TestEmptyErrorPageIsReportedToPlugins(t *testing.T) {
+	home := testPage("home", "/", types.StrategyStatic)
+	recorder := &recordingPlugin{}
+	env := newEnv(t, []*types.Page{home}, withPlugins(t, recorder))
+	if err := env.router.RegisterError(errorOnlyPage("global-500")); err != nil {
+		t.Fatalf("RegisterError() = %v, want nil", err)
+	}
+	env.engine.set("home", fakeRender{err: errBoom})
+	env.engine.set("global-500", fakeRender{html: ""})
+
+	env.get("/")
+
+	errs := recorder.reportedErrors()
+	if len(errs) != 2 {
+		t.Fatalf("OnError dispatches = %d, want 2", len(errs))
+	}
+	if !errors.Is(errs[1], ErrEmptyErrorPage) {
+		t.Errorf("empty error page reported as %v, want ErrEmptyErrorPage", errs[1])
+	}
+}

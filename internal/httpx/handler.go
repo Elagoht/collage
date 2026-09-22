@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
@@ -27,11 +28,23 @@ import (
 // wrapped message names the field that was left unset.
 var ErrMissingDependency = errors.New("collage: missing handler dependency")
 
-// ErrNotFound is the error reported to plugins through ErrorHook when a request
-// resolves to no content. It exists because ErrorEvent.Err must name the failure
-// being reported, and a not-found result arrives from the router as a normal match,
-// not as an error.
-var ErrNotFound = errors.New("collage: no route matched the request")
+// ErrNoRoute is the error reported to plugins through ErrorHook when no route
+// matched the request. It exists because ErrorEvent.Err must name the failure being
+// reported, and a not-found result arrives from the router as a normal match, not as
+// an error.
+//
+// It is deliberately NOT named ErrNotFound: types.ErrNotFound means "the content
+// this route resolves to does not exist", reported by a data handler and wrapped
+// deep inside a render error. Both produce a 404, and a plugin asking why needs to
+// tell them apart — an unmatched URL is a routing or link problem, a missing record
+// is a content one.
+var ErrNoRoute = errors.New("collage: no route matched the request")
+
+// ErrEmptyErrorPage is the error reported to plugins when a registered error page
+// renders successfully but produces no markup. It is a distinct failure from a
+// render error — nothing failed, there is simply nothing to serve — and the handler
+// falls through to the built-in page either way.
+var ErrEmptyErrorPage = errors.New("collage: error page rendered empty")
 
 // Pipeline stages, as reported to plugins through ErrorEvent.Stage. The field is
 // documented as caller-defined rather than an enum, so these are the names this
@@ -44,6 +57,7 @@ const (
 	stageRender       = "render"
 	stageAfterRender  = "after_render"
 	stageCacheWrite   = "cache_write"
+	stageErrorPage    = "error_page"
 )
 
 // contentTypeHTML is the Content-Type every rendered page and built-in error page
@@ -88,6 +102,18 @@ type Deps struct {
 	// DefaultTTL is the cache TTL used for a page that sets no CacheTTL of its
 	// own. Zero or less defers to the cache's own default TTL.
 	DefaultTTL time.Duration
+	// Vary lists the request headers a rendered page's content depends on. They
+	// are joined into a Vary header on every publicly cacheable response.
+	//
+	// The application layer populates it from the router's enabled locale
+	// sources: "Accept-Language" when header-locale resolution is on, "Cookie"
+	// when cookie-locale resolution is. This framework's own cache key already
+	// carries the resolved locale, so its cache was never at risk — but a shared
+	// cache between the handler and the client, a CDN or a corporate proxy, keys
+	// on the URL alone, and a locale negotiated from a header or a cookie is not
+	// in the URL. Without this, such a cache hands one visitor's language to the
+	// next.
+	Vary []string
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
@@ -103,6 +129,7 @@ type Handler struct {
 	logger     *slog.Logger
 	devMode    bool
 	defaultTTL time.Duration
+	vary       string
 }
 
 var _ http.Handler = (*Handler)(nil)
@@ -134,6 +161,10 @@ func New(d Deps) (*Handler, error) {
 		logger:     d.Logger,
 		devMode:    d.DevMode,
 		defaultTTL: d.DefaultTTL,
+		// Joined once at construction: it is the same string on every response,
+		// and it is copied out of d rather than aliased so a caller mutating its
+		// slice afterwards cannot change what is served.
+		vary: strings.Join(d.Vary, ", "),
 	}, nil
 }
 
@@ -201,7 +232,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 	if match.IsNotFound || match.Page == nil {
 		return h.serveFailure(w, r, failure{
 			status: http.StatusNotFound,
-			err:    fmt.Errorf("%w: %q", ErrNotFound, r.URL.Path),
+			err:    fmt.Errorf("%w: %q", ErrNoRoute, r.URL.Path),
 			page:   match.Page,
 			locale: match.Locale,
 			stage:  stageNotFound,
@@ -229,7 +260,21 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 	key := ""
 	cacheable := h.cache != nil && page.Strategy.Cacheable() && (r.Method == http.MethodGet || r.Method == http.MethodHead)
 	if cacheable {
-		key = cache.Key(cache.KeyInput{Path: r.URL.Path, Locale: match.Locale, Params: match.PathParams})
+		// The raw query is a cache dimension, not decoration: a fragment's data
+		// handler receives the whole *http.Request and may legitimately render
+		// from r.URL.Query(), so two queries against one path are two
+		// representations. This does fragment the cache across utm_* and other
+		// tracking variants of the same page, and it varies on parameter order
+		// because the query is not canonicalized — correctness over hit rate. A
+		// per-page allowlist of significant query parameters would recover both
+		// and is the obvious future enhancement; it is deliberately not built
+		// here, since guessing which parameters matter is the application's call.
+		key = cache.Key(cache.KeyInput{
+			Path:   r.URL.Path,
+			Locale: match.Locale,
+			Params: match.PathParams,
+			Vary:   []string{r.URL.RawQuery},
+		})
 		lookupStart := time.Now()
 		if content, etag, found := h.cache.Get(ctx, key); found {
 			h.metrics.CacheEvent(ctx, observability.CacheHit, key)
@@ -309,14 +354,18 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 	// caching it would pin one request's transient fragment failure in front of
 	// every later request. A HEAD is served from cache but never populates it —
 	// it produced no body to store.
+	etag := ""
 	if cacheable && r.Method == http.MethodGet && !result.Degraded() {
-		h.writeCache(r, key, page, content, result.DependencyTags)
+		etag = h.writeCache(r, key, page, content, result.DependencyTags)
+	}
+	if etag == "" {
+		etag = cache.ETag(content)
 	}
 
 	header := w.Header()
 	header.Set("Content-Type", contentTypeHTML)
-	header.Set("ETag", cache.ETag(content))
-	header.Set("Cache-Control", h.cacheControl(page))
+	header.Set("ETag", etag)
+	h.setCacheHeaders(header, page)
 	if h.devMode {
 		header.Set(renderTimeHeader, renderTime.String())
 	}
@@ -332,7 +381,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *types.Page, content []byte, etag string) int {
 	header := w.Header()
 	header.Set("ETag", etag)
-	header.Set("Cache-Control", h.cacheControl(page))
+	h.setCacheHeaders(header, page)
 
 	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		// No Content-Type and no body: a 304 tells the client its copy is still
@@ -356,7 +405,15 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 //
 // A failure here never fails the request. The page has already rendered, and
 // serving it uncached is strictly better than turning a cache problem into a 500.
-func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string) {
+//
+// It returns the ETag the cache stored the entry under, or the empty string when
+// nothing was written. Cache is an interface the application may implement, and its
+// contract is that Set returns the content's ETag — so the stored value, not a
+// locally recomputed one, is what the fresh response must advertise. A cache that
+// derives ETags its own way would otherwise send one value on the fresh response and
+// a different one on every hit that followed, and every conditional request would
+// miss.
+func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string) string {
 	ctx := r.Context()
 
 	event := &plugin.CacheWriteEvent{
@@ -367,27 +424,29 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	}
 	if err := h.plugins.CacheWrite(ctx, event); err != nil {
 		h.reportError(r, failure{err: err, page: page, stage: stageCacheWrite})
-		return
+		return ""
 	}
 	if event.Skip {
-		return
+		return ""
 	}
 
+	var etag string
 	var err error
 	if tagged, ok := h.cache.(cache.TaggedCache); ok {
-		_, err = tagged.SetTagged(ctx, key, content, event.TTL, event.Tags)
+		etag, err = tagged.SetTagged(ctx, key, content, event.TTL, event.Tags)
 	} else {
-		_, err = h.cache.Set(ctx, key, content, event.TTL)
+		etag, err = h.cache.Set(ctx, key, content, event.TTL)
 	}
 	if err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: cache write: %w", err), page: page, stage: stageCacheWrite})
-		return
+		return ""
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
 
 	if err := h.tracker.Track(ctx, key, event.Tags); err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
 	}
+	return etag
 }
 
 // ttlFor returns the cache TTL for page: its own CacheTTL when set, otherwise the
@@ -397,6 +456,20 @@ func (h *Handler) ttlFor(page *types.Page) time.Duration {
 		return page.CacheTTL
 	}
 	return h.defaultTTL
+}
+
+// setCacheHeaders writes page's Cache-Control and, whenever that response is
+// publicly cacheable, the Vary header built from Deps.Vary. Vary belongs only on a
+// public response: it tells a shared cache which request headers select between
+// representations, and a no-store response has no representation to select.
+func (h *Handler) setCacheHeaders(header http.Header, page *types.Page) {
+	control := h.cacheControl(page)
+	header.Set("Cache-Control", control)
+
+	if h.vary == "" || !strings.HasPrefix(control, "public") {
+		return
+	}
+	header.Set("Vary", h.vary)
 }
 
 // cacheControl returns the Cache-Control value for page's render strategy: a static
