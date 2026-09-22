@@ -85,17 +85,35 @@ func TestResolveLocale_Header_PrimarySubtagFallback(t *testing.T) {
 	}
 }
 
-func TestResolveLocale_Header_ExactBeatsSubtagAcrossEntries(t *testing.T) {
+// TestResolveLocale_Header_HighestQWinsAcrossEntries pins true highest-q
+// resolution (RFC 4647 lookup shape): "tr-TR" at q=0.9 only matches "tr" via
+// primary-subtag fallback, while "en" at q=0.1 is an exact match — but q is
+// compared per entry first, so the strongly-preferred subtag match must still
+// beat the weakly-preferred exact match. Exact-vs-subtag only breaks a tie
+// within a single entry's own resolution, never across different entries.
+func TestResolveLocale_Header_HighestQWinsAcrossEntries(t *testing.T) {
 	opts := LocaleOptions{Default: "en", Supported: []string{"tr", "en"}}
 	req := newRequest(t, "/blog")
-	// tr-TR would match "tr" only via subtag fallback and has a higher q; "en" is
-	// an exact match at a lower q. Exact matches are tried across every entry
-	// before any subtag fallback is attempted.
 	req.Header.Set("Accept-Language", "tr-TR;q=0.9,en;q=0.1")
 
 	locale, _ := resolveLocale(req, req.URL.Path, opts)
-	if locale != "en" {
-		t.Fatalf("locale = %q, want en (exact match preferred over subtag fallback)", locale)
+	if locale != "tr" {
+		t.Fatalf("locale = %q, want tr (higher q wins even via subtag fallback)", locale)
+	}
+}
+
+// TestResolveLocale_Header_ExactAndSubtagTieWithinOneEntry checks that when an
+// entry's tag is an exact match, the exact match is used (rather than, say,
+// preferring a "more specific" reading) — exact vs. subtag is still resolved,
+// just only within one entry, never across entries.
+func TestResolveLocale_Header_ExactAndSubtagTieWithinOneEntry(t *testing.T) {
+	opts := LocaleOptions{Default: "en", Supported: []string{"tr", "en"}}
+	req := newRequest(t, "/blog")
+	req.Header.Set("Accept-Language", "tr;q=0.5")
+
+	locale, _ := resolveLocale(req, req.URL.Path, opts)
+	if locale != "tr" {
+		t.Fatalf("locale = %q, want tr", locale)
 	}
 }
 
@@ -196,6 +214,30 @@ func TestResolveAcceptLanguage_QExcludedByZero(t *testing.T) {
 	locale, ok := resolveAcceptLanguage("en;q=0,tr;q=0.5", []string{"en", "tr"})
 	if !ok || locale != "tr" {
 		t.Fatalf("locale=%q ok=%v, want tr (q=0 excludes en)", locale, ok)
+	}
+}
+
+// TestResolveAcceptLanguage_QAboveOneIsClamped checks that a q-value above 1
+// (invalid per RFC 7231, but not a parse failure) is clamped to 1 rather than
+// rejected or left to distort the ordering above a real q=1 entry. "en;q=1"
+// comes first in the header and "tr;q=5" second: left unclamped, tr's larger
+// raw value would sort ahead of en despite appearing later; clamped to 1, tr
+// only ties en's real q=1, and the stable sort keeps ties in header order, so
+// en — genuinely no less preferred, and listed first — wins.
+func TestResolveAcceptLanguage_QAboveOneIsClamped(t *testing.T) {
+	locale, ok := resolveAcceptLanguage("en;q=1,tr;q=5", []string{"en", "tr"})
+	if !ok || locale != "en" {
+		t.Fatalf("locale=%q ok=%v, want en (q=5 clamps to 1, tying rather than dominating en's real q=1)", locale, ok)
+	}
+}
+
+// TestResolveAcceptLanguage_NegativeQIsClampedAndExcluded checks that a
+// negative q-value clamps to 0 and is then excluded exactly as an explicit
+// q=0 is, rather than sorting as if it were a low-but-valid preference.
+func TestResolveAcceptLanguage_NegativeQIsClampedAndExcluded(t *testing.T) {
+	locale, ok := resolveAcceptLanguage("en;q=-1,tr;q=0.1", []string{"en", "tr"})
+	if !ok || locale != "tr" {
+		t.Fatalf("locale=%q ok=%v, want tr (negative q clamps to 0 and is excluded)", locale, ok)
 	}
 }
 

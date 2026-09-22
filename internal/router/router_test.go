@@ -245,6 +245,27 @@ func TestRouter_Redirect_UnsubstitutedPlaceholder_RejectedAtRegistration(t *test
 	}
 }
 
+// TestRouter_Redirect_DuplicateFrom_Rejected checks that two different
+// redirects sharing the same From pattern collide the same way two pages
+// sharing a path pattern do: the redirect tree has exactly one terminal node
+// per pattern, so a second redirect targeting an already-registered From
+// cannot be honored.
+func TestRouter_Redirect_DuplicateFrom_Rejected(t *testing.T) {
+	r := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
+	first := newTestPageWithRedirects("first", map[string]string{"en": "/first"}, []*types.Redirect{
+		{From: "/legacy", To: "/first"},
+	})
+	mustRegister(t, r, first)
+
+	second := newTestPageWithRedirects("second", map[string]string{"en": "/second"}, []*types.Redirect{
+		{From: "/legacy", To: "/second"},
+	})
+	err := r.Register(second)
+	if !errors.Is(err, ErrDuplicateRoute) {
+		t.Fatalf("expected ErrDuplicateRoute, got %v", err)
+	}
+}
+
 func TestRouter_Redirect_ShadowsPage_Rejected(t *testing.T) {
 	r := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
 	mustRegister(t, r, newTestPage("about", map[string]string{"en": "/about"}))

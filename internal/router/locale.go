@@ -104,12 +104,20 @@ type acceptEntry struct {
 }
 
 // resolveAcceptLanguage parses header per RFC 7231's Accept-Language grammar and
-// returns the supported locale with the highest q-value, preferring an exact tag
-// match over every candidate before falling back to a primary-subtag match (so
-// "tr-TR" matches a supported "tr"). Malformed entries — an empty tag, an
-// unparsable or missing q-value where "q=" is present, or an excluded q=0 — are
-// skipped rather than causing a failure; header is attacker-controlled input and
-// this never panics on it.
+// resolves the entry with the true highest q-value: entries are considered in
+// descending q order, and for each one an exact tag match is tried before its
+// primary-subtag match (so "tr-TR" matches a supported "tr") — the first entry,
+// in q order, that matches either way wins. Exact-vs-subtag only breaks a tie
+// within one entry; it never lets a weaker entry's exact match beat a stronger
+// entry's subtag match, which is what "highest q wins" requires (RFC 4647
+// lookup). A q outside [0, 1] is clamped into range. Malformed entries — an
+// empty tag, an unparsable or missing q-value where "q=" is present, or an
+// excluded q=0 — are skipped rather than causing a failure; header is
+// attacker-controlled input and this never panics on it. A bare "*" is treated
+// as an ordinary, never-matching tag: it has no primary subtag of its own to
+// fall back on, so it simply never resolves and the caller falls through to the
+// next locale source, which is the same outcome a dedicated "*" handler would
+// produce here since resolveAcceptLanguage is never the last source consulted.
 func resolveAcceptLanguage(header string, supported []string) (string, bool) {
 	if header == "" {
 		return "", false
@@ -143,6 +151,12 @@ func resolveAcceptLanguage(header string, supported []string) (string, bool) {
 			}
 		}
 
+		if q > 1 {
+			q = 1
+		} else if q < 0 {
+			q = 0
+		}
+
 		if tag == "" || q <= 0 {
 			continue
 		}
@@ -155,8 +169,6 @@ func resolveAcceptLanguage(header string, supported []string) (string, bool) {
 		if resolved, ok := matchSupported(supported, e.tag); ok {
 			return resolved, true
 		}
-	}
-	for _, e := range entries {
 		primary := e.tag
 		if idx := strings.IndexByte(e.tag, '-'); idx >= 0 {
 			primary = e.tag[:idx]
