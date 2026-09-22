@@ -41,6 +41,11 @@ var ErrLocaleDefaultNotSupported = errors.New("collage: default locale not in su
 var ErrNegativeDuration = errors.New("collage: negative duration")
 
 // Config is the framework's top-level configuration.
+//
+// It is mirrored field for field by internal/core.Config. New applies the defaults
+// and the validation here, then converts into that mirror and hands it to core.New,
+// which is how internal/core stays free of any dependency on this package. A field
+// added here must be added there, and to toCoreConfig, or it will simply be ignored.
 type Config struct {
 	// DevMode enables development-mode behaviour across the framework. See IsDevMode
 	// for the effective value, which also considers Template.DevMode.
