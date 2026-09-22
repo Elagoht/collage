@@ -145,8 +145,8 @@ func TestPage_Validate(t *testing.T) {
 
 	t.Run("negative cache ttl", func(t *testing.T) {
 		p := &Page{Name: "home", ContentFragment: validContent(), CacheTTL: -time.Second}
-		if err := p.Validate(); err == nil {
-			t.Fatal("Validate() error = nil, want non-nil for negative CacheTTL")
+		if err := p.Validate(); !errors.Is(err, ErrInvalidTTL) {
+			t.Fatalf("Validate() error = %v, want ErrInvalidTTL", err)
 		}
 	})
 

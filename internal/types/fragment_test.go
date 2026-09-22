@@ -119,15 +119,15 @@ func TestFragment_Validate(t *testing.T) {
 				"content": {Name: "content", Required: true},
 			},
 		}
-		if err := f.Validate(); !errors.Is(err, ErrMissingContent) {
-			t.Fatalf("Validate() error = %v, want ErrMissingContent", err)
+		if err := f.Validate(); !errors.Is(err, ErrRequiredSlotUnfilled) {
+			t.Fatalf("Validate() error = %v, want ErrRequiredSlotUnfilled", err)
 		}
 	})
 
 	t.Run("negative timeout", func(t *testing.T) {
 		f := &Fragment{Name: "x", TemplatePath: "x.html", Timeout: -time.Second}
-		if err := f.Validate(); err == nil {
-			t.Fatal("Validate() error = nil, want non-nil for negative timeout")
+		if err := f.Validate(); !errors.Is(err, ErrInvalidTimeout) {
+			t.Fatalf("Validate() error = %v, want ErrInvalidTimeout", err)
 		}
 	})
 
@@ -139,8 +139,8 @@ func TestFragment_Validate(t *testing.T) {
 				"content": {Name: ""},
 			},
 		}
-		if err := f.Validate(); !errors.Is(err, ErrUnknownSlot) {
-			t.Fatalf("Validate() error = %v, want ErrUnknownSlot", err)
+		if err := f.Validate(); !errors.Is(err, ErrInvalidSlotDefinition) {
+			t.Fatalf("Validate() error = %v, want ErrInvalidSlotDefinition", err)
 		}
 	})
 
@@ -152,8 +152,8 @@ func TestFragment_Validate(t *testing.T) {
 				"content": {Name: "other"},
 			},
 		}
-		if err := f.Validate(); !errors.Is(err, ErrUnknownSlot) {
-			t.Fatalf("Validate() error = %v, want ErrUnknownSlot", err)
+		if err := f.Validate(); !errors.Is(err, ErrInvalidSlotDefinition) {
+			t.Fatalf("Validate() error = %v, want ErrInvalidSlotDefinition", err)
 		}
 	})
 

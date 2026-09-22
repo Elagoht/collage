@@ -7,8 +7,7 @@ import "errors"
 var ErrNilFragment = errors.New("collage: nil fragment")
 
 // ErrUnknownSlot is returned when an operation references a slot name a fragment has
-// not declared, or when a fragment's slot map contains a malformed entry (an empty
-// slot name, or a map key that does not match the SlotDefinition's own Name field).
+// not declared — a Bind target or a Slot lookup that misses.
 var ErrUnknownSlot = errors.New("collage: unknown slot")
 
 // ErrSlotOccupied is returned when binding a fragment to a slot that already has a
@@ -19,13 +18,28 @@ var ErrSlotOccupied = errors.New("collage: slot already occupied")
 // from itself.
 var ErrFragmentCycle = errors.New("collage: fragment cycle detected")
 
-// ErrMissingContent is returned when a page has no content fragment, or when a
-// fragment's declared Required slot has no fill.
+// ErrMissingContent is returned when a page has no content fragment.
 var ErrMissingContent = errors.New("collage: missing content")
 
 // ErrMissingTTL is returned when a page uses StrategyIncremental without a positive
 // CacheTTL.
 var ErrMissingTTL = errors.New("collage: missing cache ttl for incremental strategy")
+
+// ErrInvalidTimeout is returned when a fragment's Timeout is negative.
+var ErrInvalidTimeout = errors.New("collage: invalid timeout")
+
+// ErrInvalidTTL is returned when a page's CacheTTL is negative. This is distinct
+// from ErrMissingTTL, which covers a zero CacheTTL under StrategyIncremental.
+var ErrInvalidTTL = errors.New("collage: invalid cache ttl")
+
+// ErrRequiredSlotUnfilled is returned when a fragment declares a slot as Required
+// but the slot has no fill.
+var ErrRequiredSlotUnfilled = errors.New("collage: required slot has no fill")
+
+// ErrInvalidSlotDefinition is returned when a fragment's slot map contains a
+// malformed entry: an empty slot name, or a map key that does not match the
+// SlotDefinition's own Name field.
+var ErrInvalidSlotDefinition = errors.New("collage: invalid slot definition")
 
 // ErrInvalidRedirectStatus is returned when a redirect's status code is set to a
 // value other than 0, 301, 302, 307, or 308.

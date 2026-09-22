@@ -106,11 +106,13 @@ func (f *Fragment) EffectiveTimeout(def time.Duration) time.Duration {
 }
 
 // Validate reports whether f and every fragment reachable from it (through Fill and
-// Fallback) form a well-formed tree: Name and TemplatePath are non-empty, Timeout is
-// not negative, every slot's map key equals its SlotDefinition.Name, no slot name is
-// empty, and every slot declared Required has at least one fill. It returns
-// ErrNilFragment for a nil receiver and ErrFragmentCycle, with the offending
-// fragment's name, if the tree is not acyclic. It returns nil for a valid tree.
+// Fallback) form a well-formed tree: Name is non-empty (ErrEmptyName), TemplatePath
+// is non-empty (ErrEmptyTemplatePath), Timeout is not negative (ErrInvalidTimeout),
+// every slot's map key equals its SlotDefinition.Name and no slot name is empty
+// (ErrInvalidSlotDefinition), and every slot declared Required has at least one fill
+// (ErrRequiredSlotUnfilled). It returns ErrNilFragment for a nil receiver and
+// ErrFragmentCycle, with the offending fragment's name, if the tree is not acyclic.
+// It returns nil for a valid tree.
 func (f *Fragment) Validate() error {
 	return f.validate(make(map[*Fragment]bool))
 }
@@ -136,19 +138,19 @@ func (f *Fragment) validate(stack map[*Fragment]bool) error {
 		return ErrEmptyTemplatePath
 	}
 	if f.Timeout < 0 {
-		return fmt.Errorf("collage: fragment %q has negative timeout", f.Name)
+		return fmt.Errorf("%w: fragment %q has negative timeout", ErrInvalidTimeout, f.Name)
 	}
 
 	for _, key := range f.SlotNames() {
 		slot := f.Slots[key]
 		if slot == nil || slot.Name == "" {
-			return fmt.Errorf("%w: slot key %q has no name", ErrUnknownSlot, key)
+			return fmt.Errorf("%w: slot key %q has no name", ErrInvalidSlotDefinition, key)
 		}
 		if slot.Name != key {
-			return fmt.Errorf("%w: slot key %q does not match slot name %q", ErrUnknownSlot, key, slot.Name)
+			return fmt.Errorf("%w: slot key %q does not match slot name %q", ErrInvalidSlotDefinition, key, slot.Name)
 		}
 		if slot.Required && len(slot.Fill) == 0 {
-			return fmt.Errorf("%w: required slot %q has no fill", ErrMissingContent, slot.Name)
+			return fmt.Errorf("%w: required slot %q has no fill", ErrRequiredSlotUnfilled, slot.Name)
 		}
 		for _, child := range slot.Fill {
 			if err := child.validate(stack); err != nil {

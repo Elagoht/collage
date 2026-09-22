@@ -119,11 +119,11 @@ func (p *Page) ContentSlotName() string {
 
 // Validate reports whether p is well-formed: Name is non-empty (ErrEmptyName),
 // ContentFragment is non-nil (ErrMissingContent), every entry in Paths starts with
-// "/" (ErrInvalidPath), CacheTTL is not negative, CacheTTL is positive when Strategy
-// is StrategyIncremental (ErrMissingTTL), every redirect in Redirects validates,
-// neither NotFoundPage nor ErrorPage is p itself (ErrSelfErrorPage), and p.Root()
-// validates. NotFoundPage and ErrorPage are not recursed into: they are validated
-// when registered in their own right.
+// "/" (ErrInvalidPath), CacheTTL is not negative (ErrInvalidTTL), CacheTTL is
+// positive when Strategy is StrategyIncremental (ErrMissingTTL), every redirect in
+// Redirects validates, neither NotFoundPage nor ErrorPage is p itself
+// (ErrSelfErrorPage), and p.Root() validates. NotFoundPage and ErrorPage are not
+// recursed into: they are validated when registered in their own right.
 func (p *Page) Validate() error {
 	if p.Name == "" {
 		return ErrEmptyName
@@ -137,7 +137,7 @@ func (p *Page) Validate() error {
 		}
 	}
 	if p.CacheTTL < 0 {
-		return fmt.Errorf("collage: page %q has negative cache ttl", p.Name)
+		return fmt.Errorf("%w: page %q", ErrInvalidTTL, p.Name)
 	}
 	if p.Strategy == StrategyIncremental && p.CacheTTL <= 0 {
 		return fmt.Errorf("%w: page %q", ErrMissingTTL, p.Name)
