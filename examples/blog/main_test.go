@@ -37,7 +37,7 @@ const liveSlug = "hello-collage"
 func blog(t *testing.T) (*httptest.Server, *PostStore, *collage.App) {
 	t.Helper()
 
-	app, store, err := newBlog(templateRoot)
+	app, store, err := newBlog(templateRoot, "localhost", 0)
 	if err != nil {
 		t.Fatalf("newBlog: %v", err)
 	}

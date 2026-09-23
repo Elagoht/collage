@@ -27,6 +27,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"time"
@@ -97,12 +98,20 @@ func bind(fn dataFunc) collage.DataHandlerFunc {
 }
 
 func main() {
-	app, _, err := newBlog(templateRoot)
+	host := flag.String("host", "localhost", "interface to listen on")
+	port := flag.Int("port", 3000, "port to listen on; pick another if 3000 is taken")
+	flag.Parse()
+
+	app, _, err := newBlog(templateRoot, *host, *port)
 	if err != nil {
 		log.Fatalf("blog: %v", err)
 	}
 
-	log.Println("blog: serving on http://localhost:3000")
+	// "starting", not "serving": ListenAndServe does the binding, so at this point
+	// the port could still be taken and the next line could be a fatal error. A
+	// success message printed before the thing succeeds is how a bind failure gets
+	// read as a working server.
+	log.Printf("blog: starting on http://%s:%d", *host, *port)
 	if err := app.ListenAndServe(); err != nil {
 		log.Fatalf("blog: %v", err)
 	}
@@ -116,11 +125,11 @@ func main() {
 // fragment naming a template that does not exist, a page referencing an error
 // page that was never registered — every one of those is reported from this
 // function, at startup, by design.
-func newBlog(root string) (*collage.App, *PostStore, error) {
+func newBlog(root, host string, port int) (*collage.App, *PostStore, error) {
 	app, err := collage.New(&collage.Config{
 		Server: collage.ServerConfig{
-			Host: "localhost",
-			Port: 3000,
+			Host: host,
+			Port: port,
 		},
 		Template: collage.TemplateConfig{
 			Root:      root,

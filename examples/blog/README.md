@@ -4,9 +4,16 @@ This is the advanced example from collage's specification, implemented for real.
 It serves actual requests, and `main_test.go` is the framework's end-to-end test.
 
 ```
-go run ./examples/blog      # serves on http://localhost:3000
-go test ./examples/blog     # the end-to-end test
+cd examples/blog && go run .     # serves on http://localhost:3000
+cd examples/blog && go run . -port 8099   # if 3000 is taken
+go test ./examples/blog          # the end-to-end test, from anywhere
 ```
+
+Run it from **this directory**, not from the repository root: the templates are
+loaded from the relative path `templates`, so the process's working directory has
+to be the one holding them. `-host` and `-port` override the defaults; the test
+needs neither, because it drives `app.Handler()` through `httptest` and never
+binds a port.
 
 It imports nothing but the standard library and
 `github.com/Elagoht/collage/pkg/collage`. That is a deliberate constraint: if the
@@ -91,8 +98,10 @@ status codes: a cache hit and a re-render are both `200` with the same body.
 enters the page cache — its freshness is the mount's `Cache-Control` and the
 client's business — and a missing one answers `text/plain`, never HTML.
 
-The example mounts an `embed.FS` so `go run ./examples/blog` works from any
-directory. An application serving files from disk should use
+The example mounts an `embed.FS`, so the **static files** travel with the binary
+and need no working directory. The templates do not: `TemplateConfig.Root` is a
+filesystem path, so the example still has to be run from its own directory. An
+application serving files from disk should use
 `os.OpenRoot("./static")` and its `FS()`, never `os.DirFS`, which Go's own
 documentation states does not prevent symlink traversal. See
 [docs/assets.md](../../docs/assets.md).
