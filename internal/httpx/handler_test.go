@@ -1996,3 +1996,27 @@ func TestServe_EmptyCacheParamsDropsTheQueryEntirely(t *testing.T) {
 		t.Errorf("renders = %d, want %d — an empty allowlist means no query discriminates", got, after)
 	}
 }
+
+// In development a page is rendered again for every request, even one that was
+// cached a moment ago. Templates reload from disk in dev mode, and a cached page
+// would hide that reload for as long as its TTL — on exactly the pages someone is
+// most likely to be editing.
+func TestHandler_DevModeNeverServesACachedPage(t *testing.T) {
+	page := testPage("home", "/", types.StrategyIncremental)
+	env := newEnv(t, []*types.Page{page}, withDevMode())
+
+	for range 3 {
+		if rec := env.get("/"); rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	}
+
+	if got := env.engine.totalCalls(); got != 3 {
+		t.Errorf("renders = %d, want 3: dev mode must not serve a page rendered before an edit", got)
+	}
+	// The entry is still written. Someone developing a plugin or an invalidation
+	// rule needs the write path to keep working.
+	if got := env.cacheEntries(); got == 0 {
+		t.Error("nothing was written to the cache; the write path must still run in dev mode")
+	}
+}

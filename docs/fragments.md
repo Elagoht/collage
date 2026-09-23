@@ -44,8 +44,22 @@ Template: collage.TemplateConfig{
 it the right knob here: `embed.FS` names each file by its path in the source
 tree, so without it every template would be called
 `templates/pages/home.html`. An empty `Root` alongside an `FS` means the root of
-that filesystem. `DevMode` has no useful effect on an embedded filesystem, whose
-contents are fixed at build time.
+that filesystem.
+
+**In development, an embedded template set is ignored when the directory is there
+on disk.** Embedding is what a production binary needs and exactly what a developer
+does not: the embedded copy was fixed when the binary was built, so editing a
+template would change nothing until the next rebuild — and reloading an embedded
+file only reparses the same bytes. So with `DevMode` on, if `Root` also exists as a
+directory relative to the working directory, that is what is rendered, and the
+application logs that it chose it. The embed directive's path is a source-relative
+path, which is the same path a `go run .` in the package directory sees, so the two
+normally coincide; when they do not, the directory is not there and the embedded
+copy is used.
+
+The other half of that loop is the page cache, which **is not read in development**
+— see [caching](caching.md). Reloading a template is no use if the page it renders
+was cached before the edit.
 
 With `Root` alone, templates are read through `os.OpenRoot`, so a symlink whose
 target leaves the root is refused by the kernel during path resolution. A

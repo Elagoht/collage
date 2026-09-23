@@ -441,7 +441,10 @@ func New(cfg Config) (*App, error) {
 	maps.Copy(funcs, cfg.Template.Funcs)
 
 	tmpl, err := template.NewHTML(template.HTMLConfig{
-		FS:        cfg.Template.FS,
+		// Not cfg.Template.FS directly: in development an embedded template set
+		// cannot reload, so the copy on disk is preferred when there is one. See
+		// templateSource.
+		FS:        templateSource(cfg.Template.FS, cfg.Template.Root, devMode, logger),
 		Root:      cfg.Template.Root,
 		Extension: cfg.Template.Extension,
 		DevMode:   devMode,

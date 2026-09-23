@@ -462,6 +462,14 @@ Not the VCS revision from `debug.ReadBuildInfo`, for what it is worth: `go run`
 usually omits it, and it says nothing about uncommitted edits — which are exactly
 the edits a developer is looking at when a page comes back stale.
 
+**A cached page is never served in development.** `Config.DevMode` or
+`Template.DevMode` turns off cache *lookups*: every request renders again. Templates
+reload from disk in development, and a cached page hides that reload for as long as
+its TTL — on exactly the pages someone is most likely to be editing. The write path
+is untouched, so entries are still stored, tags still tracked and `CacheWrite` hooks
+still fire; what dev mode removes is serving a page that was rendered before the
+edit.
+
 **A disk cache is never used in development.** `Config.DevMode` or
 `Template.DevMode` substitutes an in-memory one and logs that it did. Development is
 exactly where the output changes between runs, and nobody bumps a version to save a

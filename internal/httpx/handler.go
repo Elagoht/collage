@@ -494,7 +494,18 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			Vary:   queryVary(r.URL, page.CacheParams),
 		})
 		lookupStart := time.Now()
-		if content, etag, found := h.cache.Get(ctx, key); found {
+		// Never read from the cache in development.
+		//
+		// Templates reload from disk there, which is the point of dev mode — and
+		// a cached page hides that reload for as long as its TTL, on exactly the
+		// pages a developer is most likely to be editing. Two mechanisms, each
+		// sensible alone, combining into "my edit did nothing".
+		//
+		// The write path below is left alone deliberately: entries are still
+		// stored, tags still tracked, CacheWrite hooks still fire, so anyone
+		// developing a plugin or an invalidation rule still sees it work. What
+		// dev mode removes is serving a page that was rendered before the edit.
+		if content, etag, found := h.cacheGet(ctx, key); found {
 			h.metrics.CacheEvent(ctx, observability.CacheHit, key)
 			// The only place cacheHit is ever reported true: what it times is the
 			// lookup that stood in for a render, not a render that did not happen.
@@ -643,6 +654,15 @@ func (h *Handler) renderPage(
 	}
 
 	return &outcome{content: content, etag: etag, renderTime: renderTime}
+}
+
+// cacheGet is the cache lookup, which never finds anything in development. See the
+// call site for why.
+func (h *Handler) cacheGet(ctx context.Context, key string) ([]byte, string, bool) {
+	if h.devMode {
+		return nil, "", false
+	}
+	return h.cache.Get(ctx, key)
 }
 
 // serveCached writes a cache hit: a 304 when the request's If-None-Match matches
