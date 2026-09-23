@@ -76,6 +76,44 @@ A result that sets none of them is a bare status, and a `nil` result is a 204.
 An action's response is never cached, whatever the page it rendered was declared as.
 It was produced from one submission and belongs to whoever sent it.
 
+## Redirect or render? Failure renders, success redirects
+
+Both work. `Page` is not only for failures — a successful submission can perfectly
+well answer with the page it was sent from, carrying "thanks, we have your message":
+
+```go
+rc.Set("sent", true)
+return collage.RenderPage(contactPage), nil
+```
+
+What decides between them is not the framework but the browser. Answering a POST with
+a page leaves the address bar on the URL that was posted to, and the history entry a
+POST — so reloading submits the form again, behind a dialog most people click
+through. Answering with a 303 makes the browser's next request a `GET` of somewhere
+else, and reloading *that* is free.
+
+Which gives a rule that is about what the two outcomes mean rather than about
+mechanics:
+
+**A refused submission renders the page.** The reader is going to fix it and send it
+again, so resubmission is the intended next step rather than a hazard — and rendering
+is what puts the reason and what they typed back in front of them. Answer 422, not
+200: the request was understood and not acted on.
+
+**An accepted submission redirects.** The work is done, and a reload must not do it
+twice. Send the reader somewhere that can say so:
+
+```go
+return collage.SeeOther("/contact/thanks"), nil
+```
+
+`examples/magazine` does both — its newsletter form answers 303 on success and 422
+with the page on failure — so each shape is visible next to the other.
+
+The exception is a submission that changed nothing and can be repeated harmlessly: a
+search, a filter, a preview. Those are usually a `GET` anyway, and a `Fragment` is a
+better answer than either.
+
 ## Invalidating what the change made wrong
 
 ```go
