@@ -1,0 +1,6 @@
+<header class="page-head">
+  <p class="kicker">404</p>
+  <h1>{{if eq .Locale "tr"}}Bu yazı bulunamadı{{else}}That piece could not be found{{end}}</h1>
+  <p class="standfirst">{{if eq .Locale "tr"}}Yazı taşınmış ya da adresteki tarih yanlış olabilir.{{else}}It may have moved, or the date in the address may be wrong.{{end}}</p>
+  <p><a href="{{.URL.Search}}">{{if eq .Locale "tr"}}Arşivde ara{{else}}Search the archive{{end}}</a></p>
+</header>

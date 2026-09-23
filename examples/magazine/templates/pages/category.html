@@ -1,0 +1,8 @@
+<header class="page-head">
+  <p class="kicker">{{if eq .Locale "tr"}}Bölüm{{else}}Section{{end}}</p>
+  <h1>{{.Heading}}</h1>
+  <p class="standfirst">{{.Standfirst}}</p>
+  <p class="count">{{.Listing.Total}} {{if eq .Locale "tr"}}yazı{{else}}articles{{end}}</p>
+</header>
+{{template "partials/cards.html" .}}
+{{template "partials/pager.html" .}}

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log/slog"
 	"slices"
 	"time"
@@ -15,7 +16,8 @@ import (
 // range 1..65535.
 var ErrInvalidPort = errors.New("collage: invalid port")
 
-// ErrEmptyTemplateRoot is returned when Config.Template.Root is empty.
+// ErrEmptyTemplateRoot is returned when Config.Template names no template source:
+// Root is empty and FS is nil.
 var ErrEmptyTemplateRoot = errors.New("collage: empty template root")
 
 // ErrInvalidCacheType is returned when Config.Cache.Enabled is true and
@@ -91,7 +93,25 @@ type ServerConfig struct {
 
 // TemplateConfig configures template loading and rendering.
 type TemplateConfig struct {
-	// Root is the directory templates are loaded from. Defaults to "./templates".
+	// FS, when non-nil, is the filesystem templates are loaded from, and Root names
+	// a directory within it rather than on disk. Embedding templates this way is
+	// what lets a binary run from any working directory:
+	//
+	//	//go:embed templates
+	//	var templates embed.FS
+	//
+	//	collage.New(collage.Config{Template: collage.TemplateConfig{
+	//		FS:   templates,
+	//		Root: "templates",
+	//	}})
+	//
+	// DevMode has no useful effect on an embedded filesystem, whose contents are
+	// fixed at build time: reloading reparses identical bytes on every request.
+	FS fs.FS
+	// Root is the directory templates are loaded from, and is stripped from every
+	// template name. It is a path on disk when FS is nil, defaulting to
+	// "./templates", and a slash-separated path within FS otherwise, where an empty
+	// value means the root of FS itself.
 	Root string
 	// Funcs adds template functions to, and may override entries of, the
 	// framework's built-in function map (slot, safeHTML, safeURL, dict, default,
@@ -240,7 +260,11 @@ func (c *Config) ApplyDefaults() {
 		c.Server.ShutdownTimeout = 10 * time.Second
 	}
 
-	if c.Template.Root == "" {
+	// Only for the disk mode. "./templates" is relative to the working directory,
+	// so defaulting it into an FS-backed config would send the loader looking for a
+	// "templates" subdirectory inside the embedded filesystem that the caller never
+	// asked for.
+	if c.Template.Root == "" && c.Template.FS == nil {
 		c.Template.Root = "./templates"
 	}
 	if c.Template.Extension == "" {
@@ -285,7 +309,7 @@ func (c *Config) Validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("%w: %d", ErrInvalidPort, c.Server.Port)
 	}
-	if c.Template.Root == "" {
+	if c.Template.Root == "" && c.Template.FS == nil {
 		return ErrEmptyTemplateRoot
 	}
 	if c.Cache.Enabled && c.Cache.Store == nil {

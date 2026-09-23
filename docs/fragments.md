@@ -20,6 +20,38 @@ templates/
 A fragment that names a template the engine did not load is rejected at
 `RegisterPage`, not at the first request.
 
+### Where the templates come from
+
+`Root` on its own is a directory on disk, resolved against the process's working
+directory. That is what you want in development, where `DevMode` reparses from
+disk on every request and a markup change shows up without a rebuild.
+
+Set `FS` and `Root` becomes a directory *within* that filesystem instead, which
+is how a binary carries its own templates and runs from anywhere:
+
+```go
+//go:embed templates
+var templates embed.FS
+
+Template: collage.TemplateConfig{
+	FS:        templates,
+	Root:      "templates",
+	Extension: ".html",
+}
+```
+
+`Root` is still stripped from every template name, which is exactly what makes
+it the right knob here: `embed.FS` names each file by its path in the source
+tree, so without it every template would be called
+`templates/pages/home.html`. An empty `Root` alongside an `FS` means the root of
+that filesystem. `DevMode` has no useful effect on an embedded filesystem, whose
+contents are fixed at build time.
+
+With `Root` alone, templates are read through `os.OpenRoot`, so a symlink whose
+target leaves the root is refused by the kernel during path resolution. A
+symlink resolving *inside* the root loads normally — containment refuses what
+leaves the root, not symlinks as such.
+
 ## Building a fragment
 
 ```go

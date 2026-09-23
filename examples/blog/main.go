@@ -19,6 +19,9 @@
 //   - "/static/" as a mounted asset file system, served from an embed.FS with
 //     Range support and its own Cache-Control, outside the page cache entirely.
 //
+// Both its templates and its static files are embedded, so the binary carries
+// everything it serves and runs from any working directory.
+//
 // It imports nothing but the standard library and
 // github.com/Elagoht/collage/pkg/collage. If this program ever needed an
 // internal/ import, that would be a hole in the framework's public surface
@@ -27,17 +30,32 @@ package main
 
 import (
 	"context"
+	"embed"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
-// templateRoot is the directory the example's templates are loaded from,
-// relative to this directory — which is both where "go run ." starts and where
-// "go test" runs, so the same value serves the server and the test.
+// templatesFS holds the example's templates. Embedding them is what makes
+// "go run github.com/Elagoht/collage/examples/blog" work from any directory: a
+// Root on its own is a path resolved against the working directory, so a
+// disk-backed example only runs from the one place its templates sit.
+//
+// A real application often wants the opposite trade in development — templates
+// on disk, so a markup change shows up on the next request without a rebuild.
+// That is Root without FS, together with DevMode.
+//
+//go:embed templates
+var templatesFS embed.FS
+
+// templateRoot is the directory within templatesFS the templates are loaded
+// from. embed.FS names every file by its path in the source tree, so without
+// stripping this prefix every template would be named "templates/pages/home.html"
+// rather than "pages/home.html".
 const templateRoot = "templates"
 
 // site is the metadata the shared layout renders with. A real application would
@@ -102,7 +120,7 @@ func main() {
 	port := flag.Int("port", 3000, "port to listen on; pick another if 3000 is taken")
 	flag.Parse()
 
-	app, _, err := newBlog(templateRoot, *host, *port)
+	app, _, err := newBlog(templatesFS, *host, *port)
 	if err != nil {
 		log.Fatalf("blog: %v", err)
 	}
@@ -115,22 +133,23 @@ func main() {
 	}
 }
 
-// newBlog builds the whole application over templateRoot and returns it
-// alongside the store it serves from, ready for ListenAndServe or for an
-// httptest server.
+// newBlog builds the whole application over the templates in templates and
+// returns it alongside the store it serves from, ready for ListenAndServe or for
+// an httptest server.
 //
 // Nothing here is deferred to the first request: an unparseable template, a
 // fragment naming a template that does not exist, a page referencing an error
 // page that was never registered — every one of those is reported from this
 // function, at startup, by design.
-func newBlog(root, host string, port int) (*collage.App, *PostStore, error) {
+func newBlog(templates fs.FS, host string, port int) (*collage.App, *PostStore, error) {
 	app, err := collage.New(&collage.Config{
 		Server: collage.ServerConfig{
 			Host: host,
 			Port: port,
 		},
 		Template: collage.TemplateConfig{
-			Root:      root,
+			FS:        templates,
+			Root:      templateRoot,
 			Extension: ".html",
 		},
 		Cache: collage.CacheConfig{

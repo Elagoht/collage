@@ -335,6 +335,7 @@ func toCoreConfig(cfg *Config) core.Config {
 			ShutdownTimeout: cfg.Server.ShutdownTimeout,
 		},
 		Template: core.TemplateConfig{
+			FS:        cfg.Template.FS,
 			Root:      cfg.Template.Root,
 			Extension: cfg.Template.Extension,
 			DevMode:   cfg.Template.DevMode,

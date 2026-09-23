@@ -9,15 +9,24 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
-	"strings"
 	"sync"
 )
 
 // HTMLConfig configures an HTMLEngine.
 type HTMLConfig struct {
-	// Root is the directory templates are loaded from.
+	// FS, when non-nil, is the filesystem templates are loaded from, and Root is
+	// interpreted as a directory *within* it rather than as a path on disk. This is
+	// what lets a binary embed its templates with //go:embed and run from any
+	// working directory. When FS is nil, templates are loaded from the disk
+	// directory named by Root.
+	FS fs.FS
+	// Root is the directory templates are loaded from: a path on disk when FS is
+	// nil, otherwise a slash-separated path within FS. Template names are relative
+	// to it, so Root is stripped from every name. When FS is non-nil, an empty Root
+	// means the root of FS itself.
 	Root string
 	// Extension is the file extension, including the leading dot (e.g. ".html"),
 	// that identifies template files under Root. Files with any other extension are
@@ -125,8 +134,7 @@ func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path stri
 }
 
 // Reload discards the current template set and reparses every template under
-// cfg.Root from disk. It is safe to call concurrently with Render and
-// RenderWithFuncs.
+// cfg.Root. It is safe to call concurrently with Render and RenderWithFuncs.
 //
 // Two overlapping Reload calls (e.g. two concurrent DevMode renders) may finish in
 // either order; whichever pointer swap happens last under e.mu wins, even if it was
@@ -135,59 +143,46 @@ func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path stri
 // not a data race — e.mu still makes every read/write of e.tmpl/e.names safe — and
 // it's deliberately left unserialized: DevMode reloads are frequent and cheap, and
 // the next Render (in DevMode) or the next explicit Reload call corrects it.
+//
+// Reloading is only meaningful for the disk mode. When cfg.FS is an embed.FS its
+// contents are fixed at build time, so a DevMode reload there reparses identical
+// bytes on every request: pure cost, no effect.
 func (e *HTMLEngine) Reload() error {
-	info, err := os.Stat(e.cfg.Root)
-	if err != nil || !info.IsDir() {
-		return fmt.Errorf("%w: %s", ErrTemplateRootMissing, e.cfg.Root)
-	}
-
-	// Resolved once per Reload (not per file) and compared against each file's own
-	// resolved target below, so a symlinked Root itself (e.g. macOS's /tmp ->
-	// /private/tmp) doesn't cause every legitimate template to be rejected.
-	rootResolved, err := filepath.EvalSymlinks(e.cfg.Root)
+	fsys, closeFS, err := e.openRoot()
 	if err != nil {
-		return fmt.Errorf("collage: resolve template root %s: %w", e.cfg.Root, err)
+		return err
 	}
+	defer closeFS()
 
 	funcs := DefaultFuncs()
 	maps.Copy(funcs, e.cfg.Funcs)
 
-	root := template.New("").Funcs(funcs)
+	set := template.New("").Funcs(funcs)
 	var names []string
 
-	walkErr := filepath.WalkDir(e.cfg.Root, func(p string, d fs.DirEntry, err error) error {
+	walkErr := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.IsDir() {
 			return nil
 		}
-		if filepath.Ext(p) != e.cfg.Extension {
+		if path.Ext(p) != e.cfg.Extension {
 			return nil
 		}
 
-		name, err := templateName(e.cfg.Root, p)
+		// p is the template name as-is: fs.WalkDir yields slash-separated paths
+		// relative to the root of fsys, and fsys is already rooted at cfg.Root. No
+		// containment check is needed on the path string, because no path string is
+		// what containment rests on here — see openRoot.
+		content, err := fs.ReadFile(fsys, p)
 		if err != nil {
-			return err
+			return e.readError(p, err)
 		}
-
-		// templateName only checks the walked path string, which WalkDir guarantees
-		// is lexically under Root. That's not enough: p itself may be a symlink
-		// whose target resolves outside Root, and os.ReadFile below follows
-		// symlinks transparently. Re-verify against the resolved target before
-		// reading it.
-		if err := verifyResolvesWithinRoot(rootResolved, p); err != nil {
-			return err
+		if _, err := set.New(p).Parse(string(content)); err != nil {
+			return fmt.Errorf("collage: parse template %s: %w", p, err)
 		}
-
-		content, err := os.ReadFile(p)
-		if err != nil {
-			return fmt.Errorf("collage: read template %s: %w", name, err)
-		}
-		if _, err := root.New(name).Parse(string(content)); err != nil {
-			return fmt.Errorf("collage: parse template %s: %w", name, err)
-		}
-		names = append(names, name)
+		names = append(names, p)
 		return nil
 	})
 	if walkErr != nil {
@@ -197,10 +192,72 @@ func (e *HTMLEngine) Reload() error {
 	sort.Strings(names)
 
 	e.mu.Lock()
-	e.tmpl = root
+	e.tmpl = set
 	e.names = names
 	e.mu.Unlock()
 	return nil
+}
+
+// openRoot returns the filesystem to load templates from, rooted at cfg.Root, along
+// with a function that releases it. Both modes are reduced to one fs.FS here so that
+// Reload has a single walk to maintain rather than one per source.
+//
+// The disk mode goes through os.OpenRoot, which makes containment a kernel
+// guarantee: an open that would leave the root is refused by the OS during path
+// resolution. That is strictly stronger than resolving symlinks in Go and comparing
+// the result against the root as strings, which is what this used to do — that check
+// had to be correct about every symlink in every path segment to hold, and had to
+// re-derive at every read what the kernel already knows. Note that os.DirFS would
+// NOT do: it is explicitly not a security boundary and follows a symlink out of the
+// directory without complaint.
+//
+// A symlink whose target stays inside the root still resolves normally. Containment
+// refuses what leaves the root, not symlinks as such.
+func (e *HTMLEngine) openRoot() (fs.FS, func(), error) {
+	if e.cfg.FS == nil {
+		root, err := os.OpenRoot(e.cfg.Root)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: %s", ErrTemplateRootMissing, e.cfg.Root)
+		}
+		return root.FS(), func() { root.Close() }, nil
+	}
+
+	// An fs.FS has no symlinks and no absolute paths, so subdirectory selection is
+	// all that is left to do: fs.ValidPath already excludes "..", and fs.Sub cannot
+	// return a filesystem wider than the one it was given.
+	sub := path.Clean(filepath.ToSlash(e.cfg.Root))
+	if sub == "" || sub == "." {
+		return e.cfg.FS, func() {}, nil
+	}
+	fsys, err := fs.Sub(e.cfg.FS, sub)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %s", ErrTemplateRootMissing, e.cfg.Root)
+	}
+	// fs.Sub does not check that the subdirectory exists, so a typo in Root would
+	// otherwise surface as "no templates loaded" rather than as a missing root.
+	if info, err := fs.Stat(fsys, "."); err != nil || !info.IsDir() {
+		return nil, nil, fmt.Errorf("%w: %s", ErrTemplateRootMissing, e.cfg.Root)
+	}
+	return fsys, func() {}, nil
+}
+
+// readError classifies a failed template read.
+//
+// os.OpenRoot refuses a symlink whose target leaves the root, but the error it
+// returns wraps an unexported value that matches no exported sentinel, so there is
+// nothing to test it against without comparing error strings. The escape is
+// therefore re-identified here, on the failure path only, to restore the
+// ErrTemplateEscapesRoot the caller expects. This lstat carries no security weight:
+// the kernel already refused the open, and this only decides which error explains
+// the refusal. In FS mode there is nothing to lstat, since an fs.FS has no symlinks.
+func (e *HTMLEngine) readError(name string, err error) error {
+	if e.cfg.FS == nil {
+		info, lerr := os.Lstat(filepath.Join(e.cfg.Root, filepath.FromSlash(name)))
+		if lerr == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%w: %s: %v", ErrTemplateEscapesRoot, name, err)
+		}
+	}
+	return fmt.Errorf("collage: read template %s: %w", name, err)
 }
 
 // Names returns every loaded template path, sorted.
@@ -210,42 +267,4 @@ func (e *HTMLEngine) Names() []string {
 	names := make([]string, len(e.names))
 	copy(names, e.names)
 	return names
-}
-
-// templateName resolves path (a file found under root) to its template name: a
-// slash-separated path relative to root, produced with filepath.ToSlash so behaviour
-// is identical on macOS and Windows. It returns ErrTemplateEscapesRoot if path does
-// not resolve to a location inside root.
-func templateName(root, path string) (string, error) {
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return "", fmt.Errorf("%w: %s", ErrTemplateEscapesRoot, path)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("%w: %s", ErrTemplateEscapesRoot, path)
-	}
-	return filepath.ToSlash(rel), nil
-}
-
-// verifyResolvesWithinRoot follows any symlinks in path and confirms the resolved
-// location still falls inside rootResolved, which must already be symlink-resolved
-// (see Reload). This closes the gap templateName's lexical check cannot see: path
-// can be lexically under Root while being a symlink whose target is not, and
-// os.ReadFile follows that symlink transparently. Containment is decided with
-// filepath.Rel rather than a string prefix check, so a sibling directory that merely
-// shares Root as a string prefix (e.g. "/root" vs "/rootsibling") is not mistaken
-// for being inside it.
-func verifyResolvesWithinRoot(rootResolved, path string) error {
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return fmt.Errorf("%w: %s: %v", ErrTemplateEscapesRoot, path, err)
-	}
-	rel, err := filepath.Rel(rootResolved, resolved)
-	if err != nil {
-		return fmt.Errorf("%w: %s", ErrTemplateEscapesRoot, path)
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("%w: %s", ErrTemplateEscapesRoot, path)
-	}
-	return nil
 }

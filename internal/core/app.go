@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	htmltemplate "html/template"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"net"
@@ -151,7 +152,11 @@ type ServerConfig struct {
 
 // TemplateConfig is internal/core's mirror of pkg/collage.TemplateConfig.
 type TemplateConfig struct {
-	// Root is the directory templates are loaded from.
+	// FS, when non-nil, is the filesystem templates are loaded from, and Root names
+	// a directory within it rather than on disk.
+	FS fs.FS
+	// Root is the directory templates are loaded from: a path on disk when FS is
+	// nil, otherwise a path within FS, where empty means the root of FS.
 	Root string
 	// Extension is the file extension that identifies template files under Root.
 	Extension string
@@ -347,7 +352,7 @@ type App struct {
 // Everything is constructed here, once: New never starts a goroutine and never
 // touches the network, so building an App is safe in a test.
 func New(cfg Config) (*App, error) {
-	if cfg.Template.Root == "" {
+	if cfg.Template.Root == "" && cfg.Template.FS == nil {
 		return nil, ErrEmptyTemplateRoot
 	}
 	if cfg.Template.Extension == "" {
@@ -370,6 +375,7 @@ func New(cfg Config) (*App, error) {
 	}
 
 	tmpl, err := template.NewHTML(template.HTMLConfig{
+		FS:        cfg.Template.FS,
 		Root:      cfg.Template.Root,
 		Extension: cfg.Template.Extension,
 		DevMode:   devMode,

@@ -222,7 +222,7 @@ client.
 | `collage.ErrAmbiguousParameterName` | Two parameter names at one position |
 | `collage.ErrRedirectShadowsPage` | A redirect source that is also a page or document path |
 | `collage.ErrUnsubstitutedPlaceholder` | A redirect destination placeholder the source does not capture |
-| `collage.ErrTemplateRootMissing` | `New`: `Template.Root` does not exist |
+| `collage.ErrTemplateRootMissing` | `New`: `Template.Root` does not exist, on disk or within `Template.FS` |
 
 Every one of them is matchable with `errors.Is`, and the wrapped message names the
 page or document, the pattern, and the locale. A document adds a few of its own —

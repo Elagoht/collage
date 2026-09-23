@@ -1,0 +1,7 @@
+{{if gt .Listing.TotalPages 1}}
+<nav class="pager" aria-label="Pagination">
+  {{if .Listing.HasPrev}}<a rel="prev" href="{{.Pager.Page .Listing.PrevPage}}">← {{if eq .Locale "tr"}}Önceki{{else}}Previous{{end}}</a>{{else}}<span class="disabled">← {{if eq .Locale "tr"}}Önceki{{else}}Previous{{end}}</span>{{end}}
+  <span class="position">{{.Listing.Page}} / {{.Listing.TotalPages}}</span>
+  {{if .Listing.HasNext}}<a rel="next" href="{{.Pager.Page .Listing.NextPage}}">{{if eq .Locale "tr"}}Sonraki{{else}}Next{{end}} →</a>{{else}}<span class="disabled">{{if eq .Locale "tr"}}Sonraki{{else}}Next{{end}} →</span>{{end}}
+</nav>
+{{end}}

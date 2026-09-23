@@ -1,0 +1,18 @@
+{{if .Listing.Items}}
+<ul class="cards">
+  {{range .Listing.Items}}
+  <li class="card">
+    <p class="kicker"><a href="{{$.URL.Category .Category}}">{{.Category}}</a></p>
+    <h2><a href="{{$.URL.Article .}}">{{.Title}}</a></h2>
+    <p class="dek">{{.Dek}}</p>
+    <p class="byline">
+      <a href="{{$.URL.Author .Author}}">{{.Author}}</a> ·
+      <time datetime="{{formatTime .PublishedAt "2006-01-02"}}">{{formatTime .PublishedAt "2 January 2006"}}</time> ·
+      {{.ReadMinutes}} min
+    </p>
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<p class="empty">{{if eq .Locale "tr"}}Burada henüz bir şey yok.{{else}}Nothing here yet.{{end}}</p>
+{{end}}

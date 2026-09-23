@@ -4,16 +4,20 @@ This is the advanced example from collage's specification, implemented for real.
 It serves actual requests, and `main_test.go` is the framework's end-to-end test.
 
 ```
-cd examples/blog && go run .     # serves on http://localhost:3000
-cd examples/blog && go run . -port 8099   # if 3000 is taken
-go test ./examples/blog          # the end-to-end test, from anywhere
+go run ./examples/blog             # serves on http://localhost:3000
+go run ./examples/blog -port 8099  # if 3000 is taken
+go test ./examples/blog            # the end-to-end test
 ```
 
-Run it from **this directory**, not from the repository root: the templates are
-loaded from the relative path `templates`, so the process's working directory has
-to be the one holding them. `-host` and `-port` override the defaults; the test
-needs neither, because it drives `app.Handler()` through `httptest` and never
-binds a port.
+Every one of those works from any directory. Both the templates and the static
+files are embedded with `//go:embed`, so the binary carries everything it serves
+and resolves no path against the working directory. `-host` and `-port` override
+the defaults; the test needs neither, because it drives `app.Handler()` through
+`httptest` and never binds a port.
+
+The server logs `collage: listening` with the bound address once the port is
+actually open. Nothing is printed before that, so a bind failure cannot be
+mistaken for a running server.
 
 It imports nothing but the standard library and
 `github.com/Elagoht/collage/pkg/collage`. That is a deliberate constraint: if the
