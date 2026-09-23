@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -75,6 +76,23 @@ type MatchResult struct {
 	IsNotFound bool
 }
 
+// ClaimedPath is one URL path pattern the router answers to, as reported by
+// Router.ClaimedPaths. It exists so a caller outside this package can ask what URL
+// space is already spoken for without enumerating the registries that space was
+// built from — the router is the component that owns the answer, and a caller that
+// rebuilt it from its own registries would be reading a copy that drifts.
+type ClaimedPath struct {
+	// Pattern is a request path pattern the router would answer, spelled the way
+	// a request arrives: locale-prefixed forms are listed separately from the
+	// bare form, because both reach the same route and both are claimed. It is
+	// the pattern as registered, so a dynamic segment still appears as
+	// "{slug}".
+	Pattern string
+	// Owner describes what claims Pattern, ready to drop into an error message:
+	// `page "about"`, `document "sitemap"`, or `redirect from "/old-blog/{slug}"`.
+	Owner string
+}
+
 // Router resolves incoming requests to pages, documents, redirects, or a
 // not-found result, and holds the site's registered not-found and error
 // pages.
@@ -115,6 +133,23 @@ type Router interface {
 	// ErrorPage returns the page registered by RegisterError, or nil if none was
 	// registered.
 	ErrorPage() *types.Page
+	// ClaimedPaths returns every URL path pattern registered with the router, in
+	// registration order: page paths, document paths, and redirect sources
+	// alike, each with a description of what claims it. It is what lets a caller
+	// ask "is this URL space already spoken for?" — internal/core's mount
+	// close-out check is the caller it exists for.
+	//
+	// Every registry is included deliberately. A check that reads only pages and
+	// documents misses redirects, which is how a mount came to silently swallow
+	// a registered Redirect.From with no startup error and a 404 at request
+	// time.
+	//
+	// Each locale-prefixed form of a pattern is listed alongside the bare one
+	// whenever path-locale resolution is enabled, because a request for
+	// "/tr/about" reaches the tr tree's "/about": the URL space a route occupies
+	// includes the prefix a visitor actually types, not only the pattern the
+	// route was registered under.
+	ClaimedPaths() []ClaimedPath
 }
 
 // router is the default Router implementation.
@@ -141,8 +176,24 @@ type router struct {
 	routedPathsByLocale map[string]map[string]string
 	redirectFroms       map[string]*types.Redirect
 
+	// claims records every registration in order, as the pattern was spelled,
+	// so ClaimedPaths can report the URL space this router occupies without
+	// re-deriving it from the maps above — whose keys are normalized ("/blog/{}")
+	// and whose iteration order is random, neither of which belongs in an error
+	// message.
+	claims []claim
+
 	notFoundPage *types.Page
 	errorPage    *types.Page
+}
+
+// claim is one recorded registration: the locale it was registered under (empty
+// for a redirect, which carries no locale), the pattern as written, and the
+// description of what registered it.
+type claim struct {
+	locale  string
+	pattern string
+	owner   string
 }
 
 // New returns a Router that resolves locales according to opts.
@@ -233,7 +284,7 @@ func (rt *router) Register(page *types.Page) error {
 		}
 		target.page = page
 
-		rt.recordRoutedPath(locale, normalized, owner)
+		rt.recordRoutedPath(locale, pattern, normalized, owner)
 	}
 
 	return rt.registerRedirects(page.Name, page.Redirects)
@@ -272,13 +323,18 @@ func (rt *router) checkRedirectShadow(owner, pattern, locale, normalized string)
 // otherwise succeeds. registerRedirect consults this so a redirect registered
 // afterward at the same path is caught too — the "route registered first"
 // half of the shadow check that checkRedirectShadow does not cover.
-func (rt *router) recordRoutedPath(locale, normalized, owner string) {
+// It also records the claim ClaimedPaths reports, keeping the pattern as written
+// rather than its normalized form: normalization exists to make two spellings of
+// one route compare equal, and an error message that says "/blog/{}" instead of
+// "/blog/{slug}" makes the reader hunt for a route that does not exist.
+func (rt *router) recordRoutedPath(locale, pattern, normalized, owner string) {
 	byPath, ok := rt.routedPathsByLocale[locale]
 	if !ok {
 		byPath = make(map[string]string)
 		rt.routedPathsByLocale[locale] = byPath
 	}
 	byPath[normalized] = owner
+	rt.claims = append(rt.claims, claim{locale: locale, pattern: pattern, owner: owner})
 }
 
 // registerRedirect validates and inserts redirect into rt.redirectTree.
@@ -325,8 +381,61 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	target.redirectStatus = redirect.EffectiveStatus()
 	target.redirectCatchAll = catchAll
 	rt.redirectFroms[normalizedFrom] = redirect
+	// Locale is empty: the redirect tree is shared across locales, so this
+	// pattern is claimed under every one of them. ClaimedPaths expands that.
+	rt.claims = append(rt.claims, claim{
+		pattern: redirect.From,
+		owner:   fmt.Sprintf("redirect from %q", redirect.From),
+	})
 
 	return nil
+}
+
+// ClaimedPaths implements Router.
+func (rt *router) ClaimedPaths() []ClaimedPath {
+	pathLocales := rt.pathLocales()
+
+	claimed := make([]ClaimedPath, 0, len(rt.claims)*(1+len(pathLocales)))
+	for _, c := range rt.claims {
+		claimed = append(claimed, ClaimedPath{Pattern: c.pattern, Owner: c.owner})
+
+		if c.locale != "" {
+			// A route: reachable at its own pattern under a locale resolved
+			// from a header, a cookie or the default, and at the one
+			// locale-prefixed form that resolves to its own locale.
+			if slices.Contains(pathLocales, c.locale) {
+				claimed = append(claimed, ClaimedPath{Pattern: localePrefixed(c.locale, c.pattern), Owner: c.owner})
+			}
+			continue
+		}
+
+		// A redirect: matched after the locale prefix is stripped, so every
+		// supported locale's prefix reaches it.
+		for _, locale := range pathLocales {
+			claimed = append(claimed, ClaimedPath{Pattern: localePrefixed(locale, c.pattern), Owner: c.owner})
+		}
+	}
+	return claimed
+}
+
+// pathLocales returns the locales that appear as a URL path prefix, or nil when
+// path-locale resolution is disabled and none of them do.
+func (rt *router) pathLocales() []string {
+	if rt.localeOptions.DisablePathLocale {
+		return nil
+	}
+	return rt.localeOptions.supportedLocales()
+}
+
+// localePrefixed returns the URL a request carrying locale's path prefix uses to
+// reach pattern. Root is the one case worth spelling out: resolveLocale maps
+// "/tr" — with no trailing segment — onto the pattern "/", so the prefixed form of
+// "/" is "/tr" and not "/tr/".
+func localePrefixed(locale, pattern string) string {
+	if pattern == "/" {
+		return "/" + locale
+	}
+	return "/" + locale + pattern
 }
 
 // RegisterNotFound implements Router.

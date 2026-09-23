@@ -156,6 +156,11 @@ func (s *stubRouter) NotFoundPage() *types.Page { return s.notFound }
 // ErrorPage returns the stored global error page.
 func (s *stubRouter) ErrorPage() *types.Page { return s.errorPage }
 
+// ClaimedPaths returns nothing: the stub registers no route, and nothing in this
+// package consults claimed paths — internal/core's mount close-out check is the
+// only caller.
+func (s *stubRouter) ClaimedPaths() []router.ClaimedPath { return nil }
+
 // plainCache wraps a Cache so that it does NOT satisfy cache.TaggedCache, forcing
 // the handler down its Set path. It exists to prove that tags still reach the
 // tracker when the cache cannot store them itself.
@@ -1398,6 +1403,9 @@ var _ router.Router = (*panickingRouter)(nil)
 func (p *panickingRouter) Match(*http.Request) (*router.MatchResult, error) {
 	panic("router exploded")
 }
+
+// ClaimedPaths returns nothing; see stubRouter.ClaimedPaths.
+func (p *panickingRouter) ClaimedPaths() []router.ClaimedPath { return nil }
 
 // TestStaticPageDoesNotExpireAtTheDefaultTTL is the I3 regression. StrategyStatic is
 // documented as "render once and serve until explicitly invalidated", but Static()

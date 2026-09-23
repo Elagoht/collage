@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -700,4 +701,89 @@ func TestRouter_RedirectShadowsPage_IgnoresPlaceholderNames(t *testing.T) {
 			{From: "/blog/{rest...}", To: "/archive"},
 		}))
 	})
+}
+
+// TestClaimedPathsReportsEveryRegistry pins what ClaimedPaths exists to answer:
+// the whole URL space this router occupies, from all three registries and in the
+// spelling a request arrives in. internal/core's mount close-out check reads
+// nothing else, so a registry missing here is a registry a mount can silently
+// swallow.
+func TestClaimedPathsReportsEveryRegistry(t *testing.T) {
+	rt := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr"}})
+
+	page := &types.Page{
+		Name:      "about",
+		Paths:     map[string]string{"en": "/about", "tr": "/hakkinda"},
+		Redirects: []*types.Redirect{{From: "/old-about", To: "/about"}},
+	}
+	if err := rt.Register(page); err != nil {
+		t.Fatalf("Register() = %v, want nil", err)
+	}
+	doc := &types.Document{
+		Name:        "sitemap",
+		ContentType: "application/xml",
+		Paths:       map[string]string{"en": "/sitemap.xml"},
+		Handler: func(context.Context, *types.RenderContext) ([]byte, []string, error) {
+			return []byte("<urlset/>"), nil, nil
+		},
+	}
+	if err := rt.RegisterDocument(doc); err != nil {
+		t.Fatalf("RegisterDocument() = %v, want nil", err)
+	}
+
+	byPattern := make(map[string]string)
+	for _, claimed := range rt.ClaimedPaths() {
+		byPattern[claimed.Pattern] = claimed.Owner
+	}
+
+	for pattern, wantOwner := range map[string]string{
+		// The bare patterns, reachable when the locale resolves from a header,
+		// a cookie, or the default.
+		"/about":       `page "about"`,
+		"/hakkinda":    `page "about"`,
+		"/sitemap.xml": `document "sitemap"`,
+		"/old-about":   `redirect from "/old-about"`,
+		// The locale-prefixed forms, which are the URLs a visitor types. A
+		// route's prefix is its own locale's; a redirect is matched after the
+		// prefix is stripped, so every supported locale reaches it.
+		"/en/about":       `page "about"`,
+		"/tr/hakkinda":    `page "about"`,
+		"/en/sitemap.xml": `document "sitemap"`,
+		"/en/old-about":   `redirect from "/old-about"`,
+		"/tr/old-about":   `redirect from "/old-about"`,
+	} {
+		owner, ok := byPattern[pattern]
+		if !ok {
+			t.Errorf("ClaimedPaths() omits %q", pattern)
+			continue
+		}
+		if owner != wantOwner {
+			t.Errorf("ClaimedPaths()[%q] owner = %q, want %q", pattern, owner, wantOwner)
+		}
+	}
+
+	// A locale a route was not registered under claims nothing: "/tr/about" is
+	// not a URL this router answers, and reporting it would make a mount at
+	// "/tr/" fail for a page that does not live there.
+	if owner, ok := byPattern["/tr/about"]; ok {
+		t.Errorf("ClaimedPaths() reports %q (owner %q); the tr tree holds /hakkinda, not /about", "/tr/about", owner)
+	}
+}
+
+// TestClaimedPathsOmitsLocalePrefixesWhenPathLocaleIsDisabled proves the prefixed
+// forms are reported because they are reachable, not unconditionally: with path
+// locale resolution off, "/tr/about" reaches nothing and must not be claimed.
+func TestClaimedPathsOmitsLocalePrefixesWhenPathLocaleIsDisabled(t *testing.T) {
+	rt := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr"}, DisablePathLocale: true})
+
+	page := &types.Page{Name: "about", Paths: map[string]string{"tr": "/about"}}
+	if err := rt.Register(page); err != nil {
+		t.Fatalf("Register() = %v, want nil", err)
+	}
+
+	for _, claimed := range rt.ClaimedPaths() {
+		if claimed.Pattern != "/about" {
+			t.Errorf("ClaimedPaths() reports %q with path-locale resolution disabled; only %q is reachable", claimed.Pattern, "/about")
+		}
+	}
 }

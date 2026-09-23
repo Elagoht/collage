@@ -37,7 +37,7 @@ func (rt *router) RegisterDocument(doc *types.Document) error {
 		}
 		target.document = doc
 
-		rt.recordRoutedPath(locale, normalized, owner)
+		rt.recordRoutedPath(locale, pattern, normalized, owner)
 	}
 
 	return rt.registerRedirects(doc.Name, doc.Redirects)
