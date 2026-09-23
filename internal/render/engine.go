@@ -199,10 +199,18 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	span.SetAttribute("locale", rc.Locale)
 	rc = rc.WithContext(ctx)
 
-	state := &renderState{page: rc.Page.Name, tags: make(map[string]struct{})}
+	state := &renderState{
+		page:       rc.Page.Name,
+		tags:       make(map[string]struct{}),
+		hoistToken: newHoistToken(),
+	}
 
 	start := time.Now()
 	html, err := e.renderFragment(rc, root, state)
+	// Resolved on the finished tree, so a declaration made anywhere below a marker
+	// still reaches it — which is the whole reason a marker is written rather than
+	// the content itself.
+	html = resolveHoists(html, state.hoistToken, rc.Hoisted())
 	total := time.Since(start)
 
 	// Reported whether or not the render succeeded: a render that failed still

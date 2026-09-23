@@ -35,8 +35,17 @@ func DefaultFuncs() template.FuncMap {
 		"lower":      strings.ToLower,
 		"title":      title,
 		"join":       join,
+		"hoist":      hoistPlaceholder,
 		"formatTime": formatTime,
 	}
+}
+
+// hoistPlaceholder is the parse-time stand-in for "hoist", for the same reason
+// slotPlaceholder exists: html/template can only call a name that was in the
+// FuncMap at parse time, and the real implementation is bound per render. If this
+// one runs, a template used {{hoist}} outside a render that bound it.
+func hoistPlaceholder(area string) (template.HTML, error) {
+	return "", fmt.Errorf("%w: %q", ErrHoistOutsideRender, area)
 }
 
 // slotPlaceholder is the parse-time stand-in for "slot". It is never meant to run: a

@@ -23,6 +23,11 @@ var ErrTemplateEscapesRoot = errors.New("collage: template escapes root")
 // path that does not match any loaded template.
 var ErrTemplateNotFound = errors.New("collage: template not found")
 
+// ErrHoistOutsideRender is returned by the placeholder "hoist" template function
+// when it is invoked outside a render that has bound a real implementation. It
+// signals a stray {{hoist "area"}} rather than silently writing nothing.
+var ErrHoistOutsideRender = errors.New("collage: hoist called outside render")
+
 // ErrSlotOutsideRender is returned by the placeholder "slot" template function when
 // it is invoked outside a render that has bound a real slot implementation. It
 // signals a stray {{slot "name"}} rather than producing a nil-map panic.

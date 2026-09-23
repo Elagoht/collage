@@ -39,6 +39,10 @@ type renderState struct {
 	// descendants' time from its own template execution. Each fragment replaces its
 	// descendants' contribution with its own on the way out.
 	childTotal time.Duration
+	// hoistToken is the per-render marker token, so {{hoist}} writes a placeholder
+	// no other render could produce — including one carried in content a page is
+	// rendering.
+	hoistToken string
 	// notFound is set once, at the required fragment whose own attempt first
 	// failed with an error satisfying errors.Is(err, types.ErrNotFound). It is
 	// never reset: the render either fails for this reason or it does not, and
@@ -123,6 +127,15 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 	defer span.End()
 	span.SetAttribute("fragment", f.Name)
 	rc = rc.WithContext(ctx)
+
+	// Depth is maintained here rather than derived, because a data handler calls
+	// Hoist while this fragment is rendering and has no other way to know how deep
+	// it is. Restored on the way out, so a sibling that renders next is not told it
+	// is a child of the one that just finished.
+	hoisted := rc.Hoisted()
+	previousDepth := hoisted.Depth()
+	hoisted.SetDepth(len(state.stack))
+	defer hoisted.SetDepth(previousDepth)
 
 	// The metadata slot is reserved on entry so parents appear before the children
 	// that render inside them, and filled in once the outcome is known.
@@ -254,6 +267,7 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 		"slot": func(name string) (htmltemplate.HTML, error) {
 			return e.renderSlot(rc, f, name, state)
 		},
+		"hoist": hoistFunc(state.hoistToken),
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 
 func TestDefaultFuncs_HasAllDocumentedNames(t *testing.T) {
 	want := []string{
-		"slot", "safeHTML", "safeURL", "dict", "default",
+		"slot", "hoist", "safeHTML", "safeURL", "dict", "default",
 		"upper", "lower", "title", "join", "formatTime",
 	}
 	funcs := DefaultFuncs()

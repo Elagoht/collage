@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"html/template"
 	"net/http"
 )
 
@@ -22,6 +23,10 @@ type RenderContext struct {
 	// ctx is the underlying context for cancellation, deadlines, and request-scoped
 	// values. It is unexported; use Context and WithContext to read and derive it.
 	ctx context.Context
+	// hoisted collects what this render's fragments declare for the page. It is
+	// shared by every fragment in one render, which is what WithContext's shallow
+	// copy preserves.
+	hoisted *Hoisted
 }
 
 // NewRenderContext builds a RenderContext for one render. It copies params into a
@@ -43,6 +48,7 @@ func NewRenderContext(ctx context.Context, req *http.Request, page *Page, locale
 		Page:       page,
 		SharedData: make(map[string]any), // any: fragments exchange arbitrary values
 		ctx:        ctx,
+		hoisted:    NewHoisted(),
 	}
 }
 
@@ -80,3 +86,32 @@ func (rc *RenderContext) Set(key string, value any) { // any: SharedData values 
 	}
 	rc.SharedData[key] = value
 }
+
+// Hoist declares html for the page's area, under key.
+//
+// It is how a fragment contributes something that belongs to the page rather than
+// to itself — a stylesheet, a title, a preload hint — without knowing where in the
+// document it will land. The layout decides that with {{hoist "area"}}.
+//
+//	rc.Hoist("head", "css:/static/gallery.css",
+//		`<link rel="stylesheet" href="/static/gallery.css">`)
+//
+// The key is what makes one declaration the same as another. Distinct keys all
+// appear, in the order they were first declared; the same key declared twice keeps
+// the innermost one, because that is what specificity looks like in a fragment
+// tree. A layout naming a default title and an article naming its own are not in
+// conflict — the article is more specific, and wins.
+//
+// html is inserted without escaping, exactly as the caller wrote it. That is the
+// point of the mechanism and the responsibility that comes with it: build it from
+// values you control, or escape them yourself.
+//
+// Call it from a data handler, synchronously. A handler that hoists from a
+// goroutine of its own is outside the single-walker guarantee this relies on.
+func (rc *RenderContext) Hoist(area, key string, html template.HTML) {
+	rc.hoisted.Add(area, key, rc.hoisted.Depth(), html)
+}
+
+// Hoisted returns this render's collector. It is how the render engine reads what
+// was declared and maintains the current depth; an application uses Hoist.
+func (rc *RenderContext) Hoisted() *Hoisted { return rc.hoisted }

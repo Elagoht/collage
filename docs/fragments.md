@@ -340,3 +340,67 @@ error message.
 
 It does not hot-reload Go code. A change to your `.go` files still needs a
 restart.
+
+## Hoisting
+
+A fragment often needs something that belongs to the page rather than to itself: the
+stylesheet it uses, the title it is the subject of, a preload hint for its own
+image. It cannot write those where they go, because it does not know where that is —
+and by the time it renders, the layout has already written its `<head>`.
+
+So it declares, and the layout decides where declarations land:
+
+```go
+// in a fragment's data handler
+rc.Hoist("head", "css:/static/gallery.css",
+	`<link rel="stylesheet" href="/static/gallery.css">`)
+```
+
+```html
+<!-- in the layout -->
+<head>
+  {{hoist "head"}}
+</head>
+```
+
+`{{hoist}}` writes a marker rather than content, because nothing below it has
+rendered yet. The engine replaces the marker once the whole tree is finished, so a
+declaration made anywhere below still reaches it. One pass; the layout keeps
+deciding the position.
+
+### The key decides what counts as the same thing
+
+Distinct keys all appear, in the order they were first declared. The same key
+declared twice keeps **the innermost declaration**, because that is what specificity
+looks like in a fragment tree:
+
+```go
+// layout: a default
+rc.Hoist("head", "title", `<title>The Wire</title>`)
+
+// article content, nested inside it: more specific, and wins
+rc.Hoist("head", "title", `<title>Seawalls Buy Time — The Wire</title>`)
+```
+
+That one rule covers both jobs. Stylesheets get a key per href, so they accumulate
+and deduplicate. A title gets one key, so it overrides. Nothing has to be declared
+as "a set" or "a single value".
+
+Two details worth knowing rather than discovering:
+
+- **Position comes from the first declaration, not the winning one.** Otherwise a
+  page's `<head>` would reorder itself depending on whether something nested
+  happened to override a title.
+- **At equal depth, the later declaration wins.** Two siblings writing one key is a
+  real conflict with no specificity to settle it, so the rule is arbitrary — stated
+  here rather than found out.
+
+### What it does not escape
+
+`Hoist` inserts what you give it, exactly as written. That is the point of the
+mechanism and the responsibility that comes with it: build the markup from values
+you control, or escape them yourself.
+
+Call it from a data handler, synchronously. The collector relies on the same
+single-walker guarantee the rest of the render does, and a handler hoisting from a
+goroutine of its own is outside it.
