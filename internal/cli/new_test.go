@@ -222,11 +222,15 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	// failing: the sign-up page carries a form, a form needs a server to post
 	// to, and a page that says Dynamic() is not part of a static build.
 	buildOut := runIn(goBin, "run", ".", "-collage-build", "-out", "dist")
-	if !strings.Contains(buildOut, "build complete, 3 file(s) written") {
+	if !strings.Contains(buildOut, "3 files written") {
 		t.Fatalf("build output = %q, want it to report three files written", buildOut)
 	}
-	if !strings.Contains(buildOut, "skip signup") {
-		t.Errorf("build output = %q, want it to skip the form page and say why", buildOut)
+	if !strings.Contains(buildOut, "1 page skipped") || !strings.Contains(buildOut, "signup") {
+		t.Errorf("build output = %q, want it to name the skipped form page", buildOut)
+	}
+	// The last line is the one people read, so it has to carry the counts.
+	if !strings.Contains(buildOut, "3 written · 1 skipped · 0 failed") {
+		t.Errorf("build output = %q, want a summary line carrying every count", buildOut)
 	}
 
 	stylesheetPath := filepath.Join(target, "dist", "static", "app.css")

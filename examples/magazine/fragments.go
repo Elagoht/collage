@@ -53,7 +53,7 @@ type deps struct {
 // built, which is the one order that works: a page's own action is declared while
 // the page is being built, and cannot refer to the finished page yet.
 type sitePages struct {
-	home *collage.Page
+	newsletter *collage.Page
 }
 
 // translate maps a newsroom error onto the framework's.
@@ -221,16 +221,6 @@ func (d *deps) homeData(ctx context.Context, rc *collage.RenderContext) (*view, 
 	d.hoistTitle(rc, v.Heading, v.Standfirst)
 	v.Pager = pager{Path: v.URL.Home()}
 
-	// Whatever the newsletter action left for this render. On an ordinary page
-	// view there is nothing there, which is the same code path.
-	if reason, ok := rc.Get("newsletter:error"); ok {
-		v.NewsletterError, _ = reason.(string) // any: SharedData's value type is the framework's
-	}
-	if typed, ok := rc.Get("newsletter:email"); ok {
-		v.NewsletterEmail, _ = typed.(string) // any: SharedData's value type is the framework's
-	}
-	v.Subscribed = rc.Request != nil && rc.Request.URL.Query().Get("subscribed") == "1"
-
 	return v, []string{"articles"}, nil
 }
 
@@ -370,5 +360,28 @@ func (d *deps) searchData(ctx context.Context, rc *collage.RenderContext) (*view
 	d.hoistTitle(rc, v.Query+" — "+v.Heading, v.Standfirst)
 	// No dependency tags: the search page is Dynamic, so nothing caches it and
 	// there is nothing for an invalidation to reach.
+	return v, nil, nil
+}
+
+// newsletterData fetches what the newsletter page renders with, including whatever
+// the action left behind after a refused submission.
+func (d *deps) newsletterData(ctx context.Context, rc *collage.RenderContext) (*view, []string, error) {
+	v := d.base(rc)
+	v.Heading = localized(rc.Locale, "The newsletter", "Bülten")
+	v.Standfirst = localized(rc.Locale,
+		"One email a week, and nothing else.",
+		"Haftada bir e-posta, başka hiçbir şey.")
+	d.hoistTitle(rc, v.Heading, v.Standfirst)
+
+	// On an ordinary page view there is nothing here, which is the same code path
+	// as a refused submission.
+	if reason, ok := rc.Get("newsletter:error"); ok {
+		v.NewsletterError, _ = reason.(string) // any: SharedData's value type is the framework's
+	}
+	if typed, ok := rc.Get("newsletter:email"); ok {
+		v.NewsletterEmail, _ = typed.(string) // any: SharedData's value type is the framework's
+	}
+	v.Subscribed = rc.Request != nil && rc.Request.URL.Query().Get("subscribed") == "1"
+
 	return v, nil, nil
 }

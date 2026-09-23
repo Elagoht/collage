@@ -62,7 +62,7 @@ func (d *deps) subscribe(ctx context.Context, rc *collage.RenderContext) (*colla
 	if reason := invalidAddress(address); reason != "" {
 		rc.Set("newsletter:error", reason)
 		rc.Set("newsletter:email", address)
-		result := collage.RenderPage(d.pages.home)
+		result := collage.RenderPage(d.pages.newsletter)
 		result.Status = 422
 		return result, nil
 	}
@@ -71,7 +71,7 @@ func (d *deps) subscribe(ctx context.Context, rc *collage.RenderContext) (*colla
 
 	// Where the reader lands, not where they were. A GET of the home page with a
 	// marker the page reads, so the reload that follows is a plain page view.
-	return collage.SeeOther("/?subscribed=1"), nil
+	return collage.SeeOther("/newsletter?subscribed=1"), nil
 }
 
 // invalidAddress returns why address cannot be subscribed, or the empty string.

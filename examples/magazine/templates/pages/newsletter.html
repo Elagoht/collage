@@ -1,0 +1,23 @@
+<header class="page-head">
+  <h1>{{.Heading}}</h1>
+  <p class="standfirst">{{.Standfirst}}</p>
+</header>
+
+<section class="newsletter">
+  {{/* The two outcomes the action produces. A failure re-rendered this page and
+       left its reason in the render context; a success redirected here with a
+       marker in the query. */}}
+  {{with .NewsletterError}}<p class="form-error" role="alert">{{.}}</p>{{end}}
+  {{if .Subscribed}}<p class="form-ok">{{if eq $.Locale "tr"}}Teşekkürler, kaydınız alındı.{{else}}Thanks — you are on the list.{{end}}</p>{{end}}
+
+  {{/* No action attribute: the form posts to the page it is on. */}}
+  <form method="post">
+    {{/* Renders the whole hidden input, field name and all. Without it this form
+         is refused with a 403, which is the point. */}}
+    {{csrfToken}}
+    <label for="newsletter-email">{{if eq $.Locale "tr"}}E-posta{{else}}Email{{end}}</label>
+    <input id="newsletter-email" type="email" name="email" value="{{.NewsletterEmail}}"
+           autocomplete="email" required>
+    <button type="submit">{{if eq $.Locale "tr"}}Abone ol{{else}}Subscribe{{end}}</button>
+  </form>
+</section>

@@ -15,6 +15,37 @@ collage help [command]
 Exit codes: `0` on success, `2` for a usage error (no command, an unknown
 command, a malformed plugin command), `1` for a command that parsed but failed.
 
+## Reading a build's output
+
+`collage.PrintBuildReport` writes what a build did, and what it writes is shaped
+around the thing that is easy to miss:
+
+```
+✓ 3 files written
+    dist/index.html
+    dist/static/app.css
+    dist/static/app.41014ebb.css
+
+▲ 1 page skipped
+    signup  page uses the dynamic render strategy, which cannot be built statically
+
+3 written · 1 skipped · 0 failed · 2.4ms
+```
+
+Written files are summarised — ten of them, then a count, because a build that wrote
+three hundred must not bury the one it skipped. Skips and failures are never
+truncated: a skip is the build telling you a page is not in its output, and that is
+what a build is for saying. The last line carries every count and is coloured by the
+worst of them, so it answers "how did that go" without being read.
+
+Colour and the ✓ ▲ ✗ markers appear only on a terminal, and not when `NO_COLOR` is
+set or `TERM` is `dumb`. Piped to a file or a CI log it is plain ASCII, because
+escape codes in a log outlive the session that wrote them.
+
+A scaffolded project calls it, and so does `examples/magazine` — the one place in
+that program that prints rather than logs, because a build is a command somebody ran
+and is watching.
+
 ## What `collage new` gives you
 
 Two pages, and the difference between them is the lesson:

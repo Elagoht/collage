@@ -41,6 +41,10 @@
   <p>{{.Site.Tagline}}</p>
   <p class="colophon">
     {{if eq .Locale "tr"}}collage ile sunuluyor{{else}}Served with collage{{end}} ·
+    {{/* A link rather than the form itself. A form needs a server to post to, so
+         a page carrying one cannot be part of a static build — and every page
+         renders this layout. */}}
+    <a href="{{if eq .Locale "tr"}}/tr/bulten{{else}}/newsletter{{end}}">{{if eq .Locale "tr"}}Bülten{{else}}Newsletter{{end}}</a> ·
     <a href="/rss.xml">RSS</a> · <a href="/sitemap.xml">Sitemap</a>
   </p>
 </footer>

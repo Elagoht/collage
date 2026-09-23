@@ -296,6 +296,8 @@ func TestSite_EveryRouteAnswers(t *testing.T) {
 		{"/robots.txt", 200, "text/plain"},
 		{"/healthz", 200, "application/json"},
 		{"/static/magazine.css", 200, "text/css"},
+		{"/newsletter", 200, "text/html"},
+		{"/tr/bulten", 200, "text/html"},
 		{"/category/no-such-category", 404, "text/html"},
 		{"/nothing/here/at-all", 404, "text/html"},
 	} {
@@ -927,7 +929,7 @@ func token(t *testing.T, body string) string {
 
 func submit(t *testing.T, site http.Handler, form url.Values, cookies []*http.Cookie) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req := httptest.NewRequest(http.MethodPost, "/newsletter", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	for _, c := range cookies {
 		req.AddCookie(c)
@@ -943,7 +945,7 @@ func TestSite_NewsletterAcceptsAValidAddress(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	page, body := request(t, site, "/")
+	page, body := request(t, site, "/newsletter")
 	csrfToken := token(t, body)
 
 	rec := submit(t, site, url.Values{"_csrf": {csrfToken}, "email": {"reader@example.com"}},
@@ -963,7 +965,7 @@ func TestSite_NewsletterRefusesAnInvalidAddress(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	page, body := request(t, site, "/")
+	page, body := request(t, site, "/newsletter")
 	csrfToken := token(t, body)
 
 	rec := submit(t, site, url.Values{"_csrf": {csrfToken}, "email": {"not-an-address"}},
@@ -993,21 +995,21 @@ func TestSite_NewsletterRefusesASubmissionWithNoToken(t *testing.T) {
 	}
 }
 
-// Two readers are handed two tokens, and the page behind them is still cached: one
-// render, two tokens. Without that, a form in a page's footer turns caching off.
-func TestSite_TwoReadersGetTwoTokensFromOneCachedPage(t *testing.T) {
-	b, api := newBackend(t)
+// Two readers are handed two different tokens.
+//
+// The property that the body behind those tokens is cacheable belongs to the
+// framework and is tested there (internal/httpx). What this checks is the part a
+// site can get wrong on its own: that two readers are never given one token, which
+// would be a token anybody obtains by visiting.
+func TestSite_TwoReadersGetTwoTokens(t *testing.T) {
+	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	_, first := request(t, site, "/")
-	hitsAfterFirst := b.hits.Load()
-	_, second := request(t, site, "/")
+	_, first := request(t, site, "/newsletter")
+	_, second := request(t, site, "/newsletter")
 
 	if token(t, first) == token(t, second) {
 		t.Error("two readers were handed one token")
-	}
-	if b.hits.Load() != hitsAfterFirst {
-		t.Error("the second read went to the backend; the page behind the token is not being cached")
 	}
 }
 
@@ -1040,17 +1042,23 @@ func TestSite_UnsupportedMethodsAreRefused(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	req := httptest.NewRequest(http.MethodDelete, "/", nil)
-	rec := httptest.NewRecorder()
-	site.ServeHTTP(rec, req)
+	// The newsletter page answers POST, because its form does; the home page does
+	// not, and a DELETE reaches neither.
+	for path, want := range map[string][]string{
+		"/":           {"GET", "HEAD", "OPTIONS"},
+		"/newsletter": {"GET", "HEAD", "OPTIONS", "POST"},
+	} {
+		rec := httptest.NewRecorder()
+		site.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, path, nil))
 
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status = %d, want 405", rec.Code)
-	}
-	allow := rec.Header().Get("Allow")
-	for _, want := range []string{"GET", "HEAD", "OPTIONS", "POST"} {
-		if !strings.Contains(allow, want) {
-			t.Errorf("Allow = %q, want it to contain %s", allow, want)
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("DELETE %s = %d, want 405", path, rec.Code)
+		}
+		allow := rec.Header().Get("Allow")
+		for _, method := range want {
+			if !strings.Contains(allow, method) {
+				t.Errorf("DELETE %s Allow = %q, want it to contain %s", path, allow, method)
+			}
 		}
 	}
 }

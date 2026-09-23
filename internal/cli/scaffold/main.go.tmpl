@@ -168,7 +168,8 @@ func envInt(key string, fallback int) int {
 }
 
 // staticBuild renders every statically-buildable page to files under outDir,
-// removing outDir's existing contents first when clean is set.
+// removing outDir's existing contents first when clean is set, and prints what
+// happened.
 //
 // This calls straight through to collage.NewBuilder — collage's own static
 // builder — rather than reimplementing any part of it. That matters beyond
@@ -187,21 +188,17 @@ func staticBuild(app *collage.App, outDir string, clean bool) error {
 	}
 
 	report, buildErr := builder.Build(context.Background())
+
 	// report is populated even when buildErr is not nil: Build records every
 	// individual failure in report.Errors and joins them into buildErr, so it
 	// is worth printing either way.
-	for _, path := range report.Written {
-		fmt.Println("@@NAME@@: wrote", path)
-	}
-	for _, skip := range report.Skipped {
-		if skip.Locale != "" {
-			fmt.Printf("@@NAME@@: skip %s (%s): %s\n", skip.Page, skip.Locale, skip.Reason)
-			continue
-		}
-		fmt.Printf("@@NAME@@: skip %s: %s\n", skip.Page, skip.Reason)
-	}
-	fmt.Printf("@@NAME@@: build complete, %d file(s) written, %d skipped, took %s\n",
-		len(report.Written), len(report.Skipped), report.Duration)
+	//
+	// PrintBuildReport rather than a loop of our own: it summarises the files
+	// written, names every page that was skipped and every one that failed, and
+	// colours the last line by the worst of the three — on a terminal, and in
+	// plain ASCII anywhere else. A flat list of everything written is what
+	// hides the one page that did not build.
+	collage.PrintBuildReport(os.Stdout, report, buildErr)
 
 	return buildErr
 }

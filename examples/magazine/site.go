@@ -195,9 +195,6 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 			WithDataHandler(bind(d.homeData)).
 			Required().
 			Build()).
-		// The newsletter form posts to the page it is on, which is what an HTML
-		// form does by default. Nothing else needs a URL.
-		WithAction("POST", d.subscribe).
 		WithPath("en", "/").
 		WithPath("tr", "/").
 		// Only the page number changes what this renders. Without saying so, every
@@ -301,11 +298,35 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 	// articleNotFound and the other error pages must be registered in their own
 	// right: a referenced-but-unregistered error page never has its content bound
 	// into its layout, so it would render empty at the one moment it is needed.
-	// The action that re-renders the home page on a validation failure needs the
-	// finished page, which does not exist while the page is being built.
-	d.pages.home = home
+	// The newsletter has a page of its own rather than sitting on the home page,
+	// and the reason is worth stating: a form needs a server to post to, so a page
+	// carrying one cannot be part of a static build. The home page is built —
+	// it is the site's front door — so the form lives somewhere that is not.
+	//
+	// It is also the right shape for a form that appears site-wide. A form in a
+	// footer is not about the page it happens to be on, and answering a failed
+	// submission by re-rendering "whichever page they were reading" is a question
+	// with no good answer.
+	newsletter := collage.NewPage("newsletter").
+		WithLayout(layout).
+		WithContent(collage.NewFragment("newsletter-content", "pages/newsletter.html").
+			WithDataHandler(bind(d.newsletterData)).
+			Required().
+			Build()).
+		WithPath("en", "/newsletter").
+		WithPath("tr", "/bulten").
+		WithNotFoundPage(notFound).
+		WithErrorPage(serverError).
+		Dynamic().
+		WithAction("POST", d.subscribe).
+		Build()
 
-	for _, page := range []*collage.Page{home, category, author, article, search, notFound, articleNotFound, serverError} {
+	// The action re-renders this page on a validation failure, and needs the
+	// finished page — registration is what binds a page's content into its
+	// layout, so a page built on the spot would render an empty layout.
+	d.pages.newsletter = newsletter
+
+	for _, page := range []*collage.Page{home, category, author, article, search, newsletter, notFound, articleNotFound, serverError} {
 		if err := app.RegisterPage(page); err != nil {
 			return nil, nil, fmt.Errorf("register page %q: %w", page.Name, err)
 		}
