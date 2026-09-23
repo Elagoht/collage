@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"path"
+	"strconv"
 	"strings"
 )
 
@@ -155,13 +156,29 @@ func (m *Mount) resolve(urlPath string) (string, bool) {
 // plainText writes an error body matching the framework's document error surface:
 // never HTML, so a client fetching a stylesheet or a media file is not handed a
 // web page.
+//
+// It is deliberately a second implementation of internal/httpx's writePlainText
+// rather than a shared one: this package does not import internal/httpx, and
+// inverting that to share four header writes would couple the asset layer to the
+// HTTP handler for no gain. The cost of that decision is that the two can drift,
+// and they had — this one omitted the Content-Length its counterpart sets. They
+// are aligned again here, header for header. Anything added to one belongs in
+// the other; that is the price the duplication was priced at.
 func plainText(w http.ResponseWriter, r *http.Request, status int) {
 	body := http.StatusText(status) + "\n"
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	header := w.Header()
+	header.Set("Content-Type", "text/plain; charset=utf-8")
+	header.Set("Cache-Control", "no-store")
+	header.Set("X-Content-Type-Options", "nosniff")
+	header.Set("Content-Length", strconv.Itoa(len(body)))
 	w.WriteHeader(status)
+
 	if r.Method != http.MethodHead {
-		w.Write([]byte(body))
+		// The error is deliberately unchecked, matching writePlainText: the
+		// status line and headers are already on the wire, so there is nothing
+		// left to tell the client, and a client that hung up mid-body is not a
+		// server fault worth logging.
+		_, _ = w.Write([]byte(body))
 	}
 }

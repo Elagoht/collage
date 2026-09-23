@@ -142,10 +142,13 @@ a panic in a data handler is: it becomes an ordinary error carrying the recovere
 value and the stack, so the request fails rather than the process.
 
 A document handler has no per-document `Timeout` field — `Fragment` has one,
-`Document` does not — so it runs under the engine's default timeout. As
-everywhere else in the framework, that bounds the *context* the handler is given,
-not the handler itself: a handler that never consults `ctx.Done()` can still run
-past its deadline.
+`Document` does not — so it runs under **`Config.Template.Timeout`** (5s by
+default), the same knob that sets the default fragment data-handler timeout. For
+a fragment that field is a default something can override; for a document it is
+the entire budget, so raising it for one slow fragment raises it for every
+sitemap and feed too. As everywhere else in the framework, it bounds the
+*context* the handler is given, not the handler itself: a handler that never
+consults `ctx.Done()` can still run past its deadline.
 
 ## Errors are plain text, never HTML
 

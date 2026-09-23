@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -274,5 +275,33 @@ func TestMount_BarePrefix_ReturnsPlainText404(t *testing.T) {
 	}
 	if !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
 		t.Fatalf("Content-Type = %q, want text/plain — bare prefix must be plain-text, not HTML", rec.Header().Get("Content-Type"))
+	}
+}
+
+// TestMount_PlainTextErrorCarriesTheSameHeadersAsADocumentError pins M6. This
+// package writes its own plain-text error rather than importing internal/httpx's,
+// which is a deliberate duplication — and the first bill it came due on was a
+// missing Content-Length that internal/httpx's writePlainText has always set. The
+// two writers are aligned header for header, and this test is what keeps them
+// that way from this side.
+func TestMount_PlainTextErrorCarriesTheSameHeadersAsADocumentError(t *testing.T) {
+	m := mustMount(t)
+	rec := httptest.NewRecorder()
+	m.ServeHTTP(rec, httptest.NewRequest("GET", "/static/nope.css", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+
+	body := rec.Body.String()
+	for header, want := range map[string]string{
+		"Content-Type":           "text/plain; charset=utf-8",
+		"Cache-Control":          "no-store",
+		"X-Content-Type-Options": "nosniff",
+		"Content-Length":         strconv.Itoa(len(body)),
+	} {
+		if got := rec.Header().Get(header); got != want {
+			t.Errorf("%s = %q, want %q", header, got, want)
+		}
 	}
 }
