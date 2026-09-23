@@ -465,6 +465,16 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 	restrictLocales := len(allowedLocales) > 0
 
 	for _, page := range b.app.Pages() {
+		// A page with no path is not a URL, so there is nothing to export it as.
+		// That is every error page — a not-found page, a server-error page —
+		// which are reached by failing rather than by matching, and reporting
+		// each of them as skipped every build says nothing anyone can act on.
+		//
+		// The not-found page is in the output all the same, as 404.html; see
+		// writeNotFoundPages.
+		if len(page.Paths) == 0 {
+			continue
+		}
 		if !page.Strategy.Cacheable() {
 			skipped = append(skipped, SkipRecord{
 				Page:   page.Name,

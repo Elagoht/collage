@@ -222,8 +222,8 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	// failing: the sign-up page carries a form, a form needs a server to post
 	// to, and a page that says Dynamic() is not part of a static build.
 	buildOut := runIn(goBin, "run", ".", "-collage-build", "-out", "dist")
-	if !strings.Contains(buildOut, "3 files written") {
-		t.Fatalf("build output = %q, want it to report three files written", buildOut)
+	if !strings.Contains(buildOut, "4 files written") {
+		t.Fatalf("build output = %q, want it to report four files written", buildOut)
 	}
 	// Two skips, and naming them is the point: the form page, because a form needs
 	// a server to post to, and the health check, because what it reports is this
@@ -231,13 +231,21 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	if !strings.Contains(buildOut, "2 pages skipped") {
 		t.Errorf("build output = %q, want it to count the skips", buildOut)
 	}
+	// The not-found page is in the output as 404.html, so reporting it as
+	// skipped would be saying the opposite of what happened.
+	if strings.Contains(buildOut, "not-found") {
+		t.Errorf("build output = %q, want the not-found page not reported as skipped", buildOut)
+	}
+	if !strings.Contains(buildOut, "404.html") {
+		t.Errorf("build output = %q, want it to have written a 404 page", buildOut)
+	}
 	for _, name := range []string{"signup", "health"} {
 		if !strings.Contains(buildOut, name) {
 			t.Errorf("build output = %q, want it to name the skipped %q", buildOut, name)
 		}
 	}
 	// The last line is the one people read, so it has to carry the counts.
-	if !strings.Contains(buildOut, "3 written · 2 skipped · 0 failed") {
+	if !strings.Contains(buildOut, "4 written · 2 skipped · 0 failed") {
 		t.Errorf("build output = %q, want a summary line carrying every count", buildOut)
 	}
 

@@ -131,6 +131,12 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 	if err := app.RegisterDocument(healthDocument()); err != nil {
 		return nil, fmt.Errorf("register health document: %w", err)
 	}
+	// Registered rather than given a path: it is reached by failing to match.
+	// "collage export" writes it as 404.html, which is what a static host
+	// answers an unknown URL with.
+	if err := app.RegisterNotFoundPage(notFoundPage()); err != nil {
+		return nil, fmt.Errorf("register not-found page: %w", err)
+	}
 
 	assets, err := staticFiles(devMode)
 	if err != nil {

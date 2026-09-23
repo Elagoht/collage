@@ -204,6 +204,31 @@ func (s *store) add(address string) {
 }
 
 // ---------------------------------------------------------------------------
+// The not-found page
+// ---------------------------------------------------------------------------
+
+// notFoundPage is served when a request resolves to nothing.
+//
+// It is registered with RegisterNotFoundPage rather than given a path of its own:
+// it is reached by failing to match, not by matching. A static export writes it
+// as 404.html — one per locale — which is the file a static host answers an
+// unknown URL with. Without one, that answer comes from the host: somebody
+// else's page, in somebody else's language, with no way back to this site.
+//
+// Dynamic, because a 404 is never worth caching. The export writes it anyway:
+// whether a page is worth caching and whether it belongs in an export are
+// different questions.
+func notFoundPage() *collage.Page {
+	content := collage.NewFragment("not-found-content", "pages/404.html").Build()
+
+	return collage.NewPage("not-found").
+		WithLayout(layout()).
+		WithContent(content).
+		Dynamic().
+		Build()
+}
+
+// ---------------------------------------------------------------------------
 // Operations
 // ---------------------------------------------------------------------------
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.4.1
+
+- `collage new` scaffolds a not-found page, so a new project's export has a
+  `404.html` rather than leaving an unknown URL to whatever the host shows.
+- A build no longer reports pathless pages as skipped. Every error page is one —
+  they are reached by failing rather than by matching — and naming each of them
+  every build said nothing anyone could act on, while the not-found page among them
+  *was* in the output, as `404.html`.
+
 ## v0.4.0
 
 ### Breaking

@@ -169,3 +169,16 @@ func TestHealthCheck(t *testing.T) {
 		t.Errorf("Content-Type = %q, want application/json", ct)
 	}
 }
+
+// An address that is nothing answers 404 with this site's own page, not the
+// browser's idea of one. A static export writes the same page as 404.html.
+func TestNotFoundPage(t *testing.T) {
+	rec, body := get(t, handler(t), "/there-is-nothing-here")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if !strings.Contains(body, "There is nothing at this address") {
+		t.Errorf("body = %q, want this site's own not-found page", body)
+	}
+}
