@@ -3,12 +3,14 @@ package template
 import (
 	"bytes"
 	"context"
+	"embed"
 	"errors"
 	"html/template"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/fstest"
 )
 
 func TestNewHTML_LoadsAndNamesTemplates(t *testing.T) {
@@ -181,18 +183,34 @@ func TestHTMLEngine_NonDevMode_DoesNotReloadUntilExplicit(t *testing.T) {
 	}
 }
 
-func TestHTMLEngine_RootEscape(t *testing.T) {
-	// filepath.WalkDir never yields a path lexically outside the root it was given
-	// (it does not follow symlinked directories), so templateName's lexical check
-	// can't be exercised end-to-end through NewHTML/Reload with an ordinary
-	// filesystem layout. It is still a real check Reload applies to every walked
-	// path, so it is unit-tested directly here. The other half of the boundary — a
-	// file that is lexically inside Root but a symlink to somewhere that isn't — is
-	// exercised end-to-end in TestHTMLEngine_RootEscape_SymlinkedFile below.
+func TestHTMLEngine_SymlinkInsideRootIsLoaded(t *testing.T) {
+	// The containment check must refuse only what leaves the root. A symlink whose
+	// target is another file *inside* the root is legitimate — a shared partial
+	// linked into two trees, a checked-out theme — and must still load. This is the
+	// regression guard for a containment fix that over-corrects into rejecting every
+	// symlink rather than every escaping one.
 	root := t.TempDir()
-	_, err := templateName(root, filepath.Join(filepath.Dir(root), "outside.html"))
-	if !errors.Is(err, ErrTemplateEscapesRoot) {
-		t.Fatalf("templateName() error = %v, want ErrTemplateEscapesRoot", err)
+	if err := os.Mkdir(filepath.Join(root, "shared"), 0o755); err != nil {
+		t.Fatalf("Mkdir(shared): %v", err)
+	}
+	writeFixture(t, filepath.Join(root, "shared", "banner.html"), "INSIDE")
+
+	link := filepath.Join(root, "linked.html")
+	if err := os.Symlink(filepath.Join("shared", "banner.html"), link); err != nil {
+		t.Skipf("symlink creation not supported on this platform: %v", err)
+	}
+
+	engine, err := NewHTML(HTMLConfig{Root: root, Extension: ".html"})
+	if err != nil {
+		t.Fatalf("NewHTML() error = %v, want success (linked.html resolves inside root)", err)
+	}
+
+	var buf bytes.Buffer
+	if err := engine.Render(context.Background(), &buf, "linked.html", nil); err != nil {
+		t.Fatalf("Render(linked.html) error = %v", err)
+	}
+	if buf.String() != "INSIDE" {
+		t.Errorf("Render(linked.html) = %q, want %q", buf.String(), "INSIDE")
 	}
 }
 
@@ -268,5 +286,97 @@ func writeFixture(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatalf("write fixture %s: %v", path, err)
+	}
+}
+
+// embeddedTemplates is a real embed.FS rather than an fstest.MapFS because embed is
+// the mode that exists to be supported: a binary that carries its templates and runs
+// from any working directory. embed.FS also has quirks a map cannot reproduce — zero
+// ModTime, no symlinks, its own directory synthesis — so testing against it is what
+// proves the loader works for the case it was added for.
+//
+//go:embed testdata/valid
+var embeddedTemplates embed.FS
+
+func TestNewHTML_EmbeddedFS_RootIsSubPath(t *testing.T) {
+	engine, err := NewHTML(HTMLConfig{FS: embeddedTemplates, Root: "testdata/valid", Extension: ".html"})
+	if err != nil {
+		t.Fatalf("NewHTML() error = %v", err)
+	}
+
+	want := []string{"layouts/default.html", "pages/home.html", "partial.html", "slot.html"}
+	got := engine.Names()
+	if len(got) != len(want) {
+		t.Fatalf("Names() = %v, want %v", got, want)
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Errorf("Names()[%d] = %q, want %q (Root must be stripped from template names)", i, got[i], name)
+		}
+	}
+}
+
+func TestNewHTML_EmbeddedFS_RendersWithoutWorkingDirectory(t *testing.T) {
+	// The whole point of the FS mode: no relative path is resolved against the
+	// process working directory, so a chdir cannot break template loading.
+	t.Chdir(t.TempDir())
+
+	engine, err := NewHTML(HTMLConfig{FS: embeddedTemplates, Root: "testdata/valid", Extension: ".html"})
+	if err != nil {
+		t.Fatalf("NewHTML() error = %v", err)
+	}
+
+	var buf bytes.Buffer
+	data := struct{ Heading string }{Heading: "Hello"}
+	if err := engine.Render(context.Background(), &buf, "pages/home.html", data); err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	if want := "<h1>Hello</h1>\n"; buf.String() != want {
+		t.Errorf("Render() output = %q, want %q", buf.String(), want)
+	}
+}
+
+func TestNewHTML_FS_EmptyRootMeansFSRoot(t *testing.T) {
+	fsys := fstest.MapFS{
+		"pages/home.html": &fstest.MapFile{Data: []byte("<h1>{{.Heading}}</h1>\n")},
+		"notes.md":        &fstest.MapFile{Data: []byte("ignored")},
+	}
+
+	engine, err := NewHTML(HTMLConfig{FS: fsys, Extension: ".html"})
+	if err != nil {
+		t.Fatalf("NewHTML() error = %v", err)
+	}
+
+	got := engine.Names()
+	if len(got) != 1 || got[0] != "pages/home.html" {
+		t.Fatalf("Names() = %v, want [pages/home.html] (empty Root means the FS root; .md is not the extension)", got)
+	}
+}
+
+func TestNewHTML_FS_MissingRootSubPath(t *testing.T) {
+	fsys := fstest.MapFS{
+		"pages/home.html": &fstest.MapFile{Data: []byte("<h1>hi</h1>")},
+	}
+
+	_, err := NewHTML(HTMLConfig{FS: fsys, Root: "nonexistent", Extension: ".html"})
+	if !errors.Is(err, ErrTemplateRootMissing) {
+		t.Fatalf("NewHTML() error = %v, want ErrTemplateRootMissing", err)
+	}
+}
+
+func TestNewHTML_FS_TakesPrecedenceOverDiskPath(t *testing.T) {
+	// Root is a path *within* FS when FS is set, never a disk path. A Root that
+	// happens to name a real directory on disk must not be read from disk.
+	fsys := fstest.MapFS{
+		"testdata/valid/only.html": &fstest.MapFile{Data: []byte("FROM FS")},
+	}
+
+	engine, err := NewHTML(HTMLConfig{FS: fsys, Root: "testdata/valid", Extension: ".html"})
+	if err != nil {
+		t.Fatalf("NewHTML() error = %v", err)
+	}
+	got := engine.Names()
+	if len(got) != 1 || got[0] != "only.html" {
+		t.Fatalf("Names() = %v, want [only.html] (disk testdata/valid must not be consulted)", got)
 	}
 }
