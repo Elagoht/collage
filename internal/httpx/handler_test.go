@@ -1857,3 +1857,55 @@ func TestPageRequestUnaffectedByMountsBeingConfigured(t *testing.T) {
 		t.Errorf("HTTPResponse calls = %+v, want one 200 for \"/\"", responses)
 	}
 }
+
+// panickingTracer panics from StartSpan. It is the hostile double for the one
+// tracer call that runs before anything has been written.
+type panickingTracer struct{ observability.NoopTracer }
+
+func (panickingTracer) StartSpan(ctx context.Context, name string) (context.Context, observability.Span) {
+	panic("tracer: start span exploded")
+}
+
+// panickingSpan starts fine and panics when an attribute is set — the other call
+// that runs before the response.
+type panickingSpanTracer struct{ observability.NoopTracer }
+
+func (panickingSpanTracer) StartSpan(ctx context.Context, name string) (context.Context, observability.Span) {
+	return ctx, panickingSpan{}
+}
+
+type panickingSpan struct{ observability.NoopSpan }
+
+func (panickingSpan) SetAttribute(key, value string) { panic("tracer: set attribute exploded") }
+
+func TestHandler_TracerPanicStillServesTheRequest(t *testing.T) {
+	// A tracer that cannot start a span is a reason to serve the page without
+	// tracing, not a reason not to serve it. Unguarded, the panic unwinds into
+	// net/http, which closes the connection with no status line — the caller sees a
+	// network failure rather than a request that was answered.
+	for _, tc := range []struct {
+		name   string
+		tracer observability.Tracer
+	}{
+		{"StartSpan panics", panickingTracer{}},
+		{"SetAttribute panics", panickingSpanTracer{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			page := testPage("home", "/", types.StrategyStatic)
+			env := newEnv(t, []*types.Page{page}, func(d *Deps) { d.Tracer = tc.tracer })
+			env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+			res := env.get("/")
+
+			if res.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 — the request must still be answered", res.Code)
+			}
+			if res.Body.Len() == 0 {
+				t.Error("no body was written")
+			}
+			if env.logs.count("collage: tracer panicked starting the request span") == 0 {
+				t.Error("the tracer panic was swallowed without a log line")
+			}
+		})
+	}
+}

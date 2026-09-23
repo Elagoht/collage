@@ -5,6 +5,7 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -230,16 +231,44 @@ func New(d Deps) (*Handler, error) {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	ctx, span := h.tracer.StartSpan(r.Context(), "collage.http")
+	ctx, span := h.startRequestSpan(r)
 	defer span.End()
-	span.SetAttribute("http.method", r.Method)
-	span.SetAttribute("http.path", r.URL.Path)
 	r = r.WithContext(ctx)
 
 	status := h.serveGuarded(w, r)
 
 	span.SetAttribute("http.status_code", strconv.Itoa(status))
 	h.metrics.HTTPResponse(ctx, status, r.URL.Path, time.Since(start))
+}
+
+// startRequestSpan opens the request's span, containing a panic from an
+// application's Tracer instead of letting it reach net/http.
+//
+// This is the one part of the tracing bracket that runs before anything has been
+// written, so it is the one part where a panic costs the client its response: the
+// connection closes with no status line, and the caller sees what looks like a
+// network failure rather than a bug in its tracer. A tracer that cannot start a
+// span is a reason to serve the page without tracing, not a reason not to serve it.
+//
+// SetAttribute is inside the guard because it runs here too, before the response.
+// When it panics the span is abandoned rather than ended: End would be a third call
+// into a Tracer that has already demonstrated it panics, and the framework has
+// nothing to gain by making it.
+func (h *Handler) startRequestSpan(r *http.Request) (ctx context.Context, span observability.Span) {
+	ctx, span = r.Context(), observability.NoopSpan{}
+
+	defer func() {
+		if rec := recover(); rec != nil {
+			h.logger.Error("collage: tracer panicked starting the request span",
+				"panic", rec, "path", r.URL.Path, "stack", string(debug.Stack()))
+			ctx, span = r.Context(), observability.NoopSpan{}
+		}
+	}()
+
+	ctx, span = h.tracer.StartSpan(r.Context(), "collage.http")
+	span.SetAttribute("http.method", r.Method)
+	span.SetAttribute("http.path", r.URL.Path)
+	return ctx, span
 }
 
 // serveGuarded runs serve and turns a panic escaping it into a 500 on the normal
@@ -254,14 +283,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // dependency Tracker, a Metrics implementation called from serve, an asset mount's
 // fs.FS, and a plugin hook.
 //
-// It does not cover the tracer and metric calls in ServeHTTP itself — StartSpan,
-// SetAttribute, End, and HTTPResponse all run outside this guard, and a panic in
-// any of them still unwinds into net/http. That is deliberate rather than
-// overlooked: those calls bracket the response instead of producing it, so by the
-// time three of the four run there is no status left to write and nothing a 500
-// could add, and moving them inside would mean reporting a failed span through the
-// very Tracer that just panicked. The comment used to claim otherwise, which is the
-// kind of promise a panic guard must not make loosely.
+// It does not cover the span-closing and metric calls in ServeHTTP itself —
+// SetAttribute, End, and HTTPResponse after the response — and a panic in any of
+// them still unwinds into net/http. That is deliberate rather than overlooked:
+// those calls bracket the response instead of producing it, so by the time they run
+// there is no status left to write and nothing a 500 could add, and moving them
+// inside would mean reporting a failed span through the very Tracer that just
+// panicked. The comment used to claim it covered all of them, which is the kind of
+// promise a panic guard must not make loosely.
+//
+// The tracer calls that run *before* the response are a different case and are
+// guarded, by startRequestSpan rather than here: a panic there costs the client its
+// response entirely.
 //
 // The response's content type follows what the request resolved to, not what this
 // frame knows: serve records the resolved route in route, so a panic in an

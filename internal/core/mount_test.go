@@ -285,3 +285,29 @@ func TestMount_RejectsAPrefixShadowingALocalePrefixedPage(t *testing.T) {
 		t.Fatalf("error %q does not name the locale-prefixed URL /tr/about", err)
 	}
 }
+
+// TestMount_RejectsAPrefixShadowingALocaleHomePage is the trailing-slash corner of
+// the same check. A page whose Turkish path is "/" is reached at "/tr/" as well as
+// "/tr" — path-locale resolution maps a single-segment path to "/" — but
+// ClaimedPaths reported only the unslashed form, so strings.HasPrefix("/tr", "/tr/")
+// was false and a mount at "/tr/" was allowed to swallow the Turkish front page.
+func TestMount_RejectsAPrefixShadowingALocaleHomePage(t *testing.T) {
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.Locale.Default = "en"
+		cfg.Locale.Supported = []string{"en", "tr"}
+	})
+
+	page := newHomePage()
+	page.Paths = map[string]string{"en": "/", "tr": "/"}
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if err := app.Mount("/tr/", mountFS()); err != nil {
+		t.Fatalf("Mount: %v", err)
+	}
+
+	err := app.Start()
+	if !errors.Is(err, ErrMountShadowsRoute) {
+		t.Fatalf("Start = %v, want ErrMountShadowsRoute — /tr/ is the Turkish front page", err)
+	}
+}

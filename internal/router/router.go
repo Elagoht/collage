@@ -404,7 +404,9 @@ func (rt *router) ClaimedPaths() []ClaimedPath {
 			// from a header, a cookie or the default, and at the one
 			// locale-prefixed form that resolves to its own locale.
 			if slices.Contains(pathLocales, c.locale) {
-				claimed = append(claimed, ClaimedPath{Pattern: localePrefixed(c.locale, c.pattern), Owner: c.owner})
+				for _, prefixed := range localePrefixed(c.locale, c.pattern) {
+					claimed = append(claimed, ClaimedPath{Pattern: prefixed, Owner: c.owner})
+				}
 			}
 			continue
 		}
@@ -412,7 +414,9 @@ func (rt *router) ClaimedPaths() []ClaimedPath {
 		// A redirect: matched after the locale prefix is stripped, so every
 		// supported locale's prefix reaches it.
 		for _, locale := range pathLocales {
-			claimed = append(claimed, ClaimedPath{Pattern: localePrefixed(locale, c.pattern), Owner: c.owner})
+			for _, prefixed := range localePrefixed(locale, c.pattern) {
+				claimed = append(claimed, ClaimedPath{Pattern: prefixed, Owner: c.owner})
+			}
 		}
 	}
 	return claimed
@@ -431,11 +435,18 @@ func (rt *router) pathLocales() []string {
 // reach pattern. Root is the one case worth spelling out: resolveLocale maps
 // "/tr" — with no trailing segment — onto the pattern "/", so the prefixed form of
 // "/" is "/tr" and not "/tr/".
-func localePrefixed(locale, pattern string) string {
+// localePrefixed returns every URL form under which pattern is reachable in locale.
+//
+// The root pattern has two of them. resolveLocale maps a single-segment path to
+// "/", so a page whose path is "/" answers at both "/tr" and "/tr/". Reporting only
+// the unslashed form let a mount at "/tr/" through the shadow check, because that
+// check is a prefix comparison and "/tr" is not prefixed by "/tr/" — the mount then
+// swallowed the locale's front page without anything noticing at startup.
+func localePrefixed(locale, pattern string) []string {
 	if pattern == "/" {
-		return "/" + locale
+		return []string{"/" + locale, "/" + locale + "/"}
 	}
-	return "/" + locale + pattern
+	return []string{"/" + locale + pattern}
 }
 
 // RegisterNotFound implements Router.
