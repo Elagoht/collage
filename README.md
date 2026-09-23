@@ -119,8 +119,8 @@ mounted stylesheet. It is also the framework's end-to-end test.
 [`examples/magazine`](examples/magazine) puts them together against a backend that
 can be slow and can fail: a news site with per-locale paths, fragments that fall
 back instead of failing, and a search page that is deliberately never cached. It is
-a **separate module** that requires collage the way your project would, so it reads
-as an application rather than as part of the framework. The backend it talks to is
+a **separate module** whose `go.mod` requires collage exactly the way yours would,
+so it reads as an application rather than as part of the framework. The backend it talks to is
 [`examples/newsroom-api`](examples/newsroom-api), which is not a collage program at
 all — it serves JSON and knows nothing about what renders it.
 

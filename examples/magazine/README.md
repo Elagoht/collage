@@ -18,10 +18,16 @@ elsewhere with `go run . -api http://localhost:9000`.
 go test ./...
 ```
 
-The one line in `go.mod` your own project would not have is the `replace` pointing
-at `../..`. The framework has no released tag yet, and an example built against a
-published version would lag the code it demonstrates. You would `go get
-github.com/Elagoht/collage` and require a version instead.
+`go.mod` here is exactly what yours would be — a plain `require`, no `replace`. The
+framework's source is not in this directory and cannot be reached from it: collage
+comes from the module cache like any other dependency, and Go does not let one
+module import another's `internal` packages.
+
+The `go.work` at the repository root is what builds this against the checkout beside
+it rather than the released version, so a change to the framework is exercised here
+immediately. It is a developer's tool and nothing in this module refers to it —
+delete it, or copy this directory somewhere else, and the `require` above resolves
+from the module cache as usual.
 
 `examples/blog` is the other example, and it answers a different question: it shows
 the framework's mechanisms one at a time against an in-process store, and it is the

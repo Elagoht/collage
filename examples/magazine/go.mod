@@ -1,20 +1,16 @@
 // The Wire — a magazine built with collage.
 //
-// This is what an application using the framework looks like from the outside: its
-// own module, its own module path, and collage as an ordinary dependency. Nothing
-// in the site's code is special because it happens to live in the framework's
-// repository.
+// An application that uses the framework: its own module, its own module path, and
+// collage as an ordinary dependency resolved from the module cache like any other.
+// Nothing in this directory is framework source, and nothing here can reach the
+// framework's internal packages — Go does not allow it across modules.
 //
-// The replace below is the one line that is. It points the dependency at the
-// checkout two directories up, so the example is built against the collage you have
-// rather than a published version — the framework has no released tag yet, and an
-// example that lags the code it demonstrates is worse than no example. Your own
-// project would not have it: you would `go get github.com/Elagoht/collage` and
-// require a version.
+// The go.work file at the repository root points this at the checkout beside it
+// while the two are developed together. It is a developer's tool, not part of the
+// project: delete it and this module builds against the released version instead,
+// which is what anyone cloning the example on its own gets.
 module example.com/thewire
 
 go 1.26
 
-require github.com/Elagoht/collage v0.0.0
-
-replace github.com/Elagoht/collage => ../..
+require github.com/Elagoht/collage v0.1.0
