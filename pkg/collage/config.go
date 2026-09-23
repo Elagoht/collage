@@ -10,6 +10,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/observability"
 )
 
@@ -23,6 +24,13 @@ var ErrEmptyTemplateRoot = errors.New("collage: empty template root")
 
 // ErrInvalidCacheType is returned when Config.Cache.Enabled is true and
 // Config.Cache.Type is not a supported cache type.
+// ErrEmptyCacheDir is returned when Cache.Type is "disk" and Cache.Dir is empty.
+var ErrEmptyCacheDir = cache.ErrEmptyCacheDir
+
+// ErrEmptyCacheVersion is returned when Cache.Type is "disk" and Cache.Version is
+// empty. See CacheConfig.Version for why it is required rather than defaulted.
+var ErrEmptyCacheVersion = cache.ErrEmptyCacheVersion
+
 var ErrInvalidCacheType = errors.New("collage: invalid cache type")
 
 // ErrEmptyLocaleDefault is returned when Config.Locale.Default is empty.
@@ -193,6 +201,23 @@ type CacheConfig struct {
 	// (ApplyDefaults sets it to 10000); a negative value means unlimited, and is left
 	// untouched by ApplyDefaults.
 	MaxEntries int
+	// Dir is where a "disk" cache stores its entries. Required for that type.
+	Dir string
+	// Version identifies the build whose rendered output a "disk" cache holds, and
+	// is required for that type. Anything that changes when the output could: a
+	// git commit, a release tag, a build timestamp.
+	//
+	// It exists because a disk cache outlives the process that filled it. Without
+	// it a new binary serves HTML the old one rendered — a changed template, a
+	// changed data handler, and a page nobody can explain. Entries live under a
+	// subdirectory named for a hash of this, so a different version reads a
+	// different directory and finds nothing; there is no check to forget.
+	//
+	// A disk cache is never used in development. Config.DevMode or
+	// Template.DevMode substitutes an in-memory one and says so, because that is
+	// where the output changes between runs and nobody bumps a version to save a
+	// file.
+	Version string
 	// MaxKeysPerTag caps how many cache keys the framework's dependency tracker
 	// records under any one tag. Zero means "use the default" (ApplyDefaults sets
 	// it to 10000); a negative value means unlimited, and is left untouched by
@@ -332,6 +357,13 @@ func (c *Config) Validate() error {
 	if c.Cache.Enabled && c.Cache.Store == nil {
 		switch c.Cache.Type {
 		case "memory":
+		case "disk":
+			if c.Cache.Dir == "" {
+				return ErrEmptyCacheDir
+			}
+			if c.Cache.Version == "" {
+				return ErrEmptyCacheVersion
+			}
 		default:
 			return fmt.Errorf("%w: %q", ErrInvalidCacheType, c.Cache.Type)
 		}

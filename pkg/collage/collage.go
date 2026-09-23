@@ -380,6 +380,8 @@ func toCoreConfig(cfg *Config) core.Config {
 			Type:          cfg.Cache.Type,
 			DefaultTTL:    cfg.Cache.DefaultTTL,
 			MaxEntries:    cfg.Cache.MaxEntries,
+			Dir:           cfg.Cache.Dir,
+			Version:       cfg.Cache.Version,
 			MaxKeysPerTag: cfg.Cache.MaxKeysPerTag,
 		},
 		Locale: core.LocaleConfig{

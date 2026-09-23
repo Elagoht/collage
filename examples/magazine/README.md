@@ -250,6 +250,26 @@ The result needs nothing running behind it. Serving `out/` with any file server 
 `python3 -m http.server` will do — gives the whole site, images included, with the
 API and the collage process both stopped.
 
+## Keeping the cache across restarts
+
+By default everything is rendered again after a restart. Point the site at a
+directory and it is not:
+
+```
+go run . -cache-dir /var/cache/thewire -build-id "$(git rev-parse --short HEAD)"
+```
+
+`-build-id` is required alongside it. A disk cache outlives the process that filled
+it, so without one a new binary would serve the previous build's HTML — entries live
+under a directory named for the id, so changing it starts a fresh cache rather than
+reading a stale one. Verified both ways: the same id restarts without re-rendering
+the article, a different id re-renders it.
+
+The framework substitutes an in-memory cache in dev mode whatever this says, because
+that is where the output changes between runs and no version bump would catch it.
+
+The images have their own disk cache, in the image plugin — see its `cacheDir`.
+
 ## Configuration
 
 Flags, or the environment: `HOST`, `PORT`, `MAGAZINE_API_URL`, `PUBLIC_BASE_URL`,

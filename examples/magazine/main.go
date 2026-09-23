@@ -53,6 +53,8 @@ func main() {
 	apiURL := flag.String("api", env("MAGAZINE_API_URL", "http://localhost:8080"), "newsroom API base URL (env MAGAZINE_API_URL)")
 	publicURL := flag.String("public-url", env("PUBLIC_BASE_URL", ""), "public origin for feed and sitemap links; defaults to http://host:port (env PUBLIC_BASE_URL)")
 	cacheTTL := flag.Duration("cache-ttl", envDuration("CACHE_TTL", 5*time.Minute), "default page cache lifetime (env CACHE_TTL)")
+	cacheDir := flag.String("cache-dir", env("CACHE_DIR", ""), "keep rendered pages here so a restart does not re-render them; empty means memory only (env CACHE_DIR)")
+	buildID := flag.String("build-id", env("BUILD_ID", ""), "identifies this build's rendered output; required with -cache-dir (env BUILD_ID)")
 	logLevel := flag.String("log-level", env("LOG_LEVEL", "info"), "debug, info, warn or error (env LOG_LEVEL)")
 	pluginConfig := flag.String("plugins", env("PLUGINS_CONFIG", "plugins-config.json"), "plugin configuration file; a missing one means every plugin runs on its defaults (env PLUGINS_CONFIG)")
 	buildDir := flag.String("build", "", "render the site to this directory and exit instead of serving")
@@ -88,6 +90,8 @@ func main() {
 		DevMode:       *devMode,
 		Logger:        log,
 		PluginConfig:  plugins,
+		CacheDir:      *cacheDir,
+		BuildID:       *buildID,
 	}
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "http://" + *host + ":" + strconv.Itoa(*port)

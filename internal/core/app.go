@@ -209,6 +209,12 @@ type CacheConfig struct {
 	DefaultTTL time.Duration
 	// MaxEntries caps the number of cache entries.
 	MaxEntries int
+	// Dir is where a "disk" cache stores its entries.
+	Dir string
+	// Version identifies the build whose output a "disk" cache holds. Entries live
+	// under a subdirectory named for it, so a new build reads a fresh cache rather
+	// than the previous binary's HTML.
+	Version string
 	// MaxKeysPerTag caps how many cache keys the dependency tracker records under
 	// any one tag. Zero means "use the default" (defaultMaxKeysPerTag); a negative
 	// value means unlimited. See pkg/collage.CacheConfig.MaxKeysPerTag for what
@@ -456,20 +462,11 @@ func New(cfg Config) (*App, error) {
 	// cache is not silently turned on, because "caching is off" must mean off.
 	var store cache.Cache
 	if cfg.Cache.Enabled {
-		switch {
-		case cfg.Cache.Store != nil:
-			store = cfg.Cache.Store
-		default:
-			switch cfg.Cache.Type {
-			case "", "memory":
-				store = cache.NewMemory(cache.MemoryConfig{
-					DefaultTTL: cfg.Cache.DefaultTTL,
-					MaxEntries: cfg.Cache.MaxEntries,
-				})
-			default:
-				return nil, fmt.Errorf("%w: %q", ErrUnsupportedCache, cfg.Cache.Type)
-			}
+		built, err := buildCache(cfg, devMode, logger)
+		if err != nil {
+			return nil, err
 		}
+		store = built
 	}
 
 	// Bounded before it is ever written to: the tracker is written on every cache

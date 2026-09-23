@@ -398,3 +398,40 @@ a cache on that is an eviction attack with a text field for a trigger. Such a pa
 wants `Dynamic()`.
 
 `DocumentBuilder.WithCacheParams` is the same knob for documents.
+
+## Keeping the cache across restarts
+
+The default cache is in memory, so a restart renders everything again. A disk cache
+keeps it:
+
+```go
+Cache: collage.CacheConfig{
+	Enabled: true,
+	Type:    "disk",
+	Dir:     "/var/cache/mysite",
+	Version: buildID,   // a git commit, a release tag, a build timestamp
+}
+```
+
+`Version` is required, and the reason is the whole design. **A disk cache outlives
+the process that filled it**, so without one a new binary serves HTML the old one
+rendered — a changed template, a changed data handler, and a page nobody can
+explain. Entries live under a subdirectory named for a hash of the version, so a
+different version reads a different directory and finds nothing. There is no check
+to forget and no sweep to schedule; the old directory simply stops being read.
+
+**A disk cache is never used in development.** `Config.DevMode` or
+`Template.DevMode` substitutes an in-memory one and logs that it did. Development is
+exactly where the output changes between runs, and nobody bumps a version to save a
+file — the version guard catches a released build, not a developer.
+
+Each entry is one file: a JSON header line carrying the ETag, the expiry and the
+dependency tags, then the content. Written through a temporary file and a rename, so
+a reader sees either the whole previous entry or the whole new one. There is no
+separate tag index — `Invalidate` reads the headers instead, which costs one small
+read per entry on a call that happens when content is published, and buys having no
+second structure that can disagree with the first or be left behind by a crash.
+
+Keys are hashed before they become filenames. `Cache` is a public interface and a
+caller can store under anything, so no key can name a path, a parent directory, or a
+filename longer than the filesystem accepts.

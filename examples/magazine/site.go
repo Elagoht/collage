@@ -45,6 +45,13 @@ type config struct {
 	DevMode bool
 	// PluginConfig is each plugin's own configuration, keyed by plugin name.
 	PluginConfig map[string]json.RawMessage
+	// CacheDir keeps rendered pages on disk so a restart serves them rather than
+	// rendering them again. Empty means memory only.
+	CacheDir string
+	// BuildID identifies this build's rendered output. Required alongside CacheDir,
+	// because a disk cache outlives the process that filled it and a new binary
+	// must not serve the previous one's HTML.
+	BuildID string
 	// Logger receives the framework's own structured output as well as the site's.
 	Logger *slog.Logger
 }
@@ -86,8 +93,14 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 			Timeout: 6 * time.Second,
 		},
 		Cache: collage.CacheConfig{
-			Enabled:       true,
-			Type:          "memory",
+			Enabled: true,
+			// Disk when a directory is configured, so a restart serves what the
+			// last run rendered. The framework substitutes memory in dev mode
+			// whatever this says, because that is where the output changes between
+			// runs and no version bump would catch it.
+			Type:          cacheType(cfg.CacheDir),
+			Dir:           cfg.CacheDir,
+			Version:       cfg.BuildID,
 			DefaultTTL:    cfg.CacheTTL,
 			MaxEntries:    512,
 			MaxKeysPerTag: 2048,
@@ -316,4 +329,12 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 	}
 
 	return app, client, nil
+}
+
+// cacheType picks the cache implementation from whether a directory was configured.
+func cacheType(dir string) string {
+	if dir == "" {
+		return "memory"
+	}
+	return "disk"
 }

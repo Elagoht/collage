@@ -14,6 +14,8 @@ import (
 
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/types"
+	"os"
+	"time"
 )
 
 // extPlugin is a plugin that uses every capability the extension adds. It is one
@@ -364,5 +366,75 @@ func TestRenderPath_RunsPluginInit(t *testing.T) {
 
 	if p.settings.Greeting != "configured" {
 		t.Errorf("greeting = %q, want %q — the plugin never saw its configuration", p.settings.Greeting, "configured")
+	}
+}
+
+func TestCache_DiskCacheIsNotUsedInDevMode(t *testing.T) {
+	// Development is exactly where the output changes between runs, and nobody
+	// bumps a version to save a file. The version guard catches a released build;
+	// it does not catch a developer, so dev mode substitutes memory outright.
+	dir := t.TempDir()
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.DevMode = true
+		cfg.Cache = CacheConfig{Enabled: true, Type: "disk", Dir: dir, Version: "v1", DefaultTTL: time.Minute}
+	})
+	if err := app.RegisterPage(newHomePage()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if err := app.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if _, err := app.RenderPath(t.Context(), "/", "en", nil); err != nil {
+		t.Fatalf("RenderPath: %v", err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("dev mode wrote %d entries to the disk cache directory", len(entries))
+	}
+}
+
+func TestCache_DiskCacheSurvivesARestart(t *testing.T) {
+	dir := t.TempDir()
+	build := func() *App {
+		app := newTestAppWith(t, defaultTemplates(), func(cfg *Config) {
+			cfg.Cache = CacheConfig{Enabled: true, Type: "disk", Dir: dir, Version: "v1", DefaultTTL: time.Minute}
+		})
+		page := newHomePage()
+		page.Strategy = types.StrategyIncremental
+		page.CacheTTL = time.Minute
+		if err := app.RegisterPage(page); err != nil {
+			t.Fatalf("RegisterPage: %v", err)
+		}
+		return app
+	}
+
+	first := build()
+	rec := httptest.NewRecorder()
+	first.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first request = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("nothing was written to the cache directory (%v)", err)
+	}
+
+	// A second application over the same directory and version: a restart.
+	second := build()
+	rec2 := httptest.NewRecorder()
+	second.Handler().ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second request = %d", rec2.Code)
+	}
+	if rec2.Body.String() != rec.Body.String() {
+		t.Errorf("the restarted application served different bytes")
+	}
+	if got, want := rec2.Header().Get("ETag"), rec.Header().Get("ETag"); got != want {
+		t.Errorf("ETag = %q, want %q — a restart must not change what a client is holding", got, want)
 	}
 }

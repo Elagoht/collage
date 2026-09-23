@@ -323,3 +323,33 @@ func TestConfig_Validate_EmptyRootWithoutFSIsInvalid(t *testing.T) {
 		t.Fatalf("Validate() error = %v, want ErrEmptyTemplateRoot", err)
 	}
 }
+
+func TestConfig_Validate_DiskCacheNeedsADirectoryAndAVersion(t *testing.T) {
+	// A disk cache outlives the process that filled it, so a version is not a
+	// nicety: without one a new binary serves the previous build's HTML. Both are
+	// refused at Validate rather than defaulted, because there is no safe default
+	// for either.
+	base := func() Config {
+		c := Config{Cache: CacheConfig{Enabled: true, Type: "disk"}}
+		c.ApplyDefaults()
+		return c
+	}
+
+	c := base()
+	if err := c.Validate(); !errors.Is(err, ErrEmptyCacheDir) {
+		t.Errorf("Validate() = %v, want ErrEmptyCacheDir", err)
+	}
+
+	c = base()
+	c.Cache.Dir = "/tmp/collage"
+	if err := c.Validate(); !errors.Is(err, ErrEmptyCacheVersion) {
+		t.Errorf("Validate() = %v, want ErrEmptyCacheVersion", err)
+	}
+
+	c = base()
+	c.Cache.Dir = "/tmp/collage"
+	c.Cache.Version = "abc123"
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate() = %v, want nil", err)
+	}
+}
