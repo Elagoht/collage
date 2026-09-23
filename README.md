@@ -14,12 +14,42 @@ whose handler returns bytes — and **assets**, a mounted `fs.FS` served with
 
 No dependencies: the standard library, and nothing else. Go 1.26.
 
-## Install
+## Getting started
+
+Three commands and a site is running.
 
 ```
-go get github.com/Elagoht/collage
-go install github.com/Elagoht/collage/cmd/collage@latest   # optional CLI
+go install github.com/Elagoht/collage/cmd/collage@latest
+
+collage new mysite
+cd mysite && go mod tidy
+go run .
 ```
+
+http://localhost:3000 — two pages, a form, a stylesheet, a health check and six
+tests. `PORT=8080 go run .` moves it. Go 1.26 is the only requirement; `go install`
+puts `collage` in `$(go env GOPATH)/bin`, which is on your `PATH` if you have
+installed any Go tool before.
+
+Then, in that directory:
+
+```
+collage dev      # the same, with templates reloading as you edit them
+go test ./...    # the tests it came with
+collage build    # -> bin/mysite, the binary you deploy
+collage export   # -> dist/, static files, for a site that needs no server
+collage serve    # serves dist/ the way a static host would
+```
+
+Editing `templates/pages/home.html` under `collage dev` and reloading shows the
+change. Editing Go code does not — that still needs a restart.
+
+Where to look next: `home.go` has the two pages, their data handlers and the form's
+action; `main.go` has the configuration and the mount. The rest of this file is what
+those are made of, and [docs/](docs/) is the detail.
+
+**Adding collage to a project you already have** is `go get
+github.com/Elagoht/collage` and the application below.
 
 ## A minimal application
 

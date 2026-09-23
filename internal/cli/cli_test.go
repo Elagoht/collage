@@ -320,3 +320,18 @@ func TestRun_Dev_RejectsExtraArgs(t *testing.T) {
 		t.Error("stderr is empty, want a usage message")
 	}
 }
+
+// The version is read from the build rather than written down. A written-down one
+// is a string somebody has to remember to change, and nobody does: this said 0.1.0
+// through four releases, so anyone who installed the fourth was told they had the
+// first.
+func TestVersion_ComesFromTheBuild(t *testing.T) {
+	if Version == "" {
+		t.Fatal("Version is empty")
+	}
+	// A test binary is built from a working copy, so this is the honest answer
+	// here. What matters is that it is not a literal somebody typed.
+	if Version != "devel" {
+		t.Errorf("Version = %q in a test binary, want %q — it is not being read from the build", Version, "devel")
+	}
+}

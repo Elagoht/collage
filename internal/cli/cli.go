@@ -22,14 +22,33 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/Elagoht/collage/internal/plugin"
 )
 
-// Version is the collage CLI's own version string, printed by "collage
-// version". It identifies this tool, not any project it scaffolds or drives.
-const Version = "0.1.0"
+// Version is the collage CLI's own version string, printed by "collage version".
+// It identifies this tool, not any project it scaffolds or drives.
+//
+// Read from the build rather than written down, because a written-down version is
+// one somebody has to remember to change and nobody does: this said 0.1.0 through
+// four releases, so anyone who installed v0.4.1 was told they had the first one.
+// "go install ...@v0.4.1" records that version in the binary, and this reports what
+// is actually there.
+var Version = buildVersion()
+
+// buildVersion returns the module version this binary was built from, or "devel"
+// for one built from a working copy — which is the honest answer for a binary whose
+// source may be anything at all.
+func buildVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return "devel"
+	}
+	return strings.TrimPrefix(info.Main.Version, "v")
+}
 
 // ErrNoCommand is returned when Run is called with no arguments at all.
 var ErrNoCommand = errors.New("collage: no command given")
