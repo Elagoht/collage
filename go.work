@@ -17,4 +17,5 @@ use (
 	./examples/newsroom-api
 	./plugins/jsonld
 	./plugins/minimizer
+	./plugins/opti-image
 )
