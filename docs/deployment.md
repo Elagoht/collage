@@ -11,7 +11,7 @@ collage build
 `CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w"` — and
 defaults to linux/amd64 rather than this machine, because a binary built on a Mac
 does not run in a Linux container. `collage build -i` also offers to write a
-Dockerfile and a systemd unit beside it. See [the CLI](cli.md).
+Dockerfile and a systemd unit into `bin/` beside it. See [the CLI](cli.md).
 
 There is no `collage start`, and there should not be. It could only shell out to
 `go run .`, which puts the Go toolchain in your production image and compiles at
@@ -27,8 +27,9 @@ A scaffolded project embeds its templates and its static files, so the binary ru
 from any working directory. Nothing has to be copied next to it, and a container
 image can be the binary and nothing else:
 
-`collage build -i` writes this for you; it is here so you can read it before you
-run it.
+`collage build -i` writes this into `bin/`, beside the binary — so the command is
+`docker build -f bin/Dockerfile .`, which the build output prints. It is reproduced
+here so you can read it before you run it.
 
 ```dockerfile
 FROM golang:1.26 AS build

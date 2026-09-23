@@ -67,9 +67,13 @@ COLLAGE_CSRF_KEY=$(head -c 32 /dev/urandom | base64) go run .
 There is no `collage start`: this is a Go program, so production is a binary.
 
 ```
-CGO_ENABLED=0 go build -o @@NAME@@ .
-HOST=0.0.0.0 PORT=8080 COLLAGE_CSRF_KEY=... ./@@NAME@@
+collage build              # -> bin/@@NAME@@, built for linux/amd64
+collage build -i           # also offers a Dockerfile and a systemd unit in bin/
+HOST=0.0.0.0 PORT=8080 COLLAGE_CSRF_KEY=... ./bin/@@NAME@@
 ```
+
+`.gitignore` ignores `bin/@@NAME@@`, the binary itself, rather than `bin/` — so a
+`bin/Dockerfile` you edit is committed like any other file.
 
 Templates and static files are embedded, so the binary is the whole site — nothing
 to copy next to it, and a container image can be that binary and nothing else.

@@ -38,10 +38,25 @@ carry the paths of the machine that built it. `-s -w`, which is most of the size
 does not run in a Linux container, and `exec format error` on a server is the wrong
 place to find that out. `-os` and `-arch` change it; `-o` changes where it lands.
 
-`collage build -i` asks whether to write a `Dockerfile` and a systemd unit beside
-it. Without `-i` it writes only the binary, and it never overwrites a file that is
-already there — a Dockerfile is something a project edits, and a build command that
-replaces it with a default is one that quietly undoes somebody's work.
+`collage build -i` asks whether to write a `Dockerfile` and a systemd unit **beside
+the binary**, in `bin/`. They are generated files, and the project root is for what
+a person wrote. The one thing that costs is a flag at the other end, which the
+output prints rather than leaving you to work out:
+
+```
+✓ bin/app
+    linux/amd64 · 9.3 MB
+    wrote bin/Dockerfile    docker build -f bin/Dockerfile .
+    wrote bin/app.service
+```
+
+Without `-i` only the binary is written, and neither file is ever written over one
+that is already there — these are files a project edits, and a build command that
+replaces one with a default is one that quietly undoes somebody's work.
+
+A scaffolded project's `.gitignore` ignores `bin/<name>`, the binary, rather than
+`bin/` itself. That is what makes editing `bin/Dockerfile` safe: it is committed
+like any other file, and only the build output is ignored.
 
 The binary goes to `bin/` and the static site to `dist/` deliberately: `collage
 export -clean` removes `dist/`'s contents, which would delete a binary sitting in

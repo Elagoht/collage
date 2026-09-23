@@ -40,7 +40,8 @@ error" on a server is the wrong place to learn it.
   -os name    target operating system (default "linux")
   -arch name  target architecture (default "amd64")
   -i          ask which extra files to write beside it — a Dockerfile, a
-              systemd unit. Without it, only the binary is written.
+              systemd unit, written into the same directory as the binary.
+              Without it, only the binary is written.
 
 To render the project to static files instead, see "collage export".
 `
@@ -87,7 +88,7 @@ func (c *CLI) runBuild(ctx context.Context, args []string) int {
 
 	extras := extraFiles{}
 	if *interactive {
-		extras = c.askForExtras(name, *goos, *goarch)
+		extras = c.askForExtras(name, filepath.Dir(target), *goos, *goarch)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -109,7 +110,7 @@ func (c *CLI) runBuild(ctx context.Context, args []string) int {
 	}
 	elapsed := time.Since(started)
 
-	written, err := extras.write(name)
+	written, err := extras.write(name, filepath.Dir(target))
 	if err != nil {
 		fmt.Fprintf(c.stderr(), "collage: build: %v\n", err)
 		return 1
@@ -134,7 +135,13 @@ func (c *CLI) reportBuild(target, goos, goarch string, elapsed time.Duration, ex
 	fmt.Fprintf(w, "\n%s %s\n", s.OK(s.Mark("✓", "+")), s.Bold(target))
 	fmt.Fprintf(w, "    %s\n", s.Dim(platform+" · "+size))
 	for _, path := range extras {
-		fmt.Fprintf(w, "    %s\n", s.Dim("wrote "+path))
+		line := "wrote " + path
+		if filepath.Base(path) == "Dockerfile" {
+			// The one thing moving it out of the project root costs, said at
+			// the moment somebody would otherwise have to work it out.
+			line += "    docker build -f " + path + " ."
+		}
+		fmt.Fprintf(w, "    %s\n", s.Dim(line))
 	}
 	fmt.Fprintf(w, "\n%s\n", s.OK(fmt.Sprintf("%s · %s · %s", size, platform, elapsed.Round(100*time.Millisecond))))
 }
@@ -184,16 +191,22 @@ type extraFiles struct {
 	systemd    bool
 }
 
-// write produces the chosen files and returns the paths of the ones it created.
+// write produces the chosen files beside the binary, in dir, and returns the paths
+// of the ones it created.
 //
-// An existing file is never overwritten, and that is not a convenience: a
-// Dockerfile is something a project edits, and a build command that replaces it
-// with a default is a build command that quietly undoes somebody's work.
-func (e extraFiles) write(name string) ([]string, error) {
+// Beside the binary rather than at the project root, because they are generated and
+// the root is for what a person wrote. The cost is one flag at the other end —
+// "docker build -f bin/Dockerfile ." — which the report prints so nobody has to work
+// it out.
+//
+// An existing file is never overwritten, and that is not a convenience: these are
+// files a project edits, and a build command that replaces one with a default is a
+// build command that quietly undoes somebody's work.
+func (e extraFiles) write(name, dir string) ([]string, error) {
 	var written []string
 
 	if e.dockerfile {
-		path, err := writeIfAbsent("Dockerfile", dockerfileFor(name))
+		path, err := writeIfAbsent(filepath.Join(dir, "Dockerfile"), dockerfileFor(name))
 		if err != nil {
 			return written, err
 		}
@@ -202,7 +215,7 @@ func (e extraFiles) write(name string) ([]string, error) {
 		}
 	}
 	if e.systemd {
-		path, err := writeIfAbsent(name+".service", systemdUnitFor(name))
+		path, err := writeIfAbsent(filepath.Join(dir, name+".service"), systemdUnitFor(name))
 		if err != nil {
 			return written, err
 		}
@@ -228,7 +241,7 @@ func writeIfAbsent(path, content string) (string, error) {
 }
 
 // askForExtras prompts for the files to write beside the binary.
-func (c *CLI) askForExtras(name, goos, goarch string) extraFiles {
+func (c *CLI) askForExtras(name, dir, goos, goarch string) extraFiles {
 	out := c.stdout()
 	fmt.Fprintf(out, "Building %s for %s/%s.\n\n", name, goos, goarch)
 
@@ -248,8 +261,8 @@ func (c *CLI) askForExtras(name, goos, goarch string) extraFiles {
 	}
 
 	extras := extraFiles{
-		dockerfile: ask("Write a Dockerfile?", "Dockerfile"),
-		systemd:    ask("Write a systemd unit?", name+".service"),
+		dockerfile: ask("Write a Dockerfile?", filepath.Join(dir, "Dockerfile")),
+		systemd:    ask("Write a systemd unit?", filepath.Join(dir, name+".service")),
 	}
 	fmt.Fprintln(out)
 	return extras

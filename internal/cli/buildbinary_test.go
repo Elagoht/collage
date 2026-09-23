@@ -113,7 +113,7 @@ func TestBuild_WritesNoExtraFilesWithoutInteractive(t *testing.T) {
 	inProject(t, "example.com/shop")
 	runBuildIn(t)
 
-	for _, path := range []string{"Dockerfile", "shop.service"} {
+	for _, path := range []string{"Dockerfile", filepath.Join("bin", "Dockerfile"), filepath.Join("bin", "shop.service")} {
 		if _, err := os.Stat(path); err == nil {
 			t.Errorf("%s was written without -i", path)
 		}
@@ -130,11 +130,20 @@ func TestBuild_InteractiveWritesWhatWasAskedFor(t *testing.T) {
 		t.Fatalf("build exited %d: %s", code, out.String())
 	}
 
-	if _, err := os.Stat("Dockerfile"); err != nil {
-		t.Errorf("Dockerfile was not written after answering yes: %v", err)
+	// Beside the binary, not at the project root: they are generated, and the
+	// root is for what a person wrote.
+	if _, err := os.Stat(filepath.Join("bin", "Dockerfile")); err != nil {
+		t.Errorf("bin/Dockerfile was not written after answering yes: %v", err)
 	}
-	if _, err := os.Stat("shop.service"); err == nil {
+	if _, err := os.Stat("Dockerfile"); err == nil {
+		t.Error("a Dockerfile was written at the project root")
+	}
+	if _, err := os.Stat(filepath.Join("bin", "shop.service")); err == nil {
 		t.Error("a systemd unit was written after answering no")
+	}
+	// And the one thing that costs is said rather than left to be worked out.
+	if !strings.Contains(out.String(), "docker build -f bin/Dockerfile .") {
+		t.Errorf("output = %q, want it to name the command that uses the generated file", out.String())
 	}
 }
 
@@ -142,7 +151,10 @@ func TestBuild_InteractiveWritesWhatWasAskedFor(t *testing.T) {
 // replaces it with a default is one that quietly undoes somebody's work.
 func TestBuild_NeverOverwritesAnExistingFile(t *testing.T) {
 	inProject(t, "example.com/shop")
-	if err := os.WriteFile("Dockerfile", []byte("FROM scratch\n"), 0o644); err != nil {
+	if err := os.MkdirAll("bin", 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join("bin", "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -151,7 +163,7 @@ func TestBuild_NeverOverwritesAnExistingFile(t *testing.T) {
 	cli := &CLI{Stdout: &out, Stderr: &out, Runner: runner, Stdin: strings.NewReader("y\nn\n")}
 	cli.runBuild(context.Background(), []string{"-i"})
 
-	kept, err := os.ReadFile("Dockerfile")
+	kept, err := os.ReadFile(filepath.Join("bin", "Dockerfile"))
 	if err != nil {
 		t.Fatal(err)
 	}
