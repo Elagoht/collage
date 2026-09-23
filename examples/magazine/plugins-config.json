@@ -11,6 +11,7 @@
     "searchURL": "http://localhost:3000/search?q={query}"
   },
   "elagoht/opti-image": {
+    "cacheDir": ".cache/images",
     "webp": true,
     "quality": 82,
     "maxSourceBytes": 8388608

@@ -258,9 +258,18 @@ Nothing to pass. A restart serves what the last run rendered:
 go run .
 ```
 
-Rendered pages go to `<temp>/thewire-cache`, under the temporary directory rather
-than beside the source so nothing turns up in your next commit. `-cache-dir` moves
-it, `-cache-dir=` turns it off.
+It fills as you browse:
+
+```
+.cache/
+  pages/1ab8861e0446c66b/     rendered pages, one directory per build
+  images/                     resized images
+```
+
+A dotted directory beside the source, the way a build tool puts its output in
+`.next` — findable, one line in `.gitignore`, and gone when you delete it.
+`-cache-dir` moves the pages, the image plugin's `cacheDir` moves the images, and
+`-cache-dir=` turns the page cache off.
 
 There is no build identifier to supply. The framework derives one from a hash of the
 running executable, which changes exactly when the output might — so rebuilding

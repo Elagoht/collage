@@ -215,14 +215,16 @@ func withImageOrigin(plugins map[string]json.RawMessage, apiURL string, log *slo
 
 // defaultCacheDir is where rendered pages are kept between restarts.
 //
-// Under the temporary directory rather than beside the source: a program that drops
-// files where it was started from is a program whose output turns up in the next
-// commit. It is on by default because the alternative is re-rendering every page
-// after every restart to save a directory the operating system already cleans up,
-// and "-cache-dir=" turns it off for anyone who would rather it did not.
+// ".cache/pages", beside the source, the way a build tool puts its output in
+// ".next" or "node_modules/.vite". A temporary directory would keep it out of the
+// way and out of reach: on macOS that is /var/folders/xy/…/T, and a cache nobody
+// can find is a cache nobody can clear. One line in .gitignore settles the rest.
+//
+// On by default, because the alternative is re-rendering every page after every
+// restart to save a directory you can delete. "-cache-dir=" turns it off.
 //
 // No build identifier goes with it. The framework derives one from the running
 // executable, which changes exactly when the rendered output might.
 func defaultCacheDir() string {
-	return filepath.Join(os.TempDir(), "thewire-cache")
+	return filepath.Join(".cache", "pages")
 }

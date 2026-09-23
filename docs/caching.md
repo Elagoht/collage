@@ -408,9 +408,13 @@ keeps it:
 Cache: collage.CacheConfig{
 	Enabled: true,
 	Type:    "disk",
-	Dir:     "/var/cache/mysite",
+	Dir:     ".cache/pages",
 }
 ```
+
+`Dir` has no default, because a framework that picks a place to write files is a
+framework that writes them somewhere nobody looked. An application that wants the
+build-tool convention says `.cache/pages` and adds a line to `.gitignore`.
 
 A directory is all it takes. **A disk cache outlives the process that filled it**, so
 something has to stop a new binary serving HTML the old one rendered — a changed

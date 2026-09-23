@@ -8,6 +8,9 @@
 # which matches a file extension rather than a directory name.
 /examples/magazine/out/
 
+# Rendered pages and optimised images, written as the site is browsed.
+/examples/magazine/.cache/
+
 # "go build" inside an example module drops a binary named after its directory.
 /examples/magazine/thewire
 /examples/newsroom-api/newsroom-api
