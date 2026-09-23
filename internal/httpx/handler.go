@@ -5,6 +5,7 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/csrf"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -164,23 +166,41 @@ type Deps struct {
 	// before every request is routed. A nil or empty Mounts serves no assets. See
 	// Handler.serve for why checking them first is safe.
 	Mounts []*asset.Mount
+	// MaxBodyBytes bounds an action's request body when the action declares no
+	// bound of its own. Zero selects the framework's default; negative means
+	// unbounded, which is a decision worth making deliberately.
+	MaxBodyBytes int64
+	// Invalidator drops cache entries by tag, and is what backs
+	// ActionResult.InvalidateTags. Nil makes that field inert.
+	Invalidator Invalidator
+	// CSRF verifies unsafe requests to actions and issues the tokens
+	// {{csrfToken}} renders. Nil turns forgery checking off entirely, which is
+	// what an application with no forms and no key gets.
+	CSRF *csrf.Guard
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
 // Handler is safe for concurrent use by as many requests as the server accepts.
 type Handler struct {
-	router     router.Router
-	renderer   render.Engine
-	cache      cache.Cache
-	tracker    dependency.Tracker
-	plugins    *plugin.Registry
-	metrics    observability.Metrics
-	tracer     observability.Tracer
-	logger     *slog.Logger
-	devMode    bool
-	defaultTTL time.Duration
-	vary       string
-	mounts     []*asset.Mount
+	router       router.Router
+	renderer     render.Engine
+	cache        cache.Cache
+	tracker      dependency.Tracker
+	plugins      *plugin.Registry
+	metrics      observability.Metrics
+	tracer       observability.Tracer
+	logger       *slog.Logger
+	devMode      bool
+	defaultTTL   time.Duration
+	vary         string
+	mounts       []*asset.Mount
+	maxBodyBytes int64
+	invalidator  Invalidator
+	csrf         *csrf.Guard
+	// flight coalesces concurrent renders of one cache key, so an expiring
+	// popular page costs one render rather than one per request that arrives
+	// while it is being re-made.
+	flight *flight
 }
 
 var _ http.Handler = (*Handler)(nil)
@@ -218,7 +238,11 @@ func New(d Deps) (*Handler, error) {
 		vary: strings.Join(d.Vary, ", "),
 		// Cloned for the same reason: a caller mutating d.Mounts after New returns
 		// must not change what this Handler serves.
-		mounts: slices.Clone(d.Mounts),
+		mounts:       slices.Clone(d.Mounts),
+		maxBodyBytes: d.MaxBodyBytes,
+		invalidator:  d.Invalidator,
+		csrf:         d.CSRF,
+		flight:       newFlight(),
 	}, nil
 }
 
@@ -438,6 +462,37 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// document match, Page is nil by MatchResult's own contract (exactly one of
 	// Page and Document is set), and the nil-Page check below would otherwise
 	// treat every matched document as a 404 before this branch ever ran.
+	// Before the not-found fallback and before Page, for the same reason the
+	// document branch is: a matched action leaves Page and Document nil, and the
+	// nil-Page check below would read that as a 404.
+	if match.Action != nil {
+		route.resolved(routeKindAction, match.Action.Name)
+		return h.serveAction(w, r, match, route)
+	}
+
+	// A path that exists but does not answer this method. Distinct from a 404,
+	// and the distinction is the whole point: the reader is told the URL is real
+	// and what it does accept, rather than that it is not a URL.
+	if match.MethodNotAllowed {
+		w.Header().Set("Allow", strings.Join(match.Allowed, ", "))
+		return h.serveFailure(w, r, failure{
+			status: http.StatusMethodNotAllowed,
+			err:    fmt.Errorf("%w: %s %s", ErrMethodNotAllowed, r.Method, r.URL.Path),
+			locale: match.Locale,
+			stage:  stageRoute,
+		})
+	}
+
+	// An OPTIONS request that no action claimed. The router already worked out
+	// what the path accepts, so answering here keeps one list in one place.
+	if r.Method == http.MethodOptions && len(match.Allowed) > 0 {
+		header := w.Header()
+		header.Set("Allow", strings.Join(match.Allowed, ", "))
+		header.Set("Content-Length", "0")
+		w.WriteHeader(http.StatusNoContent)
+		return http.StatusNoContent
+	}
+
 	if match.Document != nil {
 		route.resolved(routeKindDocument, match.Document.Name)
 		return h.serveDocument(w, r, match, route)
@@ -489,7 +544,18 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			Vary:   queryVary(r.URL, page.CacheParams),
 		})
 		lookupStart := time.Now()
-		if content, etag, found := h.cache.Get(ctx, key); found {
+		// Never read from the cache in development.
+		//
+		// Templates reload from disk there, which is the point of dev mode — and
+		// a cached page hides that reload for as long as its TTL, on exactly the
+		// pages a developer is most likely to be editing. Two mechanisms, each
+		// sensible alone, combining into "my edit did nothing".
+		//
+		// The write path below is left alone deliberately: entries are still
+		// stored, tags still tracked, CacheWrite hooks still fire, so anyone
+		// developing a plugin or an invalidation rule still sees it work. What
+		// dev mode removes is serving a page that was rendered before the edit.
+		if content, etag, found := h.cacheGet(ctx, key); found {
 			h.metrics.CacheEvent(ctx, observability.CacheHit, key)
 			// The only place cacheHit is ever reported true: what it times is the
 			// lookup that stood in for a render, not a render that did not happen.
@@ -499,6 +565,105 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		h.metrics.CacheEvent(ctx, observability.CacheMiss, key)
 	}
 
+	// One render serves every request that wants this key, and the rest wait for
+	// it. Without the flight, the moment a popular page expires is the moment
+	// every request in flight becomes a cache miss and renders — identical work,
+	// multiplied by traffic, aimed at the upstream that has just been shown to be
+	// slow. See flight.
+	//
+	// A page with no key is rendered directly. There is nothing to coalesce on,
+	// and a page the application declared dynamic is two renders for two requests
+	// by its own declaration.
+	produce := func() *outcome { return h.renderPage(ctx, r, page, match, key, cacheable) }
+
+	var out *outcome
+	shared := false
+	if key != "" {
+		out, shared = h.flight.do(ctx, key, produce)
+	} else {
+		out = produce()
+	}
+	if shared {
+		// Not a hit: nothing was in the cache when this request asked. It is the
+		// other outcome that costs nothing, and it is worth being able to see
+		// separately — a large coalesced count is what a too-short TTL looks
+		// like from the outside.
+		h.metrics.CacheEvent(ctx, observability.CacheCoalesced, key)
+	}
+
+	if out.fail != nil {
+		return h.serveFailure(w, r, *out.fail)
+	}
+
+	content, etag, personal := h.personalise(w, r, out.content, out.etag)
+
+	header := w.Header()
+	header.Set("Content-Type", contentTypeHTML)
+	header.Set("ETag", etag)
+	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
+	// After setCacheHeaders, so it overrides whatever the page's strategy declared.
+	// The body that goes on the wire carries this reader's token, whatever the
+	// shared one behind it may be cached as.
+	if personal {
+		header.Set("Cache-Control", "private, no-store")
+	}
+	if h.devMode {
+		header.Set(renderTimeHeader, out.renderTime.String())
+	}
+	w.WriteHeader(http.StatusOK)
+	writeBody(w, content)
+
+	return http.StatusOK
+}
+
+// personalise replaces the forgery-token marker in content with this reader's own
+// token, and sends the cookie the token is checked against.
+//
+// This is what lets a page with a form be cached. What is stored, shared between
+// readers and handed to everyone waiting on one render, is a body with a marker in
+// it — a string nobody can compute without the application's key. What goes on the
+// wire is that body with the reader's own token in place of the marker.
+//
+// A body with no marker is returned untouched, which is every page that has no form.
+func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []byte, etag string) ([]byte, string, bool) {
+	if h.csrf == nil {
+		return content, etag, false
+	}
+	marker := []byte(h.csrf.Marker())
+	if !bytes.Contains(content, marker) {
+		return content, etag, false
+	}
+
+	token, _, err := h.csrf.TokenFor(r)
+	if err != nil {
+		// Nothing to substitute with. Serving the marker would render a form that
+		// is refused on submission with nothing to explain why, so this is a
+		// failure rather than a body.
+		h.logger.Error("collage: could not issue a forgery token", "err", err)
+		return content, etag, false
+	}
+
+	personalised := bytes.ReplaceAll(content, marker, []byte(token))
+	http.SetCookie(w, h.csrf.Cookie(r, token))
+	// Recomputed, because this body is not the one the ETag was made from. An ETag
+	// that names a body nobody was sent is how a conditional request is answered
+	// 304 for content the client never had.
+	return personalised, cache.ETag(personalised), true
+}
+
+// renderPage renders one page and returns what to write, or why nothing can be.
+//
+// It writes nothing itself, and that is the point: the work may be being done on
+// behalf of several requests at once, and each of them writes its own response from
+// the value this returns.
+func (h *Handler) renderPage(
+	ctx context.Context,
+	r *http.Request,
+	page *types.Page,
+	match *router.MatchResult,
+	key string,
+	cacheable bool,
+) *outcome {
 	// Deliberately after the cache lookup: BeforeRenderHook documents that it
 	// does not fire when a cached render is served instead of a fresh one, which
 	// is what distinguishes it from PageResolvedHook.
@@ -512,13 +677,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		Locale:  match.Locale,
 		Path:    r.URL.Path,
 	}); err != nil {
-		return h.serveFailure(w, r, failure{
+		return &outcome{fail: &failure{
 			status: http.StatusInternalServerError,
 			err:    err,
 			page:   page,
 			locale: match.Locale,
 			stage:  stageBeforeRender,
-		})
+		}}
 	}
 
 	renderStart := time.Now()
@@ -536,14 +701,14 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			// NotFoundPage through errorPageFor exactly as a router miss does.
 			status = http.StatusNotFound
 		}
-		return h.serveFailure(w, r, failure{
+		return &outcome{fail: &failure{
 			status:   status,
 			err:      err,
 			page:     page,
 			locale:   match.Locale,
 			fragment: failedFragment(result),
 			stage:    stageRender,
-		})
+		}}
 	}
 
 	// The hook may replace the HTML, and the replacement is what goes on the wire
@@ -559,15 +724,25 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// No fragment is named: the failure is the plugin's, and pointing the dev
 		// page at a fragment that merely happened to be degraded would send a
 		// developer looking in the wrong place.
-		return h.serveFailure(w, r, failure{
+		return &outcome{fail: &failure{
 			status: http.StatusInternalServerError,
 			err:    err,
 			page:   page,
 			locale: match.Locale,
 			stage:  stageAfterRender,
-		})
+		}}
 	}
 	content := afterRender.HTML
+	if len(content) == 0 {
+		// A blank page is not a page. See ErrEmptyRender.
+		return &outcome{fail: &failure{
+			status: http.StatusInternalServerError,
+			err:    fmt.Errorf("%w: page %q", ErrEmptyRender, page.Name),
+			page:   page,
+			locale: match.Locale,
+			stage:  stageRender,
+		}}
+	}
 
 	// A degraded render is complete enough to serve but must never be cached:
 	// caching it would pin one request's transient fragment failure in front of
@@ -581,26 +756,34 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		etag = cache.ETag(content)
 	}
 
-	header := w.Header()
-	header.Set("Content-Type", contentTypeHTML)
-	header.Set("ETag", etag)
-	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
-	if h.devMode {
-		header.Set(renderTimeHeader, renderTime.String())
-	}
-	w.WriteHeader(http.StatusOK)
-	writeBody(w, content)
+	return &outcome{content: content, etag: etag, renderTime: renderTime}
+}
 
-	return http.StatusOK
+// cacheGet is the cache lookup, which never finds anything in development. See the
+// call site for why.
+func (h *Handler) cacheGet(ctx context.Context, key string) ([]byte, string, bool) {
+	if h.devMode {
+		return nil, "", false
+	}
+	return h.cache.Get(ctx, key)
 }
 
 // serveCached writes a cache hit: a 304 when the request's If-None-Match matches
 // the stored ETag, otherwise a 200 carrying the stored content. It returns the
 // status it wrote.
 func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *types.Page, content []byte, etag string) int {
+	// The stored body carries a marker where this reader's forgery token goes, so
+	// what is written is not what was stored — and the ETag has to name what was
+	// written, or a conditional request is answered 304 for a body the client was
+	// never sent.
+	content, etag, personal := h.personalise(w, r, content, etag)
+
 	header := w.Header()
 	header.Set("ETag", etag)
 	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
+	if personal {
+		header.Set("Cache-Control", "private, no-store")
+	}
 
 	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		// No Content-Type and no body: a 304 tells the client its copy is still

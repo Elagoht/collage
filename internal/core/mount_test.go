@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -309,5 +311,41 @@ func TestMount_RejectsAPrefixShadowingALocaleHomePage(t *testing.T) {
 	err := app.Start()
 	if !errors.Is(err, ErrMountShadowsRoute) {
 		t.Fatalf("Start = %v, want ErrMountShadowsRoute — /tr/ is the Turkish front page", err)
+	}
+}
+
+// In development a mount must show an edited file, which means not remembering the
+// name it derived from the old one.
+func TestMount_DevModeReflectsAnEditedFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "app.css")
+	if err := os.WriteFile(path, []byte("body{color:red}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	app := newTestAppWith(t, defaultTemplates(), func(cfg *Config) { cfg.DevMode = true })
+	if err := app.Mount("/static/", root.FS()); err != nil {
+		t.Fatalf("Mount: %v", err)
+	}
+
+	before, err := app.assetURL("/static/app.css")
+	if err != nil {
+		t.Fatalf("assetURL: %v", err)
+	}
+
+	if err := os.WriteFile(path, []byte("body{color:blue}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := app.assetURL("/static/app.css")
+	if err != nil {
+		t.Fatalf("assetURL: %v", err)
+	}
+	if after == before {
+		t.Fatalf("asset URL = %q before and after the edit; a page would keep linking the old one", after)
 	}
 }

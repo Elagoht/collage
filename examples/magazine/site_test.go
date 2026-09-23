@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +99,16 @@ type backend struct {
 	// hits counts every request, so a test can prove a render happened again
 	// rather than being served from the page cache.
 	hits atomic.Int64
+
+	// inFlight and peak record how many requests the site had open at once. It is
+	// how a test sees that fragments fetch concurrently without timing anything:
+	// a peak above one is overlap, whatever the machine was doing.
+	inFlight atomic.Int64
+	peak     atomic.Int64
+	// hold, when non-nil, blocks every request until it is closed or the caller
+	// gives up, so the peak is the number of requests that were genuinely
+	// simultaneous rather than a race between fast handlers.
+	hold chan struct{}
 }
 
 func newBackend(t *testing.T, failPrefixes ...string) (*backend, *httptest.Server) {
@@ -111,6 +122,26 @@ func newBackend(t *testing.T, failPrefixes ...string) (*backend, *httptest.Serve
 
 func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.hits.Add(1)
+
+	now := b.inFlight.Add(1)
+	for {
+		peak := b.peak.Load()
+		if now <= peak || b.peak.CompareAndSwap(peak, now) {
+			break
+		}
+	}
+	defer b.inFlight.Add(-1)
+	if b.hold != nil {
+		select {
+		case <-b.hold:
+		case <-r.Context().Done():
+			// The caller gave up. Returning here is what makes inFlight mean
+			// "requests the site is actually waiting on": a handler that stayed
+			// blocked after its fragment timed out would keep the count up and
+			// make sequential fetches look concurrent.
+			return
+		}
+	}
 
 	if b.failFirst.Load() > 0 {
 		b.failFirst.Add(-1)
@@ -265,6 +296,8 @@ func TestSite_EveryRouteAnswers(t *testing.T) {
 		{"/robots.txt", 200, "text/plain"},
 		{"/healthz", 200, "application/json"},
 		{"/static/magazine.css", 200, "text/css"},
+		{"/newsletter", 200, "text/html"},
+		{"/tr/bulten", 200, "text/html"},
 		{"/category/no-such-category", 404, "text/html"},
 		{"/nothing/here/at-all", 404, "text/html"},
 	} {
@@ -796,5 +829,236 @@ func TestSite_ArticlesIgnoreTheQueryEntirely(t *testing.T) {
 	request(t, site, target+"?anything=at-all")
 	if b.hits.Load() != cached {
 		t.Error("a query parameter re-rendered an article that reads none")
+	}
+}
+
+// The stylesheet is linked by its content-addressed name and served as immutable.
+//
+// This is the whole reason to fingerprint: a name derived from the bytes cannot
+// describe anything else, so the browser is told never to ask again. A plain name
+// can only ever carry a short lifetime, because the file behind it may change.
+func TestSite_StylesheetIsLinkedByContentAndServedForever(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, body := request(t, site, "/")
+	link := regexp.MustCompile(`href="(/static/magazine\.[0-9a-f]{16}\.css)"`).FindStringSubmatch(body)
+	if link == nil {
+		t.Fatalf("the home page does not link a content-addressed stylesheet:\n%s",
+			firstLines(body, 20))
+	}
+
+	rec, css := request(t, site, link[1])
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", link[1], rec.Code)
+	}
+	if len(css) == 0 {
+		t.Error("the stylesheet served no bytes")
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("Cache-Control = %q, want immutable", cc)
+	}
+
+	// The same URL with a hash that is not the file's must not be served at all.
+	// It would otherwise be cached for a year by everything between the site and
+	// the reader.
+	wrong, _ := request(t, site, "/static/magazine.0123456789abcdef.css")
+	if wrong.Code != http.StatusNotFound {
+		t.Errorf("GET a wrong fingerprint = %d, want 404", wrong.Code)
+	}
+}
+
+// firstLines returns at most n lines of s, for a failure message that shows enough
+// of a page to see what went wrong without printing the whole document.
+func firstLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// The fragments of one page fetch at the same time, not one after another.
+//
+// A home page is a navigation bar, a list of articles and a popular sidebar. None of
+// them needs anything from the others, and rendering them in sequence means the
+// reader waits for the sum of three round trips rather than the longest one.
+//
+// Measured as the peak number of requests the newsroom had open at once, so the
+// assertion says nothing about how fast any machine is.
+func TestSite_FragmentsFetchConcurrently(t *testing.T) {
+	b, api := newBackend(t)
+
+	// Held open until every request that is going to arrive has arrived, so the
+	// peak is what was genuinely simultaneous. Three is what the home page asks
+	// for: categories, articles, popular.
+	b.hold = make(chan struct{})
+	go func() {
+		for b.inFlight.Load() < 3 {
+			runtime.Gosched()
+		}
+		close(b.hold)
+	}()
+
+	site := newTestSite(t, api.URL)
+	rec, _ := request(t, site, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
+	}
+
+	t.Logf("peak concurrent upstream requests = %d", b.peak.Load())
+	if peak := b.peak.Load(); peak < 2 {
+		t.Errorf("peak concurrent upstream requests = %d, want at least 2: the fragments are still waiting for each other", peak)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The newsletter form
+// ---------------------------------------------------------------------------
+
+// token reads the forgery token out of a rendered page, the way a browser would read
+// it out of the form.
+func token(t *testing.T, body string) string {
+	t.Helper()
+	m := regexp.MustCompile(`name="_csrf" value="([^"]+)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no forgery token in the page:\n%s", firstLines(body, 30))
+	}
+	return m[1]
+}
+
+func submit(t *testing.T, site http.Handler, form url.Values, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/newsletter", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	site.ServeHTTP(rec, req)
+	return rec
+}
+
+// The whole form flow, as a browser walks it: read the page, submit what it carried,
+// follow the redirect.
+func TestSite_NewsletterAcceptsAValidAddress(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	page, body := request(t, site, "/newsletter")
+	csrfToken := token(t, body)
+
+	rec := submit(t, site, url.Values{"_csrf": {csrfToken}, "email": {"reader@example.com"}},
+		(&http.Response{Header: page.Header()}).Cookies())
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303: a form post must redirect, or a reload submits it again", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "subscribed=1") {
+		t.Errorf("Location = %q, want the destination to say it worked", loc)
+	}
+}
+
+// A refused address comes back on the page it was typed on, with the reason and with
+// what was typed — no session, no flash storage, no state in a query string.
+func TestSite_NewsletterRefusesAnInvalidAddress(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	page, body := request(t, site, "/newsletter")
+	csrfToken := token(t, body)
+
+	rec := submit(t, site, url.Values{"_csrf": {csrfToken}, "email": {"not-an-address"}},
+		(&http.Response{Header: page.Header()}).Cookies())
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "does not look like an email address") {
+		t.Error("the page does not say why the submission was refused")
+	}
+	if !strings.Contains(rec.Body.String(), `value="not-an-address"`) {
+		t.Error("what the reader typed was not echoed back; a refused form is not also an empty one")
+	}
+}
+
+// Without the token the submission never reaches the handler. This is the test that
+// would fail if the protection were quietly turned off.
+func TestSite_NewsletterRefusesASubmissionWithNoToken(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	rec := submit(t, site, url.Values{"email": {"reader@example.com"}}, nil)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+// Two readers are handed two different tokens.
+//
+// The property that the body behind those tokens is cacheable belongs to the
+// framework and is tested there (internal/httpx). What this checks is the part a
+// site can get wrong on its own: that two readers are never given one token, which
+// would be a token anybody obtains by visiting.
+func TestSite_TwoReadersGetTwoTokens(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, first := request(t, site, "/newsletter")
+	_, second := request(t, site, "/newsletter")
+
+	if token(t, first) == token(t, second) {
+		t.Error("two readers were handed one token")
+	}
+}
+
+// The results fragment answers on its own, and what comes back is the list rather
+// than the page around it.
+func TestSite_SearchResultsAnswerOnTheirOwn(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	whole, page := request(t, site, "/search?q=grid")
+	part, fragment := request(t, site, "/search/results?q=grid")
+
+	if whole.Code != http.StatusOK || part.Code != http.StatusOK {
+		t.Fatalf("statuses = %d, %d, want 200", whole.Code, part.Code)
+	}
+	if len(fragment) >= len(page) {
+		t.Errorf("the fragment is %d bytes and the page is %d: the fragment is not smaller", len(fragment), len(page))
+	}
+	if strings.Contains(fragment, "<html") {
+		t.Error("the fragment came back wrapped in the layout")
+	}
+	if !strings.Contains(fragment, "cards") {
+		t.Errorf("the fragment does not contain the result list:\n%s", firstLines(fragment, 10))
+	}
+}
+
+// A method no route answers is a 405 naming what the URL does accept, not a 404 and
+// not a silently rendered page.
+func TestSite_UnsupportedMethodsAreRefused(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	// The newsletter page answers POST, because its form does; the home page does
+	// not, and a DELETE reaches neither.
+	for path, want := range map[string][]string{
+		"/":           {"GET", "HEAD", "OPTIONS"},
+		"/newsletter": {"GET", "HEAD", "OPTIONS", "POST"},
+	} {
+		rec := httptest.NewRecorder()
+		site.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, path, nil))
+
+		if rec.Code != http.StatusMethodNotAllowed {
+			t.Fatalf("DELETE %s = %d, want 405", path, rec.Code)
+		}
+		allow := rec.Header().Get("Allow")
+		for _, method := range want {
+			if !strings.Contains(allow, method) {
+				t.Errorf("DELETE %s Allow = %q, want it to contain %s", path, allow, method)
+			}
+		}
 	}
 }

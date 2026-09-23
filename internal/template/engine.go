@@ -28,6 +28,15 @@ var ErrTemplateNotFound = errors.New("collage: template not found")
 // signals a stray {{hoist "area"}} rather than silently writing nothing.
 var ErrHoistOutsideRender = errors.New("collage: hoist called outside render")
 
+// ErrAssetOutsideRender is returned by the placeholder "asset" template function
+// when a template calls it outside a render that bound the real implementation.
+var ErrAssetOutsideRender = errors.New("collage: asset called outside render")
+
+// ErrCSRFOutsideRender is returned by the placeholder "csrfToken" template function
+// when a template calls it outside a render, and by a render with no request to
+// issue a token for.
+var ErrCSRFOutsideRender = errors.New("collage: csrfToken called outside a request")
+
 // ErrSlotOutsideRender is returned by the placeholder "slot" template function when
 // it is invoked outside a render that has bound a real slot implementation. It
 // signals a stray {{slot "name"}} rather than producing a nil-map panic.

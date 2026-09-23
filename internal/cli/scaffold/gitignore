@@ -1,2 +1,14 @@
+# The compiled binary "collage build" writes, by name rather than the whole
+# directory: "collage build -i" writes a Dockerfile and a systemd unit in there
+# too, and those are files you edit and commit.
+/bin/@@NAME@@
+/bin/@@NAME@@.exe
+
+# "collage export" output.
 /dist/
+
+# Rendered pages, kept between restarts. Namespaced by a hash of the binary, so
+# nothing here outlives the build that wrote it.
+/.cache/
+
 *.exe

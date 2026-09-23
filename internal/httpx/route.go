@@ -32,6 +32,13 @@ const (
 	// routeKindMount is a request claimed by a mounted asset file system. Its
 	// failures are plain text: a mount is never an HTML route.
 	routeKindMount
+	// routeKindAction is a request answered by an action. Its failures are plain
+	// text, which is the safe direction: an action is as likely to be a webhook or
+	// a fetch() as a form post, and an HTML error page handed to something parsing
+	// JSON is a parse error on top of the real one. A handler that wants an error
+	// page for the cases it expects returns one — that is what ActionResult.Page
+	// is for.
+	routeKindAction
 )
 
 // plainText reports whether a failure on a route of this kind must be written as

@@ -1,0 +1,171 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// Testing a collage application needs no server and no port: app.Handler() is an
+// ordinary http.Handler, so net/http/httptest drives it directly. Everything below
+// goes through the same newApp main uses, so what these tests exercise is the site
+// that actually runs rather than a second wiring that can drift from it.
+
+func handler(t *testing.T) http.Handler {
+	t.Helper()
+	app, err := newApp(false, 0)
+	if err != nil {
+		t.Fatalf("newApp() = %v, want nil", err)
+	}
+	return app.Handler()
+}
+
+// get returns the response to a GET of target, and its body.
+func get(t *testing.T, h http.Handler, target string) (*httptest.ResponseRecorder, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	return rec, rec.Body.String()
+}
+
+func TestHomePageRenders(t *testing.T) {
+	rec, body := get(t, handler(t), "/")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(body, "It works!") {
+		t.Errorf("the home page does not contain its heading:\n%s", body)
+	}
+	// The links come from the data handler, not from the template. Asserting on
+	// one is what proves the handler ran.
+	if !strings.Contains(body, `href="/signup"`) {
+		t.Error("the link the data handler supplies is missing")
+	}
+}
+
+func TestStylesheetIsContentAddressed(t *testing.T) {
+	_, body := get(t, handler(t), "/")
+
+	link := regexp.MustCompile(`href="(/static/app\.[0-9a-f]+\.css)"`).FindStringSubmatch(body)
+	if link == nil {
+		t.Fatalf("the page does not link a content-addressed stylesheet:\n%s", body)
+	}
+
+	rec, css := get(t, handler(t), link[1])
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", link[1], rec.Code)
+	}
+	if css == "" {
+		t.Error("the stylesheet served no bytes")
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("Cache-Control = %q, want immutable", cc)
+	}
+}
+
+// token reads the forgery token out of a rendered form, the way a browser does.
+func token(t *testing.T, body string) string {
+	t.Helper()
+	m := regexp.MustCompile(`name="_csrf" value="([^"]+)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no forgery token in the form:\n%s", body)
+	}
+	return m[1]
+}
+
+// submit posts form to the sign-up page, carrying whatever cookies the page set.
+func submit(t *testing.T, h http.Handler, form url.Values, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/signup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// The whole form flow, as a browser walks it: read the page, submit what it
+// carried, and be redirected.
+func TestSignUpAcceptsAValidAddress(t *testing.T) {
+	h := handler(t)
+	page, body := get(t, h, "/signup")
+
+	rec := submit(t, h,
+		url.Values{"_csrf": {token(t, body)}, "email": {"reader@example.com"}},
+		(&http.Response{Header: page.Header()}).Cookies())
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303: an accepted submission redirects, or a reload repeats it", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "signed=1") {
+		t.Errorf("Location = %q, want the destination to say it worked", loc)
+	}
+}
+
+// A refused address comes back on the page it was typed on, with the reason and
+// with what was typed.
+func TestSignUpRefusesAnInvalidAddress(t *testing.T) {
+	h := handler(t)
+	page, body := get(t, h, "/signup")
+
+	rec := submit(t, h,
+		url.Values{"_csrf": {token(t, body)}, "email": {"not-an-address"}},
+		(&http.Response{Header: page.Header()}).Cookies())
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "does not look like an email address") {
+		t.Error("the page does not say why the submission was refused")
+	}
+	if !strings.Contains(rec.Body.String(), `value="not-an-address"`) {
+		t.Error("what was typed was not echoed back; a refused form should not also be an empty one")
+	}
+}
+
+// Without a token the submission never reaches the handler. This is the test that
+// fails if the protection is ever turned off by accident.
+func TestSignUpRefusesASubmissionWithNoToken(t *testing.T) {
+	rec := submit(t, handler(t), url.Values{"email": {"reader@example.com"}}, nil)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+// A method no page answers is a 405 naming what the URL does accept, rather than a
+// silently rendered page.
+func TestUnsupportedMethodIsRefused(t *testing.T) {
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
+	rec := httptest.NewRecorder()
+	handler(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); !strings.Contains(allow, "GET") {
+		t.Errorf("Allow = %q, want it to name what the URL accepts", allow)
+	}
+}
+
+// The health check answers without rendering a template, which is the point of it:
+// it cannot start failing because a page did.
+func TestHealthCheck(t *testing.T) {
+	rec, body := get(t, handler(t), "/healthz")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /healthz = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(body, `"status":"ok"`) {
+		t.Errorf("body = %q, want a status", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+}

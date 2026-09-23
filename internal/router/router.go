@@ -51,9 +51,22 @@ type MatchResult struct {
 	// true.
 	Page *types.Page
 	// Document is the matched document. It is nil when a page matched, when
-	// RedirectTo is set, or when IsNotFound is true. Exactly one of Page and
-	// Document is non-nil on a successful match.
+	// RedirectTo is set, or when IsNotFound is true. Exactly one of Page,
+	// Document and Action is non-nil on a successful match.
 	Document *types.Document
+	// Action is the matched action: the route that answers this request's method.
+	// It is nil when a page or a document answered instead.
+	Action *types.Action
+	// MethodNotAllowed reports that the path exists but answers no such method.
+	// It is distinct from IsNotFound, and the distinction is the response: a 405
+	// naming what the path does accept, rather than a 404 saying the URL is not
+	// a URL.
+	MethodNotAllowed bool
+	// Allowed lists every method the matched path answers, sorted. It is set
+	// whenever a path matched — on a successful match as well as a refused one —
+	// because an OPTIONS request is a successful match that asks for exactly
+	// this list.
+	Allowed []string
 	// Locale is the locale resolved for the request, always one of the router's
 	// supported locales.
 	Locale string
@@ -122,6 +135,11 @@ type Router interface {
 	// ErrUnsubstitutedPlaceholder when a redirect's To references a
 	// placeholder its From does not capture.
 	RegisterDocument(doc *types.Document) error
+	// RegisterAction adds action's paths, across every locale in action.Paths, for
+	// every method in action.Methods. An action shares a path with a page or a
+	// document freely — a page and the POST its own form submits are one URL —
+	// but two actions claiming one method for one path is ErrDuplicateRoute.
+	RegisterAction(action *types.Action) error
 	// RegisterNotFound sets the page served when a request resolves to no
 	// content.
 	RegisterNotFound(page *types.Page) error
@@ -241,11 +259,31 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 
 	if tree, ok := rt.routeTrees[locale]; ok {
 		if matched, params, ok := tree.match(segments); ok {
+			allowed := allowedMethods(matched)
+
+			// Answered here rather than by every action: OPTIONS asks what a URL
+			// accepts, and the router is what knows. A handler is free to claim
+			// it explicitly, and resolve hands the request over when one does.
+			if req.Method == http.MethodOptions && matched.actions[http.MethodOptions] == nil {
+				return &MatchResult{Locale: locale, PathParams: params, Allowed: allowed}, nil
+			}
+
+			page, doc, action, ok := resolve(matched, req.Method)
+			if !ok {
+				return &MatchResult{
+					Locale:           locale,
+					PathParams:       params,
+					MethodNotAllowed: true,
+					Allowed:          allowed,
+				}, nil
+			}
 			return &MatchResult{
-				Page:       matched.page,
-				Document:   matched.document,
+				Page:       page,
+				Document:   doc,
+				Action:     action,
 				Locale:     locale,
 				PathParams: params,
+				Allowed:    allowed,
 			}, nil
 		}
 	}

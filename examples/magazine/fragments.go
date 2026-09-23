@@ -41,6 +41,19 @@ type deps struct {
 	// apiBase is where the newsroom API lives, needed by the templates to build
 	// image URLs.
 	apiBase string
+	// subscribers is where the newsletter form's submissions land.
+	subscribers *subscribers
+	// pages holds the pages an action needs to render. An action that answers a
+	// validation failure with the form's own page has to name that page, and the
+	// page is built after the deps are.
+	pages *sitePages
+}
+
+// sitePages holds the pages an action re-renders. It is filled in as the site is
+// built, which is the one order that works: a page's own action is declared while
+// the page is being built, and cannot refer to the finished page yet.
+type sitePages struct {
+	newsletter *collage.Page
 }
 
 // translate maps a newsroom error onto the framework's.
@@ -144,59 +157,34 @@ func (d *deps) chromeFallbackData(_ context.Context, rc *collage.RenderContext) 
 	return d.base(rc), nil, nil
 }
 
-// The three lookups below are memoised into the render's SharedData.
+// The three lookups below are memoised for the lifetime of one render.
 //
-// They were written when the document head was a separate fragment that fetched the
-// same article the content fragment did, to stop one page view costing two requests.
-// Hoisting removed that second consumer, so today nothing fetches twice and these
-// memoise nothing — they are kept because the next fragment that needs an article
-// already fetched is one line away from costing a request, and because each falls
-// back to fetching when nothing is stored, so they cannot be wrong.
+// Once rather than a read-then-write of SharedData, and the difference is the whole
+// reason it exists: sibling fragments' data handlers run at the same time, so two of
+// them checking SharedData, missing, and fetching is not a hypothetical — it is what
+// a check-then-act does under concurrency. One page view, two identical requests to
+// the newsroom, and a page that looks perfectly correct.
 //
-// SharedData is the right place for it: values exchanged between fragments within a
-// single render, shared across a fragment's per-fragment timeout context because
-// RenderContext.WithContext copies shallowly.
+// Once closes that window. The first fragment to ask fetches, the rest wait for it,
+// and all of them get the same article. The result lives exactly as long as the
+// render; anything that should outlive it is the page cache's business.
 
 func (d *deps) article(ctx context.Context, rc *collage.RenderContext, slug string) (Article, error) {
-	if v, ok := rc.Get("article:" + slug); ok {
-		if art, ok := v.(Article); ok { // any: SharedData's value type is the framework's
-			return art, nil
-		}
-	}
-	art, err := d.client.Article(ctx, slug)
-	if err != nil {
-		return Article{}, err
-	}
-	rc.Set("article:"+slug, art)
-	return art, nil
+	return collage.Once(rc, "article:"+slug, func(context.Context) (Article, error) {
+		return d.client.Article(ctx, slug)
+	})
 }
 
 func (d *deps) category(ctx context.Context, rc *collage.RenderContext, slug string) (Category, error) {
-	if v, ok := rc.Get("category:" + slug); ok {
-		if cat, ok := v.(Category); ok { // any: SharedData's value type is the framework's
-			return cat, nil
-		}
-	}
-	cat, err := d.client.Category(ctx, slug)
-	if err != nil {
-		return Category{}, err
-	}
-	rc.Set("category:"+slug, cat)
-	return cat, nil
+	return collage.Once(rc, "category:"+slug, func(context.Context) (Category, error) {
+		return d.client.Category(ctx, slug)
+	})
 }
 
 func (d *deps) author(ctx context.Context, rc *collage.RenderContext, slug string) (Author, error) {
-	if v, ok := rc.Get("author:" + slug); ok {
-		if a, ok := v.(Author); ok { // any: SharedData's value type is the framework's
-			return a, nil
-		}
-	}
-	a, err := d.client.Author(ctx, slug)
-	if err != nil {
-		return Author{}, err
-	}
-	rc.Set("author:"+slug, a)
-	return a, nil
+	return collage.Once(rc, "author:"+slug, func(context.Context) (Author, error) {
+		return d.client.Author(ctx, slug)
+	})
 }
 
 // hoistTitle declares the document title and description for this render.
@@ -232,6 +220,7 @@ func (d *deps) homeData(ctx context.Context, rc *collage.RenderContext) (*view, 
 	v.Listing = listing
 	d.hoistTitle(rc, v.Heading, v.Standfirst)
 	v.Pager = pager{Path: v.URL.Home()}
+
 	return v, []string{"articles"}, nil
 }
 
@@ -371,5 +360,28 @@ func (d *deps) searchData(ctx context.Context, rc *collage.RenderContext) (*view
 	d.hoistTitle(rc, v.Query+" — "+v.Heading, v.Standfirst)
 	// No dependency tags: the search page is Dynamic, so nothing caches it and
 	// there is nothing for an invalidation to reach.
+	return v, nil, nil
+}
+
+// newsletterData fetches what the newsletter page renders with, including whatever
+// the action left behind after a refused submission.
+func (d *deps) newsletterData(ctx context.Context, rc *collage.RenderContext) (*view, []string, error) {
+	v := d.base(rc)
+	v.Heading = localized(rc.Locale, "The newsletter", "Bülten")
+	v.Standfirst = localized(rc.Locale,
+		"One email a week, and nothing else.",
+		"Haftada bir e-posta, başka hiçbir şey.")
+	d.hoistTitle(rc, v.Heading, v.Standfirst)
+
+	// On an ordinary page view there is nothing here, which is the same code path
+	// as a refused submission.
+	if reason, ok := rc.Get("newsletter:error"); ok {
+		v.NewsletterError, _ = reason.(string) // any: SharedData's value type is the framework's
+	}
+	if typed, ok := rc.Get("newsletter:email"); ok {
+		v.NewsletterEmail, _ = typed.(string) // any: SharedData's value type is the framework's
+	}
+	v.Subscribed = rc.Request != nil && rc.Request.URL.Query().Get("subscribed") == "1"
+
 	return v, nil, nil
 }

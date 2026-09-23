@@ -98,6 +98,17 @@ type Page struct {
 	// ErrorPage is served when rendering this page fails. It must not be the page
 	// itself.
 	ErrorPage *Page
+	// Actions are the non-GET methods this page's own URL answers, which is what
+	// an HTML form needs: a form's action is the page it sits on. Each inherits
+	// this page's Paths; an action that wants a URL of its own is registered on
+	// its own instead.
+	Actions []*Action
+	// FragmentPaths are the fragments of this page that are reachable on their own,
+	// keyed by locale and then by URL pattern. Declaring one is what opens it: a
+	// framework that exposed every fragment by default would put every internal
+	// part of every page on the public web, and turning that off again is not a
+	// thing anyone remembers to do.
+	FragmentPaths map[string]map[string]*Fragment
 }
 
 // Root returns p.LayoutFragment when it is set, otherwise p.ContentFragment. It is

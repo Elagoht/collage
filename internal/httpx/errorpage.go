@@ -113,6 +113,18 @@ func (h *Handler) reportError(r *http.Request, f failure) {
 		level = slog.LevelDebug
 	case f.stage == stageAsset && f.status < http.StatusInternalServerError:
 		level = slog.LevelDebug
+	case f.stage == stageRoute && f.status < http.StatusInternalServerError:
+		// A refusal the request earned: a method the URL does not answer, a
+		// form submitted without a forgery token. Nothing in the application
+		// failed — it decided — and the deciding is the most routine thing a
+		// site with forms does, because a bot probing them does it all day.
+		// Logging that at error level buries the failures that are real, which
+		// is the same reason a route miss is at debug.
+		//
+		// A developer whose own form is being refused is not left guessing:
+		// in development the reason is written into the response itself, which
+		// is where they are looking.
+		level = slog.LevelDebug
 	}
 	if f.kind == routeKindDocument {
 		h.logger.Log(r.Context(), level, "collage: request failed",

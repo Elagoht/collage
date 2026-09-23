@@ -97,6 +97,23 @@ func (e *fakeEngine) Render(_ context.Context, rc *types.RenderContext) (*render
 }
 
 // totalCalls returns how many renders the engine has performed in all.
+// RenderFragment renders one fragment on its own. The body names the fragment, so a
+// test can tell which one was asked for without a template engine.
+func (e *fakeEngine) RenderFragment(_ context.Context, _ *types.RenderContext, f *types.Fragment) ([]byte, error) {
+	e.mu.Lock()
+	e.calls["fragment:"+f.Name]++
+	e.total++
+	out, ok := e.byPage["fragment:"+f.Name]
+	e.mu.Unlock()
+	if ok && out.err != nil {
+		return nil, out.err
+	}
+	if ok {
+		return []byte(out.html), nil
+	}
+	return []byte("<div>" + f.Name + "</div>"), nil
+}
+
 func (e *fakeEngine) totalCalls() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -160,6 +177,9 @@ func (s *stubRouter) ErrorPage() *types.Page { return s.errorPage }
 // package consults claimed paths — internal/core's mount close-out check is the
 // only caller.
 func (s *stubRouter) ClaimedPaths() []router.ClaimedPath { return nil }
+
+// RegisterAction is never called: the stub answers from a canned MatchResult.
+func (s *stubRouter) RegisterAction(*types.Action) error { return nil }
 
 // plainCache wraps a Cache so that it does NOT satisfy cache.TaggedCache, forcing
 // the handler down its Set path. It exists to prove that tags still reach the
@@ -836,24 +856,36 @@ func TestDynamicStrategyIsNeverCached(t *testing.T) {
 	}
 }
 
-func TestPostIsNeverCached(t *testing.T) {
+// A page answers GET and HEAD. A POST to it, with no action declared for that URL,
+// is a 405 naming what the path does accept — not a rendered page.
+//
+// The old behaviour was to render: any method reached the page and got HTML back.
+// That is the wrong answer to a form submission, and wrong in the quietest possible
+// way, because the reader is handed a page that looks like nothing happened while
+// the application never saw the submission at all.
+func TestPostToAPageWithNoActionIsRefused(t *testing.T) {
 	page := testPage("home", "/", types.StrategyStatic)
 	env := newEnv(t, []*types.Page{page})
 
 	res := env.do(httptest.NewRequest(http.MethodPost, "/", nil))
 
-	if res.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusMethodNotAllowed)
+	}
+	allow := res.Header().Get("Allow")
+	for _, want := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
+		if !strings.Contains(allow, want) {
+			t.Errorf("Allow = %q, want it to contain %s", allow, want)
+		}
+	}
+	if strings.Contains(allow, http.MethodPost) {
+		t.Errorf("Allow = %q, want it not to offer POST", allow)
 	}
 	if entries := env.cacheEntries(); entries != 0 {
-		t.Errorf("cache entries = %d, want 0: an unsafe method must not populate the cache", entries)
+		t.Errorf("cache entries = %d, want 0: a refused method must not populate the cache", entries)
 	}
-
-	// And the POST must not have been served from a cache it could not read
-	// either: the following GET renders for itself.
-	env.get("/")
-	if env.engine.pageCalls("home") != 2 {
-		t.Errorf("render calls = %d, want 2", env.engine.pageCalls("home"))
+	if env.engine.pageCalls("home") != 0 {
+		t.Errorf("render calls = %d, want 0: the page must not render for a method it does not answer", env.engine.pageCalls("home"))
 	}
 }
 
@@ -1419,6 +1451,9 @@ func (p *panickingRouter) Match(*http.Request) (*router.MatchResult, error) {
 
 // ClaimedPaths returns nothing; see stubRouter.ClaimedPaths.
 func (p *panickingRouter) ClaimedPaths() []router.ClaimedPath { return nil }
+
+// RegisterAction is never called; this router exists to panic from Match.
+func (p *panickingRouter) RegisterAction(*types.Action) error { return nil }
 
 // TestStaticPageDoesNotExpireAtTheDefaultTTL is the I3 regression. StrategyStatic is
 // documented as "render once and serve until explicitly invalidated", but Static()
@@ -1994,5 +2029,29 @@ func TestServe_EmptyCacheParamsDropsTheQueryEntirely(t *testing.T) {
 	env.get("/?anything=2&more=3")
 	if got := env.engine.pageCalls("home"); got != after {
 		t.Errorf("renders = %d, want %d — an empty allowlist means no query discriminates", got, after)
+	}
+}
+
+// In development a page is rendered again for every request, even one that was
+// cached a moment ago. Templates reload from disk in dev mode, and a cached page
+// would hide that reload for as long as its TTL — on exactly the pages someone is
+// most likely to be editing.
+func TestHandler_DevModeNeverServesACachedPage(t *testing.T) {
+	page := testPage("home", "/", types.StrategyIncremental)
+	env := newEnv(t, []*types.Page{page}, withDevMode())
+
+	for range 3 {
+		if rec := env.get("/"); rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, want 200", rec.Code)
+		}
+	}
+
+	if got := env.engine.totalCalls(); got != 3 {
+		t.Errorf("renders = %d, want 3: dev mode must not serve a page rendered before an edit", got)
+	}
+	// The entry is still written. Someone developing a plugin or an invalidation
+	// rule needs the write path to keep working.
+	if got := env.cacheEntries(); got == 0 {
+		t.Error("nothing was written to the cache; the write path must still run in dev mode")
 	}
 }

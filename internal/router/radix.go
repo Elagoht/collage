@@ -45,6 +45,12 @@ type node struct {
 	// page is set on a route-tree node that terminates a registered page path.
 	page *types.Page
 
+	// actions are the actions terminating at this node, keyed by method. Unlike
+	// page and document, actions coexist with either: a page and the POST its own
+	// form submits are one URL, and separating them would mean inventing a second
+	// URL for every form.
+	actions map[string]*types.Action
+
 	// document is the document terminating at this node, if any. At most one of
 	// page and document is ever set; occupantName is the only place both are read.
 	document *types.Document
@@ -75,7 +81,7 @@ type edge struct {
 // terminal reports whether n is the end of a registered page, document, or
 // redirect.
 func (n *node) terminal() bool {
-	return n.page != nil || n.document != nil || n.hasRedirect
+	return n.page != nil || n.document != nil || len(n.actions) > 0 || n.hasRedirect
 }
 
 // insert walks segments from n, creating nodes as needed, and returns the

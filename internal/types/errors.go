@@ -10,6 +10,17 @@ var ErrNilFragment = errors.New("collage: nil fragment")
 // not declared — a Bind target or a Slot lookup that misses.
 var ErrUnknownSlot = errors.New("collage: unknown slot")
 
+// ErrUnknownAsset is returned when a template asks for the URL of a file no mount
+// can resolve. It is an error rather than the path unchanged: a page that renders
+// while linking a stylesheet that 404s reports itself as fine, and the typo
+// survives to production.
+var ErrUnknownAsset = errors.New("collage: unknown asset")
+
+// ErrOnceTypeMismatch reports that one Once key was asked for as two different
+// types within a single render. The value is whatever the first caller fetched; a
+// second caller expecting something else is a bug in the keys, not a cache miss.
+var ErrOnceTypeMismatch = errors.New("collage: once key fetched as two different types")
+
 // ErrSlotOccupied is returned when binding a fragment to a slot that already has a
 // fill and does not allow multiple.
 var ErrSlotOccupied = errors.New("collage: slot already occupied")

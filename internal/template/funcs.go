@@ -36,6 +36,8 @@ func DefaultFuncs() template.FuncMap {
 		"title":      title,
 		"join":       join,
 		"hoist":      hoistPlaceholder,
+		"asset":      assetPlaceholder,
+		"csrfToken":  csrfPlaceholder,
 		"formatTime": formatTime,
 	}
 }
@@ -46,6 +48,20 @@ func DefaultFuncs() template.FuncMap {
 // one runs, a template used {{hoist}} outside a render that bound it.
 func hoistPlaceholder(area string) (template.HTML, error) {
 	return "", fmt.Errorf("%w: %q", ErrHoistOutsideRender, area)
+}
+
+// assetPlaceholder is the parse-time stand-in for "asset", for the same reason
+// slotPlaceholder and hoistPlaceholder exist: the real implementation needs the
+// application's mounts and is bound per render, but the name has to be in the
+// FuncMap before any template that calls it is parsed.
+func assetPlaceholder(urlPath string) (string, error) {
+	return "", fmt.Errorf("%w: %q", ErrAssetOutsideRender, urlPath)
+}
+
+// csrfPlaceholder is the parse-time stand-in for "csrfToken". Like slot and hoist,
+// the real implementation needs the request and is bound per render.
+func csrfPlaceholder() (template.HTML, error) {
+	return "", ErrCSRFOutsideRender
 }
 
 // slotPlaceholder is the parse-time stand-in for "slot". It is never meant to run: a

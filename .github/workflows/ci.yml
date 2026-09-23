@@ -1,0 +1,111 @@
+# The gate the framework has to pass before anyone depends on a commit.
+#
+# Three jobs rather than one, because they answer different questions and a reader
+# looking at a red tick should not have to guess which: does the framework hold, do
+# the example applications still build against it, and do the published plugins
+# still compile against what is about to become a tag.
+name: ci
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  framework:
+    name: framework
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      # Formatting first: it is the cheapest failure and the one most likely to
+      # bury a real diff in noise if it lands.
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      # -race is the point of this job, not an extra. The framework renders
+      # concurrently and caches shared state; a suite that only ever runs
+      # single-threaded would pass through exactly the bugs that matter here.
+      - name: go test -race
+        run: go test -race ./...
+
+  examples:
+    name: examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      # Built through go.work, so they compile against this checkout rather than
+      # the released version their go.mod files name. That is the whole reason to
+      # run them: a framework change that breaks a consumer should fail here, not
+      # after a tag.
+      - name: build examples
+        run: |
+          go build ./examples/magazine
+          go build ./examples/newsroom-api
+
+      # Run inside each directory: they are separate modules, so a ./examples/...
+      # pattern from the root matches nothing at all — and matching nothing is a
+      # green tick that tested no code.
+      - name: test examples
+        run: |
+          (cd examples/magazine && go test ./...)
+          (cd examples/newsroom-api && go test ./...)
+
+  plugins:
+    name: plugins
+    runs-on: ubuntu-latest
+    # Tags only. On a branch these repositories are pinned to a released collage
+    # and would tell us nothing; at a tag they answer the question that matters —
+    # is this release one the published plugins can still build against.
+    if: startsWith(github.ref, 'refs/tags/v')
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin:
+          - collage-opti-image
+          - collage-jsonld
+          - collage-minimizer
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: collage
+      - uses: actions/checkout@v4
+        with:
+          repository: Elagoht/${{ matrix.plugin }}
+          path: ${{ matrix.plugin }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      # A workspace rather than a replace directive: it leaves the plugin's own
+      # go.mod untouched, so what is tested is the plugin as published, merely
+      # resolved against the collage being released.
+      - name: build and test against this collage
+        working-directory: ${{ matrix.plugin }}
+        run: |
+          go work init . ../collage
+          go build ./...
+          go test ./...

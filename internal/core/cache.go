@@ -16,7 +16,7 @@ import (
 // A caller-supplied Store wins over Type and is taken exactly as given: it is the
 // one cache the application will use, so nothing here wraps, copies, or
 // second-guesses it.
-func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, error) {
+func buildCache(cfg Config, devMode bool, csrfMarker string, logger *slog.Logger) (cache.Cache, error) {
 	if cfg.Cache.Store != nil {
 		return cfg.Cache.Store, nil
 	}
@@ -58,6 +58,23 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 				return memory(), nil
 			}
 			version = derived
+		}
+
+		// The forgery-token marker is part of what a stored body contains, and it
+		// is derived from the application's key. A body written under one key
+		// carries a marker the next key's substitution will not find, and would be
+		// served with the marker still in it — a form refused on submission with
+		// nothing to explain why. Changing the key therefore changes the
+		// namespace, which is what this mixes in.
+		if csrfMarker != "" {
+			version += ":" + csrfMarker
+			if len(cfg.Security.CSRFKey) == 0 {
+				// Worth saying separately, because the consequence is not the one
+				// the key warning describes: a generated key is different every
+				// run, so the namespace is too, and nothing on disk is ever found
+				// again. The cache still works; it just starts empty every time.
+				logger.Warn("collage: no Security.CSRFKey set, so the disk cache starts empty after every restart")
+			}
 		}
 
 		disk, err := cache.NewDisk(cache.DiskConfig{

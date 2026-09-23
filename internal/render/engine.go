@@ -28,6 +28,9 @@ type Engine interface {
 	// only when the render failed as a whole; an isolated fragment failure is
 	// reported through the Result instead, see Result.Degraded.
 	Render(ctx context.Context, rc *types.RenderContext) (*Result, error)
+	// RenderFragment renders one fragment and its subtree on its own, with no
+	// page around it. It is what answers a request for part of a page.
+	RenderFragment(ctx context.Context, rc *types.RenderContext, f *types.Fragment) ([]byte, error)
 }
 
 // Result is one page's rendered output.
@@ -121,6 +124,15 @@ type Options struct {
 	// the fragment and its error, so a failure shows up in the page being developed
 	// instead of looking like a section someone forgot to write.
 	DevMode bool
+	// AssetURL resolves a mounted file's URL to its content-addressed one, and is
+	// what backs {{asset "/static/app.css"}}. Nil leaves the template function
+	// reporting that no mount can answer, which is what a page linking an asset
+	// through an application that mounted none should say.
+	AssetURL func(urlPath string) (string, error)
+	// CSRFMarker returns the placeholder {{csrfToken}} renders in place of a real
+	// token, which the response layer replaces per reader. Nil leaves the template
+	// function reporting that forgery protection is off.
+	CSRFMarker func() (string, error)
 }
 
 // SlotEngine is the Engine implementation that resolves {{slot "name"}} against the
@@ -133,6 +145,8 @@ type SlotEngine struct {
 	metrics        observability.Metrics
 	tracer         observability.Tracer
 	devMode        bool
+	assetURL       func(string) (string, error)
+	csrfMarker     func() (string, error)
 }
 
 var _ Engine = (*SlotEngine)(nil)
@@ -153,6 +167,8 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 		metrics:        observability.MetricsOrNoop(opts.Metrics),
 		tracer:         observability.TracerOrNoop(opts.Tracer),
 		devMode:        opts.DevMode,
+		assetURL:       opts.AssetURL,
+		csrfMarker:     opts.CSRFMarker,
 	}
 }
 
@@ -206,7 +222,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	}
 
 	start := time.Now()
-	html, err := e.renderFragment(rc, root, state)
+	html, err := e.renderFragment(rc, root, state, nil)
 	// Resolved on the finished tree, so a declaration made anywhere below a marker
 	// still reaches it — which is the whole reason a marker is written rather than
 	// the content itself.

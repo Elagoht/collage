@@ -65,6 +65,17 @@ type view struct {
 	APIBase string
 	// Pager builds the pagination links.
 	Pager pager
+	// NewsletterError is why the last submission was refused, when this render is
+	// the one an action produced after a validation failure. It is empty on an
+	// ordinary page view.
+	NewsletterError string
+	// NewsletterEmail is what the reader typed, echoed back so a refused form is
+	// not also an empty one.
+	NewsletterEmail string
+	// Subscribed reports that the reader arrived here from a successful
+	// submission, which the action signals with a query parameter rather than
+	// with stored state.
+	Subscribed bool
 }
 
 // urls builds every link the templates emit, for one locale.

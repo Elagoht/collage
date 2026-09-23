@@ -18,3 +18,53 @@ body {
   max-width: 42rem;
   padding: 2rem 1rem;
 }
+
+/* The form the scaffold ships with. */
+.signup {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid color-mix(in oklab, var(--ink) 15%, transparent);
+}
+
+.signup form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.signup label {
+  width: 100%;
+  font-size: 0.85rem;
+  letter-spacing: 0.02em;
+}
+
+.signup input {
+  flex: 1 1 18rem;
+  padding: 0.5rem 0.65rem;
+  font: inherit;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid color-mix(in oklab, var(--ink) 35%, transparent);
+  border-radius: 4px;
+}
+
+.signup button {
+  padding: 0.5rem 1rem;
+  font: inherit;
+  color: var(--paper);
+  background: var(--ink);
+  border: 1px solid var(--ink);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.error,
+.ok {
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  border: 1px solid currentColor;
+}
+
+.error { color: #8a1c1c; }
+.ok    { color: #1c5c32; }

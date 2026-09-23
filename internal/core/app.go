@@ -30,6 +30,7 @@ import (
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/csrf"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/observability"
@@ -126,8 +127,13 @@ type Config struct {
 	// DevMode enables development-mode behaviour across the framework. The
 	// effective value is this or Template.DevMode; see App.DevMode.
 	DevMode bool
+	// Security configures request-forgery protection.
+	Security SecurityConfig
 	// Logger is the structured logger the framework writes through and hands to
-	// plugins via Host.Logger. A nil Logger means slog.Default().
+	// plugins via Host.Logger. A nil Logger means the framework picks one: a
+	// terminal-friendly handler when the output is a terminal and nothing has
+	// replaced slog's own default, and slog.Default() otherwise. See
+	// defaultLogger.
 	Logger *slog.Logger
 	// Server configures the HTTP server.
 	Server ServerConfig
@@ -167,6 +173,11 @@ type ServerConfig struct {
 	WriteTimeout time.Duration
 	// IdleTimeout bounds how long a keep-alive connection may sit idle.
 	IdleTimeout time.Duration
+	// MaxBodyBytes bounds an action's request body when the action declares no
+	// bound of its own. Zero selects the framework's default of four megabytes;
+	// negative means unbounded, which is a decision worth making deliberately,
+	// because an unbounded body is memory an anonymous caller chooses the size of.
+	MaxBodyBytes int64
 	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight
 	// requests.
 	ShutdownTimeout time.Duration
@@ -324,6 +335,15 @@ type App struct {
 	// docOrder holds the registered document names in registration order, so
 	// Documents is deterministic.
 	docOrder []string
+	// actions holds every registered action by name, and actionOrder the same in
+	// registration order. An action shares a tree node with whatever else claims
+	// its path, so unlike pages and documents it is not the node's sole occupant;
+	// see internal/router's RegisterAction.
+	actions     map[string]*types.Action
+	actionOrder []*types.Action
+	// csrf issues and verifies request-forgery tokens, or is nil when the
+	// application turned the protection off.
+	csrf *csrf.Guard
 	// mounts holds every mounted asset file system, in registration order. See
 	// mount.go for Mount, Mounts, and checkMountsDoNotShadow, the close-out check
 	// that keeps a mount from silently swallowing a page's or a document's route
@@ -407,7 +427,7 @@ func New(cfg Config) (*App, error) {
 	devMode := cfg.DevMode || cfg.Template.DevMode
 	logger := cfg.Logger
 	if logger == nil {
-		logger = slog.Default()
+		logger = defaultLogger()
 	}
 
 	// The App exists before the template engine because plugins get to influence
@@ -441,7 +461,10 @@ func New(cfg Config) (*App, error) {
 	maps.Copy(funcs, cfg.Template.Funcs)
 
 	tmpl, err := template.NewHTML(template.HTMLConfig{
-		FS:        cfg.Template.FS,
+		// Not cfg.Template.FS directly: in development an embedded template set
+		// cannot reload, so the copy on disk is preferred when there is one. See
+		// templateSource.
+		FS:        templateSource(cfg.Template.FS, cfg.Template.Root, devMode, logger),
 		Root:      cfg.Template.Root,
 		Extension: cfg.Template.Extension,
 		DevMode:   devMode,
@@ -456,13 +479,26 @@ func New(cfg Config) (*App, error) {
 	metrics := observability.MetricsOrNoop(cfg.Observability.Metrics)
 	tracer := observability.TracerOrNoop(cfg.Observability.Tracer)
 
+	// Before the cache, deliberately: a stored body carries the forgery marker,
+	// which is derived from the key, so the key is part of what makes a cached
+	// body still correct. buildCache mixes it into the namespace.
+	guard, err := buildCSRF(cfg.Security, logger)
+	if err != nil {
+		return nil, fmt.Errorf("collage: csrf: %w", err)
+	}
+	app.csrf = guard
+
 	// A caller-supplied Store wins over Type, and is taken exactly as given: this
 	// is the one cache the application will use, so nothing here wraps, copies, or
 	// second-guesses it. Enabled remains the master switch — a Store on a disabled
 	// cache is not silently turned on, because "caching is off" must mean off.
 	var store cache.Cache
 	if cfg.Cache.Enabled {
-		built, err := buildCache(cfg, devMode, logger)
+		marker := ""
+		if guard != nil {
+			marker = guard.Marker()
+		}
+		built, err := buildCache(cfg, devMode, marker, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -478,12 +514,13 @@ func New(cfg Config) (*App, error) {
 	tracker.MaxKeysPerTag = cfg.Cache.MaxKeysPerTag
 
 	app.tmpl = tmpl
-	app.tmpl = tmpl
 	app.renderer = render.New(tmpl, render.Options{
 		DefaultTimeout: cfg.Template.Timeout,
 		Metrics:        metrics,
 		Tracer:         tracer,
 		DevMode:        devMode,
+		AssetURL:       app.assetURL,
+		CSRFMarker:     app.csrfMarker,
 	})
 	app.store = store
 	app.tracker = tracker
@@ -501,6 +538,7 @@ func New(cfg Config) (*App, error) {
 	app.pages = make(map[string]*types.Page)
 	app.bound = make(map[*types.Page]bool)
 	app.documents = make(map[string]*types.Document)
+	app.actions = make(map[string]*types.Action)
 	app.listening = make(chan struct{})
 
 	return app, nil
@@ -662,19 +700,33 @@ func (a *App) buildHandler() (http.Handler, error) {
 		return a.buildFailed(err)
 	}
 
+	// Here rather than at construction: whether a generated forgery key matters
+	// depends on whether anything will verify a token, which is only known once
+	// registration has closed.
+	a.warnAboutGeneratedKey()
+
 	handler, err := httpx.New(httpx.Deps{
-		Router:     a.routes,
-		Renderer:   a.renderer,
-		Cache:      a.store,
-		Tracker:    a.tracker,
-		Plugins:    a.plugins,
-		Metrics:    a.metrics,
-		Tracer:     a.tracer,
-		Logger:     a.logger,
-		DevMode:    a.devMode,
-		DefaultTTL: a.cfg.Cache.DefaultTTL,
-		Vary:       a.vary,
-		Mounts:     a.Mounts(),
+		Router:       a.routes,
+		Renderer:     a.renderer,
+		Cache:        a.store,
+		Tracker:      a.tracker,
+		Plugins:      a.plugins,
+		Metrics:      a.metrics,
+		Tracer:       a.tracer,
+		Logger:       a.logger,
+		DevMode:      a.devMode,
+		DefaultTTL:   a.cfg.Cache.DefaultTTL,
+		Vary:         a.vary,
+		Mounts:       a.Mounts(),
+		MaxBodyBytes: a.cfg.Server.MaxBodyBytes,
+		// An action asks for invalidation declaratively, and this is what
+		// carries it out. Handing every handler the whole application so it
+		// could call InvalidateTags itself would put the application inside a
+		// function whose job is to answer one request.
+		Invalidator: func(ctx context.Context, tags []string) error {
+			return a.InvalidateTags(ctx, tags...)
+		},
+		CSRF: a.csrf,
 	})
 	if err != nil {
 		return a.buildFailed(err)
@@ -976,7 +1028,22 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	// the argument instead let the two disagree — RenderPath(ctx, "/tr/blog", "en",
 	// nil) served the tr page with a RenderContext.Locale of "en", so every
 	// locale-dependent fragment on it rendered in the wrong language.
-	rc := types.NewRenderContext(ctx, req, match.Page, match.Locale, merged)
+	return a.renderResolved(ctx, req, match.Page, match.Locale, merged, path)
+}
+
+// renderResolved renders page for locale and returns what the hooks left behind.
+// It is the half of RenderPath after the router has decided, shared with
+// RenderNotFound — which has no router decision to make, because a not-found page
+// is reached by failing to match rather than by matching.
+func (a *App) renderResolved(
+	ctx context.Context,
+	req *http.Request,
+	page *types.Page,
+	locale string,
+	params map[string]string,
+	path string,
+) (*render.Result, error) {
+	rc := types.NewRenderContext(ctx, req, page, locale, params)
 
 	// The render hooks fire here as well as in the HTTP handler, and that is the
 	// point rather than a convenience.
@@ -994,8 +1061,8 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	// up in one and uses it in the other is not handed half of each.
 	if err := a.plugins.BeforeRender(ctx, &plugin.BeforeRenderEvent{
 		Context: rc,
-		Page:    match.Page,
-		Locale:  match.Locale,
+		Page:    page,
+		Locale:  locale,
 		Path:    path,
 	}); err != nil {
 		return nil, err
@@ -1007,8 +1074,8 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	}
 
 	event := &plugin.AfterRenderEvent{
-		Page:     match.Page,
-		Locale:   match.Locale,
+		Page:     page,
+		Locale:   locale,
 		Degraded: result.Degraded(),
 		HTML:     result.HTML,
 		Data:     rc.SharedData,
@@ -1061,4 +1128,38 @@ func (a *App) localeCookieName() string {
 		return defaultLocaleCookie
 	}
 	return a.cfg.Locale.CookieName
+}
+
+// RenderNotFound renders the registered not-found page for locale, or reports that
+// there is none with a nil result and a nil error.
+//
+// A not-found page is reached by failing to match, so it has no path and RenderPath
+// cannot reach it. A static build needs it anyway: a static host answers an unknown
+// URL with the site's own 404.html, and a site exported without one answers with
+// whatever the host's default is.
+//
+// The page's render strategy is deliberately not consulted. Whether a page is worth
+// caching and whether it belongs in a static export are different questions, and a
+// not-found page declared Dynamic — which is the usual declaration, since it is
+// never worth caching — would otherwise have no 404.html at all.
+func (a *App) RenderNotFound(ctx context.Context, locale string) (*render.Result, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := a.buildHandler(); err != nil {
+		return nil, err
+	}
+
+	page := a.routes.NotFoundPage()
+	if page == nil {
+		return nil, nil
+	}
+
+	// A path that cannot be a route, because that is what the page is for: a
+	// fragment reading rc.Request sees a request that did not match, which is the
+	// truth about why it is rendering.
+	const path = "/404"
+	req := a.syntheticRequest(ctx, path, locale)
+
+	return a.renderResolved(ctx, req, page, locale, map[string]string{}, path)
 }

@@ -20,7 +20,16 @@ import (
 // standing in for *core.App so this package is testable without wiring up a real
 // template engine, router, and render pipeline.
 type fakeRenderer struct {
-	pages []*types.Page
+	// csrfMarker is what CSRFMarker reports, so a test can render a page that
+	// carries one and watch the build refuse it.
+	csrfMarker string
+	// renderHTML replaces the default body, for a test that cares what is in it.
+	renderHTML string
+	// notFoundHTML is the site's 404 page. Empty means none is registered.
+	notFoundHTML string
+	// notFoundErr makes rendering it fail.
+	notFoundErr error
+	pages       []*types.Page
 	// defaultLocale is the locale written to the bare output path. An empty value
 	// means every locale gets a directory, which is what a test asserting the
 	// prefix on its own wants.
@@ -82,6 +91,22 @@ func (f *fakeRenderer) DefaultLocale() string {
 	return f.defaultLocale
 }
 
+// CSRFMarker returns the marker this renderer's pages would carry, empty unless a
+// test sets one. Most tests have no forms and no forgery protection.
+func (f *fakeRenderer) CSRFMarker() string { return f.csrfMarker }
+
+// RenderNotFound returns the site's 404 page, or reports that there is none —
+// which is what most tests want, since they register no such page.
+func (f *fakeRenderer) RenderNotFound(_ context.Context, locale string) (*render.Result, error) {
+	if f.notFoundErr != nil {
+		return nil, f.notFoundErr
+	}
+	if f.notFoundHTML == "" {
+		return nil, nil
+	}
+	return &render.Result{HTML: fmt.Appendf(nil, "%s|%s", f.notFoundHTML, locale)}, nil
+}
+
 func (f *fakeRenderer) Pages() []*types.Page {
 	return f.pages
 }
@@ -108,9 +133,11 @@ func (f *fakeRenderer) RenderPath(_ context.Context, path, locale string, params
 		return nil, failErr
 	}
 
-	result := &render.Result{
-		HTML: fmt.Appendf(nil, "<html>%s|%s</html>", locale, path),
+	body := fmt.Appendf(nil, "<html>%s|%s</html>", locale, path)
+	if f.renderHTML != "" {
+		body = []byte(f.renderHTML)
 	}
+	result := &render.Result{HTML: body}
 	if empty {
 		// Not an error: Render documents a nil HTML with a nil error as what an
 		// optional root fragment failing with no fallback produces.

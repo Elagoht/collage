@@ -2,8 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>@@NAME@@</title>
-  <link rel="stylesheet" href="/static/app.css">
+  {{/* asset resolves this to "/static/app.<hash>.css", which is served with a
+       year-long immutable lifetime: a changed file is a changed URL, so the
+       browser never has to ask whether its copy is still good. Linking
+       "/static/app.css" by hand also works, but can only be cached briefly. */}}
+  <link rel="stylesheet" href="{{asset "/static/app.css"}}">
 </head>
 <body>
   {{slot "content"}}

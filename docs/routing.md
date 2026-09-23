@@ -61,8 +61,10 @@ Matching happens on the *escaped* path, split first and percent-decoded one
 segment at a time, so a `%2F` inside a segment cannot silently erase a segment
 boundary. A segment that fails to decode is a 404, not a 500.
 
-Any HTTP method reaches the page and renders it; only `GET` and `HEAD` are
-eligible to be served from, or (for `GET`) to populate, the cache.
+A page answers `GET` and `HEAD`. Any other method is a 405 carrying an `Allow`
+header, unless an [action](actions.md) claims it for that URL — which is how a form
+posts to the page it sits on. Only `GET` and `HEAD` are eligible to be served from,
+or (for `GET`) to populate, the cache.
 
 ## Locales
 
@@ -102,6 +104,31 @@ publicly cacheable responses — see [caching](caching.md).
 
 A path registered for one locale only is reachable only in that locale. A request
 resolving to a locale with no tree simply does not match.
+
+### Translation is not the framework's job
+
+Collage routes locales. It does not translate, and there is no message catalogue
+here — deliberately, rather than as something not got round to yet.
+
+What the framework knows about a locale is which URL it belongs to and which page to
+render. What a word should be in Turkish is a question about content, and every
+project answers it somewhere it already has: a database, a translation service, a
+`golang.org/x/text` catalogue, a map in a Go file. A framework-level catalogue would
+be a fourth place that has to be kept in step with those, and it would have opinions
+about pluralisation and formatting that a real project has usually already settled.
+
+`rc.Locale` is what fragments read, and what a project does with it is its own. Put
+the lookup in a template function if a template needs it:
+
+```go
+Template: collage.TemplateConfig{
+	Funcs: template.FuncMap{"t": messages.Translate},
+},
+```
+
+The example in `examples/magazine` writes its handful of interface strings inline,
+which is the honest shape for a site with a handful of them and not a recommendation
+for a site with thousands.
 
 ## Redirects
 

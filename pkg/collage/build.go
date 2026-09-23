@@ -82,6 +82,12 @@ var ErrDegradedRender = build.ErrDegradedRender
 // regardless of BuildOptions.AllowDegraded.
 var ErrEmptyRender = build.ErrEmptyRender
 
+// ErrUnresolvedToken is recorded in BuildReport.Errors when a page rendered for a
+// static build still contains a request-forgery token placeholder. A built site has
+// no server to replace it with a reader's own token, and no server to submit the
+// form to; declare such a page Dynamic() so the build skips it.
+var ErrUnresolvedToken = build.ErrUnresolvedToken
+
 // ErrBuildPanic is recorded in BuildReport.Errors when rendering or writing one
 // page or document panicked. The build recovers it, records it against that page
 // or document, and continues with the rest.

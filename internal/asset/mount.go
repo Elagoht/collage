@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ErrInvalidPrefix reports a mount prefix that is empty, "/", or not a
@@ -18,12 +19,34 @@ var ErrInvalidPrefix = errors.New("collage: invalid mount prefix")
 // ErrNilFS reports that a mount was given no file system.
 var ErrNilFS = errors.New("collage: nil mount file system")
 
+// immutableCacheControl is what a fingerprinted name is served with: a year, which
+// is the longest any client is required to honour, and "immutable", which tells a
+// client not to revalidate even on a reload.
+const immutableCacheControl = "public, max-age=31536000, immutable"
+
 // Option configures a Mount.
 type Option func(*Mount)
 
 // WithCacheControl sets the Cache-Control header served with every file.
 func WithCacheControl(value string) Option {
 	return func(m *Mount) { m.cacheControl = value }
+}
+
+// WithDevMode makes this mount re-read a file's content hash on every request and
+// serve nothing as cacheable.
+//
+// It exists because content-addressing and editing a file are in direct conflict.
+// The hash is normally computed once and kept — a name derived from bytes that do
+// not change need not be derived twice — and the URL it produces is served with a
+// year and "immutable". Edit the file under a running process and the page keeps
+// linking the old name, the browser was told that name can never change, and the
+// edit is invisible until a restart. Which is exactly the shape of a bug nobody can
+// see: the work was done and nothing happened.
+//
+// So in development the hash is recomputed and nothing promises anything. It costs
+// one hash per request, in the mode where that is the cheapest thing happening.
+func WithDevMode() Option {
+	return func(m *Mount) { m.devMode = true }
 }
 
 // WithoutBuildCopy stops a static build from copying this mount into its output.
@@ -42,7 +65,14 @@ type Mount struct {
 	fsys         fs.FS
 	cacheControl string
 	buildCopy    bool
+	devMode      bool
 	tags         *etagCache
+	// minted records every fingerprinted name URL has handed out, keyed by the
+	// file's own path. A static build reads it to learn which content-addressed
+	// copies the rendered pages link. A sync.Map rather than a map behind the
+	// mutex the ETag cache uses: this is written once per file and read by every
+	// render thereafter.
+	minted sync.Map
 }
 
 // New returns a Mount serving fsys under prefix. prefix must begin and end with
@@ -97,7 +127,7 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name, ok := m.resolve(r.URL.Path)
+	name, fingerprinted, ok := m.resolve(r.URL.Path)
 	if !ok {
 		plainText(w, r, http.StatusNotFound)
 		return
@@ -124,13 +154,28 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if tag, err := m.tags.get(m.fsys, name); err == nil {
+	if tag, err := m.tag(name); err == nil {
 		w.Header().Set("ETag", tag)
 	}
 	if ctype := mime.TypeByExtension(path.Ext(name)); ctype != "" {
 		w.Header().Set("Content-Type", ctype)
 	}
-	w.Header().Set("Cache-Control", m.cacheControl)
+	// A fingerprinted name was minted from these exact bytes and verified against
+	// them above, so it can never describe anything else: there is nothing for a
+	// client to revalidate and no way for the answer to go stale. Everything else
+	// keeps the mount's own lifetime, which has to assume the file may change
+	// under a name that would not.
+	switch {
+	case m.devMode:
+		// Nothing is promised in development: the next request is meant to show
+		// the next edit, and a client holding an old copy is the one thing that
+		// stops it.
+		w.Header().Set("Cache-Control", "no-store")
+	case fingerprinted:
+		w.Header().Set("Cache-Control", immutableCacheControl)
+	default:
+		w.Header().Set("Cache-Control", m.cacheControl)
+	}
 
 	http.ServeContent(w, r, name, info.ModTime(), seeker)
 }
@@ -139,18 +184,49 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // reports that it is not servable. Containment is not a string problem: the
 // cleaned path must still be a valid fs path, which fs.ValidPath enforces by
 // rejecting "..", absolute paths and empty elements.
-func (m *Mount) resolve(urlPath string) (string, bool) {
+//
+// It also reports whether the request carried a verified fingerprint, which is
+// what earns the response its immutable lifetime.
+func (m *Mount) resolve(urlPath string) (name string, fingerprinted bool, ok bool) {
 	if !m.Handles(urlPath) {
-		return "", false
+		return "", false, false
 	}
-	name := path.Clean(strings.TrimPrefix(urlPath, m.prefix))
+	name = path.Clean(strings.TrimPrefix(urlPath, m.prefix))
 	if name == "." || name == "/" || strings.HasPrefix(name, "/") {
-		return "", false
+		return "", false, false
 	}
 	if !fs.ValidPath(name) {
-		return "", false
+		return "", false, false
 	}
-	return name, true
+
+	// A literal file is always itself, checked first: a real file whose name
+	// happens to have a hex-shaped component is not a fingerprint of some other
+	// file, and resolving it to one would serve the wrong bytes.
+	if _, err := fs.Stat(m.fsys, name); err == nil {
+		return name, false, true
+	}
+
+	file, hash, looksFingerprinted := splitFingerprint(name)
+	if !looksFingerprinted {
+		return name, false, true
+	}
+	// The hash has to be this file's own. Accepting any hex string would let a
+	// mistyped or forged URL be served with a year-long immutable lifetime, which
+	// a shared cache in front of the site would then hand to everyone.
+	tag, err := m.tag(file)
+	if err != nil {
+		return "", false, false
+	}
+	if strings.Trim(tag, `"`)[:fingerprintLen] != hash {
+		return "", false, false
+	}
+	return file, true, true
+}
+
+// tag returns name's content-hash ETag, remembering it outside development. See
+// WithDevMode.
+func (m *Mount) tag(name string) (string, error) {
+	return m.tags.lookup(m.fsys, name, !m.devMode)
 }
 
 // plainText writes an error body matching the framework's document error surface:

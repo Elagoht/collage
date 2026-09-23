@@ -166,6 +166,33 @@ different caches.
 Plugins observe invalidation through `OnCacheInvalidate`, and a plugin triggers
 one through `Host.InvalidateTags`.
 
+## Concurrent misses render once
+
+When a cached page expires, every request that arrives before the first re-render
+finishes is a cache miss. Without anything in the way, each of them renders: the
+same page, the same upstream calls, at the same moment — and the number of them
+grows with traffic, which is the shape of an outage rather than of a slow page.
+
+So the first request for a key renders and the rest wait for it. They are handed the
+same bytes and each writes its own response. Nothing is configurable here and
+nothing needs to be: it is how the handler serves a miss.
+
+Two things follow that are worth knowing.
+
+**Only cacheable pages coalesce.** A page declared `Dynamic()` has no cache key, and
+two requests for it are two renders by the page's own declaration.
+
+**A coalesced request is reported as its own cache event**, `CacheCoalesced`, rather
+than as a hit or a miss. It is not a hit — nothing was cached when the request asked
+— and calling it a miss would suggest it cost a render. Watch it: a count that
+climbs steadily is a page expiring faster than it can be re-made, which is what a
+too-short `Incremental` TTL looks like from the outside.
+
+A request whose own connection goes away stops waiting. And a render that fails
+because the *first* request was cancelled is not passed on to the requests behind
+it — they try again — so one reader pressing stop cannot turn into an error page for
+everyone who happened to ask at the same moment.
+
 ## What is never cached
 
 - **A degraded render.** If any fragment failed — even one a fallback covered for
@@ -434,6 +461,14 @@ framework does better than a string anyone has to remember to update.
 Not the VCS revision from `debug.ReadBuildInfo`, for what it is worth: `go run`
 usually omits it, and it says nothing about uncommitted edits — which are exactly
 the edits a developer is looking at when a page comes back stale.
+
+**A cached page is never served in development.** `Config.DevMode` or
+`Template.DevMode` turns off cache *lookups*: every request renders again. Templates
+reload from disk in development, and a cached page hides that reload for as long as
+its TTL — on exactly the pages someone is most likely to be editing. The write path
+is untouched, so entries are still stored, tags still tracked and `CacheWrite` hooks
+still fire; what dev mode removes is serving a page that was rendered before the
+edit.
 
 **A disk cache is never used in development.** `Config.DevMode` or
 `Template.DevMode` substitutes an in-memory one and logs that it did. Development is

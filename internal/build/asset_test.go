@@ -7,11 +7,13 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"github.com/Elagoht/collage/internal/asset"
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // TestBuild_CopiesMountedAssets verifies a mount's file is copied into the build
@@ -180,3 +182,176 @@ func (evilDirEntry) Name() string               { return "../../escape" }
 func (evilDirEntry) IsDir() bool                { return false }
 func (evilDirEntry) Type() fs.FileMode          { return 0 }
 func (evilDirEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrNotExist }
+
+// TestBuild_WritesFingerprintedCopiesThatWereLinked verifies a static build writes
+// the content-addressed name a page linked, and only the names something asked for.
+//
+// It matters because a build's output is served by a plain file server: nothing
+// there can strip a fingerprint the way the mount does, so a page linking
+// "/static/app.<hash>.css" needs that exact file to exist.
+func TestBuild_WritesFingerprintedCopiesThatWereLinked(t *testing.T) {
+	out := resolvedTempDir(t)
+	fsys := fstest.MapFS{
+		"app.css":   &fstest.MapFile{Data: []byte("body { color: red; }")},
+		"unused.js": &fstest.MapFile{Data: []byte("never linked")},
+	}
+	mount, err := asset.New("/static/", fsys)
+	if err != nil {
+		t.Fatalf("asset.New: %v", err)
+	}
+
+	// What a render does when a template calls {{asset "/static/app.css"}}.
+	linked, err := mount.URL("app.css")
+	if err != nil {
+		t.Fatalf("URL: %v", err)
+	}
+
+	app := &fakeRenderer{mounts: []*asset.Mount{mount}}
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := b.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	hashed := filepath.Join(out, filepath.FromSlash(strings.TrimPrefix(linked, "/")))
+	if got := readFile(t, hashed); got != "body { color: red; }" {
+		t.Fatalf("content at %s = %q, want the mount's exact bytes", hashed, got)
+	}
+
+	// The file's own name is still written: a template may link it directly, and
+	// a build that dropped it would break that page.
+	if got := readFile(t, filepath.Join(out, "static", "app.css")); got != "body { color: red; }" {
+		t.Error("the unfingerprinted name was not written")
+	}
+
+	// Nothing linked unused.js, so no fingerprinted copy of it exists. A build
+	// that wrote one per file would double every media directory.
+	entries, err := os.ReadDir(filepath.Join(out, "static"))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "unused.") && e.Name() != "unused.js" {
+			t.Errorf("wrote %q: a file nothing linked must not gain a fingerprinted copy", e.Name())
+		}
+	}
+}
+
+// A page carrying an unresolved forgery token is refused rather than written.
+//
+// The thing that replaces the placeholder with a reader's own token is the running
+// server, and a built site has no server — none to substitute, and none to submit
+// the form to either. Written, the file would ship with the placeholder in it and a
+// form that cannot work, saying nothing.
+func TestBuild_RefusesAPageWithAnUnresolvedToken(t *testing.T) {
+	out := resolvedTempDir(t)
+	const marker = "collage-csrf-deadbeefdeadbeefdeadbeefdeadbeef"
+
+	page := &types.Page{
+		Name:            "signup",
+		Paths:           map[string]string{"en": "/signup"},
+		Strategy:        types.StrategyStatic,
+		ContentFragment: &types.Fragment{Name: "signup-content", TemplatePath: "signup.html"},
+	}
+	app := &fakeRenderer{
+		pages:      []*types.Page{page},
+		csrfMarker: marker,
+		renderHTML: `<form><input name="_csrf" value="` + marker + `"></form>`,
+	}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, buildErr := b.Build(context.Background())
+
+	if buildErr == nil {
+		t.Fatal("Build() = nil error, want a refusal")
+	}
+	if !errors.Is(buildErr, ErrUnresolvedToken) {
+		t.Fatalf("Build() error = %v, want ErrUnresolvedToken", buildErr)
+	}
+	// And nothing on disk: a refused page must not leave a half-written file that
+	// a -clean build would otherwise have someone serving.
+	if _, err := os.Stat(filepath.Join(out, "signup", "index.html")); !os.IsNotExist(err) {
+		t.Errorf("the refused page was written anyway (stat err = %v)", err)
+	}
+	if len(report.Written) != 0 {
+		t.Errorf("Written = %v, want nothing", report.Written)
+	}
+}
+
+// A static host answers an unknown URL with the site's own 404.html. An export
+// without one answers with whatever that host decided to show — a page from
+// somebody else's site, in somebody else's language, with none of the navigation a
+// reader needs to get back.
+func TestBuild_WritesTheNotFoundPage(t *testing.T) {
+	out := resolvedTempDir(t)
+	app := &fakeRenderer{
+		pages: []*types.Page{{
+			Name:            "home",
+			Paths:           map[string]string{"en": "/", "tr": "/"},
+			Strategy:        types.StrategyStatic,
+			ContentFragment: &types.Fragment{Name: "home-content", TemplatePath: "home.html"},
+		}},
+		defaultLocale: "en",
+		notFoundHTML:  "<h1>not here</h1>",
+	}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := b.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// One per locale: at the root for the default locale's tree, and under the
+	// locale's own directory for the rest, because hosts differ on which they
+	// consult and writing both costs a page.
+	for path, wantLocale := range map[string]string{
+		filepath.Join(out, "404.html"):       "en",
+		filepath.Join(out, "tr", "404.html"): "tr",
+	} {
+		body := readFile(t, path)
+		if !strings.Contains(body, "not here") {
+			t.Errorf("%s = %q, want the not-found page", path, body)
+		}
+		if !strings.Contains(body, wantLocale) {
+			t.Errorf("%s was rendered for the wrong locale: %q", path, body)
+		}
+	}
+}
+
+// An application that registered no not-found page gets no file and no complaint.
+// It declared nothing, so there is nothing to report.
+func TestBuild_WithoutANotFoundPage(t *testing.T) {
+	out := resolvedTempDir(t)
+	app := &fakeRenderer{
+		pages: []*types.Page{{
+			Name:            "home",
+			Paths:           map[string]string{"en": "/"},
+			Strategy:        types.StrategyStatic,
+			ContentFragment: &types.Fragment{Name: "home-content", TemplatePath: "home.html"},
+		}},
+		defaultLocale: "en",
+	}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(out, "404.html")); !os.IsNotExist(err) {
+		t.Errorf("a 404.html was written for a site that registered no not-found page (stat err = %v)", err)
+	}
+	if len(report.Skipped) != 0 {
+		t.Errorf("Skipped = %v, want nothing: declaring no 404 page is not a skip", report.Skipped)
+	}
+}

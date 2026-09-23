@@ -199,6 +199,13 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	runIn(goBin, "mod", "tidy")
 	runIn(goBin, "build", "./...")
 
+	// The scaffold ships tests, and they have to pass — otherwise a new project
+	// starts with a red suite, which is worse than starting with none. Running
+	// them here is also what keeps them honest as the framework changes: they
+	// drive app.Handler() through the real pages, the real form and the real
+	// forgery check, so a change that breaks any of those breaks this.
+	runIn(goBin, "test", "./...")
+
 	// The scaffold's own -collage-build path is not a hand-rolled writer: it
 	// calls collage.NewBuilder, the same static builder collage-core's own
 	// internal/build implements. Running it for real here, and checking the
@@ -206,17 +213,45 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	// builder rather than some weaker stand-in the scaffold carries on its
 	// own — see docs/plans/collage-core.md's "re-export the static builder"
 	// amendment for why this distinction matters.
-	// Two files: the one page's index.html, and the one file in the mounted
-	// static directory. A mount is copied into the build output by default, so
-	// a scaffolded project's stylesheet is in dist/ without any further wiring.
+	// Three files: the home page's index.html, the mounted stylesheet under its
+	// own name, and the content-addressed copy the layout links through
+	// {{asset}}. A mount is copied into the build output by default, so a
+	// scaffolded project's stylesheet is in dist/ without any further wiring.
+	//
+	// And one skip, which is the scaffold teaching something rather than
+	// failing: the sign-up page carries a form, a form needs a server to post
+	// to, and a page that says Dynamic() is not part of a static build.
 	buildOut := runIn(goBin, "run", ".", "-collage-build", "-out", "dist")
-	if !strings.Contains(buildOut, "build complete, 2 file(s) written") {
-		t.Fatalf("build output = %q, want it to report two files written", buildOut)
+	if !strings.Contains(buildOut, "3 files written") {
+		t.Fatalf("build output = %q, want it to report three files written", buildOut)
+	}
+	// Two skips, and naming them is the point: the form page, because a form needs
+	// a server to post to, and the health check, because what it reports is this
+	// process being up rather than something cached from when it was.
+	if !strings.Contains(buildOut, "2 pages skipped") {
+		t.Errorf("build output = %q, want it to count the skips", buildOut)
+	}
+	for _, name := range []string{"signup", "health"} {
+		if !strings.Contains(buildOut, name) {
+			t.Errorf("build output = %q, want it to name the skipped %q", buildOut, name)
+		}
+	}
+	// The last line is the one people read, so it has to carry the counts.
+	if !strings.Contains(buildOut, "3 written · 2 skipped · 0 failed") {
+		t.Errorf("build output = %q, want a summary line carrying every count", buildOut)
 	}
 
 	stylesheetPath := filepath.Join(target, "dist", "static", "app.css")
 	if _, err := os.Stat(stylesheetPath); err != nil {
 		t.Fatalf("the mounted stylesheet was not copied into the build output: %v", err)
+	}
+
+	// The fingerprinted copy is what index.html links, so it has to exist as a
+	// file: a built site is served by a plain file server, and nothing there
+	// can strip a hash the way the mount does.
+	fingerprinted, err := filepath.Glob(filepath.Join(target, "dist", "static", "app.*.css"))
+	if err != nil || len(fingerprinted) != 1 {
+		t.Fatalf("content-addressed stylesheet = %v (err %v), want exactly one", fingerprinted, err)
 	}
 
 	indexPath := filepath.Join(target, "dist", "index.html")

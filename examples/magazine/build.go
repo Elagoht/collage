@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
@@ -136,18 +137,11 @@ func runBuild(cfg config, outDir string) error {
 
 	report, buildErr := builder.Build(ctx)
 
-	for _, skipped := range report.Skipped {
-		cfg.Logger.Info("build: skipped", "page", skipped.Page, "locale", skipped.Locale, "reason", skipped.Reason)
-	}
-	for _, e := range report.Errors {
-		cfg.Logger.Error("build: failed", "err", e)
-	}
-	cfg.Logger.Info("build: finished",
-		"written", len(report.Written),
-		"skipped", len(report.Skipped),
-		"errors", len(report.Errors),
-		"duration", report.Duration,
-		"outDir", outDir,
-	)
+	// Printed rather than logged, and it is the one place in this program that
+	// makes that choice. The rest of the site logs because a server's output is
+	// read by a machine first; a build is a command somebody ran and is watching,
+	// and what they need to see is which pages are not in the output.
+	collage.PrintBuildReport(os.Stdout, report, buildErr)
+
 	return buildErr
 }
