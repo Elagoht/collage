@@ -7,22 +7,79 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/Elagoht/collage/examples/magazine/newsroom"
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
+// The corpus these tests run against.
+//
+// It is declared here rather than borrowed from the API's own content, because the
+// site is a separate program: its tests must not break when someone edits an
+// article in a backend it merely talks to. Everything the assertions below name
+// lives in this slice.
+func testCorpus() ([]Article, []Category, []Author) {
+	at := func(iso string) time.Time {
+		parsed, err := time.Parse(time.RFC3339, iso)
+		if err != nil {
+			panic(err)
+		}
+		return parsed
+	}
+	articles := []Article{
+		{Slug: "seawalls-buy-time-not-safety", Title: "Seawalls Buy Time, Not Safety",
+			Dek:      "Coastal defences work, which is exactly why they are dangerous.",
+			Body:     []string{"The engineering is not in doubt.", "Development follows protection."},
+			Category: "climate", Author: "noor-haddad", PublishedAt: at("2026-09-20T08:00:00Z"),
+			ReadMinutes: 11, Tags: []string{"adaptation", "infrastructure"}, Views: 21030},
+		{Slug: "the-grid-is-the-hard-part", Title: "The Grid Is the Hard Part",
+			Dek:      "Generation got cheap. Transmission did not.",
+			Body:     []string{"The cost curves outran every projection.", "Moving the electricity is another matter."},
+			Category: "climate", Author: "noor-haddad", PublishedAt: at("2026-06-13T08:00:00Z"),
+			ReadMinutes: 10, Tags: []string{"energy", "grid"}, Views: 18760},
+		{Slug: "the-index-that-ate-the-database", Title: "The Index That Ate the Database",
+			Dek:      "A single well-meaning index turned a fast query into an outage.",
+			Body:     []string{"The change was two lines.", "Nobody had modelled the write path."},
+			Category: "technology", Author: "dilek-arslan", PublishedAt: at("2026-08-29T08:00:00Z"),
+			ReadMinutes: 11, Tags: []string{"databases"}, Views: 24310},
+		{Slug: "what-a-cache-key-actually-costs", Title: "What a Cache Key Actually Costs",
+			Dek:      "Every discriminator you add is a hit rate you give away.",
+			Body:     []string{"Caching looks like a storage problem.", "The honest default is to include everything."},
+			Category: "technology", Author: "dilek-arslan", PublishedAt: at("2026-09-11T08:00:00Z"),
+			ReadMinutes: 7, Tags: []string{"caching"}, Views: 12980},
+		{Slug: "archives-are-a-budget-line", Title: "Archives Are a Budget Line",
+			Dek:      "What a culture preserves is decided by whoever signs off on storage.",
+			Body:     []string{"Preservation is a procurement decision.", "The losses are rarely dramatic."},
+			Category: "culture", Author: "helena-strand", PublishedAt: at("2026-09-08T08:00:00Z"),
+			ReadMinutes: 8, Tags: []string{"archives"}, Views: 7310},
+	}
+	categories := []Category{
+		{Slug: "technology", Name: "Technology", Description: "Systems and the people who maintain them."},
+		{Slug: "climate", Name: "Climate", Description: "The measurements and the policy."},
+		{Slug: "culture", Name: "Culture", Description: "What we make and what we keep."},
+	}
+	authors := []Author{
+		{Slug: "noor-haddad", Name: "Noor Haddad", Role: "Climate reporter", Bio: "Reports on adaptation."},
+		{Slug: "dilek-arslan", Name: "Dilek Arslan", Role: "Technology correspondent", Bio: "Covers infrastructure."},
+		{Slug: "helena-strand", Name: "Helena Strand", Role: "Culture critic", Bio: "Writes about archives."},
+	}
+	return articles, categories, authors
+}
+
 // backend is a controllable stand-in for the newsroom API. Every test that needs a
-// particular failure builds one of these rather than driving the real server's
-// chaos knob: the schedule there is shared across every endpoint, so "the sidebar
-// is down but the article is fine" cannot be expressed with it, and the client's
-// retry masks an intermittent schedule entirely.
+// particular failure builds one of these rather than running the real API with its
+// chaos knob: that schedule is shared across every endpoint, so "the sidebar is
+// down but the article is fine" cannot be expressed with it, and the client's retry
+// masks an intermittent schedule entirely.
 type backend struct {
-	store *newsroom.Store
+	articles   []Article
+	categories []Category
+	authors    []Author
 	// failPrefixes lists path prefixes that answer 503 instead of data.
 	failPrefixes []string
 	// failFirst, when above zero, answers 503 to that many requests and then
@@ -30,18 +87,15 @@ type backend struct {
 	// next fragment's: the client retries once, so a lookup only fails outright
 	// when two consecutive attempts do.
 	failFirst atomic.Int64
-	// hits counts requests per path prefix, so a test can prove a render happened
-	// again rather than being served from the page cache.
+	// hits counts every request, so a test can prove a render happened again
+	// rather than being served from the page cache.
 	hits atomic.Int64
 }
 
 func newBackend(t *testing.T, failPrefixes ...string) (*backend, *httptest.Server) {
 	t.Helper()
-	store, err := newsroom.NewStore()
-	if err != nil {
-		t.Fatalf("NewStore() error = %v", err)
-	}
-	b := &backend{store: store, failPrefixes: failPrefixes}
+	articles, categories, authors := testCorpus()
+	b := &backend{articles: articles, categories: categories, authors: authors, failPrefixes: failPrefixes}
 	srv := httptest.NewServer(b)
 	t.Cleanup(srv.Close)
 	return b, srv
@@ -55,7 +109,6 @@ func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "injected", http.StatusServiceUnavailable)
 		return
 	}
-
 	for _, prefix := range b.failPrefixes {
 		if strings.HasPrefix(r.URL.Path, prefix) {
 			http.Error(w, "injected", http.StatusServiceUnavailable)
@@ -70,38 +123,65 @@ func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.URL.Path == "/healthz":
 		enc.Encode(map[string]string{"status": "ok"})
 	case r.URL.Path == "/v1/categories":
-		enc.Encode(b.store.Categories())
+		enc.Encode(b.categories)
 	case r.URL.Path == "/v1/popular":
-		enc.Encode(b.store.Popular(5))
+		ranked := append([]Article(nil), b.articles...)
+		sort.Slice(ranked, func(i, j int) bool { return ranked[i].Views > ranked[j].Views })
+		enc.Encode(ranked)
 	case r.URL.Path == "/v1/articles":
-		q := r.URL.Query()
-		enc.Encode(b.store.List(newsroom.Filter{
-			Category: q.Get("category"), Author: q.Get("author"), Query: q.Get("q"),
-		}))
+		enc.Encode(b.list(r.URL.Query()))
 	case strings.HasPrefix(r.URL.Path, "/v1/articles/"):
-		art, err := b.store.Article(strings.TrimPrefix(r.URL.Path, "/v1/articles/"))
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+		slug := strings.TrimPrefix(r.URL.Path, "/v1/articles/")
+		for _, art := range b.articles {
+			if art.Slug == slug {
+				enc.Encode(art)
+				return
+			}
 		}
-		enc.Encode(art)
+		http.Error(w, "not found", http.StatusNotFound)
 	case strings.HasPrefix(r.URL.Path, "/v1/categories/"):
-		cat, err := b.store.Category(strings.TrimPrefix(r.URL.Path, "/v1/categories/"))
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+		slug := strings.TrimPrefix(r.URL.Path, "/v1/categories/")
+		for _, cat := range b.categories {
+			if cat.Slug == slug {
+				enc.Encode(cat)
+				return
+			}
 		}
-		enc.Encode(cat)
+		http.Error(w, "not found", http.StatusNotFound)
 	case strings.HasPrefix(r.URL.Path, "/v1/authors/"):
-		author, err := b.store.Author(strings.TrimPrefix(r.URL.Path, "/v1/authors/"))
-		if err != nil {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
+		slug := strings.TrimPrefix(r.URL.Path, "/v1/authors/")
+		for _, a := range b.authors {
+			if a.Slug == slug {
+				enc.Encode(a)
+				return
+			}
 		}
-		enc.Encode(author)
+		http.Error(w, "not found", http.StatusNotFound)
 	default:
 		http.Error(w, "no route", http.StatusNotFound)
 	}
+}
+
+// list applies the same filters the real API does, newest first. It is deliberately
+// simple-minded: this double exists to feed the site, not to be a second
+// implementation worth testing.
+func (b *backend) list(values url.Values) Listing {
+	matched := make([]Article, 0, len(b.articles))
+	for _, art := range b.articles {
+		if c := values.Get("category"); c != "" && art.Category != c {
+			continue
+		}
+		if a := values.Get("author"); a != "" && art.Author != a {
+			continue
+		}
+		if q := values.Get("q"); q != "" && !strings.Contains(strings.ToLower(art.Title+" "+art.Dek+" "+strings.Join(art.Tags, " ")), strings.ToLower(q)) {
+			continue
+		}
+		matched = append(matched, art)
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].PublishedAt.After(matched[j].PublishedAt) })
+
+	return Listing{Items: matched, Page: 1, PerPage: len(matched), Total: len(matched), TotalPages: 1}
 }
 
 // newTestSite builds the site against api, with caching left on. The cache matters
@@ -123,7 +203,7 @@ func newTestSite(t *testing.T, apiURL string) http.Handler {
 	return app.Handler()
 }
 
-func fetch(t *testing.T, h http.Handler, target string) (*httptest.ResponseRecorder, string) {
+func request(t *testing.T, h http.Handler, target string) (*httptest.ResponseRecorder, string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
@@ -156,7 +236,7 @@ func TestSite_EveryRouteAnswers(t *testing.T) {
 		{"/category/no-such-category", 404, "text/html"},
 		{"/nothing/here/at-all", 404, "text/html"},
 	} {
-		rec, _ := fetch(t, site, tc.target)
+		rec, _ := request(t, site, tc.target)
 		if rec.Code != tc.status {
 			t.Errorf("GET %s = %d, want %d", tc.target, rec.Code, tc.status)
 		}
@@ -174,10 +254,10 @@ func TestSite_LocalePathsAreNotInterchangeable(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	if rec, _ := fetch(t, site, "/kategori/technology"); rec.Code != http.StatusNotFound {
+	if rec, _ := request(t, site, "/kategori/technology"); rec.Code != http.StatusNotFound {
 		t.Errorf("GET /kategori/technology = %d, want 404", rec.Code)
 	}
-	if rec, _ := fetch(t, site, "/tr/category/technology"); rec.Code != http.StatusNotFound {
+	if rec, _ := request(t, site, "/tr/category/technology"); rec.Code != http.StatusNotFound {
 		t.Errorf("GET /tr/category/technology = %d, want 404", rec.Code)
 	}
 }
@@ -186,7 +266,7 @@ func TestSite_TurkishPageLinksTurkishURLs(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	_, body := fetch(t, site, "/tr/")
+	_, body := request(t, site, "/tr/")
 	if !strings.Contains(body, `href="/tr/kategori/technology"`) {
 		t.Error("the Turkish front page does not link Turkish category URLs")
 	}
@@ -201,10 +281,10 @@ func TestSite_ArticleDateMustMatchTheArticle(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	if rec, _ := fetch(t, site, "/2026/09/seawalls-buy-time-not-safety"); rec.Code != http.StatusOK {
+	if rec, _ := request(t, site, "/2026/09/seawalls-buy-time-not-safety"); rec.Code != http.StatusOK {
 		t.Fatalf("the correct date = %d, want 200", rec.Code)
 	}
-	rec, body := fetch(t, site, "/2001/01/seawalls-buy-time-not-safety")
+	rec, body := request(t, site, "/2001/01/seawalls-buy-time-not-safety")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("a wrong date = %d, want 404", rec.Code)
 	}
@@ -219,7 +299,7 @@ func TestSite_SidebarFailureDegradesRatherThanFails(t *testing.T) {
 	_, api := newBackend(t, "/v1/popular")
 	site := newTestSite(t, api.URL)
 
-	rec, body := fetch(t, site, "/2026/09/seawalls-buy-time-not-safety")
+	rec, body := request(t, site, "/2026/09/seawalls-buy-time-not-safety")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: a failing sidebar must not take the article down", rec.Code)
 	}
@@ -238,7 +318,7 @@ func TestSite_NavFailureKeepsTheRestOfTheChrome(t *testing.T) {
 	_, api := newBackend(t, "/v1/categories")
 	site := newTestSite(t, api.URL)
 
-	rec, body := fetch(t, site, "/")
+	rec, body := request(t, site, "/")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -258,12 +338,12 @@ func TestSite_DegradedRendersAreNotCached(t *testing.T) {
 	site := newTestSite(t, api.URL)
 
 	target := "/2026/09/seawalls-buy-time-not-safety"
-	if rec, _ := fetch(t, site, target); rec.Code != http.StatusOK {
+	if rec, _ := request(t, site, target); rec.Code != http.StatusOK {
 		t.Fatalf("first request = %d, want 200", rec.Code)
 	}
 	after := b.hits.Load()
 
-	if rec, _ := fetch(t, site, target); rec.Code != http.StatusOK {
+	if rec, _ := request(t, site, target); rec.Code != http.StatusOK {
 		t.Fatalf("second request = %d, want 200", rec.Code)
 	}
 	if b.hits.Load() == after {
@@ -278,9 +358,9 @@ func TestSite_HealthyRendersAreCached(t *testing.T) {
 	site := newTestSite(t, api.URL)
 
 	target := "/2026/09/seawalls-buy-time-not-safety"
-	fetch(t, site, target)
+	request(t, site, target)
 	after := b.hits.Load()
-	fetch(t, site, target)
+	request(t, site, target)
 
 	if b.hits.Load() != after {
 		t.Errorf("backend hits went %d -> %d; a healthy render must be served from the cache on the second request", after, b.hits.Load())
@@ -293,9 +373,9 @@ func TestSite_SearchIsNeverCached(t *testing.T) {
 	b, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	fetch(t, site, "/search?q=grid")
+	request(t, site, "/search?q=grid")
 	after := b.hits.Load()
-	fetch(t, site, "/search?q=grid")
+	request(t, site, "/search?q=grid")
 
 	if b.hits.Load() == after {
 		t.Error("the second identical search reached no backend, so it was cached")
@@ -306,7 +386,7 @@ func TestSite_MissingArticleIs404NotAnError(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	rec, _ := fetch(t, site, "/2026/09/no-such-piece")
+	rec, _ := request(t, site, "/2026/09/no-such-piece")
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (the client must keep ErrNotFound apart from an outage)", rec.Code)
 	}
@@ -318,7 +398,7 @@ func TestSite_BackendOutageOnARequiredFragmentIs500(t *testing.T) {
 	_, api := newBackend(t, "/v1/articles")
 	site := newTestSite(t, api.URL)
 
-	rec, body := fetch(t, site, "/2026/09/seawalls-buy-time-not-safety")
+	rec, body := request(t, site, "/2026/09/seawalls-buy-time-not-safety")
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", rec.Code)
 	}
@@ -331,7 +411,7 @@ func TestSite_FeedIsWellFormedXMLWithAbsoluteLinks(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	_, body := fetch(t, site, "/rss.xml")
+	_, body := request(t, site, "/rss.xml")
 
 	var feed rss
 	if err := xml.Unmarshal([]byte(body), &feed); err != nil {
@@ -353,7 +433,7 @@ func TestSite_SitemapListsBothLocales(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
-	_, body := fetch(t, site, "/sitemap.xml")
+	_, body := request(t, site, "/sitemap.xml")
 
 	var set urlset
 	if err := xml.Unmarshal([]byte(body), &set); err != nil {
@@ -380,7 +460,7 @@ func TestSite_HealthReportsADegradedBackendWithout503(t *testing.T) {
 	_, api := newBackend(t, "/healthz")
 	site := newTestSite(t, api.URL)
 
-	rec, body := fetch(t, site, "/healthz")
+	rec, body := request(t, site, "/healthz")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
@@ -408,9 +488,9 @@ func TestSite_InvalidatingATagDropsTheCachedPage(t *testing.T) {
 	}
 	handler := app.Handler()
 
-	fetch(t, handler, "/")
+	request(t, handler, "/")
 	cached := b.hits.Load()
-	fetch(t, handler, "/")
+	request(t, handler, "/")
 	if b.hits.Load() != cached {
 		t.Fatalf("the second request was not served from the cache")
 	}
@@ -419,7 +499,7 @@ func TestSite_InvalidatingATagDropsTheCachedPage(t *testing.T) {
 		t.Fatalf("InvalidateTags() error = %v", err)
 	}
 
-	fetch(t, handler, "/")
+	request(t, handler, "/")
 	if b.hits.Load() == cached {
 		t.Error("the request after invalidation was still served from the cache")
 	}
@@ -427,7 +507,7 @@ func TestSite_InvalidatingATagDropsTheCachedPage(t *testing.T) {
 
 // compile-time check that the site builder returns the framework's App, so a
 // refactor cannot quietly change what main receives.
-var _ func(config) (*collage.App, *newsroom.Client, error) = newSite
+var _ func(config) (*collage.App, *Client, error) = newSite
 
 func TestSite_EveryPageHasItsOwnTitle(t *testing.T) {
 	// The reason the head is a slot. The layout's data handler runs before the
@@ -447,7 +527,7 @@ func TestSite_EveryPageHasItsOwnTitle(t *testing.T) {
 		{"/search?q=grid", "<title>grid — Search — The Wire</title>"},
 		{"/nothing/here", "<title>Not found — The Wire</title>"},
 	} {
-		_, body := fetch(t, site, tc.target)
+		_, body := request(t, site, tc.target)
 		if !strings.Contains(body, tc.want) {
 			t.Errorf("GET %s: title missing %q", tc.target, tc.want)
 		}
@@ -461,7 +541,7 @@ func TestSite_ArticleIsFetchedOncePerRender(t *testing.T) {
 	site := newTestSite(t, api.URL)
 
 	before := b.hits.Load()
-	if rec, _ := fetch(t, site, "/2026/09/seawalls-buy-time-not-safety"); rec.Code != http.StatusOK {
+	if rec, _ := request(t, site, "/2026/09/seawalls-buy-time-not-safety"); rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	paths := b.hits.Load() - before
@@ -483,7 +563,7 @@ func TestSite_HeadFailureLeavesAUsableTitle(t *testing.T) {
 	site := newTestSite(t, api.URL)
 	b.failFirst.Store(2)
 
-	rec, body := fetch(t, site, "/category/technology")
+	rec, body := request(t, site, "/category/technology")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: a failing head must not take the page down", rec.Code)
 	}

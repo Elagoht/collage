@@ -1,35 +1,35 @@
-// Command site is the magazine example: a news site built on collage, reading
-// everything it renders from the fake API in ../api over HTTP.
+// Command thewire is a magazine built with collage.
 //
-// It is the framework's production-shaped example. Where examples/blog shows the
-// mechanisms one at a time against an in-process store, this one puts them together
-// against a backend that can be slow, can fail, and is on the other end of a socket:
+// It is a separate module with its own module path, because that is what an
+// application using the framework is: collage is a dependency here, not a parent.
+// Everything it renders comes from a newsroom API it reads over HTTP.
+//
+// Start the backend first, then the site:
+//
+//	cd ../newsroom-api && go run .    # serves JSON on localhost:8080
+//	go run .                          # serves the site on localhost:3000
+//
+// Both take flags; both read the same settings from the environment. To watch the
+// site degrade, start the backend with failure injection:
+//
+//	cd ../newsroom-api && go run . -fail-every 3 -latency 400ms
+//
+// What it exercises, beyond what examples/blog covers:
 //
 //   - five page types over one layout, with per-locale paths — "/category/climate"
-//     in English, "/kategori/climate" in Turkish;
-//   - a masthead nav and a "most read" sidebar that are not required and have
-//     fallbacks, so an unreachable backend costs a reader the furniture and not the
-//     article;
+//     in English, "/tr/kategori/climate" in Turkish;
+//   - a section nav and a "most read" sidebar that are not required and have
+//     fallbacks, so an unreachable backend costs the furniture and not the article;
+//   - a document head filled per page through a slot, because a layout cannot see
+//     the headline its content fragment has yet to fetch;
 //   - an article fragment that is required, so a missing piece is a 404 rather than
 //     chrome wrapped around a hole;
 //   - a search page that is deliberately never cached, because its cache key
 //     includes the raw query string;
-//   - "/rss.xml", "/sitemap.xml" and "/robots.txt" as documents, marshalled with
-//     encoding/xml rather than rendered through the HTML template engine;
-//   - "/static/" as a mounted embed.FS, outside the page cache entirely;
-//   - "/healthz", which reports whether the backend is reachable.
+//   - "/rss.xml", "/sitemap.xml", "/robots.txt" and "/healthz" as documents;
+//   - "/static/" as a mounted embed.FS, outside the page cache entirely.
 //
-// Both binaries are single files with nothing beside them: templates, stylesheet and
-// corpus are all embedded, so either runs from any working directory.
-//
-// Run it against the API:
-//
-//	go run ./examples/magazine/cmd/api &
-//	go run ./examples/magazine/cmd/site
-//
-// To watch the degraded paths, start the API with failure injection:
-//
-//	go run ./examples/magazine/cmd/api -fail-every 3 -latency 400ms
+// Templates and stylesheet are embedded, so the binary runs from any directory.
 package main
 
 import (

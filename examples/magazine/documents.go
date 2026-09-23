@@ -8,13 +8,14 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/Elagoht/collage/examples/magazine/newsroom"
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
-// feedLimit is how many articles the feed carries. A feed is a recency window, not
-// an archive; the sitemap is what a crawler walks for everything.
-const feedLimit = newsroom.MaxPerPage
+// feedLimit is how many articles the feed and the sitemap ask for. A feed is a
+// recency window rather than an archive, and the API caps per_page anyway — a value
+// above its ceiling is clamped there, not an error, so this is a request and not an
+// assumption about the backend's limits.
+const feedLimit = 24
 
 // rss, channel and item are the feed's wire shape.
 //
@@ -71,7 +72,7 @@ func (d *deps) newFeedDocument(baseURL string) *collage.Document {
 		WithPath("en", "/rss.xml").
 		WithPath("tr", "/rss.xml").
 		WithHandler(func(ctx context.Context, _ *collage.RenderContext) ([]byte, []string, error) {
-			listing, err := d.client.Articles(ctx, newsroom.Filter{PerPage: feedLimit})
+			listing, err := d.client.Articles(ctx, listQuery{PerPage: feedLimit})
 			if err != nil {
 				return nil, nil, err
 			}
@@ -115,7 +116,7 @@ func (d *deps) newSitemapDocument(baseURL string) *collage.Document {
 		WithPath("en", "/sitemap.xml").
 		WithPath("tr", "/sitemap.xml").
 		WithHandler(func(ctx context.Context, _ *collage.RenderContext) ([]byte, []string, error) {
-			listing, err := d.client.Articles(ctx, newsroom.Filter{PerPage: newsroom.MaxPerPage})
+			listing, err := d.client.Articles(ctx, listQuery{PerPage: feedLimit})
 			if err != nil {
 				return nil, nil, err
 			}

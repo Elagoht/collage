@@ -1,41 +1,32 @@
-# The Wire — the production-shaped example
+# The Wire — a magazine built with collage
 
-A news magazine built on collage, reading everything it renders from a fake JSON
-API over HTTP.
+A news site reading everything it renders from a JSON backend over HTTP.
 
-`examples/blog` shows the framework's mechanisms one at a time against an
-in-process store. This one puts them together against a backend that can be slow,
-can fail, and is on the other end of a socket — which is where the interesting
-decisions are.
+This is a **separate module**. `go.mod` requires `github.com/Elagoht/collage` the
+way any project would, and the code imports nothing from the framework's internals.
+It is here to be read as an application, not as part of the framework.
 
 ```
-make -C examples/magazine dev      # API on :8080, site on http://localhost:3000
-make -C examples/magazine chaos    # the same, with the backend misbehaving
-make -C examples/magazine test
+cd ../newsroom-api && go run .   # the backend, on localhost:8080
+cd ../magazine     && go run .   # the site, on http://localhost:3000
 ```
 
-Or without make, from anywhere:
+If port 3000 is taken: `go run . -port 8080` — or any other, and point the backend
+elsewhere with `go run . -api http://localhost:9000`.
 
 ```
-go run ./examples/magazine/cmd/api &
-go run ./examples/magazine/cmd/site
+go test ./...
 ```
 
-Both binaries embed everything they serve — templates, stylesheet and the article
-corpus — so neither needs a working directory, a data volume, or anything beside it
-in a container image.
+The one line in `go.mod` your own project would not have is the `replace` pointing
+at `../..`. The framework has no released tag yet, and an example built against a
+published version would lag the code it demonstrates. You would `go get
+github.com/Elagoht/collage` and require a version instead.
 
-## What is here
-
-| | |
-|---|---|
-| `newsroom/` | the article model, 20 articles across 5 sections and 6 writers, and the API client |
-| `cmd/api/` | the fake backend: read-only JSON, with deliberate failure injection |
-| `cmd/site/` | the site itself |
-
-`newsroom` imports no collage package, deliberately. The API server has no business
-knowing what renders its JSON; the site translates newsroom's errors into the
-framework's at its own edge, in `translate`.
+`examples/blog` is the other example, and it answers a different question: it shows
+the framework's mechanisms one at a time against an in-process store, and it is the
+framework's end-to-end test, so it lives inside the framework's own module. This one
+is about what the mechanisms are *for* once a backend is involved.
 
 ## Routes
 
@@ -53,6 +44,12 @@ framework's at its own edge, in `translate`.
 
 ## The decisions worth reading the code for
 
+**The API's types are declared again in `newsroom.go`, not imported.** A backend
+does not hand its structs to its callers — you read its documentation and declare
+what you need — and a client that imports them is coupled to a repository layout
+that would not exist outside this one. It also makes the contract visible:
+everything the site depends on the backend for is in one file.
+
 **Locale comes from the URL and nowhere else.** The site sets
 `DisableHeaderLocale` and `DisableCookieLocale`. It registers different paths per
 locale, so a locale resolved from a browser header can disagree with the path
@@ -66,8 +63,8 @@ and the cache sound.
 runs before its content slot renders — fragments render depth-first, and a slot is
 filled during the parent's template execution — so the layout cannot see the
 headline the content fragment is about to fetch. Building `<title>` from the
-layout's own data gives every page the site name and nothing else. Instead each page
-binds its own head fragment, and the article and section lookups are memoised into
+layout's own data gives every page the site name and nothing else. Each page binds
+its own head fragment instead, and the article and section lookups are memoised into
 `RenderContext.SharedData` so the head and the content share one request rather than
 making two.
 
@@ -77,28 +74,27 @@ fallback, bound into a slot. A layout that can fail is a layout that can take do
 the error page explaining why the site is broken.
 
 **Required is a claim about the page, not the fragment.** The article body is
-`Required()`, so a missing piece is a 404 and an unreachable backend is a 500.
-The sidebar is not, so its failure costs the reader a panel and not the article.
-Deleting `Required()` from the article fragment makes both of those tests fail with
-a 200 — chrome wrapped around a hole, which is how a broken article gets indexed as
-an empty one.
+`Required()`, so a missing piece is a 404 and an unreachable backend is a 500. The
+sidebar is not, so its failure costs a panel and not the article. Deleting
+`Required()` from the article fragment makes both of those tests fail with a 200 —
+chrome wrapped around a hole, which is how a broken article gets indexed as an empty
+one.
 
 **"No such article" and "cannot reach the backend" stay apart the whole way.** The
-client keeps `ErrNotFound` and `ErrUnavailable` distinct, and retries only the
+client keeps `ErrNotFound` and `ErrUnavailable` distinct and retries only the
 second. A site that conflates them serves 404s during an outage and teaches every
 crawler that its archive was deleted.
 
 **Degraded renders are not cached.** The framework declines to cache a render in
 which any fragment failed. That is what stops a momentary outage from being frozen
-into the page for the whole TTL: the sidebar returns on the next request rather
-than fifteen minutes later. `TestSite_DegradedRendersAreNotCached` asserts it by
-counting backend requests, since both responses are `200` with different bodies.
+into the page for the whole TTL: the sidebar returns on the next request rather than
+fifteen minutes later. `TestSite_DegradedRendersAreNotCached` asserts it by counting
+backend requests, since both responses are `200` with different bodies.
 
 **Search is never cached, and `robots.txt` says so.** A page's cache key includes
 the raw query string, so caching search would mint an entry per distinct `?q=` —
 waste with an ordinary crawler, an eviction attack with an attacker-chosen
-parameter. Rendering it fresh costs one API call. Disallowing it in `robots.txt` is
-the other half of the same decision.
+parameter. Rendering it fresh costs one API call.
 
 **The feed and the sitemap are marshalled, not rendered.** `html/template` applies
 HTML escaping rules, which are wrong for XML at exactly the characters that most
@@ -113,33 +109,25 @@ process. The body says which it is, so a probe that does care can read it.
 
 ## Watching it degrade
 
+Start the backend with failure injection:
+
 ```
-make -C examples/magazine chaos
+cd ../newsroom-api && go run . -fail-every 3 -latency 400ms
 ```
 
-That starts the API with `-fail-every 3 -latency 400ms`. Load a section page that
-is not yet cached and the "most read" panel turns into its fallback, styled
-differently on purpose — a degraded panel that looks like a working one is how a
-partial outage goes unnoticed for a week.
+Load a section page that is not yet cached and the "most read" panel turns into its
+fallback, styled differently on purpose — a degraded panel that looks like a working
+one is how a partial outage goes unnoticed for a week.
 
 With `-fail-every 2` you will see *nothing* degrade, which is also the point: the
-client retries once, and with every second request failing the retry always lands
-on a success. Failure injection that the retry can absorb is failure injection
-working as intended.
+client retries once, and with every second request failing the retry always lands on
+a success.
 
-## Deploying it
+## Configuration
 
-```
-docker compose --project-directory ../.. -f compose.yaml up --build
-```
+Flags, or the environment: `HOST`, `PORT`, `MAGAZINE_API_URL`, `PUBLIC_BASE_URL`,
+`CACHE_TTL`, `LOG_LEVEL`, `DEV_MODE`.
 
-The `Dockerfile` builds either binary (`--build-arg CMD=api|site`) onto `scratch`.
-Nothing is copied into the runtime stage but the binary and the certificate roots,
-because there is nothing else: both binaries carry their own content.
-
-Configuration is environment variables with flag overrides — `PORT`,
-`MAGAZINE_API_URL`, `PUBLIC_BASE_URL`, `CACHE_TTL`, `LOG_LEVEL`, `DEV_MODE` for the
-site; `MAGAZINE_API_ADDR`, `MAGAZINE_API_LATENCY`, `MAGAZINE_API_FAIL_EVERY`,
-`LOG_LEVEL` for the API. `PUBLIC_BASE_URL` has to be set behind a proxy: the site
-cannot infer its public origin from the address it binds, and a feed with the wrong
-origin is a feed nobody can follow.
+`PUBLIC_BASE_URL` has to be set behind a proxy. The site cannot infer its public
+origin from the address it binds, and a feed whose links carry the wrong origin is a
+feed nobody can follow.

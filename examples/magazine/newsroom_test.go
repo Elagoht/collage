@@ -1,4 +1,4 @@
-package newsroom
+package main
 
 import (
 	"context"
@@ -171,8 +171,8 @@ func TestClient_ArticlesSendsEveryFilter(t *testing.T) {
 		w.Write([]byte(`{"items":[],"page":2,"perPage":3,"total":0,"totalPages":0}`))
 	})
 
-	_, err := testClient(srv.URL).Articles(context.Background(), Filter{
-		Category: "climate", Author: "noor-haddad", Query: "grid", Page: 2, PerPage: 3,
+	_, err := testClient(srv.URL).Articles(context.Background(), listQuery{
+		Category: "climate", Author: "noor-haddad", Search: "grid", Page: 2, PerPage: 3,
 	})
 	if err != nil {
 		t.Fatalf("Articles() error = %v", err)

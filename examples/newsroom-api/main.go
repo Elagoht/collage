@@ -1,14 +1,17 @@
-// Command api is the magazine example's fake backend: a read-only JSON API over an
+// Command newsroom-api is a fake magazine backend: a read-only JSON API over an
 // embedded corpus of twenty articles.
 //
-// It exists so the site has something real to talk to. The site fetches over HTTP,
-// decodes JSON, handles timeouts and retries, and degrades when this process is
-// unwell — none of which it would exercise against an in-process slice.
+// It is not a collage program and does not import the framework. It exists so the
+// magazine example has a real backend to talk to — one that answers over HTTP, can
+// be slow, and can fail — rather than an in-process slice that never does any of
+// those things.
+//
+//	go run .            # serves on localhost:8080
 //
 // Two knobs make the site's failure handling demonstrable rather than theoretical:
 //
-//	-latency 800ms    # every response is slow
-//	-fail-every 3     # every third request answers 503
+//	go run . -latency 800ms    # every response is slow
+//	go run . -fail-every 3     # every third request answers 503
 //
 // With those set, the site's "most read" sidebar drops out while the article still
 // renders, which is the behaviour its non-required fragments exist to produce.
@@ -27,8 +30,6 @@ import (
 	"strconv"
 	"syscall"
 	"time"
-
-	"github.com/Elagoht/collage/examples/magazine/newsroom"
 )
 
 func main() {
@@ -40,7 +41,7 @@ func main() {
 
 	log := newLogger(*logLevel)
 
-	store, err := newsroom.NewStore()
+	store, err := NewStore()
 	if err != nil {
 		log.Error("api: corpus is unusable", "err", err)
 		os.Exit(1)

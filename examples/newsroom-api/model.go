@@ -1,12 +1,11 @@
-// Package newsroom is the magazine example's domain: the article model, the seed
-// content both binaries are built from, and the HTTP client the site reads through.
+// Article, Category, Author and Page are this API's wire contract.
 //
-// It deliberately does not import the collage framework. The API server has no
-// business knowing what renders its JSON, and keeping the boundary honest here is
-// what makes the example a demonstration of a site talking to a backend rather than
-// a demonstration of a site talking to itself. The site translates this package's
-// errors into the framework's at its own edge.
-package newsroom
+// The magazine site declares its own copies of these rather than importing them.
+// That duplication is the honest shape for two independent programs: a service does
+// not hand its structs to its callers, and a caller that imports them is coupled to
+// a repository layout it would not have in reality.
+
+package main
 
 import (
 	"errors"
@@ -14,17 +13,9 @@ import (
 	"time"
 )
 
-// ErrNotFound is returned by the store and the client when a slug names nothing.
-// The site maps it onto collage.ErrNotFound, which is what turns it into a 404
-// rather than a 500.
+// ErrNotFound is returned by the store when a slug names nothing. It is the only
+// condition this API answers 404 for.
 var ErrNotFound = errors.New("newsroom: not found")
-
-// ErrUnavailable is returned by the client when the API could not be reached or
-// answered with a server error. It is deliberately distinct from ErrNotFound: one
-// means "there is no such article", the other means "ask again later", and a site
-// that conflates them serves 404s during an outage and poisons every crawler that
-// sees one.
-var ErrUnavailable = errors.New("newsroom: upstream unavailable")
 
 // Article is one published piece.
 type Article struct {

@@ -10,13 +10,11 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/Elagoht/collage/examples/magazine/newsroom"
 )
 
 func testMux(t *testing.T, chaos *Chaos) http.Handler {
 	t.Helper()
-	store, err := newsroom.NewStore()
+	store, err := NewStore()
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}
@@ -40,7 +38,7 @@ func TestAPI_ArticlesReturnsAPage(t *testing.T) {
 		t.Errorf("Content-Type = %q, want JSON", ct)
 	}
 
-	var page newsroom.Page
+	var page Page
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -67,12 +65,12 @@ func TestAPI_UnparseablePageFallsBackRatherThanFailing(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 
-	var page newsroom.Page
+	var page Page
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if page.Page != 1 || page.PerPage != newsroom.DefaultPerPage {
-		t.Errorf("page/perPage = %d/%d, want 1/%d", page.Page, page.PerPage, newsroom.DefaultPerPage)
+	if page.Page != 1 || page.PerPage != DefaultPerPage {
+		t.Errorf("page/perPage = %d/%d, want 1/%d", page.Page, page.PerPage, DefaultPerPage)
 	}
 }
 
@@ -164,7 +162,7 @@ func TestAPI_EveryClientMethodHasARoute(t *testing.T) {
 func TestAPI_PopularRespectsLimit(t *testing.T) {
 	rec := get(t, testMux(t, nil), "/v1/popular?limit=4")
 
-	var articles []newsroom.Article
+	var articles []Article
 	if err := json.Unmarshal(rec.Body.Bytes(), &articles); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -184,7 +182,7 @@ func TestAPI_InjectedFailuresAreLogged(t *testing.T) {
 	// own log shows only the requests that succeeded — the one log you cannot
 	// afford to be missing while working out why the site went degraded.
 	var logged bytes.Buffer
-	store, err := newsroom.NewStore()
+	store, err := NewStore()
 	if err != nil {
 		t.Fatalf("NewStore() error = %v", err)
 	}

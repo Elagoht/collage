@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/Elagoht/collage/examples/magazine/newsroom"
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
@@ -50,7 +49,7 @@ type config struct {
 // naming a template that does not exist, a page whose error page was never
 // registered, a mount prefix that shadows a route — every one of those is reported
 // from this function, at startup.
-func newSite(cfg config) (*collage.App, *newsroom.Client, error) {
+func newSite(cfg config) (*collage.App, *Client, error) {
 	app, err := collage.New(&collage.Config{
 		DevMode: cfg.DevMode,
 		Logger:  cfg.Logger,
@@ -97,7 +96,7 @@ func newSite(cfg config) (*collage.App, *newsroom.Client, error) {
 		return nil, nil, fmt.Errorf("build app: %w", err)
 	}
 
-	client := newsroom.NewClient(cfg.APIBaseURL)
+	client := NewClient(cfg.APIBaseURL)
 	d := &deps{client: client, log: cfg.Logger}
 
 	// The chrome, built per page.

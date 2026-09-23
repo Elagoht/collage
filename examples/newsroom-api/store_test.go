@@ -1,4 +1,4 @@
-package newsroom
+package main
 
 import (
 	"errors"

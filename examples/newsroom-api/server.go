@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
-
-	"github.com/Elagoht/collage/examples/magazine/newsroom"
 )
 
 // Chaos injects the failure modes a real backend has and a fake one otherwise
@@ -39,17 +37,17 @@ func (c *Chaos) tripped() bool {
 
 // server holds everything the handlers read.
 type server struct {
-	store *newsroom.Store
+	store *Store
 	log   *slog.Logger
 	chaos *Chaos
 }
 
 // newMux wires the API's routes.
 //
-// Every listing endpoint answers the same newsroom.Page shape, so the site's client
+// Every listing endpoint answers the same Page shape, so the site's client
 // has one decode path for the home page, the category pages, the author pages and
 // search. That uniformity is why the site needs no endpoint-specific parsing.
-func newMux(store *newsroom.Store, log *slog.Logger, chaos *Chaos) http.Handler {
+func newMux(store *Store, log *slog.Logger, chaos *Chaos) http.Handler {
 	s := &server{store: store, log: log, chaos: chaos}
 
 	mux := http.NewServeMux()
@@ -80,7 +78,7 @@ func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 
 func (s *server) articles(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	page := s.store.List(newsroom.Filter{
+	page := s.store.List(Filter{
 		Category: q.Get("category"),
 		Author:   q.Get("author"),
 		Query:    q.Get("q"),
@@ -133,7 +131,7 @@ func (s *server) popular(w http.ResponseWriter, r *http.Request) {
 // 404; anything else is a 500, because a backend that answers 404 for conditions it
 // does not recognise teaches its callers that unknown failures mean "deleted".
 func (s *server) writeError(w http.ResponseWriter, err error) {
-	if errors.Is(err, newsroom.ErrNotFound) {
+	if errors.Is(err, ErrNotFound) {
 		writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
 		return
 	}

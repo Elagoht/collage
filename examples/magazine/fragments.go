@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strconv"
 
-	"github.com/Elagoht/collage/examples/magazine/newsroom"
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
@@ -32,7 +31,7 @@ func bind(fn newsroomData) collage.DataHandlerFunc {
 // deps is what the data handlers read. One struct rather than a closure per handler
 // so the set of things a handler can reach is visible in one place.
 type deps struct {
-	client *newsroom.Client
+	client *Client
 	log    *slog.Logger
 }
 
@@ -46,7 +45,7 @@ type deps struct {
 // Both errors are wrapped, so errors.Is still finds the newsroom sentinel further
 // up — a plugin's error hook can tell an outage from a typo.
 func translate(err error) error {
-	if errors.Is(err, newsroom.ErrNotFound) {
+	if errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("%w: %w", collage.ErrNotFound, err)
 	}
 	return err
@@ -144,43 +143,43 @@ func (d *deps) headServerError(_ context.Context, rc *collage.RenderContext) (*v
 // Each falls back to fetching when nothing is stored, so removing the head fragment
 // changes the request count and not the behaviour.
 
-func (d *deps) article(ctx context.Context, rc *collage.RenderContext, slug string) (newsroom.Article, error) {
+func (d *deps) article(ctx context.Context, rc *collage.RenderContext, slug string) (Article, error) {
 	if v, ok := rc.Get("article:" + slug); ok {
-		if art, ok := v.(newsroom.Article); ok { // any: SharedData's value type is the framework's
+		if art, ok := v.(Article); ok { // any: SharedData's value type is the framework's
 			return art, nil
 		}
 	}
 	art, err := d.client.Article(ctx, slug)
 	if err != nil {
-		return newsroom.Article{}, err
+		return Article{}, err
 	}
 	rc.Set("article:"+slug, art)
 	return art, nil
 }
 
-func (d *deps) category(ctx context.Context, rc *collage.RenderContext, slug string) (newsroom.Category, error) {
+func (d *deps) category(ctx context.Context, rc *collage.RenderContext, slug string) (Category, error) {
 	if v, ok := rc.Get("category:" + slug); ok {
-		if cat, ok := v.(newsroom.Category); ok { // any: SharedData's value type is the framework's
+		if cat, ok := v.(Category); ok { // any: SharedData's value type is the framework's
 			return cat, nil
 		}
 	}
 	cat, err := d.client.Category(ctx, slug)
 	if err != nil {
-		return newsroom.Category{}, err
+		return Category{}, err
 	}
 	rc.Set("category:"+slug, cat)
 	return cat, nil
 }
 
-func (d *deps) author(ctx context.Context, rc *collage.RenderContext, slug string) (newsroom.Author, error) {
+func (d *deps) author(ctx context.Context, rc *collage.RenderContext, slug string) (Author, error) {
 	if v, ok := rc.Get("author:" + slug); ok {
-		if a, ok := v.(newsroom.Author); ok { // any: SharedData's value type is the framework's
+		if a, ok := v.(Author); ok { // any: SharedData's value type is the framework's
 			return a, nil
 		}
 	}
 	a, err := d.client.Author(ctx, slug)
 	if err != nil {
-		return newsroom.Author{}, err
+		return Author{}, err
 	}
 	rc.Set("author:"+slug, a)
 	return a, nil
@@ -245,7 +244,7 @@ func (d *deps) headSearch(_ context.Context, rc *collage.RenderContext) (*view, 
 
 // homeData is the front page: the newest articles, paginated.
 func (d *deps) homeData(ctx context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	listing, err := d.client.Articles(ctx, newsroom.Filter{Page: pageParam(rc)})
+	listing, err := d.client.Articles(ctx, listQuery{Page: pageParam(rc)})
 	if err != nil {
 		return nil, nil, translate(err)
 	}
@@ -267,7 +266,7 @@ func (d *deps) categoryData(ctx context.Context, rc *collage.RenderContext) (*vi
 	if err != nil {
 		return nil, nil, translate(err)
 	}
-	listing, err := d.client.Articles(ctx, newsroom.Filter{Category: slug, Page: pageParam(rc)})
+	listing, err := d.client.Articles(ctx, listQuery{Category: slug, Page: pageParam(rc)})
 	if err != nil {
 		return nil, nil, translate(err)
 	}
@@ -289,7 +288,7 @@ func (d *deps) authorData(ctx context.Context, rc *collage.RenderContext) (*view
 	if err != nil {
 		return nil, nil, translate(err)
 	}
-	listing, err := d.client.Articles(ctx, newsroom.Filter{Author: slug, Page: pageParam(rc)})
+	listing, err := d.client.Articles(ctx, listQuery{Author: slug, Page: pageParam(rc)})
 	if err != nil {
 		return nil, nil, translate(err)
 	}
@@ -346,7 +345,7 @@ func (d *deps) searchData(ctx context.Context, rc *collage.RenderContext) (*view
 		return v, nil, nil
 	}
 
-	listing, err := d.client.Articles(ctx, newsroom.Filter{Query: query, Page: pageParam(rc)})
+	listing, err := d.client.Articles(ctx, listQuery{Search: query, Page: pageParam(rc)})
 	if err != nil {
 		return nil, nil, translate(err)
 	}

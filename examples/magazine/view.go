@@ -2,8 +2,6 @@ package main
 
 import (
 	"strconv"
-
-	"github.com/Elagoht/collage/examples/magazine/newsroom"
 )
 
 // defaultLocale is the locale served without a path prefix.
@@ -44,20 +42,20 @@ type view struct {
 	// writing paths inline, or an English URL ends up on a Turkish page.
 	URL urls
 	// Nav is the category list in the masthead.
-	Nav []newsroom.Category
+	Nav []Category
 	// Heading and Standfirst are the page's own title block.
 	Heading    string
 	Standfirst string
 	// Listing is the paginated article list, on the pages that have one.
-	Listing newsroom.Page
+	Listing Listing
 	// Article is the piece being read, on the article page.
-	Article *newsroom.Article
+	Article *Article
 	// Category and Author are the subject of a landing page.
-	Category *newsroom.Category
+	Category *Category
 	// Author is the subject of an author page.
-	Author *newsroom.Author
+	Author *Author
 	// Popular is the most-read sidebar.
-	Popular []newsroom.Article
+	Popular []Article
 	// Query is the current search term, echoed into the search box.
 	Query string
 	// BasePath is the path pagination links are built from, without the page
@@ -112,7 +110,7 @@ func (u urls) Search() string {
 // Article is one piece. The date segments come from the article rather than from a
 // formatter here, so the URL a template links and the route the site registers
 // cannot drift apart in formatting.
-func (u urls) Article(a newsroom.Article) string {
+func (u urls) Article(a Article) string {
 	return u.prefix() + a.Path()
 }
 

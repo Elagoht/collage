@@ -4,6 +4,10 @@
 *.test
 *.out
 
+# "go build" inside an example module drops a binary named after its directory.
+/examples/magazine/thewire
+/examples/newsroom-api/newsroom-api
+
 # Worktrees / SDD scratch
 /.worktrees/
 /.superpowers/
