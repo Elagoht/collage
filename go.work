@@ -5,10 +5,6 @@
 // without waiting for a release. Nothing references it: each example's go.mod is
 // exactly what that project would have on its own, and removing this file makes
 // them resolve collage from the module cache like any other dependency.
-//
-// examples/blog is not listed. It lives inside the framework's own module, because
-// it is the end-to-end test as well as an example and the framework's gate has to
-// build and run it.
 go 1.26
 
 use (
