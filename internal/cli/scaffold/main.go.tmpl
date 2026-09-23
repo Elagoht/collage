@@ -110,9 +110,7 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 		}
 	}
 
-	// fs.Sub, because the embedded tree contains the "static" directory
-	// itself: mounting it whole would serve "/static/static/app.css".
-	assets, err := fs.Sub(staticFS, "static")
+	assets, err := staticFiles(devMode)
 	if err != nil {
 		return nil, err
 	}
@@ -121,6 +119,34 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 	}
 
 	return app, nil
+}
+
+// staticFiles returns the filesystem "/static/" is served from.
+//
+// The embedded copy, except in development, where the directory on disk wins
+// whenever it is there. It is the same rule collage applies to templates, for
+// the same reason: the embedded copy was fixed when the binary was built, so
+// editing a stylesheet would change nothing until the next rebuild — and what
+// you would see is not an error but a page that simply did not change.
+//
+// os.OpenRoot, not os.DirFS, and the difference is a security one. Go's own
+// documentation for os.DirFS says it does not prevent access to files outside
+// the directory: a symlink planted inside "static" — by a build step, a
+// dependency, an upload — resolves through it and the file it points at is
+// served. An os.Root is enforced by the kernel. The *os.Root is deliberately
+// never closed: its fs.FS serves every request for the life of the process.
+func staticFiles(devMode bool) (fs.FS, error) {
+	if devMode {
+		if root, err := os.OpenRoot("static"); err == nil {
+			return root.FS(), nil
+		}
+		// Not there — started from somewhere else, perhaps. The embedded copy
+		// is the safe answer rather than a failure to start.
+	}
+
+	// fs.Sub, because the embedded tree contains the "static" directory
+	// itself: mounting it whole would serve "/static/static/app.css".
+	return fs.Sub(staticFS, "static")
 }
 
 // envString returns the environment variable named key, or fallback.

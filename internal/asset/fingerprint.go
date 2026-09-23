@@ -30,7 +30,7 @@ const fingerprintLen = 16
 // which is a broken page that reports itself as fine.
 func (m *Mount) URL(name string) (string, error) {
 	clean := path.Clean(name)
-	tag, err := m.tags.get(m.fsys, clean)
+	tag, err := m.tag(clean)
 	if err != nil {
 		return "", err
 	}

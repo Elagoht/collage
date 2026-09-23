@@ -114,6 +114,38 @@ a shared cache, for a year.
 mount's own `Cache-Control`. Nothing existing breaks; it simply cannot be cached
 hard.
 
+## In development, nothing is remembered
+
+A content-addressed name and an editable file are in direct conflict. The hash is
+normally computed once and kept — a name derived from bytes that do not change need
+not be derived twice — and the URL is served with a year and `immutable`. Edit the
+file under a running process and the page goes on linking the old name, which the
+browser was told can never change, so the edit is invisible until a restart. Not an
+error: a page that simply did not change.
+
+So with `DevMode` on, every mount re-reads the hash and serves `no-store`. An edited
+file gets a new URL, the page links it, and the browser fetches it.
+
+That is half the problem. The other half belongs to the application: a mount over an
+`embed.FS` serves bytes that were fixed when the binary was built, and no amount of
+re-hashing changes them. Serve the directory in development and the embedded copy
+otherwise — which is what `collage new` scaffolds:
+
+```go
+func staticFiles(devMode bool) (fs.FS, error) {
+	if devMode {
+		if root, err := os.OpenRoot("static"); err == nil {
+			return root.FS(), nil
+		}
+	}
+	return fs.Sub(staticFS, "static")
+}
+```
+
+collage does this for templates itself, because `Template.Root` already tells it
+where they are. A mount is handed an `fs.FS` and nothing else, so where the files
+came from is something only the application knows.
+
 A static build writes both: each file under its own name, and a content-addressed
 copy of every file something actually linked. Only those — the mount records each
 URL as it is minted, so a media directory is not doubled for the sake of names no

@@ -32,6 +32,23 @@ func WithCacheControl(value string) Option {
 	return func(m *Mount) { m.cacheControl = value }
 }
 
+// WithDevMode makes this mount re-read a file's content hash on every request and
+// serve nothing as cacheable.
+//
+// It exists because content-addressing and editing a file are in direct conflict.
+// The hash is normally computed once and kept — a name derived from bytes that do
+// not change need not be derived twice — and the URL it produces is served with a
+// year and "immutable". Edit the file under a running process and the page keeps
+// linking the old name, the browser was told that name can never change, and the
+// edit is invisible until a restart. Which is exactly the shape of a bug nobody can
+// see: the work was done and nothing happened.
+//
+// So in development the hash is recomputed and nothing promises anything. It costs
+// one hash per request, in the mode where that is the cheapest thing happening.
+func WithDevMode() Option {
+	return func(m *Mount) { m.devMode = true }
+}
+
 // WithoutBuildCopy stops a static build from copying this mount into its output.
 // Use it for a mount served from a CDN in production, or one large enough that
 // duplicating it into the build directory is not wanted.
@@ -48,6 +65,7 @@ type Mount struct {
 	fsys         fs.FS
 	cacheControl string
 	buildCopy    bool
+	devMode      bool
 	tags         *etagCache
 	// minted records every fingerprinted name URL has handed out, keyed by the
 	// file's own path. A static build reads it to learn which content-addressed
@@ -136,7 +154,7 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if tag, err := m.tags.get(m.fsys, name); err == nil {
+	if tag, err := m.tag(name); err == nil {
 		w.Header().Set("ETag", tag)
 	}
 	if ctype := mime.TypeByExtension(path.Ext(name)); ctype != "" {
@@ -147,9 +165,15 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// client to revalidate and no way for the answer to go stale. Everything else
 	// keeps the mount's own lifetime, which has to assume the file may change
 	// under a name that would not.
-	if fingerprinted {
+	switch {
+	case m.devMode:
+		// Nothing is promised in development: the next request is meant to show
+		// the next edit, and a client holding an old copy is the one thing that
+		// stops it.
+		w.Header().Set("Cache-Control", "no-store")
+	case fingerprinted:
 		w.Header().Set("Cache-Control", immutableCacheControl)
-	} else {
+	default:
 		w.Header().Set("Cache-Control", m.cacheControl)
 	}
 
@@ -189,7 +213,7 @@ func (m *Mount) resolve(urlPath string) (name string, fingerprinted bool, ok boo
 	// The hash has to be this file's own. Accepting any hex string would let a
 	// mistyped or forged URL be served with a year-long immutable lifetime, which
 	// a shared cache in front of the site would then hand to everyone.
-	tag, err := m.tags.get(m.fsys, file)
+	tag, err := m.tag(file)
 	if err != nil {
 		return "", false, false
 	}
@@ -197,6 +221,12 @@ func (m *Mount) resolve(urlPath string) (name string, fingerprinted bool, ok boo
 		return "", false, false
 	}
 	return file, true, true
+}
+
+// tag returns name's content-hash ETag, remembering it outside development. See
+// WithDevMode.
+func (m *Mount) tag(name string) (string, error) {
+	return m.tags.lookup(m.fsys, name, !m.devMode)
 }
 
 // plainText writes an error body matching the framework's document error surface:

@@ -31,6 +31,10 @@ var ErrMountConflict = errors.New("collage: mount prefixes overlap")
 // path, or redirect source is not rejected here: that check runs in buildHandler,
 // once registration is closed, so it catches the conflict whichever of the mount
 // and the route was registered first. See checkMountsDoNotShadow.
+// In development every mount is given asset.WithDevMode, which stops it
+// remembering a file's content hash: a name derived once from a file somebody is
+// editing keeps pointing at what that file used to be, and the page goes on linking
+// it. See asset.WithDevMode.
 func (a *App) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -46,6 +50,12 @@ func (a *App) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error {
 	// the wrong slice of a file whose advertised length no longer matches.
 	for _, wrap := range a.mountWrappers {
 		fsys = wrap(fsys)
+	}
+
+	// Prepended rather than appended, so an application that passed its own
+	// options still wins: this is a default for development, not an override.
+	if a.devMode {
+		opts = append([]asset.Option{asset.WithDevMode()}, opts...)
 	}
 
 	m, err := asset.New(prefix, fsys, opts...)
