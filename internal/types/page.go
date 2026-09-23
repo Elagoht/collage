@@ -76,6 +76,20 @@ type Page struct {
 	CacheTTL time.Duration
 	// SEO holds opaque SEO metadata for this page.
 	SEO map[string]any // any: SEO metadata is opaque to the framework
+	// CacheParams restricts which query parameters take part in this page's cache
+	// key. A nil value keeps every parameter — the default, because narrowing by
+	// default would silently merge two representations of a page whose handler
+	// reads a parameter nobody remembered to declare. An empty non-nil value drops
+	// the query from the key entirely, which is how a page states that it renders
+	// the same whatever the query says.
+	//
+	// It exists because the raw query is otherwise a cache dimension in full: a
+	// crawler walking "?utm_source=..." variants mints an entry per variant and
+	// evicts the real archive from a bounded cache without ever requesting a
+	// distinct page. Naming the parameters the page actually reads also lets the
+	// key be canonicalised, so "?a=1&b=2" and "?b=2&a=1" stop being two entries for
+	// one representation.
+	CacheParams []string
 	// DependencyTags lists the cache dependency tags this page's render depends on.
 	DependencyTags []string
 	// NotFoundPage is served when a request under this page resolves to no content.

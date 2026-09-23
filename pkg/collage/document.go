@@ -121,6 +121,15 @@ func (b *DocumentBuilder) Incremental(ttl time.Duration) *DocumentBuilder {
 	return b
 }
 
+// WithCacheParams restricts which query parameters take part in this document's
+// cache key, on the same terms as PageBuilder.WithCacheParams.
+func (b *DocumentBuilder) WithCacheParams(names ...string) *DocumentBuilder {
+	params := make([]string, 0, len(names))
+	params = append(params, names...)
+	b.document.CacheParams = params
+	return b
+}
+
 // WithDependency appends tags to the document's cache dependency tags.
 func (b *DocumentBuilder) WithDependency(tags ...string) *DocumentBuilder {
 	b.document.DependencyTags = append(b.document.DependencyTags, tags...)

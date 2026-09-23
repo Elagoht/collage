@@ -358,3 +358,43 @@ var _ collage.TaggedCache = (*memoStore)(nil)
 
 The framework's own dependency tracker keeps working either way, and remains the
 authority for resolving tags to keys: the two indexes are deliberately redundant.
+
+## Which query parameters are part of the key
+
+By default, the whole raw query string is a cache dimension. That is the
+conservative reading and it is correct: a data handler receives the whole request
+and may render from `r.URL.Query()`, so the framework cannot know which parameters
+matter without being told.
+
+It is also expensive. A newsletter link carrying `?utm_source=` caches a second copy
+of the page, and a crawler walking variants evicts real entries from a bounded cache
+without ever asking for a distinct page. Say which parameters the page reads:
+
+```go
+collage.NewPage("listing").
+	WithPath("en", "/articles").
+	WithCacheParams("page", "sort").
+	Incremental(time.Minute)
+```
+
+Naming none at all drops the query from the key entirely — how a page states that it
+renders the same whatever the query says:
+
+```go
+WithCacheParams()
+```
+
+Naming a parameter the page does not read is harmless. Failing to name one it does
+read is not: two representations then share an entry, and one visitor is served
+another's page.
+
+Declaring an allowlist also canonicalises what survives, so `?page=2&sort=new` and
+`?sort=new&page=2` stop being two entries for one representation. That is only safe
+once the page has said which parameters matter, which is why it is not the default.
+
+An allowlist does not make every page cacheable. A search page's discriminating
+parameter is the search term, whose values are chosen by whoever is asking — keying
+a cache on that is an eviction attack with a text field for a trigger. Such a page
+wants `Dynamic()`.
+
+`DocumentBuilder.WithCacheParams` is the same knob for documents.

@@ -97,10 +97,19 @@ into the page for the whole TTL: the sidebar returns on the next request rather 
 fifteen minutes later. `TestSite_DegradedRendersAreNotCached` asserts it by counting
 backend requests, since both responses are `200` with different bodies.
 
-**Search is never cached, and `robots.txt` says so.** A page's cache key includes
-the raw query string, so caching search would mint an entry per distinct `?q=` —
-waste with an ordinary crawler, an eviction attack with an attacker-chosen
-parameter. Rendering it fresh costs one API call.
+**Every page says which query parameters it reads.** By default the whole query
+string discriminates, which is correct and expensive: a newsletter link carrying
+`?utm_source=` caches a second copy of the front page, and a crawler walking
+variants evicts the real archive from a bounded cache without ever asking for a
+distinct page. The listings declare `WithCacheParams("page")`; an article declares
+`WithCacheParams()` with nothing at all, because it renders the same whatever the
+query says.
+
+**Search is still never cached, and `robots.txt` says so.** The allowlist does not
+rescue it: the offending parameter is the one the page is about. `q` has to
+discriminate, and its values are chosen by whoever is asking — a cache keyed on
+arbitrary reader input is an eviction attack with a text field for a trigger.
+Rendering it fresh costs one API call.
 
 **The feed and the sitemap are marshalled, not rendered.** `html/template` applies
 HTML escaping rules, which are wrong for XML at exactly the characters that most

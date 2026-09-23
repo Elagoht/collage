@@ -98,6 +98,32 @@ func (b *PageBuilder) Incremental(ttl time.Duration) *PageBuilder {
 	return b
 }
 
+// WithCacheParams restricts which query parameters take part in this page's cache
+// key. Naming none at all — WithCacheParams() with no arguments — drops the query
+// from the key entirely, which is how a page states that it renders the same
+// whatever the query says.
+//
+// Without it every query parameter discriminates, which is correct but expensive: a
+// crawler walking "?utm_source=..." variants mints an entry per variant and evicts
+// the real archive from a bounded cache without ever asking for a distinct page.
+// Name the parameters the page's data handlers actually read.
+//
+// It also canonicalises what survives, so "?page=2&sort=new" and "?sort=new&page=2"
+// stop being two entries for one representation. That is only safe once the page
+// has said which parameters matter, which is why it is not the default.
+//
+// Naming a parameter a handler does not read is harmless. Failing to name one it
+// does read is not: two representations then share an entry, and one visitor is
+// served another's page.
+func (b *PageBuilder) WithCacheParams(names ...string) *PageBuilder {
+	// Non-nil even when empty: nil means "every parameter", and a page that
+	// deliberately ignores its query has to be able to say so.
+	params := make([]string, 0, len(names))
+	params = append(params, names...)
+	b.page.CacheParams = params
+	return b
+}
+
 // WithDependency appends tags to the page's cache dependency tags.
 func (b *PageBuilder) WithDependency(tags ...string) *PageBuilder {
 	b.page.DependencyTags = append(b.page.DependencyTags, tags...)

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -271,6 +272,43 @@ func (h *Handler) startRequestSpan(r *http.Request) (ctx context.Context, span o
 	return ctx, span
 }
 
+// queryVary turns a request's query into the cache-key dimensions a route declares.
+//
+// A nil allow keeps the raw query whole, which is the default and the conservative
+// reading: the framework cannot know which parameters a data handler consults, and
+// merging two representations serves one visitor another's page. The cost is that
+// every "?utm_source=..." variant is its own entry, so a crawler can evict a bounded
+// cache without ever asking for a distinct page — which is why a route can say
+// otherwise.
+//
+// A non-nil allow — including an empty one, which drops the query entirely — selects
+// only the named parameters, and canonicalises what survives. Canonicalising is safe
+// precisely here and not above: once the route has said which parameters matter,
+// their order and the absence of everything else are no longer facts about the
+// representation. Values are kept in their given order within a parameter, because
+// repeating a parameter is how a request expresses a list.
+func queryVary(u *url.URL, allow []string) []string {
+	if allow == nil {
+		return []string{u.RawQuery}
+	}
+	if len(allow) == 0 || u.RawQuery == "" {
+		return nil
+	}
+
+	values := u.Query()
+	selected := make(url.Values, len(allow))
+	for _, name := range allow {
+		if vs, ok := values[name]; ok {
+			selected[name] = vs
+		}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	// url.Values.Encode sorts by key, which is the canonicalisation.
+	return []string{selected.Encode()}
+}
+
 // serveGuarded runs serve and turns a panic escaping it into a 500 on the normal
 // error path — logged, dispatched to every ErrorHook, and counted by the metric
 // ServeHTTP reports — instead of letting it unwind into net/http, which closes the
@@ -439,20 +477,16 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	key := ""
 	cacheable := h.cache != nil && page.Strategy.Cacheable() && (r.Method == http.MethodGet || r.Method == http.MethodHead)
 	if cacheable {
-		// The raw query is a cache dimension, not decoration: a fragment's data
+		// The query is a cache dimension, not decoration: a fragment's data
 		// handler receives the whole *http.Request and may legitimately render
 		// from r.URL.Query(), so two queries against one path are two
-		// representations. This does fragment the cache across utm_* and other
-		// tracking variants of the same page, and it varies on parameter order
-		// because the query is not canonicalized — correctness over hit rate. A
-		// per-page allowlist of significant query parameters would recover both
-		// and is the obvious future enhancement; it is deliberately not built
-		// here, since guessing which parameters matter is the application's call.
+		// representations. Which parts of it discriminate is the page's own
+		// declaration — see queryVary and Page.CacheParams.
 		key = cache.Key(cache.KeyInput{
 			Path:   r.URL.Path,
 			Locale: match.Locale,
 			Params: match.PathParams,
-			Vary:   []string{r.URL.RawQuery},
+			Vary:   queryVary(r.URL, page.CacheParams),
 		})
 		lookupStart := time.Now()
 		if content, etag, found := h.cache.Get(ctx, key); found {

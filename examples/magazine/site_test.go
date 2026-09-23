@@ -755,3 +755,39 @@ func TestSite_SearchCountAgreesInNumber(t *testing.T) {
 		t.Error("a multiple match does not report the plural")
 	}
 }
+
+func TestSite_TrackingParametersDoNotMintCacheEntries(t *testing.T) {
+	// The listing pages declare that only "page" discriminates. Without that, a
+	// newsletter link or a crawler appending "?utm_source=..." caches a separate
+	// copy of the archive per variant, evicting real pages from a bounded cache
+	// without ever asking for a distinct one.
+	b, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	request(t, site, "/")
+	cached := b.hits.Load()
+
+	request(t, site, "/?utm_source=newsletter&fbclid=abc123")
+	if b.hits.Load() != cached {
+		t.Error("a tracking parameter reached the backend, so it minted its own cache entry")
+	}
+
+	request(t, site, "/?page=2")
+	if b.hits.Load() == cached {
+		t.Error("?page=2 was served from the front page's cache entry; the page number must still discriminate")
+	}
+}
+
+func TestSite_ArticlesIgnoreTheQueryEntirely(t *testing.T) {
+	b, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	target := "/2026/09/seawalls-buy-time-not-safety"
+	request(t, site, target)
+	cached := b.hits.Load()
+
+	request(t, site, target+"?anything=at-all")
+	if b.hits.Load() != cached {
+		t.Error("a query parameter re-rendered an article that reads none")
+	}
+}

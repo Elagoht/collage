@@ -39,6 +39,10 @@ type Document struct {
 	Strategy RenderStrategy
 	// CacheTTL is the lifetime of a cached body under StrategyIncremental.
 	CacheTTL time.Duration
+	// CacheParams restricts which query parameters take part in this document's
+	// cache key, on the same terms as Page.CacheParams: nil keeps every parameter,
+	// an empty non-nil value drops the query from the key.
+	CacheParams []string
 	// DependencyTags are tags every response from this document carries, in
 	// addition to whatever its handler returns.
 	DependencyTags []string

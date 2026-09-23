@@ -61,7 +61,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			Path:   r.URL.Path,
 			Locale: match.Locale,
 			Params: match.PathParams,
-			Vary:   []string{r.URL.RawQuery},
+			Vary:   queryVary(r.URL, doc.CacheParams),
 		})
 		lookupStart := time.Now()
 		if content, etag, found := h.cache.Get(ctx, key); found {
