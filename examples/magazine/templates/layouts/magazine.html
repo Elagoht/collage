@@ -7,7 +7,10 @@
      handler declares defaults and a page's content overrides them from wherever it
      is nested. Writing one here too would produce two of each. */}}
 {{hoist "head"}}
-<link rel="stylesheet" href="/static/magazine.css">
+{{/* asset resolves the stylesheet to its content-addressed name, which is what
+     lets it be served as immutable: a changed file is a changed URL, so the
+     browser never has to ask whether its copy is still good. */}}
+<link rel="stylesheet" href="{{asset "/static/magazine.css"}}">
 <link rel="alternate" type="application/rss+xml" title="{{.Site.Name}}" href="/rss.xml">
 </head>
 <body>

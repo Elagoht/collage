@@ -71,6 +71,55 @@ func mountAssets(app *collage.App) error {
 without it the stylesheet answers at `/static/static/app.css`. A mount serves
 what it is given and does not guess at a root inside it.
 
+## Content-addressed URLs
+
+Link a mounted file with `asset`, not by hand:
+
+```html
+<link rel="stylesheet" href="{{asset "/static/app.css"}}">
+```
+
+What goes into the page is the file's own name with its content hash in it:
+
+```html
+<link rel="stylesheet" href="/static/app.0d5f2b53aebf6c72.css">
+```
+
+and that URL is served with
+
+```
+Cache-Control: public, max-age=31536000, immutable
+```
+
+The hash is why that is honest rather than optimistic. A name derived from the bytes
+cannot describe anything else, so there is nothing for a client to revalidate: when
+the file changes the name changes, the old URL is never requested again, and the new
+one arrives on the next page load. A plain name cannot be served that way at any
+lifetime — sooner or later it hands someone a stylesheet that no longer matches the
+page it is styling. That is why the mount's own `Cache-Control` stays short, and why
+`WithCacheControl` is about the plain names rather than these.
+
+Three details worth knowing.
+
+**A file that does not exist is an error, not a URL.** `{{asset "/static/typo.css"}}`
+fails the fragment. The alternative — emitting the path unchanged — is a page that
+renders successfully while linking a stylesheet that 404s: broken, and reporting
+itself as fine.
+
+**The hash in a request is verified.** A URL carrying a hash that is not the file's
+is a 404, not a hit. Serving it would pin a mistake in front of every client behind
+a shared cache, for a year.
+
+**Plain names still work.** `/static/app.css` is served exactly as before, with the
+mount's own `Cache-Control`. Nothing existing breaks; it simply cannot be cached
+hard.
+
+A static build writes both: each file under its own name, and a content-addressed
+copy of every file something actually linked. Only those — the mount records each
+URL as it is minted, so a media directory is not doubled for the sake of names no
+page uses.
+
+
 ## Options
 
 ```go

@@ -9,6 +9,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ErrInvalidPrefix reports a mount prefix that is empty, "/", or not a
@@ -17,6 +18,11 @@ var ErrInvalidPrefix = errors.New("collage: invalid mount prefix")
 
 // ErrNilFS reports that a mount was given no file system.
 var ErrNilFS = errors.New("collage: nil mount file system")
+
+// immutableCacheControl is what a fingerprinted name is served with: a year, which
+// is the longest any client is required to honour, and "immutable", which tells a
+// client not to revalidate even on a reload.
+const immutableCacheControl = "public, max-age=31536000, immutable"
 
 // Option configures a Mount.
 type Option func(*Mount)
@@ -43,6 +49,12 @@ type Mount struct {
 	cacheControl string
 	buildCopy    bool
 	tags         *etagCache
+	// minted records every fingerprinted name URL has handed out, keyed by the
+	// file's own path. A static build reads it to learn which content-addressed
+	// copies the rendered pages link. A sync.Map rather than a map behind the
+	// mutex the ETag cache uses: this is written once per file and read by every
+	// render thereafter.
+	minted sync.Map
 }
 
 // New returns a Mount serving fsys under prefix. prefix must begin and end with
@@ -97,7 +109,7 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	name, ok := m.resolve(r.URL.Path)
+	name, fingerprinted, ok := m.resolve(r.URL.Path)
 	if !ok {
 		plainText(w, r, http.StatusNotFound)
 		return
@@ -130,7 +142,16 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if ctype := mime.TypeByExtension(path.Ext(name)); ctype != "" {
 		w.Header().Set("Content-Type", ctype)
 	}
-	w.Header().Set("Cache-Control", m.cacheControl)
+	// A fingerprinted name was minted from these exact bytes and verified against
+	// them above, so it can never describe anything else: there is nothing for a
+	// client to revalidate and no way for the answer to go stale. Everything else
+	// keeps the mount's own lifetime, which has to assume the file may change
+	// under a name that would not.
+	if fingerprinted {
+		w.Header().Set("Cache-Control", immutableCacheControl)
+	} else {
+		w.Header().Set("Cache-Control", m.cacheControl)
+	}
 
 	http.ServeContent(w, r, name, info.ModTime(), seeker)
 }
@@ -139,18 +160,43 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // reports that it is not servable. Containment is not a string problem: the
 // cleaned path must still be a valid fs path, which fs.ValidPath enforces by
 // rejecting "..", absolute paths and empty elements.
-func (m *Mount) resolve(urlPath string) (string, bool) {
+//
+// It also reports whether the request carried a verified fingerprint, which is
+// what earns the response its immutable lifetime.
+func (m *Mount) resolve(urlPath string) (name string, fingerprinted bool, ok bool) {
 	if !m.Handles(urlPath) {
-		return "", false
+		return "", false, false
 	}
-	name := path.Clean(strings.TrimPrefix(urlPath, m.prefix))
+	name = path.Clean(strings.TrimPrefix(urlPath, m.prefix))
 	if name == "." || name == "/" || strings.HasPrefix(name, "/") {
-		return "", false
+		return "", false, false
 	}
 	if !fs.ValidPath(name) {
-		return "", false
+		return "", false, false
 	}
-	return name, true
+
+	// A literal file is always itself, checked first: a real file whose name
+	// happens to have a hex-shaped component is not a fingerprint of some other
+	// file, and resolving it to one would serve the wrong bytes.
+	if _, err := fs.Stat(m.fsys, name); err == nil {
+		return name, false, true
+	}
+
+	file, hash, looksFingerprinted := splitFingerprint(name)
+	if !looksFingerprinted {
+		return name, false, true
+	}
+	// The hash has to be this file's own. Accepting any hex string would let a
+	// mistyped or forged URL be served with a year-long immutable lifetime, which
+	// a shared cache in front of the site would then hand to everyone.
+	tag, err := m.tags.get(m.fsys, file)
+	if err != nil {
+		return "", false, false
+	}
+	if strings.Trim(tag, `"`)[:fingerprintLen] != hash {
+		return "", false, false
+	}
+	return file, true, true
 }
 
 // plainText writes an error body matching the framework's document error surface:

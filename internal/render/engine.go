@@ -121,6 +121,11 @@ type Options struct {
 	// the fragment and its error, so a failure shows up in the page being developed
 	// instead of looking like a section someone forgot to write.
 	DevMode bool
+	// AssetURL resolves a mounted file's URL to its content-addressed one, and is
+	// what backs {{asset "/static/app.css"}}. Nil leaves the template function
+	// reporting that no mount can answer, which is what a page linking an asset
+	// through an application that mounted none should say.
+	AssetURL func(urlPath string) (string, error)
 }
 
 // SlotEngine is the Engine implementation that resolves {{slot "name"}} against the
@@ -133,6 +138,7 @@ type SlotEngine struct {
 	metrics        observability.Metrics
 	tracer         observability.Tracer
 	devMode        bool
+	assetURL       func(string) (string, error)
 }
 
 var _ Engine = (*SlotEngine)(nil)
@@ -153,6 +159,7 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 		metrics:        observability.MetricsOrNoop(opts.Metrics),
 		tracer:         observability.TracerOrNoop(opts.Tracer),
 		devMode:        opts.DevMode,
+		assetURL:       opts.AssetURL,
 	}
 }
 

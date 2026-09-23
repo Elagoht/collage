@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -180,3 +181,59 @@ func (evilDirEntry) Name() string               { return "../../escape" }
 func (evilDirEntry) IsDir() bool                { return false }
 func (evilDirEntry) Type() fs.FileMode          { return 0 }
 func (evilDirEntry) Info() (fs.FileInfo, error) { return nil, fs.ErrNotExist }
+
+// TestBuild_WritesFingerprintedCopiesThatWereLinked verifies a static build writes
+// the content-addressed name a page linked, and only the names something asked for.
+//
+// It matters because a build's output is served by a plain file server: nothing
+// there can strip a fingerprint the way the mount does, so a page linking
+// "/static/app.<hash>.css" needs that exact file to exist.
+func TestBuild_WritesFingerprintedCopiesThatWereLinked(t *testing.T) {
+	out := resolvedTempDir(t)
+	fsys := fstest.MapFS{
+		"app.css":   &fstest.MapFile{Data: []byte("body { color: red; }")},
+		"unused.js": &fstest.MapFile{Data: []byte("never linked")},
+	}
+	mount, err := asset.New("/static/", fsys)
+	if err != nil {
+		t.Fatalf("asset.New: %v", err)
+	}
+
+	// What a render does when a template calls {{asset "/static/app.css"}}.
+	linked, err := mount.URL("app.css")
+	if err != nil {
+		t.Fatalf("URL: %v", err)
+	}
+
+	app := &fakeRenderer{mounts: []*asset.Mount{mount}}
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := b.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	hashed := filepath.Join(out, filepath.FromSlash(strings.TrimPrefix(linked, "/")))
+	if got := readFile(t, hashed); got != "body { color: red; }" {
+		t.Fatalf("content at %s = %q, want the mount's exact bytes", hashed, got)
+	}
+
+	// The file's own name is still written: a template may link it directly, and
+	// a build that dropped it would break that page.
+	if got := readFile(t, filepath.Join(out, "static", "app.css")); got != "body { color: red; }" {
+		t.Error("the unfingerprinted name was not written")
+	}
+
+	// Nothing linked unused.js, so no fingerprinted copy of it exists. A build
+	// that wrote one per file would double every media directory.
+	entries, err := os.ReadDir(filepath.Join(out, "static"))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "unused.") && e.Name() != "unused.js" {
+			t.Errorf("wrote %q: a file nothing linked must not gain a fingerprinted copy", e.Name())
+		}
+	}
+}

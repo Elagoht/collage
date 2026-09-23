@@ -478,12 +478,12 @@ func New(cfg Config) (*App, error) {
 	tracker.MaxKeysPerTag = cfg.Cache.MaxKeysPerTag
 
 	app.tmpl = tmpl
-	app.tmpl = tmpl
 	app.renderer = render.New(tmpl, render.Options{
 		DefaultTimeout: cfg.Template.Timeout,
 		Metrics:        metrics,
 		Tracer:         tracer,
 		DevMode:        devMode,
+		AssetURL:       app.assetURL,
 	})
 	app.store = store
 	app.tracker = tracker

@@ -9,7 +9,7 @@ import (
 
 func TestDefaultFuncs_HasAllDocumentedNames(t *testing.T) {
 	want := []string{
-		"slot", "hoist", "safeHTML", "safeURL", "dict", "default",
+		"slot", "hoist", "asset", "safeHTML", "safeURL", "dict", "default",
 		"upper", "lower", "title", "join", "formatTime",
 	}
 	funcs := DefaultFuncs()
@@ -20,6 +20,16 @@ func TestDefaultFuncs_HasAllDocumentedNames(t *testing.T) {
 	}
 	if len(funcs) != len(want) {
 		t.Errorf("DefaultFuncs() has %d entries, want %d", len(funcs), len(want))
+	}
+}
+
+func TestAssetPlaceholder(t *testing.T) {
+	url, err := assetPlaceholder("/static/app.css")
+	if url != "" {
+		t.Errorf("assetPlaceholder() url = %q, want empty", url)
+	}
+	if !errors.Is(err, ErrAssetOutsideRender) {
+		t.Fatalf("assetPlaceholder() error = %v, want ErrAssetOutsideRender", err)
 	}
 }
 

@@ -268,6 +268,7 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 			return e.renderSlot(rc, f, name, state)
 		},
 		"hoist": hoistFunc(state.hoistToken),
+		"asset": e.assetFunc(),
 	}
 }
 
@@ -327,4 +328,24 @@ func devComment(name string, err error) []byte {
 		" failed: " +
 		htmltemplate.HTMLEscapeString(err.Error()) +
 		" -->")
+}
+
+// assetFunc is the per-render implementation of {{asset "/static/app.css"}}. It
+// returns the content-addressed URL for a mounted file.
+//
+// An unresolvable asset is an error rather than the path unchanged. A page that
+// renders successfully while linking a stylesheet that 404s is a broken page
+// reporting itself as fine, and the typo that caused it survives to production;
+// failing the fragment puts the mistake in front of whoever made it.
+func (e *SlotEngine) assetFunc() func(string) (string, error) {
+	return func(urlPath string) (string, error) {
+		if e.assetURL == nil {
+			return "", fmt.Errorf("%w: %q: this application has mounted no assets", types.ErrUnknownAsset, urlPath)
+		}
+		resolved, err := e.assetURL(urlPath)
+		if err != nil {
+			return "", fmt.Errorf("%w: %q: %w", types.ErrUnknownAsset, urlPath, err)
+		}
+		return resolved, nil
+	}
 }

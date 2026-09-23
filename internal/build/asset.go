@@ -65,6 +65,31 @@ func (b *Builder) copyAssets(outDirResolved string) ([]string, []error) {
 		if walkErr != nil {
 			errs = append(errs, fmt.Errorf("collage: mount %q: %w", mount.Prefix(), walkErr))
 		}
+
+		// The rendered pages link content-addressed names, so those names have to
+		// be files in the output — a static build answers with a directory, and a
+		// directory cannot strip a fingerprint the way the mount does.
+		//
+		// Only the names something actually asked for are written, not one per
+		// file: the mount recorded each URL as it was minted, and a build that
+		// wrote a fingerprinted copy of every asset would double a media
+		// directory for the sake of names no page links.
+		for name, hashed := range mount.Fingerprinted() {
+			target, err := documentTarget(outDirResolved, mount.Prefix()+hashed)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("collage: mount %q file %q: %w", mount.Prefix(), hashed, err))
+				continue
+			}
+			if err := verifyNoSymlinksBeneath(outDirResolved, target); err != nil {
+				errs = append(errs, fmt.Errorf("collage: mount %q file %q: %w", mount.Prefix(), hashed, err))
+				continue
+			}
+			if err := copyMountFile(fsys, name, target); err != nil {
+				errs = append(errs, fmt.Errorf("collage: mount %q file %q: %w", mount.Prefix(), hashed, err))
+				continue
+			}
+			written = append(written, target)
+		}
 	}
 
 	return written, errs

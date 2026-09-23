@@ -130,3 +130,23 @@ func (a *App) checkMountsDoNotShadow() error {
 	}
 	return nil
 }
+
+// assetURL resolves a mounted file's URL to its content-addressed one, and is what
+// backs {{asset "/static/app.css"}} in a template.
+//
+// It reads the mounts at call time rather than closing over them, so a mount
+// registered after the render engine was built is still found — registration and
+// engine construction are ordered by the application, not by this package.
+func (a *App) assetURL(urlPath string) (string, error) {
+	for _, m := range a.Mounts() {
+		if !m.Handles(urlPath) {
+			continue
+		}
+		return m.URL(strings.TrimPrefix(urlPath, m.Prefix()))
+	}
+	return "", fmt.Errorf("%w: no mount serves %q", ErrNoMountForAsset, urlPath)
+}
+
+// ErrNoMountForAsset reports that a template asked for an asset URL under a prefix
+// no mount claims.
+var ErrNoMountForAsset = errors.New("collage: no mount serves that asset")

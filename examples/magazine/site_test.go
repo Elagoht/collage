@@ -798,3 +798,49 @@ func TestSite_ArticlesIgnoreTheQueryEntirely(t *testing.T) {
 		t.Error("a query parameter re-rendered an article that reads none")
 	}
 }
+
+// The stylesheet is linked by its content-addressed name and served as immutable.
+//
+// This is the whole reason to fingerprint: a name derived from the bytes cannot
+// describe anything else, so the browser is told never to ask again. A plain name
+// can only ever carry a short lifetime, because the file behind it may change.
+func TestSite_StylesheetIsLinkedByContentAndServedForever(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, body := request(t, site, "/")
+	link := regexp.MustCompile(`href="(/static/magazine\.[0-9a-f]{16}\.css)"`).FindStringSubmatch(body)
+	if link == nil {
+		t.Fatalf("the home page does not link a content-addressed stylesheet:\n%s",
+			firstLines(body, 20))
+	}
+
+	rec, css := request(t, site, link[1])
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", link[1], rec.Code)
+	}
+	if len(css) == 0 {
+		t.Error("the stylesheet served no bytes")
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("Cache-Control = %q, want immutable", cc)
+	}
+
+	// The same URL with a hash that is not the file's must not be served at all.
+	// It would otherwise be cached for a year by everything between the site and
+	// the reader.
+	wrong, _ := request(t, site, "/static/magazine.0123456789abcdef.css")
+	if wrong.Code != http.StatusNotFound {
+		t.Errorf("GET a wrong fingerprint = %d, want 404", wrong.Code)
+	}
+}
+
+// firstLines returns at most n lines of s, for a failure message that shows enough
+// of a page to see what went wrong without printing the whole document.
+func firstLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}
