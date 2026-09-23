@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
@@ -45,6 +46,12 @@ var ErrInvalidOutDir = errors.New("collage: invalid output directory")
 // repository root, a directory whose contents must never be silently deleted
 // because a config field was blank or mistyped.
 var ErrDangerousOutDir = errors.New("collage: refusing to use a dangerous output directory")
+
+// ErrOutputPathCollision is returned by Build when two tasks resolve to the same
+// output file. Writing one over the other drops a page from the build with nothing
+// in the report to show for it, which is the kind of silent loss this framework
+// refuses everywhere else.
+var ErrOutputPathCollision = errors.New("collage: two builds target one output path")
 
 // ErrPathEscapesOutDir is returned when a resolved output path falls outside
 // Options.OutDir. PathProvider is user code: a provider returning "../escape", or a
@@ -128,6 +135,10 @@ type Renderer interface {
 	// Mounts returns every mounted asset file system. A static build copies each
 	// one whose BuildCopy is true into its output; see copyAssets.
 	Mounts() []*asset.Mount
+	// DefaultLocale is the locale served without a path prefix. Every other
+	// locale's output is written under a directory named after it, mirroring the
+	// URL the router answers; see localeOutputPath.
+	DefaultLocale() string
 }
 
 // PathProvider supplies the concrete paths a dynamic page's pattern expands to. A
@@ -309,6 +320,16 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	tasks, skipped, enumerateErrs := b.enumerate(ctx)
 	report.Skipped = skipped
 
+	// Checked before anything renders, so a collision costs no work and leaves no
+	// half-built directory. It has to be its own pass rather than a check inside
+	// the write: the writes run concurrently, and "did anyone else already claim
+	// this file" is exactly the question a concurrent writer cannot answer about
+	// itself.
+	if err := b.checkNoOutputCollisions(tasks); err != nil {
+		enumerateErrs = append(enumerateErrs, err)
+		tasks = nil
+	}
+
 	written := make([]string, len(tasks))
 	taskErrs := make([]error, len(tasks))
 
@@ -370,6 +391,31 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		return report, nil
 	}
 	return report, errors.Join(errs...)
+}
+
+// checkNoOutputCollisions reports the first pair of tasks that would write to one
+// file. Two pages whose patterns differ only in a trailing slash, or a PathProvider
+// that returns the same path twice, both land here — and without the check the
+// second write silently replaced the first, dropping a page from the build with
+// nothing in the report to show for it.
+//
+// Locale is already folded in by localeOutputPath, so the same pattern in two
+// locales is not a collision: that is the ordinary multi-locale case and each
+// locale has its own directory.
+func (b *Builder) checkNoOutputCollisions(tasks []buildTask) error {
+	defaultLocale := b.app.DefaultLocale()
+	claimed := make(map[string]buildTask, len(tasks))
+
+	for _, task := range tasks {
+		key := path.Clean(localeOutputPath(task.locale, defaultLocale, task.path))
+		if previous, taken := claimed[key]; taken {
+			return fmt.Errorf("%w: %q, claimed by page %q locale %q and page %q locale %q",
+				ErrOutputPathCollision, key,
+				previous.page.Name, previous.locale, task.page.Name, task.locale)
+		}
+		claimed[key] = task
+	}
+	return nil
 }
 
 // enumerate walks every registered page and expands it into the concrete build
@@ -441,6 +487,29 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 	return tasks, skipped, errs
 }
 
+// localeOutputPath prefixes urlPath with the locale directory the router serves it
+// under: nothing for the default locale, "/<locale>" for every other.
+//
+// This mirrors path-locale resolution rather than adding a convention of its own. A
+// page registered at Paths{"tr": "/blog"} is reached at "/tr/blog" — the prefix is
+// stripped before matching, so the author does not write it and writing it would
+// produce "/tr/tr/blog". Without this, every locale of a page resolved to one file
+// and the last render written won.
+//
+// A build is a set of files, so the default locale is the only one that can occupy
+// the bare path. Which locale that is comes from the application rather than from
+// Options: it is the same value the router resolves against, and two places to
+// state it is one place for them to disagree.
+func localeOutputPath(locale, defaultLocale, urlPath string) string {
+	if locale == "" || locale == defaultLocale {
+		return urlPath
+	}
+	if urlPath == "/" {
+		return "/" + locale
+	}
+	return "/" + locale + urlPath
+}
+
 // isDynamicPattern reports whether pattern contains a "{param}" or "{param...}"
 // placeholder segment. Every such segment is wrapped in braces, so a substring check
 // for "{" is sufficient and does not require depending on internal/router's pattern
@@ -453,7 +522,7 @@ func isDynamicPattern(pattern string) bool {
 // under outDirResolved, which must already be an absolute, symlink-resolved
 // directory (see prepareOutDir). It returns the absolute path written.
 func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, task buildTask) (string, error) {
-	target, err := resolveTarget(outDirResolved, task.path)
+	target, err := resolveTarget(outDirResolved, localeOutputPath(task.locale, b.app.DefaultLocale(), task.path))
 	if err != nil {
 		return "", fmt.Errorf("collage: page %q locale %q: %w", task.page.Name, task.locale, err)
 	}

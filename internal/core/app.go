@@ -480,6 +480,13 @@ func (a *App) DevMode() bool {
 	return a.devMode
 }
 
+// DefaultLocale returns the locale served without a path prefix. A static build
+// reads it to decide which locale occupies the bare output path and which get a
+// directory of their own; see internal/build.
+func (a *App) DefaultLocale() string {
+	return a.cfg.Locale.Default
+}
+
 // Logger returns the application's structured logger.
 func (a *App) Logger() *slog.Logger {
 	return a.logger

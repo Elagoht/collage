@@ -36,6 +36,12 @@ type PathInstance = build.PathInstance
 // could not produce, and why.
 type SkipRecord = build.SkipRecord
 
+// ErrOutputPathCollision is returned by Build when two pages would be written to
+// the same file — two patterns differing only in a trailing slash, or a
+// PathProvider returning one path twice. It is reported before anything renders, so
+// a collision costs no work and leaves no half-built output directory.
+var ErrOutputPathCollision = build.ErrOutputPathCollision
+
 // ErrNilRenderer is returned by NewBuilder when app is nil.
 var ErrNilRenderer = build.ErrNilRenderer
 
