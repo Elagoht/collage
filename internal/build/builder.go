@@ -18,6 +18,7 @@
 package build
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -100,6 +101,20 @@ var ErrDegradedRender = errors.New("collage: refusing to write a degraded render
 // Options.AllowDegraded is about serving a partial page, not an absent one.
 var ErrEmptyRender = errors.New("collage: refusing to write an empty render")
 
+// ErrUnresolvedToken is recorded in Report.Errors when a page rendered for a static
+// build contains a request-forgery token placeholder.
+//
+// A token is per reader, and the thing that replaces the placeholder with one is the
+// running server. A built site has no server: the file would ship with the
+// placeholder in it, and the form in it would be refused on submission with nothing
+// to explain why — assuming there were anything to submit to, which there is not,
+// because a form needs a server and a built site is files.
+//
+// So it is refused rather than written. A page with a form belongs to the served
+// site, and saying Dynamic() is how it says so; the build then skips it, with a
+// reason, instead of shipping something broken.
+var ErrUnresolvedToken = errors.New("collage: refusing to write a page whose forgery token was never resolved")
+
 // Renderer is the narrow surface Builder needs from an application: what it
 // contains — pages, documents, and mounted asset file systems — and a way to
 // render a page or document by path outside the HTTP request path. It is
@@ -139,6 +154,11 @@ type Renderer interface {
 	// locale's output is written under a directory named after it, mirroring the
 	// URL the router answers; see localeOutputPath.
 	DefaultLocale() string
+	// CSRFMarker is the placeholder a rendered page carries where a
+	// request-forgery token goes, or the empty string when the application has no
+	// forgery protection. A static build refuses to write a page containing it:
+	// see checkNoUnresolvedToken.
+	CSRFMarker() string
 }
 
 // PathProvider supplies the concrete paths a dynamic page's pattern expands to. A
@@ -541,6 +561,9 @@ func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, tas
 	}
 	if len(result.HTML) == 0 {
 		return "", fmt.Errorf("%w: page %q locale %q path %q", ErrEmptyRender, task.page.Name, task.locale, task.path)
+	}
+	if marker := b.app.CSRFMarker(); marker != "" && bytes.Contains(result.HTML, []byte(marker)) {
+		return "", fmt.Errorf("%w: page %q locale %q path %q", ErrUnresolvedToken, task.page.Name, task.locale, task.path)
 	}
 
 	// resolveTarget's containment check is purely lexical: it proves the *string*

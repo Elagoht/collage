@@ -733,6 +733,16 @@ func (h *Handler) renderPage(
 		}}
 	}
 	content := afterRender.HTML
+	if len(content) == 0 {
+		// A blank page is not a page. See ErrEmptyRender.
+		return &outcome{fail: &failure{
+			status: http.StatusInternalServerError,
+			err:    fmt.Errorf("%w: page %q", ErrEmptyRender, page.Name),
+			page:   page,
+			locale: match.Locale,
+			stage:  stageRender,
+		}}
+	}
 
 	// A degraded render is complete enough to serve but must never be cached:
 	// caching it would pin one request's transient fragment failure in front of

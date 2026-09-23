@@ -425,3 +425,47 @@ func TestCSRF_APageWithNoFormIsUnaffected(t *testing.T) {
 		t.Errorf("Cache-Control = %q, want the page's own", cc)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// An empty render is never a response
+// ---------------------------------------------------------------------------
+
+// A page that rendered no markup is a failure, not a 200 with nothing in it.
+//
+// The static builder has always refused to write one (ErrEmptyRender) on the
+// grounds that a file nobody can read is worse than no file. Serving one is the same
+// mistake with a status code on it: the reader gets a blank page and the operator
+// gets a success in the log.
+func TestEmptyRenderIsNotServed(t *testing.T) {
+	page := testPage("blank", "/blank", types.StrategyDynamic)
+	env := newEnv(t, []*types.Page{page}, func(d *Deps) {
+		d.Renderer = newFakeEngine(fakeRender{html: ""})
+	})
+
+	rec := env.get("/blank")
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 for a page that rendered nothing", rec.Code)
+	}
+}
+
+// The same for a page an action answered with — which is where it actually bites,
+// because RenderPage is usually handed a page built on the spot, and a page that was
+// never registered has no content bound into its layout.
+func TestEmptyRenderFromAnActionIsNotServed(t *testing.T) {
+	page := testPage("blank", "/blank", types.StrategyDynamic)
+	create := action("create", "/create", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+			return &types.ActionResult{Status: http.StatusUnprocessableEntity, Page: page}, nil
+		})
+
+	env := actionEnv(t, nil, []*types.Action{create}, func(d *Deps) {
+		d.Renderer = newFakeEngine(fakeRender{html: ""})
+	})
+
+	rec := env.do(post("/create", ""))
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500: an empty body is not a validation failure", rec.Code)
+	}
+}

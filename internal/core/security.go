@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/Elagoht/collage/internal/csrf"
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // SecurityConfig configures the framework's request-forgery protection.
@@ -50,8 +51,12 @@ func buildCSRF(cfg SecurityConfig, logger *slog.Logger) (*csrf.Guard, error) {
 		if _, err := rand.Read(key); err != nil {
 			return nil, err
 		}
-		logger.Warn("collage: no Security.CSRFKey set, so one was generated for this process; " +
-			"tokens will be refused after a restart and across instances")
+		// Not warned about here. Whether a generated key matters depends on
+		// whether anything will ever verify a token, and that is not known until
+		// registration closes — so the warning lives at Start, where the answer
+		// is. Saying it at construction means every application that has no forms
+		// at all is told about a key it has no use for, and a warning that is
+		// usually noise is a warning nobody reads.
 	}
 
 	return csrf.New(csrf.Config{
@@ -79,3 +84,43 @@ func (a *App) csrfMarker() (string, error) {
 // ErrCSRFDisabled reports a template asking for a forgery token in an application
 // that turned the protection off.
 var ErrCSRFDisabled = errors.New("collage: csrfToken used but request-forgery protection is disabled")
+
+// warnAboutGeneratedKey reports a generated forgery key, but only to an application
+// that will actually verify tokens.
+//
+// It runs once registration has closed, because that is when the question can be
+// answered: an application with no action that answers an unsafe method never checks
+// a token, and telling it about a key it has no use for is how a warning becomes
+// noise. One that does check will refuse every submission made before its last
+// restart, which is worth interrupting for.
+//
+// It must be called with a.mu held, or from a path that has closed registration.
+func (a *App) warnAboutGeneratedKey() {
+	if a.csrf == nil || len(a.cfg.Security.CSRFKey) != 0 {
+		return
+	}
+	for _, action := range a.actionOrder {
+		for _, method := range action.Methods {
+			if types.SafeMethod(method) {
+				continue
+			}
+			a.logger.Warn("collage: no Security.CSRFKey set, so one was generated for this process; "+
+				"form submissions will be refused after a restart and across instances",
+				"action", action.Name)
+			return
+		}
+	}
+}
+
+// CSRFMarker is the placeholder a rendered page carries where a request-forgery
+// token goes, or the empty string when this application has no forgery protection.
+//
+// It is exported for the static builder, which refuses to write a page containing
+// it: a built site has no server to replace it with a reader's own token, and none
+// to submit the form to either.
+func (a *App) CSRFMarker() string {
+	if a.csrf == nil {
+		return ""
+	}
+	return a.csrf.Marker()
+}

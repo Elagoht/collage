@@ -18,6 +18,20 @@ var ErrMethodNotAllowed = errors.New("collage: method not allowed")
 // ErrNoActionHandler reports an action registered without a handler.
 var ErrNoActionHandler = errors.New("collage: action has no handler")
 
+// ErrEmptyRender reports a page that rendered no markup at all.
+//
+// It is a failure rather than a 200 with nothing in it, which is what it used to be.
+// The static builder has always refused to write one on the grounds that a file
+// nobody can read is worse than no file; serving one is the same mistake with a
+// status code on it, where the reader gets a blank page and the operator gets a
+// success in the log.
+//
+// The usual cause is a page handed to ActionResult.Page that was built on the spot
+// rather than registered. Registration is what binds a page's content into its
+// layout, so an unregistered page renders its layout around an empty required slot —
+// a failure the root fragment absorbs, leaving nothing.
+var ErrEmptyRender = errors.New("collage: page rendered no markup")
+
 // defaultMaxBodyBytes bounds a request body when neither the action nor the
 // application says otherwise.
 //
@@ -211,6 +225,10 @@ func (h *Handler) writeActionPage(
 	rendered, err := h.renderer.Render(r.Context(), rc)
 	if err != nil {
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
+	}
+	if len(rendered.HTML) == 0 {
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender,
+			fmt.Errorf("%w: page %q", ErrEmptyRender, result.Page.Name)))
 	}
 	return writeHTML(w, statusOr(result.Status, http.StatusOK), rendered.HTML)
 }

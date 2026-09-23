@@ -15,6 +15,29 @@ collage help [command]
 Exit codes: `0` on success, `2` for a usage error (no command, an unknown
 command, a malformed plugin command), `1` for a command that parsed but failed.
 
+## What `collage new` gives you
+
+Two pages, and the difference between them is the lesson:
+
+- **`/`** is `Static()`. Its data handler returns values from Go rather than from
+  the template, so the wiring is visible, and nothing about it depends on the
+  request — which is what lets `collage build` render it to a file.
+- **`/signup`** is `Dynamic()`, and carries a form: a `{{csrfToken}}`, a validation
+  failure that re-renders the page with 422, and a success that redirects with 303.
+  A form needs a server to post to, so a static build skips this page and says so.
+
+Templates and static files are embedded, so the binary runs from any working
+directory; development mode still prefers the directory on disk, so editing a
+template is visible on the next request. The stylesheet is linked with `{{asset}}`,
+so it is served content-addressed and `immutable`. `PORT` and `-port` move the
+server off 3000.
+
+Set `COLLAGE_CSRF_KEY` before deploying anything with a form in it. Without one a
+key is generated per process, and the application says so at startup — but only when
+it has an action that could verify a token, because telling an application with no
+forms about a key it has no use for is how a warning becomes noise.
+
+
 ## `collage new`
 
 Scaffolds a runnable project: a `go.mod`, a `main.go` wiring one page and mounting

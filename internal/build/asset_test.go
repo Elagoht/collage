@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/internal/asset"
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // TestBuild_CopiesMountedAssets verifies a mount's file is copied into the build
@@ -235,5 +236,49 @@ func TestBuild_WritesFingerprintedCopiesThatWereLinked(t *testing.T) {
 		if strings.HasPrefix(e.Name(), "unused.") && e.Name() != "unused.js" {
 			t.Errorf("wrote %q: a file nothing linked must not gain a fingerprinted copy", e.Name())
 		}
+	}
+}
+
+// A page carrying an unresolved forgery token is refused rather than written.
+//
+// The thing that replaces the placeholder with a reader's own token is the running
+// server, and a built site has no server — none to substitute, and none to submit
+// the form to either. Written, the file would ship with the placeholder in it and a
+// form that cannot work, saying nothing.
+func TestBuild_RefusesAPageWithAnUnresolvedToken(t *testing.T) {
+	out := resolvedTempDir(t)
+	const marker = "collage-csrf-deadbeefdeadbeefdeadbeefdeadbeef"
+
+	page := &types.Page{
+		Name:            "signup",
+		Paths:           map[string]string{"en": "/signup"},
+		Strategy:        types.StrategyStatic,
+		ContentFragment: &types.Fragment{Name: "signup-content", TemplatePath: "signup.html"},
+	}
+	app := &fakeRenderer{
+		pages:      []*types.Page{page},
+		csrfMarker: marker,
+		renderHTML: `<form><input name="_csrf" value="` + marker + `"></form>`,
+	}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, buildErr := b.Build(context.Background())
+
+	if buildErr == nil {
+		t.Fatal("Build() = nil error, want a refusal")
+	}
+	if !errors.Is(buildErr, ErrUnresolvedToken) {
+		t.Fatalf("Build() error = %v, want ErrUnresolvedToken", buildErr)
+	}
+	// And nothing on disk: a refused page must not leave a half-written file that
+	// a -clean build would otherwise have someone serving.
+	if _, err := os.Stat(filepath.Join(out, "signup", "index.html")); !os.IsNotExist(err) {
+		t.Errorf("the refused page was written anyway (stat err = %v)", err)
+	}
+	if len(report.Written) != 0 {
+		t.Errorf("Written = %v, want nothing", report.Written)
 	}
 }

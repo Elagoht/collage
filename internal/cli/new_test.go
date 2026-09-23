@@ -206,17 +206,33 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	// builder rather than some weaker stand-in the scaffold carries on its
 	// own — see docs/plans/collage-core.md's "re-export the static builder"
 	// amendment for why this distinction matters.
-	// Two files: the one page's index.html, and the one file in the mounted
-	// static directory. A mount is copied into the build output by default, so
-	// a scaffolded project's stylesheet is in dist/ without any further wiring.
+	// Three files: the home page's index.html, the mounted stylesheet under its
+	// own name, and the content-addressed copy the layout links through
+	// {{asset}}. A mount is copied into the build output by default, so a
+	// scaffolded project's stylesheet is in dist/ without any further wiring.
+	//
+	// And one skip, which is the scaffold teaching something rather than
+	// failing: the sign-up page carries a form, a form needs a server to post
+	// to, and a page that says Dynamic() is not part of a static build.
 	buildOut := runIn(goBin, "run", ".", "-collage-build", "-out", "dist")
-	if !strings.Contains(buildOut, "build complete, 2 file(s) written") {
-		t.Fatalf("build output = %q, want it to report two files written", buildOut)
+	if !strings.Contains(buildOut, "build complete, 3 file(s) written") {
+		t.Fatalf("build output = %q, want it to report three files written", buildOut)
+	}
+	if !strings.Contains(buildOut, "skip signup") {
+		t.Errorf("build output = %q, want it to skip the form page and say why", buildOut)
 	}
 
 	stylesheetPath := filepath.Join(target, "dist", "static", "app.css")
 	if _, err := os.Stat(stylesheetPath); err != nil {
 		t.Fatalf("the mounted stylesheet was not copied into the build output: %v", err)
+	}
+
+	// The fingerprinted copy is what index.html links, so it has to exist as a
+	// file: a built site is served by a plain file server, and nothing there
+	// can strip a hash the way the mount does.
+	fingerprinted, err := filepath.Glob(filepath.Join(target, "dist", "static", "app.*.css"))
+	if err != nil || len(fingerprinted) != 1 {
+		t.Fatalf("content-addressed stylesheet = %v (err %v), want exactly one", fingerprinted, err)
 	}
 
 	indexPath := filepath.Join(target, "dist", "index.html")

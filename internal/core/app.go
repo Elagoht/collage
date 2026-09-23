@@ -697,6 +697,11 @@ func (a *App) buildHandler() (http.Handler, error) {
 		return a.buildFailed(err)
 	}
 
+	// Here rather than at construction: whether a generated forgery key matters
+	// depends on whether anything will verify a token, which is only known once
+	// registration has closed.
+	a.warnAboutGeneratedKey()
+
 	handler, err := httpx.New(httpx.Deps{
 		Router:       a.routes,
 		Renderer:     a.renderer,

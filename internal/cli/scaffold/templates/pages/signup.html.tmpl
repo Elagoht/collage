@@ -1,0 +1,24 @@
+<main>
+  <h1>A form, end to end</h1>
+
+  {{/* The two outcomes the action in home.go produces: a refused submission
+       rendered this page again with its reason, and an accepted one redirected
+       here with a marker in the query. */}}
+  {{with .Error}}<p class="error" role="alert">{{.}}</p>{{end}}
+  {{if .Signed}}<p class="ok">Thanks — you are on the list.</p>{{end}}
+
+  <section class="signup">
+    {{/* No action attribute: the form posts to the page it is on, and home.go
+         declares that POST with WithAction. */}}
+    <form method="post">
+      {{/* Renders the whole hidden input, field name and all. Without it this
+           form is refused with a 403 — which is the point. */}}
+      {{csrfToken}}
+      <label for="email">Email</label>
+      <input id="email" type="email" name="email" value="{{.Email}}" required>
+      <button type="submit">Sign up</button>
+    </form>
+  </section>
+
+  <p><a href="/">Back</a></p>
+</main>

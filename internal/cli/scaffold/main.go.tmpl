@@ -3,40 +3,48 @@
 //
 // # The collage CLI contract
 //
-// "collage dev" runs `go run .` in this directory with COLLAGE_DEV=1 set in
-// the process environment. This file honours that by turning on development
-// mode whenever COLLAGE_DEV=1 is set: templates are reloaded from disk on
-// every request. Development mode does NOT hot-reload Go code — a change to
-// this file, or any other .go file in this project, still requires stopping
-// and re-running `collage dev` (or `go run .`).
+// "collage dev" runs `go run .` here with COLLAGE_DEV=1 set, and "collage
+// build" runs `go run . -collage-build -out <dir>`. This file honours both by
+// reading that variable and those flags below. Development mode reloads
+// templates from disk on every request; it does not hot-reload Go code, so a
+// change to any .go file here still needs a restart.
 //
-// "collage build" runs `go run . -collage-build -out <dir>` (with -clean
-// appended when "collage build -clean" was used). This file honours that by
-// parsing -collage-build, -out, and -clean below and, when -collage-build is
-// set, rendering every statically-buildable page to <dir> — through
-// collage.NewBuilder, the same static builder the collage CLI's own
-// documentation refers to — instead of starting a server. That build also
-// copies this project's mounted static files into <dir>, under the prefix they
-// are mounted at.
-//
-// If you rewrite this file, keep both halves of the contract working, or
-// "collage dev" and "collage build" will stop doing anything useful here.
+// If you rewrite this file, keep both halves working, or "collage dev" and
+// "collage build" stop doing anything useful here.
 package main
 
 import (
 	"context"
+	"embed"
 	"flag"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
+
+// Templates and static files are embedded, so this binary runs from anywhere:
+// a container with a different WORKDIR, a systemd unit, a copy on a server.
+//
+// It costs nothing in development. With DevMode on, collage prefers the
+// directory on disk whenever it is there — which it is while you are working
+// in this project — so editing a template is still visible on the next
+// request, embedded copy or not.
+//
+//go:embed all:templates
+var templatesFS embed.FS
+
+//go:embed all:static
+var staticFS embed.FS
 
 func main() {
 	buildFlag := flag.Bool("collage-build", false, "render the app to static files instead of serving it")
 	outFlag := flag.String("out", "dist", "output directory for -collage-build")
 	cleanFlag := flag.Bool("clean", false, "remove -out's existing contents before building")
+	portFlag := flag.Int("port", envInt("PORT", 3000), "port to listen on (env PORT)")
 	flag.Parse()
 
 	devMode := os.Getenv("COLLAGE_DEV") == "1"
@@ -44,11 +52,26 @@ func main() {
 	cfg := &collage.Config{
 		DevMode: devMode,
 		Server: collage.ServerConfig{
-			Host: "localhost",
-			Port: 3000,
+			Host: envString("HOST", "localhost"),
+			Port: *portFlag,
 		},
 		Template: collage.TemplateConfig{
-			Root: "templates",
+			FS:        templatesFS,
+			Root:      "templates",
+			Extension: ".html",
+		},
+		Security: collage.SecurityConfig{
+			// Signs the forgery tokens this project's forms carry. Leave it
+			// unset and one is generated per process, which is fine while you
+			// are developing and wrong to deploy: every form submitted before
+			// a restart is refused after it, and one instance refuses what
+			// another issued.
+			//
+			// In production set COLLAGE_CSRF_KEY to at least 32 random bytes,
+			// kept with your other secrets:
+			//
+			//	head -c 32 /dev/urandom | base64
+			CSRFKey: []byte(os.Getenv("COLLAGE_CSRF_KEY")),
 		},
 	}
 
@@ -56,10 +79,19 @@ func main() {
 	if err != nil {
 		log.Fatalf("@@NAME@@: %v", err)
 	}
-	if err := app.RegisterPage(homePage()); err != nil {
-		log.Fatalf("@@NAME@@: register home page: %v", err)
+	for _, page := range []*collage.Page{homePage(), signUpPage()} {
+		if err := app.RegisterPage(page); err != nil {
+			log.Fatalf("@@NAME@@: register page: %v", err)
+		}
 	}
-	if err := mountStatic(app); err != nil {
+
+	// fs.Sub, because the embedded tree contains the "static" directory itself:
+	// mounting it whole would serve "/static/static/app.css".
+	assets, err := fs.Sub(staticFS, "static")
+	if err != nil {
+		log.Fatalf("@@NAME@@: static files: %v", err)
+	}
+	if err := app.Mount("/static/", assets); err != nil {
 		log.Fatalf("@@NAME@@: mount static files: %v", err)
 	}
 
@@ -76,67 +108,34 @@ func main() {
 	}
 }
 
-// homePage wires the one page this scaffold ships: a shared layout and a
-// static home page, served at "/". Its content fragment has no DataHandler,
-// so it renders with no data — add one (see collage.FragmentBuilder's
-// WithDataHandler) once this page needs to render something dynamic.
-func homePage() *collage.Page {
-	layout := collage.NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
-		Build()
-
-	content := collage.NewFragment("home-content", "pages/home.html").Build()
-
-	return collage.NewPage("home").
-		WithLayout(layout).
-		WithContent(content).
-		WithPath("en", "/").
-		Static().
-		Build()
+// envString returns the environment variable named key, or fallback.
+func envString(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
 }
 
-// mountStatic serves this project's "static" directory at the URL prefix
-// "/static/", so templates can link "/static/app.css". A static build copies
-// the whole mount into its output directory too, unless the mount is
-// registered with collage.WithoutBuildCopy().
-//
-// os.OpenRoot, not os.DirFS, and the difference is a security one rather than a
-// stylistic one. Go's own documentation for os.DirFS states that it does not
-// prevent access to files outside the directory: a symlink planted inside
-// "static" — by a build step, a dependency, a CMS upload, an editor — resolves
-// through it, and the file it points at is served. os.Root is enforced by the
-// kernel: every path it opens is resolved relative to the directory it holds,
-// and a symlink leaving that directory fails to open at all.
-//
-// The *os.Root is deliberately never closed. Its fs.FS is what serves every
-// request for the life of the process, so closing it would break the mount;
-// the operating system reclaims the descriptor when the process exits.
-//
-// The path is relative, so it resolves against the working directory — which
-// is this project's own directory when started by "go run .", "collage dev" or
-// "collage build". A program started from elsewhere (a systemd unit, a
-// container with a different WORKDIR) should be given an absolute path, or
-// embed its assets with //go:embed instead.
-func mountStatic(app *collage.App) error {
-	root, err := os.OpenRoot("static")
+// envInt is envString for a number. An unparseable value falls back rather than
+// failing: a port is not worth refusing to start over.
+func envInt(key string, fallback int) int {
+	value, err := strconv.Atoi(os.Getenv(key))
 	if err != nil {
-		return err
+		return fallback
 	}
-	return app.Mount("/static/", root.FS())
+	return value
 }
 
 // staticBuild renders every statically-buildable page to files under outDir,
 // removing outDir's existing contents first when clean is set.
 //
-// This calls straight through to collage.NewBuilder — collage-core's own
-// static builder, reached through pkg/collage's public alias — rather than
-// reimplementing any part of it here. That matters beyond convenience: the
-// builder's containment checks (a resolved path is verified to stay inside
-// outDir even when a symlink is involved) and its dangerous-output-directory
-// refusals (refusing to write into a filesystem root, or to -clean a
-// repository root) are exactly the kind of logic that is easy to get subtly
-// wrong in a hand-rolled copy. Every project scaffolded by "collage new"
-// shares this one implementation instead of a copy of its own.
+// This calls straight through to collage.NewBuilder — collage's own static
+// builder — rather than reimplementing any part of it. That matters beyond
+// convenience: the builder verifies that a resolved output path stays inside
+// outDir even when a symlink is involved, and refuses a dangerous -out such as
+// a filesystem root or a repository root to -clean. Every project scaffolded
+// by "collage new" shares that one implementation rather than a copy of its
+// own.
 func staticBuild(app *collage.App, outDir string, clean bool) error {
 	builder, err := collage.NewBuilder(app, collage.BuildOptions{
 		OutDir: outDir,
@@ -148,9 +147,8 @@ func staticBuild(app *collage.App, outDir string, clean bool) error {
 
 	report, buildErr := builder.Build(context.Background())
 	// report is populated even when buildErr is not nil: Build records every
-	// individual failure in report.Errors and joins them into buildErr, so the
-	// report below is worth printing regardless of whether the build fully
-	// succeeded.
+	// individual failure in report.Errors and joins them into buildErr, so it
+	// is worth printing either way.
 	for _, path := range report.Written {
 		fmt.Println("@@NAME@@: wrote", path)
 	}

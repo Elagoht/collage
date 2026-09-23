@@ -1,10 +1,16 @@
 <main>
   <h1>It works!</h1>
   <p>This is @@NAME@@, a collage project.</p>
+
   <p>
-    Edit <code>templates/pages/home.html</code> and refresh — template changes
-    reload automatically while <code>COLLAGE_DEV=1</code> is set (which
-    <code>collage dev</code> sets for you). Changing this project's Go code
-    still requires stopping and re-running <code>collage dev</code>.
+    Edit <code>templates/pages/home.html</code> and refresh: template changes
+    reload from disk while <code>COLLAGE_DEV=1</code> is set, which
+    <code>collage dev</code> does for you. Changing Go code still needs a
+    restart.
   </p>
+
+  {{/* These come from the data handler in home.go, not from this template. */}}
+  <ul>
+    {{range .Links}}<li><a href="{{.Href}}">{{.Label}}</a></li>{{end}}
+  </ul>
 </main>
