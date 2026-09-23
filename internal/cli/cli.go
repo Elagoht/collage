@@ -64,6 +64,9 @@ type CLI struct {
 	// Stderr is where usage text and error output is written. A nil Stderr
 	// means os.Stderr.
 	Stderr io.Writer
+	// Stdin is where a command that asks a question reads the answer. A nil
+	// Stdin means os.Stdin; only "build -i" reads it.
+	Stdin io.Reader
 	// Runner runs the external "go" commands the dev and build commands
 	// construct. A nil Runner means a CommandRunner that starts a real
 	// process; tests substitute a fake to assert the constructed command
@@ -89,7 +92,8 @@ type builtinDescription struct {
 var builtins = []builtinDescription{
 	{"new", "Scaffold a new collage project"},
 	{"dev", "Run the current directory's project in development mode"},
-	{"build", "Render the current directory's project to static files"},
+	{"build", "Compile the current directory's project into the binary you deploy"},
+	{"export", "Render the current directory's project to static files"},
 	{"version", "Print the collage CLI version"},
 	{"help", "Show help for a command, or list every command"},
 }
@@ -127,6 +131,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.runDev(ctx, rest)
 	case "build":
 		return c.runBuild(ctx, rest)
+	case "export":
+		return c.runExport(ctx, rest)
 	}
 
 	if cmd, ok := c.findPluginCommand(name); ok {
@@ -240,6 +246,9 @@ func (c *CLI) printCommandHelp(w io.Writer, name string) error {
 		return nil
 	case "build":
 		fmt.Fprint(w, buildUsage)
+		return nil
+	case "export":
+		fmt.Fprint(w, exportUsage)
 		return nil
 	case "version":
 		fmt.Fprintln(w, "Usage: collage version")

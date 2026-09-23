@@ -37,7 +37,7 @@ type link struct {
 
 // homePage is served at "/".
 //
-// Static, so "collage build" renders it to a file: its output does not depend
+// Static, so "collage export" renders it to a file: its output does not depend
 // on the request, and a page that says so is a page that can be a file.
 func homePage() *collage.Page {
 	content := collage.NewFragment("home-content", "pages/home.html").
@@ -98,7 +98,7 @@ var signUpForm *collage.Page
 //
 // It is a separate page from the home page for a reason worth knowing early: a
 // form needs a server to post to, so a page carrying one cannot be part of a
-// static build. Keeping it separate means "collage build" still writes the
+// static build. Keeping it separate means "collage export" still writes the
 // home page and skips only this one, saying why.
 //
 // The form posts to the page it is on, which is what an HTML form does by

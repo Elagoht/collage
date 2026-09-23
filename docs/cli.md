@@ -15,6 +15,38 @@ collage help [command]
 Exit codes: `0` on success, `2` for a usage error (no command, an unknown
 command, a malformed plugin command), `1` for a command that parsed but failed.
 
+## `build` and `export`
+
+They produce the two different things a project can be deployed as.
+
+```
+collage build     # -> bin/<name>, the binary you run on a server
+collage export    # -> dist/,      static files you put on a static host
+```
+
+`collage build` runs the `go build` somebody would otherwise have to remember:
+
+```
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w"
+```
+
+CGO off, because collage and the standard library need no C and a static binary is
+what can go into an image holding nothing else. `-trimpath`, so the binary does not
+carry the paths of the machine that built it. `-s -w`, which is most of the size.
+
+**The default target is linux/amd64, not this machine.** A binary built on a Mac
+does not run in a Linux container, and `exec format error` on a server is the wrong
+place to find that out. `-os` and `-arch` change it; `-o` changes where it lands.
+
+`collage build -i` asks whether to write a `Dockerfile` and a systemd unit beside
+it. Without `-i` it writes only the binary, and it never overwrites a file that is
+already there — a Dockerfile is something a project edits, and a build command that
+replaces it with a default is one that quietly undoes somebody's work.
+
+The binary goes to `bin/` and the static site to `dist/` deliberately: `collage
+export -clean` removes `dist/`'s contents, which would delete a binary sitting in
+it.
+
 ## Reading a build's output
 
 `collage.PrintBuildReport` writes what a build did, and what it writes is shaped
@@ -74,7 +106,7 @@ Two pages, and the difference between them is the lesson:
 
 - **`/`** is `Static()`. Its data handler returns values from Go rather than from
   the template, so the wiring is visible, and nothing about it depends on the
-  request — which is what lets `collage build` render it to a file.
+  request — which is what lets `collage export` render it to a file.
 - **`/signup`** is `Dynamic()`, and carries a form: a `{{csrfToken}}`, a validation
   failure that re-renders the page with 422, and a success that redirects with 303.
   A form needs a server to post to, so a static build skips this page and says so.
@@ -111,7 +143,7 @@ collage new myblog -dir . -force         # into a non-empty directory
 Flags may appear before or after the project name; the command splits the
 positional argument out before parsing, so ordering does not matter.
 
-## `collage dev` and `collage build`
+## `collage dev` and `collage export`
 
 Neither command builds your application itself — it cannot. `internal/cli` has no
 way to import `pkg/collage` and construct your `App` in process, so it shells out
@@ -120,7 +152,7 @@ to `go` in the current directory, exactly as you would by hand:
 | Command | Runs | With |
 | --- | --- | --- |
 | `collage dev` | `go run .` | `COLLAGE_DEV=1` in the environment |
-| `collage build` | `go run . -collage-build -out <dir>` | `-clean` appended when you passed it |
+| `collage export` | `go run . -collage-build -out <dir>` | `-clean` appended when you passed it |
 
 That is a **contract with your `main.go`**, and the scaffolded one honours both
 halves: it turns on development mode when `COLLAGE_DEV=1` is set, and it renders

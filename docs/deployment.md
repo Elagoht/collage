@@ -1,26 +1,34 @@
 # Going to production
 
-There is no `collage start`, and there should not be. A collage project is a Go
-program: you build it and you run the binary.
+A collage project is a Go program, so what you deploy is a compiled one:
 
 ```
-go build -o mysite .
-./mysite
+collage build
+./bin/mysite
 ```
 
-A `collage start` could only do one of two things — shell out to `go run .`, which
-puts the Go toolchain in your production image and compiles the program at every
-boot, or repeat `go build` with fewer options. Neither earns a command.
+`collage build` runs the `go build` somebody would otherwise have to remember —
+`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w"` — and
+defaults to linux/amd64 rather than this machine, because a binary built on a Mac
+does not run in a Linux container. `collage build -i` also offers to write a
+Dockerfile and a systemd unit beside it. See [the CLI](cli.md).
 
-`collage dev` and `collage build` exist because they do something you would
-otherwise have to remember: set `COLLAGE_DEV=1`, or pass `-collage-build -out`.
-Running a compiled binary needs nothing remembered.
+There is no `collage start`, and there should not be. It could only shell out to
+`go run .`, which puts the Go toolchain in your production image and compiles at
+every boot, or repeat what `collage build` already does. Running a compiled binary
+needs nothing remembered, so nothing needs to remember it for you.
+
+`collage export` is the other thing this project can be — static files, for a site
+that needs no server. That is at the end of this page.
 
 ## The binary carries the site
 
 A scaffolded project embeds its templates and its static files, so the binary runs
 from any working directory. Nothing has to be copied next to it, and a container
 image can be the binary and nothing else:
+
+`collage build -i` writes this for you; it is here so you can read it before you
+run it.
 
 ```dockerfile
 FROM golang:1.26 AS build
@@ -141,11 +149,11 @@ way.
 
 ## A static site instead
 
-If nothing on the site needs a server, `collage build` renders it to files you can
+If nothing on the site needs a server, `collage export` renders it to files you can
 put on any static host:
 
 ```
-collage build -clean
+collage export -clean
 ```
 
 The output is in `dist/`. Pages declared `Dynamic()` are skipped and named, and a

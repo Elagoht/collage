@@ -4,13 +4,16 @@
 // # The collage CLI contract
 //
 // "collage dev" runs `go run .` here with COLLAGE_DEV=1 set, and "collage
-// build" runs `go run . -collage-build -out <dir>`. This file honours both by
+// export" runs `go run . -collage-build -out <dir>`. This file honours both by
 // reading that variable and those flags below. Development mode reloads
 // templates from disk on every request; it does not hot-reload Go code, so a
 // change to any .go file here still needs a restart.
 //
+// "collage build" needs nothing from this file: it compiles the program, which
+// is something go build does without being told anything.
+//
 // If you rewrite this file, keep both halves working, or "collage dev" and
-// "collage build" stop doing anything useful here.
+// "collage export" stop doing anything useful here.
 package main
 
 import (
