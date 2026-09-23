@@ -49,11 +49,37 @@ func main() {
 
 	devMode := os.Getenv("COLLAGE_DEV") == "1"
 
-	cfg := &collage.Config{
+	app, err := newApp(devMode, *portFlag)
+	if err != nil {
+		log.Fatalf("@@NAME@@: %v", err)
+	}
+
+	if *buildFlag {
+		if err := staticBuild(app, *outFlag, *cleanFlag); err != nil {
+			log.Fatalf("@@NAME@@: static build: %v", err)
+		}
+		return
+	}
+
+	fmt.Printf("@@NAME@@: serving on http://%s:%d (dev mode: %v)\n", envString("HOST", "localhost"), *portFlag, devMode)
+	if err := app.ListenAndServe(); err != nil {
+		log.Fatalf("@@NAME@@: %v", err)
+	}
+}
+
+// newApp builds the application: its configuration, its pages, and its static
+// mount.
+//
+// It is separate from main so that the tests can build the same application
+// and drive it through app.Handler(), with no server listening and no port to
+// pick. What they exercise is then the site that actually runs, rather than a
+// second wiring that can drift from it.
+func newApp(devMode bool, port int) (*collage.App, error) {
+	app, err := collage.New(&collage.Config{
 		DevMode: devMode,
 		Server: collage.ServerConfig{
 			Host: envString("HOST", "localhost"),
-			Port: *portFlag,
+			Port: port,
 		},
 		Template: collage.TemplateConfig{
 			FS:        templatesFS,
@@ -73,39 +99,28 @@ func main() {
 			//	head -c 32 /dev/urandom | base64
 			CSRFKey: []byte(os.Getenv("COLLAGE_CSRF_KEY")),
 		},
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	app, err := collage.New(cfg)
-	if err != nil {
-		log.Fatalf("@@NAME@@: %v", err)
-	}
 	for _, page := range []*collage.Page{homePage(), signUpPage()} {
 		if err := app.RegisterPage(page); err != nil {
-			log.Fatalf("@@NAME@@: register page: %v", err)
+			return nil, fmt.Errorf("register page %q: %w", page.Name, err)
 		}
 	}
 
-	// fs.Sub, because the embedded tree contains the "static" directory itself:
-	// mounting it whole would serve "/static/static/app.css".
+	// fs.Sub, because the embedded tree contains the "static" directory
+	// itself: mounting it whole would serve "/static/static/app.css".
 	assets, err := fs.Sub(staticFS, "static")
 	if err != nil {
-		log.Fatalf("@@NAME@@: static files: %v", err)
+		return nil, err
 	}
 	if err := app.Mount("/static/", assets); err != nil {
-		log.Fatalf("@@NAME@@: mount static files: %v", err)
+		return nil, fmt.Errorf("mount static files: %w", err)
 	}
 
-	if *buildFlag {
-		if err := staticBuild(app, *outFlag, *cleanFlag); err != nil {
-			log.Fatalf("@@NAME@@: static build: %v", err)
-		}
-		return
-	}
-
-	fmt.Printf("@@NAME@@: serving on http://%s:%d (dev mode: %v)\n", cfg.Server.Host, cfg.Server.Port, devMode)
-	if err := app.ListenAndServe(); err != nil {
-		log.Fatalf("@@NAME@@: %v", err)
-	}
+	return app, nil
 }
 
 // envString returns the environment variable named key, or fallback.

@@ -10,6 +10,10 @@ go mod tidy
 go run .
 ```
 
+```
+go test ./...
+```
+
 Or `collage dev` from inside this directory. Either way the site is at
 http://localhost:3000; set `PORT` (or pass `-port`) to move it.
 
@@ -22,6 +26,10 @@ code still needs a restart.
 - `main.go` — configuration, the static mount, and the `collage` CLI contract.
 - `home.go` — the two pages, their data handlers, and the sign-up form's
   action.
+- `home_test.go` — the tests, which need no server and no port: `app.Handler()`
+  is an ordinary `http.Handler`, so `net/http/httptest` drives it directly.
+  They go through the same `newApp` that `main` uses, so what they exercise is
+  the site that actually runs.
 - `templates/layouts/default.html` — the shell. `{{slot "content"}}` marks
   where a page's content goes.
 - `templates/pages/home.html` — served at `/`. Declared `Static()`, so

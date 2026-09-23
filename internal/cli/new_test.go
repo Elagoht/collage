@@ -199,6 +199,13 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	runIn(goBin, "mod", "tidy")
 	runIn(goBin, "build", "./...")
 
+	// The scaffold ships tests, and they have to pass — otherwise a new project
+	// starts with a red suite, which is worse than starting with none. Running
+	// them here is also what keeps them honest as the framework changes: they
+	// drive app.Handler() through the real pages, the real form and the real
+	// forgery check, so a change that breaks any of those breaks this.
+	runIn(goBin, "test", "./...")
+
 	// The scaffold's own -collage-build path is not a hand-rolled writer: it
 	// calls collage.NewBuilder, the same static builder collage-core's own
 	// internal/build implements. Running it for real here, and checking the
