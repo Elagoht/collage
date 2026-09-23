@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strconv"
 
 	"github.com/Elagoht/collage/pkg/collage"
@@ -252,7 +253,7 @@ func (d *deps) homeData(ctx context.Context, rc *collage.RenderContext) (*view, 
 	v.Heading = localized(rc.Locale, "Latest", "En yeni")
 	v.Standfirst = site.Tagline
 	v.Listing = listing
-	v.BasePath = v.URL.Home()
+	v.Pager = pager{Path: v.URL.Home()}
 	return v, []string{"articles"}, nil
 }
 
@@ -276,7 +277,7 @@ func (d *deps) categoryData(ctx context.Context, rc *collage.RenderContext) (*vi
 	v.Heading = cat.Name
 	v.Standfirst = cat.Description
 	v.Listing = listing
-	v.BasePath = v.URL.Category(slug)
+	v.Pager = pager{Path: v.URL.Category(slug)}
 	return v, []string{"articles", "category:" + slug}, nil
 }
 
@@ -298,7 +299,7 @@ func (d *deps) authorData(ctx context.Context, rc *collage.RenderContext) (*view
 	v.Heading = author.Name
 	v.Standfirst = author.Role
 	v.Listing = listing
-	v.BasePath = v.URL.Author(slug)
+	v.Pager = pager{Path: v.URL.Author(slug)}
 	return v, []string{"articles", "author:" + slug}, nil
 }
 
@@ -338,7 +339,8 @@ func (d *deps) searchData(ctx context.Context, rc *collage.RenderContext) (*view
 	v := base(rc)
 	v.Query = query
 	v.Heading = localized(rc.Locale, "Search", "Arama")
-	v.BasePath = v.URL.Search()
+	// The term travels with the page number, or page two is a search for nothing.
+	v.Pager = pager{Path: v.URL.Search(), Params: url.Values{"q": {query}}}
 
 	if query == "" {
 		v.Standfirst = localized(rc.Locale, "Search headlines, standfirsts and tags.", "Başlıklarda, özetlerde ve etiketlerde arayın.")
@@ -352,9 +354,14 @@ func (d *deps) searchData(ctx context.Context, rc *collage.RenderContext) (*view
 	v.Listing = listing
 	// Not localized(): the two languages put the count and the term in opposite
 	// orders, so there is no single argument list both format strings can share.
-	if rc.Locale == "tr" {
+	// English also needs the plural agreed; Turkish does not inflect the noun after
+	// a numeral, so "1 sonuç" is already correct.
+	switch {
+	case rc.Locale == "tr":
 		v.Standfirst = fmt.Sprintf("%q için %d sonuç", query, listing.Total)
-	} else {
+	case listing.Total == 1:
+		v.Standfirst = fmt.Sprintf("1 result for %q", query)
+	default:
 		v.Standfirst = fmt.Sprintf("%d results for %q", listing.Total, query)
 	}
 	// No dependency tags: the search page is Dynamic, so nothing caches it and

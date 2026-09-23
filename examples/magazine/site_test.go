@@ -3,12 +3,15 @@ package main
 import (
 	"encoding/json"
 	"encoding/xml"
+	"html"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -36,22 +39,27 @@ func testCorpus() ([]Article, []Category, []Author) {
 			Dek:      "Coastal defences work, which is exactly why they are dangerous.",
 			Body:     []string{"The engineering is not in doubt.", "Development follows protection."},
 			Category: "climate", Author: "noor-haddad", PublishedAt: at("2026-09-20T08:00:00Z"),
-			ReadMinutes: 11, Tags: []string{"adaptation", "infrastructure"}, Views: 21030},
+			ReadMinutes: 11, Tags: []string{"adaptation", "analysis"}, Views: 21030},
 		{Slug: "the-grid-is-the-hard-part", Title: "The Grid Is the Hard Part",
 			Dek:      "Generation got cheap. Transmission did not.",
 			Body:     []string{"The cost curves outran every projection.", "Moving the electricity is another matter."},
 			Category: "climate", Author: "noor-haddad", PublishedAt: at("2026-06-13T08:00:00Z"),
-			ReadMinutes: 10, Tags: []string{"energy", "grid"}, Views: 18760},
+			ReadMinutes: 10, Tags: []string{"energy", "grid", "analysis"}, Views: 18760},
 		{Slug: "the-index-that-ate-the-database", Title: "The Index That Ate the Database",
 			Dek:      "A single well-meaning index turned a fast query into an outage.",
 			Body:     []string{"The change was two lines.", "Nobody had modelled the write path."},
 			Category: "technology", Author: "dilek-arslan", PublishedAt: at("2026-08-29T08:00:00Z"),
-			ReadMinutes: 11, Tags: []string{"databases"}, Views: 24310},
+			ReadMinutes: 11, Tags: []string{"databases", "analysis"}, Views: 24310},
 		{Slug: "what-a-cache-key-actually-costs", Title: "What a Cache Key Actually Costs",
 			Dek:      "Every discriminator you add is a hit rate you give away.",
 			Body:     []string{"Caching looks like a storage problem.", "The honest default is to include everything."},
 			Category: "technology", Author: "dilek-arslan", PublishedAt: at("2026-09-11T08:00:00Z"),
 			ReadMinutes: 7, Tags: []string{"caching"}, Views: 12980},
+		{Slug: "the-standard-that-shipped-too-early", Title: "The Standard That Shipped Too Early",
+			Dek:      "A specification finalised before anyone had implemented it twice.",
+			Body:     []string{"Standards bodies have a rule of thumb.", "The first implementation revealed an ambiguity."},
+			Category: "technology", Author: "dilek-arslan", PublishedAt: at("2026-04-16T08:00:00Z"),
+			ReadMinutes: 8, Tags: []string{"standards"}, Views: 8130},
 		{Slug: "archives-are-a-budget-line", Title: "Archives Are a Budget Line",
 			Dek:      "What a culture preserves is decided by whoever signs off on storage.",
 			Body:     []string{"Preservation is a procurement decision.", "The losses are rarely dramatic."},
@@ -162,9 +170,14 @@ func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// list applies the same filters the real API does, newest first. It is deliberately
-// simple-minded: this double exists to feed the site, not to be a second
-// implementation worth testing.
+// testPerPage is small on purpose. The double has to paginate for the pager to
+// render at all, and a pager that never renders is a pager whose links are never
+// checked — which is how a next link that dropped the search term survived.
+const testPerPage = 2
+
+// list applies the same filters the real API does, newest first, and paginates. It
+// is deliberately simple-minded: this double exists to feed the site, not to be a
+// second implementation worth testing.
 func (b *backend) list(values url.Values) Listing {
 	matched := make([]Article, 0, len(b.articles))
 	for _, art := range b.articles {
@@ -181,7 +194,26 @@ func (b *backend) list(values url.Values) Listing {
 	}
 	sort.Slice(matched, func(i, j int) bool { return matched[i].PublishedAt.After(matched[j].PublishedAt) })
 
-	return Listing{Items: matched, Page: 1, PerPage: len(matched), Total: len(matched), TotalPages: 1}
+	page := 1
+	if n, err := strconv.Atoi(values.Get("page")); err == nil && n > 0 {
+		page = n
+	}
+	perPage := testPerPage
+	if n, err := strconv.Atoi(values.Get("per_page")); err == nil && n > 0 {
+		perPage = n
+	}
+
+	total := len(matched)
+	start := min((page-1)*perPage, total)
+	end := min(start+perPage, total)
+
+	return Listing{
+		Items:      matched[start:end],
+		Page:       page,
+		PerPage:    perPage,
+		Total:      total,
+		TotalPages: (total + perPage - 1) / perPage,
+	}
 }
 
 // newTestSite builds the site against api, with caching left on. The cache matters
@@ -572,5 +604,154 @@ func TestSite_HeadFailureLeavesAUsableTitle(t *testing.T) {
 	}
 	if !strings.Contains(body, "Technology") {
 		t.Error("the page content did not render")
+	}
+}
+
+func TestSite_SearchPagerCarriesTheQuery(t *testing.T) {
+	// A next link built from the listing path alone sends the reader to page two of
+	// nothing: the term lives in the query string, and dropping it turns "results 3
+	// to 4 for analysis" into "results 3 to 4 for everything".
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, body := request(t, site, "/search?q=analysis")
+
+	next := nextLink(t, body)
+	if !strings.Contains(next, "q=analysis") {
+		t.Errorf("next link = %q, want the search term carried over", next)
+	}
+	if !strings.Contains(next, "page=2") {
+		t.Errorf("next link = %q, want page=2", next)
+	}
+	if !strings.HasPrefix(next, "/search?") {
+		t.Errorf("next link = %q, want it to stay on /search", next)
+	}
+}
+
+func TestSite_SearchPageTwoStillSearches(t *testing.T) {
+	// Following the link has to land on the same search. This is the assertion the
+	// URL-shape test above cannot make on its own: it checks the link works, not
+	// just that it looks right.
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, first := request(t, site, "/search?q=analysis")
+	next := nextLink(t, first)
+
+	rec, second := request(t, site, next)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", next, rec.Code)
+	}
+
+	// Scoped to <main>: the "most read" sidebar lists the whole corpus on every
+	// page, so a check against the full body would be answered by the furniture
+	// rather than by the results.
+	results := mainContent(t, second)
+	if !strings.Contains(results, "3 results for") {
+		t.Errorf("page two does not report the search's own total; the term was lost")
+	}
+	if !strings.Contains(results, "The Grid Is the Hard Part") {
+		t.Error("page two does not list the third match")
+	}
+	if strings.Contains(results, "Archives Are a Budget Line") {
+		t.Error("page two lists an article the search does not match, so it paginated the whole corpus")
+	}
+}
+
+func TestSite_TurkishSearchPagerCarriesTheQuery(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, body := request(t, site, "/tr/arama?q=analysis")
+
+	next := nextLink(t, body)
+	if !strings.HasPrefix(next, "/tr/arama?") || !strings.Contains(next, "q=analysis") {
+		t.Errorf("next link = %q, want the Turkish search path with the term carried over", next)
+	}
+}
+
+func TestSite_ListingPagerLinksAreCanonical(t *testing.T) {
+	// Page one carries no "page" parameter, so the front page has one URL rather
+	// than two that a crawler indexes separately and the cache stores twice.
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, second := request(t, site, "/?page=2")
+
+	prev := linkWithRel(t, second, "prev")
+	if prev != "/" {
+		t.Errorf("prev link from page 2 = %q, want %q", prev, "/")
+	}
+	if next := linkWithRel(t, second, "next"); next != "/?page=3" {
+		t.Errorf("next link from page 2 = %q, want %q", next, "/?page=3")
+	}
+}
+
+func TestSite_CategoryPagerStaysInTheCategory(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, body := request(t, site, "/category/technology")
+
+	next := nextLink(t, body)
+	if next != "/category/technology?page=2" {
+		t.Errorf("next link = %q, want %q", next, "/category/technology?page=2")
+	}
+
+	rec, second := request(t, site, next)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", next, rec.Code)
+	}
+	if results := mainContent(t, second); strings.Contains(results, "Seawalls Buy Time") {
+		t.Error("page two of a section lists an article from another section")
+	}
+}
+
+// mainContent returns just the page's <main> element. The layout's sidebar lists
+// the whole corpus on every page, so an assertion against the whole document can be
+// satisfied by the furniture rather than by what the page is actually about.
+func mainContent(t *testing.T, body string) string {
+	t.Helper()
+	start := strings.Index(body, `<main id="main">`)
+	end := strings.Index(body, "</main>")
+	if start < 0 || end < start {
+		t.Fatal("no <main> element in the response")
+	}
+	return body[start:end]
+}
+
+var relLink = regexp.MustCompile(`<a rel="(prev|next)" href="([^"]*)"`)
+
+// linkWithRel returns the href of the pager link with the given rel, unescaping the
+// HTML entities the template engine writes into attributes — "&amp;" between query
+// parameters would otherwise make every assertion about a two-parameter URL fail for
+// the wrong reason.
+func linkWithRel(t *testing.T, body, rel string) string {
+	t.Helper()
+	for _, m := range relLink.FindAllStringSubmatch(body, -1) {
+		if m[1] == rel {
+			return html.UnescapeString(m[2])
+		}
+	}
+	t.Fatalf("no pager link with rel=%q in the response", rel)
+	return ""
+}
+
+func nextLink(t *testing.T, body string) string {
+	t.Helper()
+	return linkWithRel(t, body, "next")
+}
+
+func TestSite_SearchCountAgreesInNumber(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, one := request(t, site, "/search?q=databases")
+	if !strings.Contains(mainContent(t, one), "1 result for") {
+		t.Error(`a single match reads "1 results"`)
+	}
+	_, many := request(t, site, "/search?q=analysis")
+	if !strings.Contains(mainContent(t, many), "3 results for") {
+		t.Error("a multiple match does not report the plural")
 	}
 }

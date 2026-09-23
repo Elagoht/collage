@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/url"
 	"strconv"
 )
 
@@ -58,9 +59,8 @@ type view struct {
 	Popular []Article
 	// Query is the current search term, echoed into the search box.
 	Query string
-	// BasePath is the path pagination links are built from, without the page
-	// parameter. The pager appends "?page=N" to it.
-	BasePath string
+	// Pager builds the pagination links.
+	Pager pager
 }
 
 // urls builds every link the templates emit, for one locale.
@@ -114,16 +114,6 @@ func (u urls) Article(a Article) string {
 	return u.prefix() + a.Path()
 }
 
-// Paged appends a page number to a listing path. Page one is linked without the
-// parameter, so the first page has one canonical URL rather than two that a crawler
-// would index separately and a cache would store twice.
-func (u urls) Paged(base string, page int) string {
-	if page <= 1 {
-		return base
-	}
-	return base + "?page=" + strconv.Itoa(page)
-}
-
 // Switch is the same page in the other locale, used by the language toggle. It
 // returns the other locale's home page rather than a translated deep link: this
 // site has no mapping from an English slug to a Turkish one, and inventing one that
@@ -142,6 +132,44 @@ func (u urls) SwitchLabel() string {
 		return "Türkçe"
 	}
 	return "English"
+}
+
+// pager builds a listing's pagination links.
+//
+// It carries Params because a listing path is not always the whole address: the
+// search page's results depend on "?q=", and a next link built from the path alone
+// drops it, sending the reader to page two of nothing. The fix is to rebuild the
+// existing query with only the page number changed.
+//
+// Params holds what the page itself reads, not whatever the request happened to
+// arrive with. Echoing every parameter back into the links would carry a crawler's
+// tracking junk through the whole archive, and since the raw query string is part
+// of a page's cache key, each variant would be cached separately.
+type pager struct {
+	// Path is the locale-correct listing path, with no query string.
+	Path string
+	// Params are the query parameters to preserve across pages. It must not
+	// contain "page"; Page sets that.
+	Params url.Values
+}
+
+// Page is the URL of page n of this listing.
+//
+// Page one is linked without a "page" parameter, so the first page has one
+// canonical URL rather than two that a crawler would index separately and the cache
+// would store twice.
+func (p pager) Page(n int) string {
+	values := url.Values{}
+	for key, vs := range p.Params {
+		values[key] = vs
+	}
+	if n > 1 {
+		values.Set("page", strconv.Itoa(n))
+	}
+	if len(values) == 0 {
+		return p.Path
+	}
+	return p.Path + "?" + values.Encode()
 }
 
 // localized picks between two values by locale. With two locales and a handful of
