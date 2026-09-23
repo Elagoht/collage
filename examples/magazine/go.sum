@@ -18,6 +18,8 @@ github.com/Elagoht/collage-opti-image v0.0.0-20260923112828-1074bd30b3d4 h1:SC2g
 github.com/Elagoht/collage-opti-image v0.0.0-20260923112828-1074bd30b3d4/go.mod h1:EHAiDhOP4NTBbWLSS/QJskfNwmK50MlAMfS8SSNisC0=
 github.com/Elagoht/collage-opti-image v0.0.0-20260923120958-2132da7f724a h1:xqQUY3X2sxGxAQM4kl81IZoQ1yvG04QvkdlTiJf3Ekk=
 github.com/Elagoht/collage-opti-image v0.0.0-20260923120958-2132da7f724a/go.mod h1:IMvScXXq/V7vDxG/NPxfCjHdjoQAT8m8Wyyw7yGxbAo=
+github.com/Elagoht/collage-opti-image v0.0.0-20260923122443-0a71074b2362 h1:unWW61far6Eh7oLW2ISdJcreNFYrkyqaG2mSFlETMHI=
+github.com/Elagoht/collage-opti-image v0.0.0-20260923122443-0a71074b2362/go.mod h1:IMvScXXq/V7vDxG/NPxfCjHdjoQAT8m8Wyyw7yGxbAo=
 github.com/HugoSmits86/nativewebp v1.3.0 h1:n1egtEzSV4KwFtealr7dzdYq1wI/uj/bOQ/QcTcIyVE=
 github.com/HugoSmits86/nativewebp v1.3.0/go.mod h1:YNQuWenlVmSUUASVNhTDwf4d7FwYQGbGhklC8p72Vr8=
 golang.org/x/image v0.24.0 h1:AN7zRgVsbvmTfNyqIbbOraYL8mSwcKncEj8ofjgzcMQ=

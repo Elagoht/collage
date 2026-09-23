@@ -73,24 +73,15 @@ copy at that size:
 ```
 source              1600x900   92,906 bytes   (from the API)
 article, PNG         760x428   32,177 bytes
-article, WebP        760x428    6,162 bytes   (with -tags webp)
+article, WebP        760x428    6,162 bytes
 ```
 
-`plugins-config.json` asks for WebP, and it arrives in a binary built with
-`-tags webp` — the tag is what links the encoder:
+`plugins-config.json` asks for WebP and that is the whole of it — no build tag, no
+second switch. The encoder is pure Go and always linked.
 
-```
-go run -tags webp .
-```
-
-Without the tag the same configuration serves PNG, which is the right fallback: a
-missing encoder is a reason to serve the source format, not to refuse to start. It
-is not a silent one, though — the plugin says so at startup:
-
-```
-WARN opti-image: WebP is configured but no encoder is linked; serving the source
-     format instead  fix="build with -tags webp, ..."
-```
+It is a lossless encoder, which is why it wins so heavily here and would lose to
+JPEG on a photograph: this site's images are generated gradients. See the plugin's
+README for the numbers either way.
 
 That encoder is lossless, which is why it wins so heavily here and would lose on a
 photograph — this site's images are generated gradients. See the plugin's README for
@@ -207,20 +198,25 @@ a success.
 ## Building it to files
 
 ```
+cd examples/magazine
 go run . -build ./out -api http://localhost:8080
 ```
 
-The backend has to be running: a static build asks it which articles, sections and
-writers exist, and renders each one. 68 files for this corpus.
+`out` lands wherever you run it from — `examples/magazine/out` for the command
+above. The backend has to be running: a static build asks it which articles,
+sections and writers exist, and renders each one.
 
 ```
 out/index.html                                    the front page
 out/tr/index.html                                 and in Turkish
 out/category/climate/index.html                   a section
 out/2026/09/seawalls-buy-time-not-safety/index.html
+out/_image/198e8ae26c3235d1b16b8de38b7b9e1b.webp  resized, 40 of these
 out/rss.xml  out/sitemap.xml  out/robots.txt
 out/static/magazine.css                           the mount, copied
 ```
+
+108 files for this corpus.
 
 A live server answers `/category/{slug}` for whatever arrives; a directory of files
 has to be told which ones exist. `build.go` answers that with a `PathProvider`

@@ -17,7 +17,7 @@ require (
 	github.com/Elagoht/collage v0.2.0
 	github.com/Elagoht/collage-jsonld v0.0.0-20260923121014-0725f00da048
 	github.com/Elagoht/collage-minimizer v0.0.0-20260923121011-ca8447f9380d
-	github.com/Elagoht/collage-opti-image v0.0.0-20260923120958-2132da7f724a
+	github.com/Elagoht/collage-opti-image v0.0.0-20260923122443-0a71074b2362
 )
 
 require (
