@@ -59,6 +59,10 @@ type view struct {
 	Popular []Article
 	// Query is the current search term, echoed into the search box.
 	Query string
+	// APIBase is where the newsroom API lives, so a template can build an image
+	// URL. It is the one piece of deployment configuration the templates see, and
+	// they see it because an image's origin cannot be known any other way.
+	APIBase string
 	// Pager builds the pagination links.
 	Pager pager
 }

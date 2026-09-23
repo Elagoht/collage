@@ -107,6 +107,15 @@ func (a Article) Month() string { return a.PublishedAt.Format("01") }
 // Path is the article's canonical path, without a locale prefix.
 func (a Article) Path() string { return "/" + a.Year() + "/" + a.Month() + "/" + a.Slug }
 
+// ImageURL is the article's image on the newsroom API.
+//
+// Composed here rather than carried in the JSON, because the API's own host is not
+// something the corpus can know — it is wherever this site was pointed. The path is
+// part of the contract; the origin is configuration.
+func (a Article) ImageURL(apiBase string) string {
+	return strings.TrimRight(apiBase, "/") + "/images/" + a.Slug + ".png"
+}
+
 // listQuery selects one page of a listing. The zero value asks for everything, first
 // page, the API's default page size.
 type listQuery struct {

@@ -364,3 +364,38 @@ h1, h2, h3 { line-height: 1.15; margin: 0; }
 .footer p:first-child { padding-top: 1.5rem; }
 .footer p:last-child { padding-bottom: 2rem; }
 .colophon { margin-top: 0.35rem !important; }
+
+/* Images ------------------------------------------------------------------ */
+
+/* Every image declares its width and height, so the space is reserved before
+   the picture arrives and nothing on the page moves when it does. The rules
+   below scale them down responsively without giving that back: aspect-ratio
+   keeps the reserved box proportional once width is overridden. */
+
+.thumb {
+  display: block;
+  margin-bottom: 0.9rem;
+}
+.thumb img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: 4px;
+  background: var(--rule);
+}
+
+.lead {
+  margin: 0 0 1.75rem;
+  max-width: var(--measure);
+}
+.lead img {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: 4px;
+  background: var(--rule);
+}
+
+@media (max-width: 52rem) {
+  .thumb img { aspect-ratio: 2 / 1; }
+}

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"image"
+	_ "image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -193,5 +195,48 @@ func TestAPI_InjectedFailuresAreLogged(t *testing.T) {
 	}
 	if !strings.Contains(logged.String(), "status=503") {
 		t.Errorf("request log does not record the injected failure:\n%s", logged.String())
+	}
+}
+
+func TestAPI_ServesAGeneratedArticleImage(t *testing.T) {
+	rec := get(t, testMux(t, nil), "/images/seawalls-buy-time-not-safety.png")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "image/png" {
+		t.Errorf("Content-Type = %q, want image/png", ct)
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(rec.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("body is not a decodable image: %v", err)
+	}
+	if got := img.Bounds().Size(); got.X != imageWidth || got.Y != imageHeight {
+		t.Errorf("image is %v, want %dx%d", got, imageWidth, imageHeight)
+	}
+}
+
+func TestAPI_ImageForAnUnknownArticleIs404(t *testing.T) {
+	if rec := get(t, testMux(t, nil), "/images/no-such-article.png"); rec.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestAPI_ImagesAreDeterministicAndDistinct(t *testing.T) {
+	// Deterministic, so a cache in front of this endpoint is measuring the cache
+	// rather than a moving target; distinct, so a resized copy can be checked by
+	// eye against the article it belongs to.
+	mux := testMux(t, nil)
+
+	first := get(t, mux, "/images/seawalls-buy-time-not-safety.png").Body.String()
+	again := get(t, mux, "/images/seawalls-buy-time-not-safety.png").Body.String()
+	other := get(t, mux, "/images/the-grid-is-the-hard-part.png").Body.String()
+
+	if first != again {
+		t.Error("two requests for one article produced different images")
+	}
+	if first == other {
+		t.Error("two articles produced the same image")
 	}
 }

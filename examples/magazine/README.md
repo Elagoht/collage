@@ -36,16 +36,48 @@ is about what the mechanisms are *for* once a backend is involved.
 
 ## Plugins
 
-The site registers none, and still shows the mechanism: it loads
-`plugins-config.json` itself and hands the framework a `map[string]json.RawMessage`.
-That one `LoadPluginConfig` call is the only thing tying it to JSON — the framework
-reads no file and imposes no format, so moving the settings to YAML or the
-environment changes nothing else.
+The site uses three, fetched with `go get` like any other dependency:
 
-Adding a plugin is two edits that belong together: the constructor in `site.go`, and
-its section in `plugins-config.json` keyed by the plugin's `Name()`. A section whose
-key names no registered plugin is a startup error, so the two cannot drift apart
-unnoticed.
+| | |
+|---|---|
+| [`collage-minimizer`](https://github.com/Elagoht/collage-minimizer) | strips whitespace and comments from pages, documents and the stylesheet |
+| [`collage-jsonld`](https://github.com/Elagoht/collage-jsonld) | emits an Article and a BreadcrumbList on every piece |
+| [`collage-opti-image`](https://github.com/Elagoht/collage-opti-image) | resizes the article images and serves them itself |
+
+Nothing about them is special because they were written alongside the framework.
+They require `github.com/Elagoht/collage` exactly as this module does.
+
+Two of them arrive through `Config.Plugins` rather than `RegisterPlugin`, because
+they need the `Configure` phase: the minifier wraps every mounted filesystem, and
+the image optimiser registers the route it serves from, and both happen while the
+application is built.
+
+Their settings come from `plugins-config.json`, which the site loads itself — the
+one line tying it to JSON is its own `LoadPluginConfig` call, so moving the settings
+to YAML or the environment changes nothing else.
+
+One setting does not come from that file. The image optimiser may only fetch from
+hosts it is told about, and the only host this site uses is wherever `-api` pointed,
+which the file cannot know. `main.go` merges it in. That is what `PluginConfig`
+being a plain map is for: the application composes it, from a file and from anything
+else it knows.
+
+### Seeing the image optimiser work
+
+The newsroom API generates a 1600×900 image per article. The templates declare
+`width` and `height` on every `<img>` — which is what makes them eligible, since the
+declared size is the only statement of how large the picture will actually be drawn
+— so the plugin rewrites each `src` to a signed URL under `/_image/` and serves a
+copy at that size:
+
+```
+source     1600x900   92,906 bytes   (from the API)
+article     760x428   32,177 bytes   (what the page loads)
+```
+
+Nothing is fetched while the page renders. The rewrite happens during the render;
+the fetch and the resize happen the first time a browser asks for the rewritten URL,
+and the result is cached for thirty days behind a strong ETag.
 
 ## Routes
 

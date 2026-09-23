@@ -11,6 +11,9 @@
       {{.ReadMinutes}} min
     </p>
   </header>
+  <figure class="lead">
+    <img src="{{.ImageURL $.APIBase}}" width="760" height="428" alt="">
+  </figure>
   <div class="prose">
     {{range .Body}}<p>{{.}}</p>{{end}}
   </div>

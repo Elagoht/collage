@@ -8,6 +8,10 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
+
+	jsonld "github.com/Elagoht/collage-jsonld"
+	minimizer "github.com/Elagoht/collage-minimizer"
+	optimage "github.com/Elagoht/collage-opti-image"
 )
 
 // templatesFS carries the site's markup. Embedding it is what lets the binary run
@@ -56,13 +60,16 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 	app, err := collage.New(&collage.Config{
 		DevMode: cfg.DevMode,
 		Logger:  cfg.Logger,
-		// Plugins go here rather than through RegisterPlugin whenever they need
-		// the Configure phase — registering a template function or wrapping a
-		// mounted filesystem both happen while the application is built, and
-		// RegisterPlugin runs after that. This site registers none of its own;
-		// the configuration it loads is still passed through, so adding one is a
-		// line here and a section in plugins-config.json.
-		Plugins:      nil,
+		// Three ordinary dependencies, fetched with go get like any other. Two of
+		// them need the Configure phase — the minifier wraps every mounted
+		// filesystem, the image optimiser registers the route it serves from —
+		// and both happen while the application is built, so they have to arrive
+		// here rather than through RegisterPlugin.
+		Plugins: []collage.Plugin{
+			minimizer.New(),
+			jsonld.New(),
+			optimage.New(),
+		},
 		PluginConfig: cfg.PluginConfig,
 		Server: collage.ServerConfig{
 			Host: cfg.Host,
@@ -108,7 +115,7 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 	}
 
 	client := NewClient(cfg.APIBaseURL)
-	d := &deps{client: client, log: cfg.Logger}
+	d := &deps{client: client, log: cfg.Logger, apiBase: cfg.APIBaseURL}
 
 	// The chrome, built per page.
 	//

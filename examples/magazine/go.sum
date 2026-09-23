@@ -1,0 +1,8 @@
+github.com/Elagoht/collage v0.1.0 h1:4wOvb/2YCrXdi52dTa7B+rs7ttiXLo2ZVDR9imjfhAU=
+github.com/Elagoht/collage v0.1.0/go.mod h1:tyGWGpujZXtCFFxn9pjws85HOFOt4QdiuRswwQhj1Qw=
+github.com/Elagoht/collage-jsonld v0.0.0-20260923102701-5248e9b3f38e h1:jRjYfVmlNZHIOePJvSObu9sDOEZLPd6HE5u6M0Oy504=
+github.com/Elagoht/collage-jsonld v0.0.0-20260923102701-5248e9b3f38e/go.mod h1:NGpY5BTYKWKJRnFkWzCIgaJnH6p1kjwKccQFhJoFY3s=
+github.com/Elagoht/collage-minimizer v0.0.0-20260923102700-ff1566d7cd4e h1:UrXsLVol0WTDE4zWXeNvLtSUe4w+TnXxeHGPFjrS2pQ=
+github.com/Elagoht/collage-minimizer v0.0.0-20260923102700-ff1566d7cd4e/go.mod h1:5LUK1jOD/AXMUKETh+duyZel37pKb6Sls2RKp2cO8lU=
+github.com/Elagoht/collage-opti-image v0.0.0-20260923102701-b053a3bbd570 h1:hk+s/ZiJKZf23PO9cv68+uR1Xwxp2Ll7a7TK5HY1DYM=
+github.com/Elagoht/collage-opti-image v0.0.0-20260923102701-b053a3bbd570/go.mod h1:fQhzD4KiBbXKV0PpGRawUJzesIfkVhxHko1Rd9MQiCg=

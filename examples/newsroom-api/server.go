@@ -59,6 +59,9 @@ func newMux(store *Store, log *slog.Logger, chaos *Chaos) http.Handler {
 	mux.HandleFunc("GET /v1/authors", s.authors)
 	mux.HandleFunc("GET /v1/authors/{slug}", s.author)
 	mux.HandleFunc("GET /v1/popular", s.popular)
+	// Not under /v1: an image is not part of the JSON API's versioned surface, and
+	// a client fetching one is a browser rather than the site's own code.
+	mux.HandleFunc("GET /images/{slug}", s.serveImage)
 
 	// Logging is the outer layer so it records what the client actually received.
 	// Wrapped the other way round, an injected 503 short-circuits before the logger

@@ -34,13 +34,17 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
+
+	optimage "github.com/Elagoht/collage-opti-image"
 )
 
 func main() {
@@ -66,6 +70,13 @@ func main() {
 		log.Error("site: plugin configuration is unusable", "path", *pluginConfig, "err", err)
 		os.Exit(1)
 	}
+
+	// The image optimiser may only fetch from hosts it is told about, and the one
+	// host this site uses is wherever -api pointed. Merging it here rather than
+	// writing it into plugins-config.json keeps the two from disagreeing when the
+	// flag changes — and shows what PluginConfig being a plain map is for: the
+	// application composes it, from a file and from anything else it knows.
+	plugins = withImageOrigin(plugins, *apiURL, log)
 
 	cfg := config{
 		Host:          *host,
@@ -156,4 +167,36 @@ func envDuration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// withImageOrigin adds the newsroom API to the image optimiser's allowed origins.
+//
+// It merges into whatever the file already said rather than replacing it, so a
+// deployment serving images from a CDN keeps that entry and gains this one.
+func withImageOrigin(plugins map[string]json.RawMessage, apiURL string, log *slog.Logger) map[string]json.RawMessage {
+	parsed, err := url.Parse(apiURL)
+	if err != nil || parsed.Host == "" {
+		log.Warn("site: cannot derive an image origin from the API URL; images will not be optimised", "api", apiURL)
+		return plugins
+	}
+
+	var cfg optimage.Config
+	if raw, ok := plugins[optimage.Name]; ok {
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			log.Warn("site: image optimiser configuration is unusable; leaving it alone", "err", err)
+			return plugins
+		}
+	}
+	cfg.AllowedOrigins = append(cfg.AllowedOrigins, optimage.Origin{Scheme: parsed.Scheme, Host: parsed.Host})
+
+	merged, err := json.Marshal(cfg)
+	if err != nil {
+		log.Warn("site: could not rebuild the image optimiser configuration", "err", err)
+		return plugins
+	}
+	if plugins == nil {
+		plugins = make(map[string]json.RawMessage, 1)
+	}
+	plugins[optimage.Name] = merged
+	return plugins
 }

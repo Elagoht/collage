@@ -9,6 +9,8 @@ import (
 	"strconv"
 
 	"github.com/Elagoht/collage/pkg/collage"
+
+	jsonld "github.com/Elagoht/collage-jsonld"
 )
 
 // newsroomData is the signature every data handler in this file has before bind
@@ -34,6 +36,9 @@ func bind(fn newsroomData) collage.DataHandlerFunc {
 type deps struct {
 	client *Client
 	log    *slog.Logger
+	// apiBase is where the newsroom API lives, needed by the templates to build
+	// image URLs.
+	apiBase string
 }
 
 // translate maps a newsroom error onto the framework's.
@@ -53,11 +58,15 @@ func translate(err error) error {
 }
 
 // base fills the parts of a view every page shares.
-func base(rc *collage.RenderContext) *view {
+//
+// apiBase travels through it because the image URLs are built in the templates, and
+// a template has no other way to learn where the backend is.
+func (d *deps) base(rc *collage.RenderContext) *view {
 	return &view{
-		Site:   site,
-		Locale: rc.Locale,
-		URL:    urls{Locale: rc.Locale},
+		Site:    site,
+		Locale:  rc.Locale,
+		URL:     urls{Locale: rc.Locale},
+		APIBase: d.apiBase,
 	}
 }
 
@@ -78,7 +87,7 @@ func pageParam(rc *collage.RenderContext) int {
 // Everything the chrome needs from the backend — the category nav, the sidebar —
 // lives in its own fragment with its own fallback, bound into a slot below.
 func (d *deps) layoutData(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	return base(rc), nil, nil
+	return d.base(rc), nil, nil
 }
 
 // navData fetches the category list for the masthead. Its failure is contained by a
@@ -89,7 +98,7 @@ func (d *deps) navData(ctx context.Context, rc *collage.RenderContext) (*view, [
 		d.log.Warn("site: category nav unavailable", "err", err)
 		return nil, nil, err
 	}
-	v := base(rc)
+	v := d.base(rc)
 	v.Nav = cats
 	return v, []string{"categories"}, nil
 }
@@ -106,7 +115,7 @@ func (d *deps) popularData(ctx context.Context, rc *collage.RenderContext) (*vie
 		d.log.Warn("site: popular sidebar unavailable", "err", err)
 		return nil, nil, err
 	}
-	v := base(rc)
+	v := d.base(rc)
 	v.Popular = popular
 	return v, []string{"articles"}, nil
 }
@@ -115,19 +124,19 @@ func (d *deps) popularData(ctx context.Context, rc *collage.RenderContext) (*vie
 // fallback, and the error pages' own content. It performs no I/O, because the whole
 // point of each of those is that something else already failed.
 func (d *deps) chromeFallbackData(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	return base(rc), nil, nil
+	return d.base(rc), nil, nil
 }
 
 // headNotFound and headServerError title the error pages. A 404 that says "The Wire"
 // and nothing else is indistinguishable from the front page in a browser's history.
 func (d *deps) headNotFound(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	v := base(rc)
+	v := d.base(rc)
 	v.Heading = localized(rc.Locale, "Not found", "Bulunamadı")
 	return v, nil, nil
 }
 
 func (d *deps) headServerError(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	v := base(rc)
+	v := d.base(rc)
 	v.Heading = localized(rc.Locale, "Something went wrong", "Bir şeyler ters gitti")
 	return v, nil, nil
 }
@@ -192,7 +201,7 @@ func (d *deps) author(ctx context.Context, rc *collage.RenderContext, slug strin
 // its <head>.
 
 func (d *deps) headHome(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	v := base(rc)
+	v := d.base(rc)
 	v.Heading = localized(rc.Locale, "Latest", "En yeni")
 	v.Standfirst = site.Tagline
 	return v, nil, nil
@@ -203,7 +212,7 @@ func (d *deps) headCategory(ctx context.Context, rc *collage.RenderContext) (*vi
 	if err != nil {
 		return nil, nil, translate(err)
 	}
-	v := base(rc)
+	v := d.base(rc)
 	v.Heading = cat.Name
 	v.Standfirst = cat.Description
 	return v, []string{"categories"}, nil
@@ -214,7 +223,7 @@ func (d *deps) headAuthor(ctx context.Context, rc *collage.RenderContext) (*view
 	if err != nil {
 		return nil, nil, translate(err)
 	}
-	v := base(rc)
+	v := d.base(rc)
 	v.Heading = author.Name
 	v.Standfirst = author.Role
 	return v, nil, nil
@@ -225,14 +234,14 @@ func (d *deps) headArticle(ctx context.Context, rc *collage.RenderContext) (*vie
 	if err != nil {
 		return nil, nil, translate(err)
 	}
-	v := base(rc)
+	v := d.base(rc)
 	v.Heading = art.Title
 	v.Standfirst = art.Dek
 	return v, []string{"articles"}, nil
 }
 
 func (d *deps) headSearch(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	v := base(rc)
+	v := d.base(rc)
 	v.Heading = localized(rc.Locale, "Search", "Arama")
 	if q := rc.Request.URL.Query().Get("q"); q != "" {
 		// Not %q: the quotes it adds are escaped to &#34; by the template engine,
@@ -249,7 +258,7 @@ func (d *deps) homeData(ctx context.Context, rc *collage.RenderContext) (*view, 
 	if err != nil {
 		return nil, nil, translate(err)
 	}
-	v := base(rc)
+	v := d.base(rc)
 	v.Heading = localized(rc.Locale, "Latest", "En yeni")
 	v.Standfirst = site.Tagline
 	v.Listing = listing
@@ -272,7 +281,7 @@ func (d *deps) categoryData(ctx context.Context, rc *collage.RenderContext) (*vi
 		return nil, nil, translate(err)
 	}
 
-	v := base(rc)
+	v := d.base(rc)
 	v.Category = &cat
 	v.Heading = cat.Name
 	v.Standfirst = cat.Description
@@ -294,7 +303,7 @@ func (d *deps) authorData(ctx context.Context, rc *collage.RenderContext) (*view
 		return nil, nil, translate(err)
 	}
 
-	v := base(rc)
+	v := d.base(rc)
 	v.Author = &author
 	v.Heading = author.Name
 	v.Standfirst = author.Role
@@ -321,7 +330,29 @@ func (d *deps) articleData(ctx context.Context, rc *collage.RenderContext) (*vie
 			collage.ErrNotFound, slug, rc.Param("year"), rc.Param("month"))
 	}
 
-	v := base(rc)
+	// Structured data for this piece, through the render's shared data — so the
+	// plugin reads what this handler already fetched rather than parsing a headline
+	// back out of the markup it is about to annotate.
+	jsonld.Emit(rc,
+		jsonld.Article{
+			Headline:      art.Title,
+			Description:   art.Dek,
+			URL:           art.Path(),
+			Section:       art.Category,
+			Keywords:      art.Tags,
+			DatePublished: art.PublishedAt,
+			AuthorName:    art.Author,
+			PublisherName: site.Name,
+			ImageURL:      art.ImageURL(d.apiBase),
+		},
+		jsonld.BreadcrumbList{Items: []jsonld.Breadcrumb{
+			{Name: site.Name, URL: d.base(rc).URL.Home()},
+			{Name: art.Category, URL: d.base(rc).URL.Category(art.Category)},
+			{Name: art.Title, URL: d.base(rc).URL.Article(art)},
+		}},
+	)
+
+	v := d.base(rc)
 	v.Article = &art
 	v.Heading = art.Title
 	v.Standfirst = art.Dek
@@ -336,7 +367,7 @@ func (d *deps) articleData(ctx context.Context, rc *collage.RenderContext) (*vie
 func (d *deps) searchData(ctx context.Context, rc *collage.RenderContext) (*view, []string, error) {
 	query := rc.Request.URL.Query().Get("q")
 
-	v := base(rc)
+	v := d.base(rc)
 	v.Query = query
 	v.Heading = localized(rc.Locale, "Search", "Arama")
 	// The term travels with the page number, or page two is a search for nothing.

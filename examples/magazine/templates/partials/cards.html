@@ -2,6 +2,13 @@
 <ul class="cards">
   {{range .Listing.Items}}
   <li class="card">
+    <a class="thumb" href="{{$.URL.Article .}}">
+      {{/* width and height are declared, and that is what makes the image
+           eligible for optimisation: they say how large it will actually be
+           drawn, so a resize has a target rather than a guess. They also stop
+           the page reflowing when the picture arrives. */}}
+      <img src="{{.ImageURL $.APIBase}}" width="320" height="180" alt="" loading="lazy">
+    </a>
     <p class="kicker"><a href="{{$.URL.Category .Category}}">{{.Category}}</a></p>
     <h2><a href="{{$.URL.Article .}}">{{.Title}}</a></h2>
     <p class="dek">{{.Dek}}</p>
