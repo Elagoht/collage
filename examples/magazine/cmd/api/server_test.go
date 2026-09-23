@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -173,5 +175,25 @@ func TestAPI_PopularRespectsLimit(t *testing.T) {
 		if articles[i-1].Views < articles[i].Views {
 			t.Error("popular list is not ranked by views")
 		}
+	}
+}
+
+func TestAPI_InjectedFailuresAreLogged(t *testing.T) {
+	// An injected 503 must reach the request log. With the middleware wrapped the
+	// other way round, chaos short-circuits before the logger runs and the API's
+	// own log shows only the requests that succeeded — the one log you cannot
+	// afford to be missing while working out why the site went degraded.
+	var logged bytes.Buffer
+	store, err := newsroom.NewStore()
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	mux := newMux(store, slog.New(slog.NewTextHandler(&logged, nil)), &Chaos{FailEvery: 1})
+
+	if rec := get(t, mux, "/v1/articles"); rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	if !strings.Contains(logged.String(), "status=503") {
+		t.Errorf("request log does not record the injected failure:\n%s", logged.String())
 	}
 }

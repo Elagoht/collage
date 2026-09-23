@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="{{.Locale}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Heading}}{{.Heading}} — {{end}}{{.Site.Name}}</title>
+<meta name="description" content="{{if .Standfirst}}{{.Standfirst}}{{else}}{{.Site.Tagline}}{{end}}">
+<link rel="stylesheet" href="/static/magazine.css">
+<link rel="alternate" type="application/rss+xml" title="{{.Site.Name}}" href="/rss.xml">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="masthead">
+  <div class="masthead-bar">
+    <a class="wordmark" href="{{.URL.Home}}">{{.Site.Name}}</a>
+    <form class="search" action="{{.URL.Search}}" method="get" role="search">
+      <input type="search" name="q" value="{{.Query}}" placeholder="{{if eq .Locale "tr"}}Ara{{else}}Search{{end}}" aria-label="{{if eq .Locale "tr"}}Ara{{else}}Search{{end}}">
+      <button type="submit">{{if eq .Locale "tr"}}Ara{{else}}Search{{end}}</button>
+    </form>
+    <a class="locale-switch" href="{{.URL.Switch}}">{{.URL.SwitchLabel}}</a>
+  </div>
+  {{slot "nav"}}
+</header>
+
+<div class="shell">
+  <main id="main">
+    {{slot "content"}}
+  </main>
+  <aside class="sidebar">
+    {{slot "sidebar"}}
+  </aside>
+</div>
+
+<footer class="footer">
+  <p>{{.Site.Tagline}}</p>
+  <p class="colophon">
+    {{if eq .Locale "tr"}}collage ile sunuluyor{{else}}Served with collage{{end}} ·
+    <a href="/rss.xml">RSS</a> · <a href="/sitemap.xml">Sitemap</a>
+  </p>
+</footer>
+</body>
+</html>

@@ -109,10 +109,18 @@ Later, when the homepage's content changes:
 err := app.InvalidateTags(ctx, "homepage")
 ```
 
-For the full version of this — shared layouts, `/blog/{slug}`, page-specific 404
-and 500 pages, redirects, incremental caching, a plugin, a sitemap document, a
-robots.txt and a mounted stylesheet — see
-[`examples/blog`](examples/blog), which is also the framework's end-to-end test.
+There are two worked examples, and they answer different questions.
+
+[`examples/blog`](examples/blog) shows the mechanisms one at a time against an
+in-process store: shared layouts, `/blog/{slug}`, page-specific 404 and 500 pages,
+redirects, incremental caching, a plugin, a sitemap document, a robots.txt and a
+mounted stylesheet. It is also the framework's end-to-end test.
+
+[`examples/magazine`](examples/magazine) puts them together against a backend that
+can be slow and can fail: a news site and the fake JSON API it reads over HTTP, with
+per-locale paths, fragments that fall back instead of failing, a search page that is
+deliberately never cached, and a Dockerfile. Read it for the decisions rather than
+the API surface.
 
 ## What it guarantees
 

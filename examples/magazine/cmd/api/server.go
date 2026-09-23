@@ -62,7 +62,12 @@ func newMux(store *newsroom.Store, log *slog.Logger, chaos *Chaos) http.Handler 
 	mux.HandleFunc("GET /v1/authors/{slug}", s.author)
 	mux.HandleFunc("GET /v1/popular", s.popular)
 
-	return s.withChaos(s.withLogging(mux))
+	// Logging is the outer layer so it records what the client actually received.
+	// Wrapped the other way round, an injected 503 short-circuits before the logger
+	// ever runs and the API's own request log shows only the requests that
+	// succeeded — which is precisely the log you cannot afford to be missing while
+	// you are debugging why the site went degraded.
+	return s.withLogging(s.withChaos(mux))
 }
 
 // health answers without consulting Chaos. A health endpoint that the failure
