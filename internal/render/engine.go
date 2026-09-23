@@ -213,7 +213,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	}
 
 	start := time.Now()
-	html, err := e.renderFragment(rc, root, state)
+	html, err := e.renderFragment(rc, root, state, nil)
 	// Resolved on the finished tree, so a declaration made anywhere below a marker
 	// still reaches it — which is the whole reason a marker is written rather than
 	// the content itself.

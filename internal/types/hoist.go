@@ -3,6 +3,7 @@ package types
 import (
 	"html/template"
 	"strings"
+	"sync"
 )
 
 // Hoisting is how a fragment contributes something that belongs to the page rather
@@ -15,9 +16,16 @@ import (
 // declare as they render, and the engine replaces the marker once the tree is
 // finished. One pass, and the layout keeps deciding where the contributions land.
 
-// hoistEntry is one declaration, with the depth it was made at.
+// hoistEntry is one declaration, with the position in the tree it was made from.
 type hoistEntry struct {
 	depth int
+	// order is the fragment's launch number within this render. It settles a tie
+	// between two declarations at equal depth, and it exists because data handlers
+	// no longer run in the order they finish: siblings run concurrently, so "the
+	// last one to declare" would mean "whichever goroutine happened to win",
+	// which is not a rule anyone can rely on. Launch order is assigned on the
+	// render's own goroutine, in declaration order, so it is the same on every run.
+	order int
 	html  template.HTML
 }
 
@@ -33,15 +41,14 @@ type hoistArea struct {
 
 // Hoisted collects what the fragments of one render declared.
 //
-// It needs no locking, for the same reason renderState does not: the walk is
-// strictly sequential and depth-first, so exactly one goroutine touches it. A data
-// handler that hoists from a goroutine of its own is outside that guarantee and
-// outside what this supports.
+// It is locked because data handlers of sibling fragments run concurrently, and a
+// handler is the usual place to declare a title. Where the declaration came from is
+// carried in the call rather than held here as the engine's current position: a
+// single "current depth" field is only meaningful while one fragment at a time is
+// running, which is no longer true.
 type Hoisted struct {
+	mu    sync.Mutex
 	areas map[string]*hoistArea
-	// depth is the nesting level of the fragment currently rendering. The engine
-	// maintains it; Hoist reads it.
-	depth int
 }
 
 // NewHoisted returns an empty collector.
@@ -49,48 +56,47 @@ func NewHoisted() *Hoisted {
 	return &Hoisted{areas: make(map[string]*hoistArea)}
 }
 
-// Depth reports the nesting level currently being rendered.
-func (h *Hoisted) Depth() int { return h.depth }
-
-// SetDepth records the nesting level currently being rendered. It is called by the
-// render engine as it descends and again as it returns; an application has no
-// reason to call it.
-func (h *Hoisted) SetDepth(depth int) {
-	if h != nil {
-		h.depth = depth
-	}
-}
-
-// Add records a declaration for area under key, made at depth.
+// Add records a declaration for area under key, made from a fragment at depth whose
+// launch number is order.
 //
 // The innermost declaration of a key wins, because depth is what specificity looks
 // like here: a layout naming a default title and an article naming its own are not
-// in conflict, the article is simply more specific. At equal depth the later
-// declaration wins — two siblings writing one key is a genuine conflict with no
-// specificity to settle it, so the rule is arbitrary and therefore stated rather
+// in conflict, the article is simply more specific. At equal depth the
+// later-declared one wins — two siblings writing one key is a genuine conflict with
+// no specificity to settle it, so the rule is arbitrary and therefore stated rather
 // than discovered.
+//
+// "Later" means later in declaration order, not in finishing order. Sibling data
+// handlers run concurrently, so which of two goroutines reaches this function first
+// is not something a page should depend on; order is assigned when fragments are
+// launched, on one goroutine, in the order the tree declares them.
 //
 // Position is decided by the first declaration of a key, not the winning one.
 // Otherwise a page's <head> would reorder itself depending on whether a nested
 // fragment happened to override something.
-func (h *Hoisted) Add(area, key string, depth int, html template.HTML) {
+func (h *Hoisted) Add(area, key string, depth, order int, html template.HTML) {
 	if h == nil || area == "" || key == "" {
 		return
 	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	a, ok := h.areas[area]
 	if !ok {
 		a = &hoistArea{byKey: make(map[string]hoistEntry)}
 		h.areas[area] = a
 	}
 
+	entry := hoistEntry{depth: depth, order: order, html: html}
 	previous, seen := a.byKey[key]
 	if !seen {
 		a.order = append(a.order, key)
-		a.byKey[key] = hoistEntry{depth: depth, html: html}
+		a.byKey[key] = entry
 		return
 	}
-	if depth >= previous.depth {
-		a.byKey[key] = hoistEntry{depth: depth, html: html}
+	if depth > previous.depth || (depth == previous.depth && order >= previous.order) {
+		a.byKey[key] = entry
 	}
 }
 
@@ -99,6 +105,8 @@ func (h *Hoisted) HTML(area string) template.HTML {
 	if h == nil {
 		return ""
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	a, ok := h.areas[area]
 	if !ok {
 		return ""
@@ -116,6 +124,8 @@ func (h *Hoisted) Areas() []string {
 	if h == nil {
 		return nil
 	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	names := make([]string, 0, len(h.areas))
 	for name := range h.areas {
 		names = append(names, name)

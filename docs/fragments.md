@@ -66,6 +66,58 @@ target leaves the root is refused by the kernel during path resolution. A
 symlink resolving *inside* the root loads normally — containment refuses what
 leaves the root, not symlinks as such.
 
+## How a page's fragments run
+
+Rendering is depth-first and in order, and always was. What changed is when the data
+handlers run.
+
+**A fragment's declared children start their data handlers before it renders its own
+template.** A home page made of a navigation bar, an article list and a popular
+sidebar asks the upstream for all three at once, and the reader waits for the longest
+of them rather than the sum. Nothing about the markup changes: the templates still
+execute one at a time, in tree order, so `{{hoist}}` and everything else that depends
+on ordering behaves exactly as before.
+
+**Parent before child is preserved.** A child's handler starts only after its
+parent's has returned, so a parent putting something in `SharedData` for its children
+to read still works, and so does a child reading a path parameter its parent
+resolved.
+
+**Siblings run at the same time**, and that is the one thing that is genuinely
+different. Three consequences follow, in order of how likely they are to matter.
+
+*Read and write `SharedData` through `Get` and `Set`, not as a bare map.* Two
+siblings writing a map directly is a data race. `Get` and `Set` hold the render's
+lock.
+
+*Prefer `Once` to a read-then-write.* This shape has a hole in it:
+
+```go
+if v, ok := rc.Get(key); ok { return v.(Article), nil }
+article, err := api.Article(ctx, slug)   // both siblings are here at once
+rc.Set(key, article)
+```
+
+Both siblings miss the `Get`, both fetch, and the page quietly asks the upstream
+twice. `Once` closes it — the first caller fetches, the rest wait for it:
+
+```go
+article, err := collage.Once(rc, "article:"+slug, func(ctx context.Context) (Article, error) {
+	return api.Article(ctx, slug)
+})
+```
+
+*Two siblings hoisting one key is settled by declaration order.* Not by which handler
+finished first — that would make a page's `<head>` depend on the weather. Innermost
+still wins over depth, exactly as before; at equal depth the later-declared fragment
+wins.
+
+**A slot the template does not render still costs its handler.** Children are started
+one level ahead, before the template has decided what it will ask for, so a fragment
+behind a conditional slot may fetch for nothing. Its context is cancelled as soon as
+the template is done, and its failure is discarded — a fragment that was never
+rendered cannot fail a page, whether or not it is `Required`.
+
 ## Building a fragment
 
 ```go

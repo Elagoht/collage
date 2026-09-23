@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,6 +99,16 @@ type backend struct {
 	// hits counts every request, so a test can prove a render happened again
 	// rather than being served from the page cache.
 	hits atomic.Int64
+
+	// inFlight and peak record how many requests the site had open at once. It is
+	// how a test sees that fragments fetch concurrently without timing anything:
+	// a peak above one is overlap, whatever the machine was doing.
+	inFlight atomic.Int64
+	peak     atomic.Int64
+	// hold, when non-nil, blocks every request until it is closed or the caller
+	// gives up, so the peak is the number of requests that were genuinely
+	// simultaneous rather than a race between fast handlers.
+	hold chan struct{}
 }
 
 func newBackend(t *testing.T, failPrefixes ...string) (*backend, *httptest.Server) {
@@ -111,6 +122,26 @@ func newBackend(t *testing.T, failPrefixes ...string) (*backend, *httptest.Serve
 
 func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.hits.Add(1)
+
+	now := b.inFlight.Add(1)
+	for {
+		peak := b.peak.Load()
+		if now <= peak || b.peak.CompareAndSwap(peak, now) {
+			break
+		}
+	}
+	defer b.inFlight.Add(-1)
+	if b.hold != nil {
+		select {
+		case <-b.hold:
+		case <-r.Context().Done():
+			// The caller gave up. Returning here is what makes inFlight mean
+			// "requests the site is actually waiting on": a handler that stayed
+			// blocked after its fragment timed out would keep the count up and
+			// make sequential fetches look concurrent.
+			return
+		}
+	}
 
 	if b.failFirst.Load() > 0 {
 		b.failFirst.Add(-1)
@@ -843,4 +874,38 @@ func firstLines(s string, n int) string {
 		lines = lines[:n]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// The fragments of one page fetch at the same time, not one after another.
+//
+// A home page is a navigation bar, a list of articles and a popular sidebar. None of
+// them needs anything from the others, and rendering them in sequence means the
+// reader waits for the sum of three round trips rather than the longest one.
+//
+// Measured as the peak number of requests the newsroom had open at once, so the
+// assertion says nothing about how fast any machine is.
+func TestSite_FragmentsFetchConcurrently(t *testing.T) {
+	b, api := newBackend(t)
+
+	// Held open until every request that is going to arrive has arrived, so the
+	// peak is what was genuinely simultaneous. Three is what the home page asks
+	// for: categories, articles, popular.
+	b.hold = make(chan struct{})
+	go func() {
+		for b.inFlight.Load() < 3 {
+			runtime.Gosched()
+		}
+		close(b.hold)
+	}()
+
+	site := newTestSite(t, api.URL)
+	rec, _ := request(t, site, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
+	}
+
+	t.Logf("peak concurrent upstream requests = %d", b.peak.Load())
+	if peak := b.peak.Load(); peak < 2 {
+		t.Errorf("peak concurrent upstream requests = %d, want at least 2: the fragments are still waiting for each other", peak)
+	}
 }

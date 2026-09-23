@@ -27,9 +27,15 @@ type renderState struct {
 	tags map[string]struct{}
 	// fragments holds the per-fragment metadata, indexed in entry order.
 	fragments []FragmentMetadata
-	// dataTime is the total time spent in data handlers. Handlers never nest, so
-	// this is a plain sum.
+	// dataTime is the total time spent in data handlers, summed. Sibling handlers
+	// now overlap, so this can exceed the render's wall-clock time: it is how much
+	// handler work the page cost, not how long the page waited for it.
 	dataTime time.Duration
+	// order numbers fragments in the sequence they are launched. Launching happens
+	// on this goroutine, in declaration order, even though the handlers launched
+	// run concurrently — so the number is the same on every render of a page, and
+	// hoisting can use it to settle ties without depending on which goroutine won.
+	order int
 	// templateTime is the total time spent executing templates, counting each
 	// fragment's template only for itself: the time its descendants spend inside
 	// that execution is subtracted, so nesting does not inflate the total.
@@ -48,6 +54,12 @@ type renderState struct {
 	// never reset: the render either fails for this reason or it does not, and
 	// only one frame ever qualifies to set it, see renderFragment.
 	notFound bool
+}
+
+// nextOrder assigns the next launch number.
+func (s *renderState) nextOrder() int {
+	s.order++
+	return s.order
 }
 
 // addTags records tags in the render's tag set, ignoring empty ones.
@@ -106,7 +118,7 @@ func (s *renderState) chain() string {
 // Either way the failure is recorded in the fragment's metadata, which is what makes
 // Result.Degraded true, and any tags the fragment's handler had already produced are
 // kept: a fragment that failed halfway still describes what its output depended on.
-func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, state *renderState) ([]byte, error) {
+func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, state *renderState, pre *prefetch) ([]byte, error) {
 	if f == nil {
 		// Fatal for the same reason as the depth limit: a nil entry in a Fill slice
 		// is a malformed tree, and rendering the page around the hole would hide it.
@@ -128,14 +140,18 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 	span.SetAttribute("fragment", f.Name)
 	rc = rc.WithContext(ctx)
 
-	// Depth is maintained here rather than derived, because a data handler calls
-	// Hoist while this fragment is rendering and has no other way to know how deep
-	// it is. Restored on the way out, so a sibling that renders next is not told it
-	// is a child of the one that just finished.
-	hoisted := rc.Hoisted()
-	previousDepth := hoisted.Depth()
-	hoisted.SetDepth(len(state.stack))
-	defer hoisted.SetDepth(previousDepth)
+	// The fragment's position travels in its own context rather than being held as
+	// the engine's "current" depth. A data handler calls Hoist and has no other way
+	// to know how deep it is, and with sibling handlers running at once there is no
+	// single current position to read. A prefetched fragment keeps the position it
+	// was launched with, so what it hoists lands where the tree says it should.
+	depth, order := len(state.stack), 0
+	if pre != nil {
+		depth, order = pre.depth, pre.order
+	} else {
+		order = state.nextOrder()
+	}
+	rc = rc.WithFragment(depth, order)
 
 	// The metadata slot is reserved on entry so parents appear before the children
 	// that render inside them, and filled in once the outcome is known.
@@ -145,7 +161,7 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 	start := time.Now()
 	childTotalBefore := state.childTotal
 
-	out, err := e.attempt(rc, f, state)
+	out, err := e.attempt(rc, f, state, pre)
 	meta := FragmentMetadata{Name: f.Name}
 	propagate := false
 
@@ -168,7 +184,9 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 			}
 			propagate = true
 		case f.Fallback != nil:
-			fallbackOut, fallbackErr := e.attempt(rc, f.Fallback, state)
+			// No prefetch for a fallback: it exists precisely because the primary
+			// failed, which is not known until it has.
+			fallbackOut, fallbackErr := e.attempt(rc, f.Fallback, state, nil)
 			if fallbackErr != nil {
 				// A fallback exists to contain a failure, so its own failure is
 				// contained here rather than escalated: the page loses this
@@ -213,9 +231,23 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 // fallback is rendered, which is precisely why the policy lives in renderFragment
 // instead — a fallback must not get a fallback of its own, and a required fragment
 // inside a fallback must not escalate past it.
-func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *renderState) ([]byte, error) {
+func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *renderState, pre *prefetch) ([]byte, error) {
 	var data any // any: fragment data is opaque to the framework and flows straight into the template engine, whose parameter is already any
-	if f.DataHandler != nil {
+	switch {
+	case pre != nil:
+		// Already running, started by this fragment's parent. Waiting for it is
+		// all that is left, and by now it has usually finished.
+		var tags []string
+		var err error
+		var elapsed time.Duration
+		data, tags, err, elapsed = pre.wait()
+		state.dataTime += elapsed
+		state.addTags(tags)
+		if err != nil {
+			return nil, wrapFragment("data handler", f.Name, err)
+		}
+
+	case f.DataHandler != nil:
 		var tags []string
 		started := time.Now()
 		err := Execute(rc.Context(), f.EffectiveTimeout(e.defaultTimeout), func(ctx context.Context) error {
@@ -236,18 +268,25 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		return nil, err
 	}
 
+	// Started before the template runs, not after: the whole point is that a
+	// sibling's upstream call is already in flight by the time the slot that needs
+	// it is reached. Released afterwards, so a slot the template decided not to
+	// render does not leave a call running for nobody.
+	started := e.prefetchChildren(rc, f, state)
+	defer release(started)
+
 	var buf bytes.Buffer
 	childTotalBefore := state.childTotal
-	started := time.Now()
+	renderStarted := time.Now()
 	// Template execution goes through Execute as well: a template function can
 	// panic, and the fragment that owns it should fail rather than the process. No
 	// timeout is imposed here — Fragment.Timeout bounds the data handler, which is
 	// the part that talks to the outside world — but the render's context still
 	// applies.
 	err := Execute(rc.Context(), 0, func(ctx context.Context) error {
-		return e.tmpl.RenderWithFuncs(ctx, &buf, f.TemplatePath, data, e.slotFuncs(rc, f, state))
+		return e.tmpl.RenderWithFuncs(ctx, &buf, f.TemplatePath, data, e.slotFuncs(rc, f, state, started))
 	})
-	state.templateTime += time.Since(started) - (state.childTotal - childTotalBefore)
+	state.templateTime += time.Since(renderStarted) - (state.childTotal - childTotalBefore)
 	if err != nil {
 		return nil, wrapFragment("template "+f.TemplatePath, f.Name, err)
 	}
@@ -262,10 +301,15 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 // It can only rebind a function name the templates were parsed with; "slot" is
 // registered as a placeholder at parse time precisely so this override has a name to
 // take over.
-func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state *renderState) htmltemplate.FuncMap {
+func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state *renderState, started map[*types.Fragment][]*prefetch) htmltemplate.FuncMap {
+	// taken counts how many of a fragment's prefetches have been consumed, so the
+	// same fragment bound into two slots — or twice into one — takes a different
+	// one each time rather than sharing a single result. Two bindings of one
+	// fragment are two fragments as far as a render is concerned.
+	taken := make(map[*types.Fragment]int)
 	return htmltemplate.FuncMap{
 		"slot": func(name string) (htmltemplate.HTML, error) {
-			return e.renderSlot(rc, f, name, state)
+			return e.renderSlot(rc, f, name, state, started, taken)
 		},
 		"hoist": hoistFunc(state.hoistToken),
 		"asset": e.assetFunc(),
@@ -279,7 +323,14 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 // A name f does not declare is an error, not empty output: silently rendering nothing
 // would turn a typo in a template into a section that is simply missing from the
 // page, which nobody notices until a user does.
-func (e *SlotEngine) renderSlot(rc *types.RenderContext, f *types.Fragment, name string, state *renderState) (htmltemplate.HTML, error) {
+func (e *SlotEngine) renderSlot(
+	rc *types.RenderContext,
+	f *types.Fragment,
+	name string,
+	state *renderState,
+	started map[*types.Fragment][]*prefetch,
+	taken map[*types.Fragment]int,
+) (htmltemplate.HTML, error) {
 	slot, ok := f.Slot(name)
 	if !ok {
 		return "", fmt.Errorf("%w: fragment %q has no slot %q, only %v", types.ErrUnknownSlot, f.Name, name, f.SlotNames())
@@ -294,13 +345,26 @@ func (e *SlotEngine) renderSlot(rc *types.RenderContext, f *types.Fragment, name
 
 	var buf strings.Builder
 	for _, child := range slot.Fill {
-		out, err := e.renderFragment(rc, child, state)
+		out, err := e.renderFragment(rc, child, state, take(started, taken, child))
 		if err != nil {
 			return "", err
 		}
 		buf.Write(out)
 	}
 	return htmltemplate.HTML(buf.String()), nil
+}
+
+// take returns the next unconsumed prefetch for child, or nil if there is none —
+// a fragment with no data handler, or one reached past the depth limit, was never
+// launched, and a nil prefetch simply means "run it here".
+func take(started map[*types.Fragment][]*prefetch, taken map[*types.Fragment]int, child *types.Fragment) *prefetch {
+	list := started[child]
+	i := taken[child]
+	if i >= len(list) {
+		return nil
+	}
+	taken[child] = i + 1
+	return list[i]
 }
 
 // requiredSlotsFilled reports ErrRequiredSlotEmpty for the first required slot of f
