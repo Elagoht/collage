@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elagoht/collage/internal/template"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -311,8 +312,9 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 		"slot": func(name string) (htmltemplate.HTML, error) {
 			return e.renderSlot(rc, f, name, state, started, taken)
 		},
-		"hoist": hoistFunc(state.hoistToken),
-		"asset": e.assetFunc(),
+		"hoist":     hoistFunc(state.hoistToken),
+		"asset":     e.assetFunc(),
+		"csrfToken": e.csrfFunc(rc),
 	}
 }
 
@@ -413,3 +415,38 @@ func (e *SlotEngine) assetFunc() func(string) (string, error) {
 		return resolved, nil
 	}
 }
+
+// csrfFunc is the per-render implementation of {{csrfToken}}. It returns the hidden
+// input a form submits alongside its own fields.
+//
+// A whole input rather than the bare value, because the bare value is a footgun: it
+// has to be placed in a field with exactly the right name, and a form that names it
+// wrong is a form that fails to submit in a way that looks like the token is broken.
+// The one thing a template has to get right is putting it inside the <form>.
+//
+// Issuing is recorded on the render context, which is how the handler learns two
+// things the markup cannot tell it: to send the cookie this token is checked
+// against, and not to cache this page. A token belongs to one visitor.
+func (e *SlotEngine) csrfFunc(rc *types.RenderContext) func() (htmltemplate.HTML, error) {
+	return func() (htmltemplate.HTML, error) {
+		if e.csrfToken == nil || rc.Request == nil {
+			return "", template.ErrCSRFOutsideRender
+		}
+		token, err := e.csrfToken(rc.Request)
+		if err != nil {
+			return "", err
+		}
+		rc.IssueCSRF(token)
+		return htmltemplate.HTML(`<input type="hidden" name="` +
+			htmltemplate.HTMLEscapeString(CSRFFieldName) +
+			`" value="` + htmltemplate.HTMLEscapeString(token) + `">`), nil
+	}
+}
+
+// csrfFieldName is the form field a token is submitted in. It matches
+// internal/csrf's DefaultFieldName; the render engine does not import that package,
+// because a template function that needed the verifier would make every render
+// depend on the thing that checks submissions.
+// CSRFFieldName is exported so one test can assert it matches what the verifier
+// reads; see internal/core.
+const CSRFFieldName = "_csrf"

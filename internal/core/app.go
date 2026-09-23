@@ -30,6 +30,7 @@ import (
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/csrf"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/observability"
@@ -126,6 +127,8 @@ type Config struct {
 	// DevMode enables development-mode behaviour across the framework. The
 	// effective value is this or Template.DevMode; see App.DevMode.
 	DevMode bool
+	// Security configures request-forgery protection.
+	Security SecurityConfig
 	// Logger is the structured logger the framework writes through and hands to
 	// plugins via Host.Logger. A nil Logger means slog.Default().
 	Logger *slog.Logger
@@ -335,6 +338,9 @@ type App struct {
 	// see internal/router's RegisterAction.
 	actions     map[string]*types.Action
 	actionOrder []*types.Action
+	// csrf issues and verifies request-forgery tokens, or is nil when the
+	// application turned the protection off.
+	csrf *csrf.Guard
 	// mounts holds every mounted asset file system, in registration order. See
 	// mount.go for Mount, Mounts, and checkMountsDoNotShadow, the close-out check
 	// that keeps a mount from silently swallowing a page's or a document's route
@@ -498,6 +504,7 @@ func New(cfg Config) (*App, error) {
 		Tracer:         tracer,
 		DevMode:        devMode,
 		AssetURL:       app.assetURL,
+		CSRFToken:      app.csrfToken,
 	})
 	app.store = store
 	app.tracker = tracker
@@ -514,6 +521,12 @@ func New(cfg Config) (*App, error) {
 	app.vary = varyHeaders(cfg.Locale)
 	app.pages = make(map[string]*types.Page)
 	app.bound = make(map[*types.Page]bool)
+	guard, err := buildCSRF(cfg.Security, logger)
+	if err != nil {
+		return nil, fmt.Errorf("collage: csrf: %w", err)
+	}
+	app.csrf = guard
+
 	app.documents = make(map[string]*types.Document)
 	app.actions = make(map[string]*types.Action)
 	app.listening = make(chan struct{})
@@ -698,6 +711,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		Invalidator: func(ctx context.Context, tags []string) error {
 			return a.InvalidateTags(ctx, tags...)
 		},
+		CSRF: a.csrf,
 	})
 	if err != nil {
 		return a.buildFailed(err)

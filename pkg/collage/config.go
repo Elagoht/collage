@@ -72,6 +72,9 @@ type Config struct {
 	Logger *slog.Logger
 	// Server configures the HTTP server.
 	Server ServerConfig
+
+	// Security configures request-forgery protection.
+	Security SecurityConfig
 	// Template configures template loading and rendering.
 	Template TemplateConfig
 	// Plugins are registered and configured while the App is built.
@@ -114,6 +117,33 @@ type ServerConfig struct {
 	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight requests.
 	// Defaults to 10s.
 	ShutdownTimeout time.Duration
+	// MaxBodyBytes bounds an action's request body when the action declares no
+	// bound of its own. Defaults to four megabytes; a negative value means
+	// unbounded, which is a decision worth making deliberately, because an
+	// unbounded body is memory an anonymous caller chooses the size of.
+	MaxBodyBytes int64
+}
+
+// SecurityConfig configures request-forgery protection.
+type SecurityConfig struct {
+	// CSRFKey signs forgery tokens. It should be at least 32 random bytes, kept
+	// with the application's other secrets, and the same on every instance.
+	//
+	// An empty key is not an error: one is generated and the application logs that
+	// it did. That is right for a first run and wrong to deploy, because a
+	// generated key differs in every process — a token issued before a restart is
+	// refused after it, and one issued by an instance is refused by the next.
+	CSRFKey []byte
+	// CSRFCookieName overrides the cookie a token is carried in.
+	CSRFCookieName string
+	// CSRFFieldName overrides the form field a token is submitted in.
+	CSRFFieldName string
+	// CSRFHeaderName overrides the header a token may be submitted in, which is
+	// how a fetch() sends one when there is no form to put a field in.
+	CSRFHeaderName string
+	// DisableCSRF turns forgery checking off for the whole application. It is for
+	// an application with no browser-submitted forms at all.
+	DisableCSRF bool
 }
 
 // TemplateConfig configures template loading and rendering.

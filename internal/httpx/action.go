@@ -42,6 +42,19 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 
+	// Checked before the handler runs, and before anything it might change.
+	//
+	// Unsafe methods only: a GET action changes nothing by contract, and a token
+	// on it would be a token in a URL, which is a token in a log file and in a
+	// Referer header.
+	if h.csrf != nil && !action.SkipCSRF && !types.SafeMethod(r.Method) {
+		if err := h.csrf.Verify(r); err != nil {
+			// 403, not 400. The request was well formed; it was not authorised.
+			return h.serveFailure(w, r, route.failure(http.StatusForbidden, stageRoute,
+				fmt.Errorf("collage: action %q: %w", action.Name, err)))
+		}
+	}
+
 	ctx := r.Context()
 
 	// One RenderContext for the whole action, handed to the handler and then to

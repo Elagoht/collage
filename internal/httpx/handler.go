@@ -19,6 +19,7 @@ import (
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/csrf"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -171,6 +172,10 @@ type Deps struct {
 	// Invalidator drops cache entries by tag, and is what backs
 	// ActionResult.InvalidateTags. Nil makes that field inert.
 	Invalidator Invalidator
+	// CSRF verifies unsafe requests to actions and issues the tokens
+	// {{csrfToken}} renders. Nil turns forgery checking off entirely, which is
+	// what an application with no forms and no key gets.
+	CSRF *csrf.Guard
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
@@ -190,6 +195,7 @@ type Handler struct {
 	mounts       []*asset.Mount
 	maxBodyBytes int64
 	invalidator  Invalidator
+	csrf         *csrf.Guard
 	// flight coalesces concurrent renders of one cache key, so an expiring
 	// popular page costs one render rather than one per request that arrives
 	// while it is being re-made.
@@ -234,6 +240,7 @@ func New(d Deps) (*Handler, error) {
 		mounts:       slices.Clone(d.Mounts),
 		maxBodyBytes: d.MaxBodyBytes,
 		invalidator:  d.Invalidator,
+		csrf:         d.CSRF,
 		flight:       newFlight(),
 	}, nil
 }
@@ -572,6 +579,14 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	shared := false
 	if key != "" {
 		out, shared = h.flight.do(ctx, key, produce)
+		// A render that issued a forgery token belongs to the visitor it ran for.
+		// Handing it to everyone waiting behind it would give them all one token,
+		// which is a token anyone obtains by visiting the site — so this request
+		// renders for itself instead. It cannot be decided before the render,
+		// because whether a page issues a token is something its templates say.
+		if shared && out.csrfToken != "" {
+			out, shared = produce(), false
+		}
 	} else {
 		out = produce()
 	}
@@ -591,6 +606,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	header.Set("Content-Type", contentTypeHTML)
 	header.Set("ETag", out.etag)
 	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
+	// After setCacheHeaders, so it overrides whatever the page's strategy asked
+	// for. A page carrying a token is one visitor's, whatever it was declared as,
+	// and the cookie has to reach them for the token to mean anything.
+	if out.csrfToken != "" && h.csrf != nil {
+		http.SetCookie(w, h.csrf.Cookie(r, out.csrfToken))
+		header.Set("Cache-Control", "private, no-store")
+	}
 	if h.devMode {
 		header.Set(renderTimeHeader, out.renderTime.String())
 	}
@@ -683,19 +705,30 @@ func (h *Handler) renderPage(
 	}
 	content := afterRender.HTML
 
+	// A page that put a forgery token in its markup belongs to the visitor it was
+	// rendered for, and to nobody else. Caching it would hand the next visitor a
+	// token that is not theirs — and hand every visitor the same one, which is a
+	// token that no longer proves anything.
+	issuedToken := rc.IssuedCSRF()
+
 	// A degraded render is complete enough to serve but must never be cached:
 	// caching it would pin one request's transient fragment failure in front of
 	// every later request. A HEAD is served from cache but never populates it —
 	// it produced no body to store.
 	etag := ""
-	if cacheable && r.Method == http.MethodGet && !result.Degraded() {
+	if cacheable && r.Method == http.MethodGet && !result.Degraded() && issuedToken == "" {
 		etag = h.writeCache(r, key, page, content, result.DependencyTags)
 	}
 	if etag == "" {
 		etag = cache.ETag(content)
 	}
 
-	return &outcome{content: content, etag: etag, renderTime: renderTime}
+	return &outcome{
+		content:    content,
+		etag:       etag,
+		renderTime: renderTime,
+		csrfToken:  issuedToken,
+	}
 }
 
 // cacheGet is the cache lookup, which never finds anything in development. See the

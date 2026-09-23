@@ -37,6 +37,7 @@ func DefaultFuncs() template.FuncMap {
 		"join":       join,
 		"hoist":      hoistPlaceholder,
 		"asset":      assetPlaceholder,
+		"csrfToken":  csrfPlaceholder,
 		"formatTime": formatTime,
 	}
 }
@@ -55,6 +56,12 @@ func hoistPlaceholder(area string) (template.HTML, error) {
 // FuncMap before any template that calls it is parsed.
 func assetPlaceholder(urlPath string) (string, error) {
 	return "", fmt.Errorf("%w: %q", ErrAssetOutsideRender, urlPath)
+}
+
+// csrfPlaceholder is the parse-time stand-in for "csrfToken". Like slot and hoist,
+// the real implementation needs the request and is bound per render.
+func csrfPlaceholder() (template.HTML, error) {
+	return "", ErrCSRFOutsideRender
 }
 
 // slotPlaceholder is the parse-time stand-in for "slot". It is never meant to run: a

@@ -52,6 +52,11 @@ type RenderContext struct {
 type renderShared struct {
 	mu   sync.Mutex
 	once map[string]*onceCall
+	// csrf is the forgery token this render put into the page, if any. It lives
+	// here rather than on the context because WithContext and WithFragment copy
+	// shallowly: a token issued by a fragment deep in the tree has to be visible
+	// to the handler that writes the response, and only the shared state is.
+	csrf string
 }
 
 // NewRenderContext builds a RenderContext for one render. It copies params into a
@@ -164,6 +169,34 @@ func (rc *RenderContext) Set(key string, value any) { // any: SharedData values 
 // somewhere with no position in the tree.
 func (rc *RenderContext) Hoist(area, key string, html template.HTML) {
 	rc.hoisted.Add(area, key, rc.depth, rc.order, html)
+}
+
+// IssueCSRF records the forgery token this render put into the page. The template
+// function calls it; an application uses {{csrfToken}}.
+//
+// It is what tells the handler two things it cannot see from the markup: to send the
+// cookie the token is checked against, and not to cache this page. A token belongs to
+// one visitor, so a cached page carrying one would hand the next visitor a token that
+// is not theirs — and, worse, would hand every visitor the same one.
+func (rc *RenderContext) IssueCSRF(token string) {
+	if rc.state == nil {
+		return
+	}
+	rc.state.mu.Lock()
+	defer rc.state.mu.Unlock()
+	rc.state.csrf = token
+}
+
+// IssuedCSRF returns the token this render issued, or the empty string. It is what
+// the handler reads after the render to decide whether to send a cookie and whether
+// the page may be cached.
+func (rc *RenderContext) IssuedCSRF() string {
+	if rc.state == nil {
+		return ""
+	}
+	rc.state.mu.Lock()
+	defer rc.state.mu.Unlock()
+	return rc.state.csrf
 }
 
 // Hoisted returns this render's collector. It is how the render engine reads what

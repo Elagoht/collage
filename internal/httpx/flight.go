@@ -24,6 +24,11 @@ type outcome struct {
 	// fail is non-nil when no content could be produced, and carries everything
 	// serveFailure needs.
 	fail *failure
+	// csrfToken is the forgery token this render put into the page, if any. A
+	// render that issued one is never coalesced onto another request — see
+	// Handler.serve — because the token is the one thing in the body that belongs
+	// to a single visitor.
+	csrfToken string
 }
 
 // flight coalesces concurrent renders of the same cache key.
