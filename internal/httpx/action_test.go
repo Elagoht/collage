@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -467,5 +468,30 @@ func TestEmptyRenderFromAnActionIsNotServed(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500: an empty body is not a validation failure", rec.Code)
+	}
+}
+
+// A refusal the request earned is not an application failure. A bot probing forms
+// does this all day, and at error level it buries the failures that are real.
+func TestClientRefusalsAreNotLoggedAsErrors(t *testing.T) {
+	option, _ := withCSRF(t)
+	create := action("create", "/posts", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) { return nil, nil })
+
+	env := actionEnv(t, []*types.Page{testPage("home", "/", types.StrategyDynamic)},
+		[]*types.Action{create}, option)
+
+	// A POST with no token, and a DELETE to a page that answers neither.
+	env.do(post("/posts", "title=x"))
+	env.do(httptest.NewRequest(http.MethodDelete, "/", nil))
+
+	for _, rec := range env.logs.recordsFor("collage: request failed") {
+		if rec.level >= slog.LevelError {
+			t.Errorf("a %s failure was logged at %v, want below error level", rec.stage, rec.level)
+		}
+	}
+	if len(env.logs.recordsFor("collage: request failed")) != 2 {
+		t.Errorf("records = %d, want the two refusals recorded — quietly, not silently",
+			len(env.logs.recordsFor("collage: request failed")))
 	}
 }

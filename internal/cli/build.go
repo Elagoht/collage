@@ -286,6 +286,10 @@ func dockerfileFor(name string) string {
 # for a distroless base.
 FROM golang:` + goVersion() + ` AS build
 WORKDIR /src
+# Dependencies first, so editing your own code does not re-download them. If
+# your go.mod has a replace directive pointing at a path in this repository,
+# move "COPY . ." above this line — the replaced module is not here yet, and
+# go mod download will say so.
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
