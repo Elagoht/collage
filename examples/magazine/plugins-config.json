@@ -1,20 +1,11 @@
 {
-  "elagoht/minimizer": {
-    "html": true,
-    "json": true,
-    "css": true,
-    "js": false
-  },
-
-  "elagoht/jsonld": {
-    "siteName": "The Wire",
-    "siteURL": "http://localhost:3000",
-    "searchURL": "http://localhost:3000/search?q={query}"
-  },
-
-  "imns/opti-image": {
-    "allowedOrigins": [],
-    "prefix": "/_image/",
-    "quality": 82
-  }
+  "_comment": [
+    "Each key is a plugin's Name(). The site loads this file itself and hands the",
+    "framework a map, so nothing here is imposed by collage — an application whose",
+    "settings live in YAML or the environment passes the same map from there.",
+    "",
+    "The entries below are inert: this example registers no plugins, so a key",
+    "naming one would be a startup error. Add the plugin in site.go and its",
+    "section here together."
+  ]
 }

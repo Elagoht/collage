@@ -8,10 +8,6 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
-
-	"example.com/jsonld"
-	"example.com/minimizer"
-	optiimage "example.com/opti-image"
 )
 
 // templatesFS carries the site's markup. Embedding it is what lets the binary run
@@ -60,15 +56,13 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 	app, err := collage.New(&collage.Config{
 		DevMode: cfg.DevMode,
 		Logger:  cfg.Logger,
-		// Two of these need Configure, which runs while the application is built:
-		// the minifier wraps every mounted filesystem, and the image optimiser
-		// registers the route it serves from. RegisterPlugin would refuse them by
-		// name rather than skip their Configure silently.
-		Plugins: []collage.Plugin{
-			minimizer.New(),
-			jsonld.New(),
-			optiimage.New(),
-		},
+		// Plugins go here rather than through RegisterPlugin whenever they need
+		// the Configure phase — registering a template function or wrapping a
+		// mounted filesystem both happen while the application is built, and
+		// RegisterPlugin runs after that. This site registers none of its own;
+		// the configuration it loads is still passed through, so adding one is a
+		// line here and a section in plugins-config.json.
+		Plugins:      nil,
 		PluginConfig: cfg.PluginConfig,
 		Server: collage.ServerConfig{
 			Host: cfg.Host,

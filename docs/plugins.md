@@ -377,13 +377,14 @@ toolchain and identical dependency versions, and is not a basis for an ecosystem
 third-party plugin is an ordinary Go module:
 
 ```go
-import optiimage "github.com/imns/opti-image"
+import optimage "github.com/Elagoht/collage-opti-image"
 
 app, err := collage.New(&collage.Config{
-	Plugins: []collage.Plugin{optiimage.New()},
+	Plugins: []collage.Plugin{optimage.New()},
 })
 ```
 
-Nothing about a plugin shipped alongside the framework is privileged. The three in
-[`plugins/`](../plugins) are each their own module for exactly that reason — they are
-built the way anyone else's would be.
+No plugin ships with the framework, and that is the point rather than an omission: a
+plugin bundled here would be built against internals nobody else can reach, and the
+first third-party author would discover the difference the hard way. Everything a
+plugin needs is on this page.

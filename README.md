@@ -131,18 +131,22 @@ cd examples/magazine     && go run .
 
 ### Plugins
 
-Three worked plugins live in [`plugins/`](plugins), each its own module, built the
-way a third-party one would be — nothing about shipping with the framework makes
-them privileged.
+A plugin is an ordinary Go module that implements `collage.Plugin`. Nothing about
+one shipped by the framework's author would be privileged, which is why none ship
+here: they are separate projects, fetched with `go get` and registered in
+`Config.Plugins` like any other dependency.
 
-| | |
-|---|---|
-| [`elagoht/minimizer`](plugins/minimizer) | strips whitespace and comments from pages, documents and mounted assets |
-| [`elagoht/jsonld`](plugins/jsonld) | emits schema.org structured data from the render's own data |
-| [`imns/opti-image`](plugins/opti-image) | rewrites declared-size images to resized copies it serves itself |
+```go
+import optimage "github.com/Elagoht/collage-opti-image"
 
-`examples/magazine` runs all three, configured from a `plugins-config.json` it loads
-itself — the framework reads no file and imposes no format. See
+app, err := collage.New(&collage.Config{
+	Plugins:      []collage.Plugin{optimage.New()},
+	PluginConfig: pluginConfig,
+})
+```
+
+A plugin can observe a request, rewrite a page's HTML or a document's bytes, and
+contribute pages, documents, mounts and template functions of its own. See
 [`docs/plugins.md`](docs/plugins.md).
 
 ## What it guarantees

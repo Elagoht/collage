@@ -1,6 +1,11 @@
 # Plugin extensibility, and six parked defects
 
-**Status:** approved 2026-09-23. Decisions below were taken explicitly; the
+**Status:** approved 2026-09-23. **Amended the same day:** the three plugins named
+below were built here to drive the design out, then moved to repositories of their
+own — a plugin living in the framework's tree would be built against a layout no
+third-party author has, and the first one to try would find the difference the hard
+way. The capability work described here stayed. Publisher segments in the plugin
+names below were placeholders and are now all `elagoht`. Decisions below were taken explicitly; the
 rationale travels with them so a later reader can tell a choice from an accident.
 
 ## Why
@@ -33,13 +38,14 @@ toolchain and identical dependency versions, and is not a basis for an ecosystem
 A third-party plugin is therefore an ordinary Go module:
 
 ```go
-import optiimage "github.com/imns/opti-image"
-app.RegisterPlugin(optiimage.New())
+import optimage "github.com/Elagoht/collage-opti-image"
+app.RegisterPlugin(optimage.New())
 ```
 
 That already works: `collage.Plugin` is public and nothing about the framework's own
-plugins is privileged. The three plugins built here live in `plugins/`, each its own
-module, so they are structurally indistinguishable from one written elsewhere.
+plugins is privileged. The three built alongside this design are each their own
+module in their own repository, so they are structurally indistinguishable from one
+written by anyone else — which is what proves the surface is enough.
 
 ### D2 — The application supplies plugin configuration, not the framework
 
@@ -164,7 +170,7 @@ the same reason `Page` is: copying it on every render would cost the hot path.
 
 ## Plugins
 
-Each is its own module under `plugins/`, with its own `go.mod`.
+Each was built as its own module and now lives in its own repository.
 
 - **`elagoht/minimizer`** — HTML via `AfterRender`, documents via
   `OnDocumentRendered`, assets via `WrapMount`. Each of `html`, `json`, `css`, `js`
@@ -172,7 +178,7 @@ Each is its own module under `plugins/`, with its own `go.mod`.
   minifier for these formats is a parser, and a regex one silently corrupts input.
 - **`elagoht/jsonld`** — emits `<script type="application/ld+json">` into `<head>`
   from `Page.SEO` and the render's `SharedData`.
-- **`imns/opti-image`** — rewrites `<img>` elements that declare `width` and
+- **`elagoht/opti-image`** — rewrites `<img>` elements that declare `width` and
   `height`, fetching from an allowlist of hosts, resizing, and serving the result
   from a mount it registers itself. WebP is behind a build tag, because encoding it
   requires cgo and a plugin that cannot be built without a C toolchain is a plugin

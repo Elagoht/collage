@@ -2,26 +2,15 @@
 //
 // An application that uses the framework: its own module, its own module path, and
 // collage as an ordinary dependency resolved from the module cache like any other.
+// Nothing in this directory is framework source, and nothing here can reach the
+// framework's internal packages — Go does not let one module import another's.
 //
-// The three plugin requires carry replace directives and the collage one does not,
-// which is the difference between a dependency that is published and one that is
-// not. collage has a version; the plugins live beside this example under
-// placeholder module paths, so there is nowhere for the module cache to fetch them
-// from. A real third-party plugin — one with a real module path and a tag — needs
-// neither the replace nor a mention here beyond the require.
+// The go.work at the repository root points this at the checkout beside it while
+// the two are developed together. It is a developer's tool and nothing in this
+// module refers to it — delete it, or copy this directory elsewhere, and the
+// require below resolves from the module cache as usual.
 module example.com/thewire
 
 go 1.26
 
-require (
-	example.com/jsonld v0.0.0
-	example.com/minimizer v0.0.0
-	example.com/opti-image v0.0.0
-	github.com/Elagoht/collage v0.1.0
-)
-
-replace example.com/jsonld => ../../plugins/jsonld
-
-replace example.com/minimizer => ../../plugins/minimizer
-
-replace example.com/opti-image => ../../plugins/opti-image
+require github.com/Elagoht/collage v0.1.0

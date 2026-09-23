@@ -36,28 +36,16 @@ is about what the mechanisms are *for* once a backend is involved.
 
 ## Plugins
 
-The site runs all three of the repository's plugins, configured from
-`plugins-config.json` which it loads itself:
+The site registers none, and still shows the mechanism: it loads
+`plugins-config.json` itself and hands the framework a `map[string]json.RawMessage`.
+That one `LoadPluginConfig` call is the only thing tying it to JSON — the framework
+reads no file and imposes no format, so moving the settings to YAML or the
+environment changes nothing else.
 
-```json
-{
-  "elagoht/minimizer": { "html": true, "json": true, "css": true, "js": false },
-  "elagoht/jsonld":    { "siteName": "The Wire", "siteURL": "http://localhost:3000" },
-  "imns/opti-image":   { "allowedOrigins": [] }
-}
-```
-
-A missing file is not an error: every plugin's defaults already describe what
-"unconfigured" means. The one line tying the site to JSON is the `LoadPluginConfig`
-call — the framework takes a map and does not care where it came from.
-
-`opti-image` ships with an empty origin list, so it is inert until a deployment names
-the host its images come from. An empty list never means "any host".
-
-The minifier and the image optimiser are supplied through `Config.Plugins` rather
-than `RegisterPlugin`, because both need the `Configure` phase — one wraps every
-mounted filesystem, the other registers the route it serves from, and both happen
-while the application is built.
+Adding a plugin is two edits that belong together: the constructor in `site.go`, and
+its section in `plugins-config.json` keyed by the plugin's `Name()`. A section whose
+key names no registered plugin is a startup error, so the two cannot drift apart
+unnoticed.
 
 ## Routes
 

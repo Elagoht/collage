@@ -11,7 +11,7 @@ import (
 //
 //	{
 //	  "elagoht/minimizer": {"html": true, "css": true, "js": true, "json": false},
-//	  "imns/opti-image":   {"allowedHosts": [{"scheme": "https", "host": "images.example.com"}]}
+//	  "elagoht/opti-image": {"allowedOrigins": [{"scheme": "https", "host": "images.example.com"}]}
 //	}
 //
 // It is a convenience, not a requirement, and the framework never calls it. Nothing
