@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 
+	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -147,6 +148,11 @@ func (a *App) RenderDocumentPath(ctx context.Context, path, locale string, param
 		ctx = context.Background()
 	}
 
+	// Startup first, memoised — see RenderPath for why.
+	if _, err := a.buildHandler(); err != nil {
+		return nil, err
+	}
+
 	req := a.syntheticRequest(ctx, path, locale)
 
 	match, err := a.routes.Match(req)
@@ -171,5 +177,24 @@ func (a *App) RenderDocumentPath(ctx context.Context, path, locale string, param
 
 	// match.Locale, not the locale argument — see the doc comment above.
 	rc := types.NewRenderContext(ctx, req, nil, match.Locale, merged)
-	return docRenderer.ExecuteDocument(ctx, match.Document, rc)
+
+	result, err := docRenderer.ExecuteDocument(ctx, match.Document, rc)
+	if err != nil {
+		return result, err
+	}
+
+	// Dispatched here as well as on the serving path, so a static build writes what
+	// the server would have sent. See RenderPath for the reasoning.
+	event := &plugin.DocumentRenderedEvent{
+		Document:    match.Document,
+		ContentType: match.Document.ContentType,
+		Locale:      match.Locale,
+		Path:        path,
+		Body:        result.Body,
+	}
+	if err := a.plugins.DocumentRendered(ctx, event); err != nil {
+		return nil, err
+	}
+	result.Body = event.Body
+	return result, nil
 }

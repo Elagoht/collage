@@ -420,9 +420,6 @@ func New(cfg Config) (*App, error) {
 			return nil, fmt.Errorf("collage: register plugin: %w", err)
 		}
 	}
-	if err := app.plugins.CheckConfigKeys(cfg.PluginConfig); err != nil {
-		return nil, err
-	}
 	if err := app.plugins.Configure(context.Background(), func(name string) plugin.ConfigHost {
 		return &configHostView{app: app, name: name}
 	}); err != nil {
@@ -621,6 +618,14 @@ func (a *App) buildHandler() (http.Handler, error) {
 		return a.handler, a.handlerErr
 	}
 	a.handlerBuilt = true
+
+	// Checked here rather than in New, because RegisterPlugin can add a plugin
+	// after New and a key naming one of those would otherwise be reported as
+	// unknown. This is the first point at which the whole plugin set is known, and
+	// it is still startup: nothing has been served.
+	if err := a.plugins.CheckConfigKeys(a.cfg.PluginConfig); err != nil {
+		return a.buildFailed(err)
+	}
 
 	// Plugin Init runs before registration closes, because a plugin contributes to
 	// the application: a page, a document, a mount, all through Host. Closing
@@ -943,6 +948,15 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 		ctx = context.Background()
 	}
 
+	// Startup runs first, memoised, so a render here happens in the state a served
+	// render would happen in. Plugin Init is part of that, and skipping it meant a
+	// plugin reading its configuration there ran on defaults during a static build
+	// while running configured on the server — two different sites from one source,
+	// with nothing saying so.
+	if _, err := a.buildHandler(); err != nil {
+		return nil, err
+	}
+
 	req := a.syntheticRequest(ctx, path, locale)
 
 	match, err := a.routes.Match(req)
@@ -965,7 +979,49 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	// the argument instead let the two disagree — RenderPath(ctx, "/tr/blog", "en",
 	// nil) served the tr page with a RenderContext.Locale of "en", so every
 	// locale-dependent fragment on it rendered in the wrong language.
-	return a.renderer.Render(ctx, types.NewRenderContext(ctx, req, match.Page, match.Locale, merged))
+	rc := types.NewRenderContext(ctx, req, match.Page, match.Locale, merged)
+
+	// The render hooks fire here as well as in the HTTP handler, and that is the
+	// point rather than a convenience.
+	//
+	// A static build renders through this method. Skipping the hooks meant a built
+	// site was not what the server served: unminified where the server minified,
+	// unannotated where it annotated, with image URLs the server had rewritten left
+	// pointing at the origin — and nothing anywhere said so.
+	//
+	// PageResolved is deliberately not dispatched. Its contract is "once per
+	// request, immediately after the router resolves it", and a build is not a
+	// request; firing it would make every plugin counting requests count renders
+	// that nobody asked for. BeforeRender and AfterRender are about a render, which
+	// this unambiguously is, and they fire as a pair so a plugin that sets something
+	// up in one and uses it in the other is not handed half of each.
+	if err := a.plugins.BeforeRender(ctx, &plugin.BeforeRenderEvent{
+		Page:   match.Page,
+		Locale: match.Locale,
+		Path:   path,
+	}); err != nil {
+		return nil, err
+	}
+
+	result, err := a.renderer.Render(ctx, rc)
+	if err != nil {
+		return result, err
+	}
+
+	event := &plugin.AfterRenderEvent{
+		Page:     match.Page,
+		Locale:   match.Locale,
+		Degraded: result.Degraded(),
+		HTML:     result.HTML,
+		Data:     rc.SharedData,
+	}
+	if err := a.plugins.AfterRender(ctx, event); err != nil {
+		return nil, err
+	}
+	// What the hooks produced is what the caller gets, exactly as on the serving
+	// path — otherwise the dispatch would be observation dressed as transformation.
+	result.HTML = event.HTML
+	return result, nil
 }
 
 // syntheticRequest builds the GET request RenderPath resolves and renders through.

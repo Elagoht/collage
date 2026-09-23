@@ -323,6 +323,23 @@ func (p *Plugin) OnDocumentRendered(ctx context.Context, ev *collage.DocumentRen
 Without it a plugin that post-processes output covers pages and silently skips every
 sitemap, feed and JSON endpoint.
 
+### Static builds
+
+The render hooks fire during a static build too, and plugin `Init` runs before the
+first page is rendered. `RenderPath` goes through startup, memoised, so a build
+renders in the state a served render renders in.
+
+That is not a nicety. Before it, a built site was not what the server served:
+unminified where the server minified, unannotated where it annotated, and — because
+a plugin reading its configuration in `Init` never got it — running on defaults in
+one and configured in the other. One source, two sites, with nothing saying so.
+
+`PageResolved` deliberately does not fire. Its contract is "once per request,
+immediately after the router resolves it", and a build is not a request; firing it
+would make every plugin counting requests count renders nobody asked for.
+`BeforeRender` and `AfterRender` fire as a pair, so a plugin that sets something up
+in one and uses it in the other is not handed half of each.
+
 ### The render's own data
 
 `AfterRenderEvent.Data` is the render's `SharedData` — whatever the page's fragments

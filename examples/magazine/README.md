@@ -234,13 +234,17 @@ What is skipped, and why, is printed rather than left to be discovered:
 - `rss.xml`, `sitemap.xml` and `robots.txt` are one file serving both locales, so
   the Turkish copies would write over the English ones.
 
-**Three of the plugins do not run during a build.** The stylesheet is minified,
-because that happens by wrapping the mounted filesystem, which a build copies from.
-But the HTML is not minified, no structured data is emitted, and the images are left
-pointing at the backend — `AfterRender` and `OnDocumentRendered` are dispatched by
-the HTTP handler, and a build renders through `RenderPath`, which does not go
-through it. A statically built site is therefore not byte-for-byte what the server
-serves. Worth knowing before putting a build behind a CDN.
+The plugins run. A built page is byte-for-byte what the server sends — minified,
+carrying its structured data, with the image URLs rewritten — with one exception
+below.
+
+**The image URLs will not work in the built site.** Two things are true at once: the
+optimiser signs its URLs with a key generated per process, so a build's URLs are not
+valid for any later process; and the route that would serve them is skipped by the
+build anyway, because its path is dynamic and no `DocumentPathProvider` can enumerate
+signatures that do not exist yet. A statically built site needs its images somewhere
+a file server can reach — the origin directly, or a CDN — which means leaving the
+optimiser off for the build. It is a real limit of combining the two, not a setting.
 
 ## Configuration
 

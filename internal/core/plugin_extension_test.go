@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,15 +130,39 @@ func TestPlugin_ConfigDefaultsSurviveAnAbsentSection(t *testing.T) {
 func TestPlugin_UnknownConfigKeyIsAStartupError(t *testing.T) {
 	// The typo case. Ignoring it leaves the operator certain a plugin was
 	// configured while it ran on defaults.
-	cfg := testConfig(writeTemplates(t, defaultTemplates()))
-	cfg.Plugins = []plugin.Plugin{&extPlugin{name: "acme/ext"}}
-	cfg.PluginConfig = map[string]json.RawMessage{
-		"acme/exd": json.RawMessage(`{}`),
-	}
+	//
+	// Reported at Start rather than at New, because RegisterPlugin can add a plugin
+	// after New: checking earlier would call a key unknown that a later registration
+	// was about to claim.
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.Plugins = []plugin.Plugin{&extPlugin{name: "acme/ext"}}
+		cfg.PluginConfig = map[string]json.RawMessage{
+			"acme/exd": json.RawMessage(`{}`),
+		}
+	})
 
-	_, err := New(cfg)
-	if !errors.Is(err, plugin.ErrUnknownPluginConfig) {
-		t.Fatalf("New = %v, want ErrUnknownPluginConfig", err)
+	if err := app.Start(); !errors.Is(err, plugin.ErrUnknownPluginConfig) {
+		t.Fatalf("Start = %v, want ErrUnknownPluginConfig", err)
+	}
+}
+
+func TestPlugin_ConfigForALateRegisteredPluginIsNotUnknown(t *testing.T) {
+	// A plugin added through RegisterPlugin is as configurable as one supplied in
+	// Config.Plugins. It was not while the key check ran in New.
+	p := &configInInitPlugin{}
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.PluginConfig = map[string]json.RawMessage{
+			"acme/late": json.RawMessage(`{"greeting":"configured"}`),
+		}
+	})
+	if err := app.RegisterPlugin(p); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+	if err := app.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if p.settings.Greeting != "configured" {
+		t.Errorf("greeting = %q, want %q", p.settings.Greeting, "configured")
 	}
 }
 
@@ -192,5 +217,152 @@ func TestPlugin_MountWrapperWrapsEveryFilesystem(t *testing.T) {
 	// The application's mount and the one the plugin registers from Init.
 	if p.wrapCalls != 2 {
 		t.Errorf("wrapper ran %d times, want 2 — every mounted filesystem, the plugin's own included", p.wrapCalls)
+	}
+}
+
+// rewritingPlugin post-processes output the way a minifier or an image optimiser
+// does, and counts the hooks it was given.
+type rewritingPlugin struct {
+	beforeRender    int
+	afterRender     int
+	documentRendere int
+}
+
+func (*rewritingPlugin) Name() string                            { return "acme/rewrite" }
+func (*rewritingPlugin) Version() string                         { return "1.0.0" }
+func (*rewritingPlugin) Init(context.Context, plugin.Host) error { return nil }
+func (*rewritingPlugin) Shutdown(context.Context) error          { return nil }
+
+func (p *rewritingPlugin) OnBeforeRender(_ context.Context, _ *plugin.BeforeRenderEvent) error {
+	p.beforeRender++
+	return nil
+}
+
+func (p *rewritingPlugin) OnAfterRender(_ context.Context, ev *plugin.AfterRenderEvent) error {
+	p.afterRender++
+	ev.HTML = append([]byte("<!--rewritten-->"), ev.HTML...)
+	return nil
+}
+
+func (p *rewritingPlugin) OnDocumentRendered(_ context.Context, ev *plugin.DocumentRenderedEvent) error {
+	p.documentRendere++
+	ev.Body = append([]byte("rewritten\n"), ev.Body...)
+	return nil
+}
+
+// TestRenderPath_RunsThePostProcessingHooks is about a divergence rather than a
+// missing feature.
+//
+// RenderPath is what a static build renders through, and it used to skip the plugin
+// hooks entirely — those are dispatched by the HTTP handler. So a built site was not
+// what the server served: unminified where the server minified, unannotated where it
+// annotated, with image URLs the server had rewritten left pointing at the origin.
+// Nothing said so, which is the shape of failure this framework refuses everywhere
+// else.
+func TestRenderPath_RunsThePostProcessingHooks(t *testing.T) {
+	p := &rewritingPlugin{}
+	app := newTestApp(t, nil)
+	if err := app.RegisterPlugin(p); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+	if err := app.RegisterPage(newHomePage()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if err := app.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	result, err := app.RenderPath(t.Context(), "/", "en", nil)
+	if err != nil {
+		t.Fatalf("RenderPath: %v", err)
+	}
+
+	if p.afterRender != 1 {
+		t.Errorf("OnAfterRender ran %d times, want 1 — a build must produce what the server produces", p.afterRender)
+	}
+	if p.beforeRender != 1 {
+		t.Errorf("OnBeforeRender ran %d times, want 1 — a plugin pairing the two would see only half of each render", p.beforeRender)
+	}
+	if !bytes.HasPrefix(result.HTML, []byte("<!--rewritten-->")) {
+		t.Errorf("HTML = %q, want the hook's rewrite to be what RenderPath returns", result.HTML)
+	}
+}
+
+func TestRenderDocumentPath_RunsTheDocumentHook(t *testing.T) {
+	p := &rewritingPlugin{}
+	app := newTestApp(t, nil)
+	if err := app.RegisterPlugin(p); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+	if err := app.RegisterDocument(&types.Document{
+		Name:        "robots",
+		ContentType: "text/plain; charset=utf-8",
+		Paths:       map[string]string{"en": "/robots.txt"},
+		Handler: func(context.Context, *types.RenderContext) ([]byte, []string, error) {
+			return []byte("User-agent: *\n"), nil, nil
+		},
+	}); err != nil {
+		t.Fatalf("RegisterDocument: %v", err)
+	}
+	if err := app.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	result, err := app.RenderDocumentPath(t.Context(), "/robots.txt", "en", nil)
+	if err != nil {
+		t.Fatalf("RenderDocumentPath: %v", err)
+	}
+
+	if p.documentRendere != 1 {
+		t.Errorf("OnDocumentRendered ran %d times, want 1", p.documentRendere)
+	}
+	if !bytes.HasPrefix(result.Body, []byte("rewritten\n")) {
+		t.Errorf("Body = %q, want the hook's rewrite", result.Body)
+	}
+}
+
+// configInInitPlugin reads its configuration in Init, the way a plugin with nothing
+// to contribute at construction time reasonably would.
+type configInInitPlugin struct {
+	settings extSettings
+}
+
+func (*configInInitPlugin) Name() string    { return "acme/late" }
+func (*configInInitPlugin) Version() string { return "1.0.0" }
+
+func (p *configInInitPlugin) Init(_ context.Context, host plugin.Host) error {
+	p.settings = extSettings{Greeting: "default"}
+	return host.Config(&p.settings)
+}
+
+func (*configInInitPlugin) Shutdown(context.Context) error { return nil }
+
+// TestRenderPath_RunsPluginInit covers the other half of the build divergence.
+//
+// Dispatching the render hooks is not enough on its own: a plugin that reads its
+// configuration in Init ran on defaults during a static build and configured on the
+// server, so one source produced two different sites. RenderPath now goes through
+// startup, memoised, so it renders in the state a served render renders in.
+func TestRenderPath_RunsPluginInit(t *testing.T) {
+	p := &configInInitPlugin{}
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.PluginConfig = map[string]json.RawMessage{
+			"acme/late": json.RawMessage(`{"greeting":"configured"}`),
+		}
+	})
+	if err := app.RegisterPlugin(p); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+	if err := app.RegisterPage(newHomePage()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+
+	// No Start: RenderPath is what a static build calls, and a build does not serve.
+	if _, err := app.RenderPath(t.Context(), "/", "en", nil); err != nil {
+		t.Fatalf("RenderPath: %v", err)
+	}
+
+	if p.settings.Greeting != "configured" {
+		t.Errorf("greeting = %q, want %q — the plugin never saw its configuration", p.settings.Greeting, "configured")
 	}
 }
