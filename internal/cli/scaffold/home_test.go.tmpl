@@ -182,3 +182,25 @@ func TestNotFoundPage(t *testing.T) {
 		t.Errorf("body = %q, want this site's own not-found page", body)
 	}
 }
+
+// Each page declares its own <title> with rc.Hoist, and the layout's
+// {{hoist "head"}} is where it lands. A fragment renders inside the <body>, long
+// after the <head> was written, so this is the only way it reaches it.
+func TestEachPageHoistsItsOwnTitle(t *testing.T) {
+	h := handler(t)
+
+	for target, want := range map[string]string{
+		"/":       "<title>@@NAME@@</title>",
+		"/signup": "<title>Sign up — @@NAME@@</title>",
+	} {
+		_, body := get(t, h, target)
+		if !strings.Contains(body, want) {
+			t.Errorf("GET %s does not contain %q", target, want)
+		}
+		// Counted, not merely found: a layout writing one and a page hoisting
+		// another is two titles, which is a page that looks fine and is not.
+		if n := strings.Count(body, "<title>"); n != 1 {
+			t.Errorf("GET %s has %d titles, want exactly 1", target, n)
+		}
+	}
+}

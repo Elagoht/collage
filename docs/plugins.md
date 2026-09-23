@@ -10,6 +10,64 @@ if err := app.RegisterPlugin(&stamp{}); err != nil {
 }
 ```
 
+## Installing one
+
+A plugin is a separate Go module. Two steps, and there is no third:
+
+```
+go get github.com/Elagoht/collage-minimizer
+```
+
+```go
+import minimizer "github.com/Elagoht/collage-minimizer"
+
+app, err := collage.New(&collage.Config{
+	Plugins: []collage.Plugin{minimizer.New()},
+})
+```
+
+Configuration, when a plugin takes any, comes from a JSON file keyed by plugin name
+and handed to `Config.PluginConfig` — see `collage.LoadPluginConfig` and
+`examples/magazine/main.go`. A plugin with no entry runs on its defaults.
+
+### A plugin that hoists needs somewhere to hoist to
+
+Some plugins contribute to the document head — structured data, preload hints — and
+they do it by hoisting. **Nothing appears unless the layout has the marker:**
+
+```html
+<head>
+  {{hoist "head"}}
+</head>
+```
+
+A scaffolded project has it. A layout written before this mattered may not, and the
+symptom is a plugin that registers, runs, and produces nothing at all.
+
+### And some of them only supply the mechanism
+
+`collage-jsonld` is the clearest case: registering it emits nothing, because the
+plugin cannot invent what a page is about. The page says so from its data handler,
+which is where it already has the article it fetched:
+
+```go
+func articleData(ctx context.Context, rc *collage.RenderContext) (any, []string, error) {
+	article, err := client.Article(ctx, rc.Param("slug"))
+	// ...
+	jsonld.Emit(rc, jsonld.Article{
+		Headline:      article.Title,
+		DatePublished: article.PublishedAt,
+		AuthorName:    article.Author,
+	})
+	return view{Article: article}, nil, nil
+}
+```
+
+`collage-minimizer` is the other kind: it works on what the render produced, so
+registering it is the whole of it. Which kind a plugin is is the first thing its
+README says.
+
+
 ## The contract
 
 ```go

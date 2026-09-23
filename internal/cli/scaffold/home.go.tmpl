@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"html"
+	"html/template"
 	"net/mail"
 	"strings"
 	"sync"
@@ -9,12 +11,30 @@ import (
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
-// layout is the shell both pages render inside. {{slot "content"}} in
-// templates/layouts/default.html marks where a page's own content goes.
+// layout is the shell every page renders inside. {{slot "content"}} in
+// templates/layouts/default.html marks where a page's own content goes, and
+// {{hoist "head"}} marks where fragments contribute to its <head>.
 func layout() *collage.Fragment {
 	return collage.NewFragment("layout", "layouts/default.html").
 		WithSlot("content", true, false).
 		Build()
+}
+
+// title declares this page's <title>, which the layout's {{hoist "head"}} puts
+// in the document head.
+//
+// Hoisting is how a fragment contributes something that belongs to the page
+// rather than to itself. A content fragment renders inside the <body>, long
+// after the <head> was written, so it cannot put a title there by itself — it
+// declares one, and the engine substitutes it at the marker once the whole tree
+// has rendered.
+//
+// The key is what makes one declaration the same as another: declare "title"
+// twice and the innermost fragment wins, which is what "more specific" means in
+// a tree. That is also how a plugin contributes — collage-jsonld hoists its
+// structured data into the same area.
+func title(rc *collage.RenderContext, text string) {
+	rc.Hoist("head", "title", template.HTML("<title>"+html.EscapeString(text)+"</title>"))
 }
 
 // ---------------------------------------------------------------------------
@@ -62,6 +82,8 @@ func homePage() *collage.Page {
 // something another one also needs should use collage.Once rather than reading
 // and writing shared data itself.
 func homeData(ctx context.Context, rc *collage.RenderContext) (any, []string, error) { // any: html/template renders arbitrary data
+	title(rc, "@@NAME@@")
+
 	return homeView{Links: []link{
 		{Label: "Try the form", Href: "/signup"},
 		{Label: "The stylesheet", Href: "/static/app.css"},
@@ -122,6 +144,8 @@ func signUpPage() *collage.Page {
 // signUpData fetches what the form page renders with, including whatever the
 // action left behind after a refused submission.
 func signUpData(ctx context.Context, rc *collage.RenderContext) (any, []string, error) { // any: html/template renders arbitrary data
+	title(rc, "Sign up — @@NAME@@")
+
 	var view signUpView
 
 	// On an ordinary page view there is nothing here, which is the same code
@@ -219,7 +243,12 @@ func (s *store) add(address string) {
 // whether a page is worth caching and whether it belongs in an export are
 // different questions.
 func notFoundPage() *collage.Page {
-	content := collage.NewFragment("not-found-content", "pages/404.html").Build()
+	content := collage.NewFragment("not-found-content", "pages/404.html").
+		WithDataHandler(func(_ context.Context, rc *collage.RenderContext) (any, []string, error) { // any: html/template renders arbitrary data
+			title(rc, "Not found — @@NAME@@")
+			return nil, nil, nil
+		}).
+		Build()
 
 	return collage.NewPage("not-found").
 		WithLayout(layout()).

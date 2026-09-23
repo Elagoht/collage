@@ -3,7 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>@@NAME@@</title>
+
+  {{/* Where fragments contribute to the page. A fragment renders inside the
+       <body>, long after this <head> was written, so it cannot put anything
+       here by itself — it declares with rc.Hoist and the engine substitutes
+       it here once the tree has finished. The pages in home.go hoist their
+       own <title>, and a plugin such as collage-jsonld puts its structured
+       data here too. Without this marker, everything hoisted has nowhere to
+       land and nothing appears. */}}
+  {{hoist "head"}}
+
   {{/* asset resolves this to "/static/app.<hash>.css", which is served with a
        year-long immutable lifetime: a changed file is a changed URL, so the
        browser never has to ask whether its copy is still good. Linking
