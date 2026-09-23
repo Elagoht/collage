@@ -4,6 +4,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
@@ -277,5 +278,48 @@ func TestConfig_IsDevMode(t *testing.T) {
 				t.Errorf("IsDevMode() = %v, want %v", got, tt.wantDevMode)
 			}
 		})
+	}
+}
+
+func TestConfig_ApplyDefaults_FSSetLeavesRootEmpty(t *testing.T) {
+	// "./templates" is a working-directory-relative path, so defaulting it into an
+	// FS-backed config would silently look for a "templates" subdirectory inside the
+	// embedded filesystem. With FS set, an empty Root means the root of that FS.
+	c := Config{Template: TemplateConfig{FS: fstest.MapFS{}}}
+	c.ApplyDefaults()
+
+	if c.Template.Root != "" {
+		t.Errorf("Template.Root = %q, want %q (FS is set, so Root must not be defaulted)", c.Template.Root, "")
+	}
+	if c.Template.Extension != ".html" {
+		t.Errorf("Template.Extension = %q, want %q", c.Template.Extension, ".html")
+	}
+}
+
+func TestConfig_ApplyDefaults_NoFSStillDefaultsRoot(t *testing.T) {
+	c := Config{}
+	c.ApplyDefaults()
+
+	if c.Template.Root != "./templates" {
+		t.Errorf("Template.Root = %q, want %q", c.Template.Root, "./templates")
+	}
+}
+
+func TestConfig_Validate_EmptyRootWithFSIsValid(t *testing.T) {
+	c := Config{Template: TemplateConfig{FS: fstest.MapFS{}}}
+	c.ApplyDefaults()
+
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate() error = %v, want nil (an FS with no Root is a complete template source)", err)
+	}
+}
+
+func TestConfig_Validate_EmptyRootWithoutFSIsInvalid(t *testing.T) {
+	// ApplyDefaults is deliberately not called: Validate must stand on its own for
+	// a caller that builds a Config by hand.
+	c := Config{Server: ServerConfig{Port: 8080}}
+
+	if err := c.Validate(); !errors.Is(err, ErrEmptyTemplateRoot) {
+		t.Fatalf("Validate() error = %v, want ErrEmptyTemplateRoot", err)
 	}
 }

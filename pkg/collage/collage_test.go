@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
@@ -147,6 +148,7 @@ func TestNew_Rejections(t *testing.T) {
 func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	metrics := &countingMetrics{}
 	tracer := inertTracer{}
+	templateFS := fstest.MapFS{"marker.html": &fstest.MapFile{}}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -162,6 +164,7 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 			ShutdownTimeout: 4 * time.Second,
 		},
 		Template: TemplateConfig{
+			FS:        templateFS,
 			Root:      "/tmp/templates",
 			Extension: ".gohtml",
 			DevMode:   true,
@@ -206,6 +209,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	}
 	if core.Server.ShutdownTimeout != 4*time.Second {
 		t.Errorf("Server.ShutdownTimeout = %v, want 4s", core.Server.ShutdownTimeout)
+	}
+	if _, ok := core.Template.FS.(fstest.MapFS); !ok {
+		t.Errorf("Template.FS = %T, want the configured fstest.MapFS", core.Template.FS)
 	}
 	if core.Template.Root != "/tmp/templates" || core.Template.Extension != ".gohtml" {
 		t.Errorf("Template = %+v, want the configured root and extension", core.Template)
