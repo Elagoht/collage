@@ -2,7 +2,6 @@
   <h1>{{.Heading}}</h1>
   <p class="standfirst">{{.Standfirst}}</p>
 </header>
-{{if .Query}}
-  {{template "partials/cards.html" .}}
-  {{template "partials/pager.html" .}}
-{{end}}
+{{/* The results are their own fragment, which is what lets /search/results
+     answer with just this part of the page. */}}
+{{slot "results"}}

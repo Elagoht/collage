@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"log/slog"
-	"net/http"
 
 	"github.com/Elagoht/collage/internal/csrf"
 )
@@ -63,18 +62,18 @@ func buildCSRF(cfg SecurityConfig, logger *slog.Logger) (*csrf.Guard, error) {
 	})
 }
 
-// csrfToken returns the forgery token for r, and is what backs {{csrfToken}}.
+// csrfMarker returns the placeholder {{csrfToken}} renders, which the response layer
+// replaces with each reader's own token.
 //
 // It returns an error rather than an empty string when the protection is off: a
 // template asking for a token is a form that expects one, and rendering the form
 // without it would produce a page whose submission is refused with nothing to
 // explain why.
-func (a *App) csrfToken(r *http.Request) (string, error) {
+func (a *App) csrfMarker() (string, error) {
 	if a.csrf == nil {
 		return "", ErrCSRFDisabled
 	}
-	token, _, err := a.csrf.TokenFor(r)
-	return token, err
+	return a.csrf.Marker(), nil
 }
 
 // ErrCSRFDisabled reports a template asking for a forgery token in an application

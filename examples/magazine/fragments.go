@@ -41,6 +41,19 @@ type deps struct {
 	// apiBase is where the newsroom API lives, needed by the templates to build
 	// image URLs.
 	apiBase string
+	// subscribers is where the newsletter form's submissions land.
+	subscribers *subscribers
+	// pages holds the pages an action needs to render. An action that answers a
+	// validation failure with the form's own page has to name that page, and the
+	// page is built after the deps are.
+	pages *sitePages
+}
+
+// sitePages holds the pages an action re-renders. It is filled in as the site is
+// built, which is the one order that works: a page's own action is declared while
+// the page is being built, and cannot refer to the finished page yet.
+type sitePages struct {
+	home *collage.Page
 }
 
 // translate maps a newsroom error onto the framework's.
@@ -207,6 +220,17 @@ func (d *deps) homeData(ctx context.Context, rc *collage.RenderContext) (*view, 
 	v.Listing = listing
 	d.hoistTitle(rc, v.Heading, v.Standfirst)
 	v.Pager = pager{Path: v.URL.Home()}
+
+	// Whatever the newsletter action left for this render. On an ordinary page
+	// view there is nothing there, which is the same code path.
+	if reason, ok := rc.Get("newsletter:error"); ok {
+		v.NewsletterError, _ = reason.(string) // any: SharedData's value type is the framework's
+	}
+	if typed, ok := rc.Get("newsletter:email"); ok {
+		v.NewsletterEmail, _ = typed.(string) // any: SharedData's value type is the framework's
+	}
+	v.Subscribed = rc.Request != nil && rc.Request.URL.Query().Get("subscribed") == "1"
+
 	return v, []string{"articles"}, nil
 }
 

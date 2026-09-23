@@ -424,22 +424,23 @@ func (e *SlotEngine) assetFunc() func(string) (string, error) {
 // wrong is a form that fails to submit in a way that looks like the token is broken.
 // The one thing a template has to get right is putting it inside the <form>.
 //
-// Issuing is recorded on the render context, which is how the handler learns two
-// things the markup cannot tell it: to send the cookie this token is checked
-// against, and not to cache this page. A token belongs to one visitor.
+// What it renders is a marker rather than a token. A token belongs to one visitor,
+// so a cached page must not contain one — but it may contain something that stands
+// for one, which the response layer replaces with the reader's own token on the way
+// out. That is what lets a page with a form still be cached: the render is shared,
+// the one per-visitor string is not.
 func (e *SlotEngine) csrfFunc(rc *types.RenderContext) func() (htmltemplate.HTML, error) {
 	return func() (htmltemplate.HTML, error) {
-		if e.csrfToken == nil || rc.Request == nil {
+		if e.csrfMarker == nil {
 			return "", template.ErrCSRFOutsideRender
 		}
-		token, err := e.csrfToken(rc.Request)
+		marker, err := e.csrfMarker()
 		if err != nil {
 			return "", err
 		}
-		rc.IssueCSRF(token)
 		return htmltemplate.HTML(`<input type="hidden" name="` +
 			htmltemplate.HTMLEscapeString(CSRFFieldName) +
-			`" value="` + htmltemplate.HTMLEscapeString(token) + `">`), nil
+			`" value="` + marker + `">`), nil
 	}
 }
 

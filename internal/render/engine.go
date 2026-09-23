@@ -9,7 +9,6 @@ package render
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"time"
 
 	"github.com/Elagoht/collage/internal/observability"
@@ -130,10 +129,10 @@ type Options struct {
 	// reporting that no mount can answer, which is what a page linking an asset
 	// through an application that mounted none should say.
 	AssetURL func(urlPath string) (string, error)
-	// CSRFToken returns the forgery token for a request, and is what backs
-	// {{csrfToken}}. Nil leaves the template function reporting that the
-	// application has no key to sign one with.
-	CSRFToken func(r *http.Request) (string, error)
+	// CSRFMarker returns the placeholder {{csrfToken}} renders in place of a real
+	// token, which the response layer replaces per reader. Nil leaves the template
+	// function reporting that forgery protection is off.
+	CSRFMarker func() (string, error)
 }
 
 // SlotEngine is the Engine implementation that resolves {{slot "name"}} against the
@@ -147,7 +146,7 @@ type SlotEngine struct {
 	tracer         observability.Tracer
 	devMode        bool
 	assetURL       func(string) (string, error)
-	csrfToken      func(*http.Request) (string, error)
+	csrfMarker     func() (string, error)
 }
 
 var _ Engine = (*SlotEngine)(nil)
@@ -169,7 +168,7 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 		tracer:         observability.TracerOrNoop(opts.Tracer),
 		devMode:        opts.DevMode,
 		assetURL:       opts.AssetURL,
-		csrfToken:      opts.CSRFToken,
+		csrfMarker:     opts.CSRFMarker,
 	}
 }
 

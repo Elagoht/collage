@@ -909,3 +909,148 @@ func TestSite_FragmentsFetchConcurrently(t *testing.T) {
 		t.Errorf("peak concurrent upstream requests = %d, want at least 2: the fragments are still waiting for each other", peak)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The newsletter form
+// ---------------------------------------------------------------------------
+
+// token reads the forgery token out of a rendered page, the way a browser would read
+// it out of the form.
+func token(t *testing.T, body string) string {
+	t.Helper()
+	m := regexp.MustCompile(`name="_csrf" value="([^"]+)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no forgery token in the page:\n%s", firstLines(body, 30))
+	}
+	return m[1]
+}
+
+func submit(t *testing.T, site http.Handler, form url.Values, cookies []*http.Cookie) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range cookies {
+		req.AddCookie(c)
+	}
+	rec := httptest.NewRecorder()
+	site.ServeHTTP(rec, req)
+	return rec
+}
+
+// The whole form flow, as a browser walks it: read the page, submit what it carried,
+// follow the redirect.
+func TestSite_NewsletterAcceptsAValidAddress(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	page, body := request(t, site, "/")
+	csrfToken := token(t, body)
+
+	rec := submit(t, site, url.Values{"_csrf": {csrfToken}, "email": {"reader@example.com"}},
+		(&http.Response{Header: page.Header()}).Cookies())
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303: a form post must redirect, or a reload submits it again", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "subscribed=1") {
+		t.Errorf("Location = %q, want the destination to say it worked", loc)
+	}
+}
+
+// A refused address comes back on the page it was typed on, with the reason and with
+// what was typed — no session, no flash storage, no state in a query string.
+func TestSite_NewsletterRefusesAnInvalidAddress(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	page, body := request(t, site, "/")
+	csrfToken := token(t, body)
+
+	rec := submit(t, site, url.Values{"_csrf": {csrfToken}, "email": {"not-an-address"}},
+		(&http.Response{Header: page.Header()}).Cookies())
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "does not look like an email address") {
+		t.Error("the page does not say why the submission was refused")
+	}
+	if !strings.Contains(rec.Body.String(), `value="not-an-address"`) {
+		t.Error("what the reader typed was not echoed back; a refused form is not also an empty one")
+	}
+}
+
+// Without the token the submission never reaches the handler. This is the test that
+// would fail if the protection were quietly turned off.
+func TestSite_NewsletterRefusesASubmissionWithNoToken(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	rec := submit(t, site, url.Values{"email": {"reader@example.com"}}, nil)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+}
+
+// Two readers are handed two tokens, and the page behind them is still cached: one
+// render, two tokens. Without that, a form in a page's footer turns caching off.
+func TestSite_TwoReadersGetTwoTokensFromOneCachedPage(t *testing.T) {
+	b, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	_, first := request(t, site, "/")
+	hitsAfterFirst := b.hits.Load()
+	_, second := request(t, site, "/")
+
+	if token(t, first) == token(t, second) {
+		t.Error("two readers were handed one token")
+	}
+	if b.hits.Load() != hitsAfterFirst {
+		t.Error("the second read went to the backend; the page behind the token is not being cached")
+	}
+}
+
+// The results fragment answers on its own, and what comes back is the list rather
+// than the page around it.
+func TestSite_SearchResultsAnswerOnTheirOwn(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	whole, page := request(t, site, "/search?q=grid")
+	part, fragment := request(t, site, "/search/results?q=grid")
+
+	if whole.Code != http.StatusOK || part.Code != http.StatusOK {
+		t.Fatalf("statuses = %d, %d, want 200", whole.Code, part.Code)
+	}
+	if len(fragment) >= len(page) {
+		t.Errorf("the fragment is %d bytes and the page is %d: the fragment is not smaller", len(fragment), len(page))
+	}
+	if strings.Contains(fragment, "<html") {
+		t.Error("the fragment came back wrapped in the layout")
+	}
+	if !strings.Contains(fragment, "cards") {
+		t.Errorf("the fragment does not contain the result list:\n%s", firstLines(fragment, 10))
+	}
+}
+
+// A method no route answers is a 405 naming what the URL does accept, not a 404 and
+// not a silently rendered page.
+func TestSite_UnsupportedMethodsAreRefused(t *testing.T) {
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
+	rec := httptest.NewRecorder()
+	site.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+	allow := rec.Header().Get("Allow")
+	for _, want := range []string{"GET", "HEAD", "OPTIONS", "POST"} {
+		if !strings.Contains(allow, want) {
+			t.Errorf("Allow = %q, want it to contain %s", allow, want)
+		}
+	}
+}

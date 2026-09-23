@@ -61,8 +61,10 @@ Matching happens on the *escaped* path, split first and percent-decoded one
 segment at a time, so a `%2F` inside a segment cannot silently erase a segment
 boundary. A segment that fails to decode is a 404, not a 500.
 
-Any HTTP method reaches the page and renders it; only `GET` and `HEAD` are
-eligible to be served from, or (for `GET`) to populate, the cache.
+A page answers `GET` and `HEAD`. Any other method is a 405 carrying an `Allow`
+header, unless an [action](actions.md) claims it for that URL — which is how a form
+posts to the page it sits on. Only `GET` and `HEAD` are eligible to be served from,
+or (for `GET`) to populate, the cache.
 
 ## Locales
 

@@ -207,3 +207,21 @@ func TestCookie_Attributes(t *testing.T) {
 		t.Error("Secure = false over TLS: a site with TLS must not hand its tokens to a plaintext one")
 	}
 }
+
+// The marker must be the same in every process that shares a key, or a page cached
+// by one is served literally by the next.
+func TestMarker_IsStableForAKey(t *testing.T) {
+	first, _ := New(Config{Key: []byte("one key")})
+	again, _ := New(Config{Key: []byte("one key")})
+	other, _ := New(Config{Key: []byte("another key")})
+
+	if first.Marker() != again.Marker() {
+		t.Errorf("marker = %q then %q for one key, want the same", first.Marker(), again.Marker())
+	}
+	if first.Marker() == other.Marker() {
+		t.Error("two keys produced one marker; it is not derived from the key")
+	}
+	if len(first.Marker()) < 32 {
+		t.Errorf("marker = %q, want something no one can guess", first.Marker())
+	}
+}

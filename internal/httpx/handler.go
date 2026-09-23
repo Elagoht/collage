@@ -5,6 +5,7 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -579,14 +580,6 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	shared := false
 	if key != "" {
 		out, shared = h.flight.do(ctx, key, produce)
-		// A render that issued a forgery token belongs to the visitor it ran for.
-		// Handing it to everyone waiting behind it would give them all one token,
-		// which is a token anyone obtains by visiting the site — so this request
-		// renders for itself instead. It cannot be decided before the render,
-		// because whether a page issues a token is something its templates say.
-		if shared && out.csrfToken != "" {
-			out, shared = produce(), false
-		}
 	} else {
 		out = produce()
 	}
@@ -602,24 +595,60 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		return h.serveFailure(w, r, *out.fail)
 	}
 
+	content, etag, personal := h.personalise(w, r, out.content, out.etag)
+
 	header := w.Header()
 	header.Set("Content-Type", contentTypeHTML)
-	header.Set("ETag", out.etag)
+	header.Set("ETag", etag)
 	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
-	// After setCacheHeaders, so it overrides whatever the page's strategy asked
-	// for. A page carrying a token is one visitor's, whatever it was declared as,
-	// and the cookie has to reach them for the token to mean anything.
-	if out.csrfToken != "" && h.csrf != nil {
-		http.SetCookie(w, h.csrf.Cookie(r, out.csrfToken))
+	// After setCacheHeaders, so it overrides whatever the page's strategy declared.
+	// The body that goes on the wire carries this reader's token, whatever the
+	// shared one behind it may be cached as.
+	if personal {
 		header.Set("Cache-Control", "private, no-store")
 	}
 	if h.devMode {
 		header.Set(renderTimeHeader, out.renderTime.String())
 	}
 	w.WriteHeader(http.StatusOK)
-	writeBody(w, out.content)
+	writeBody(w, content)
 
 	return http.StatusOK
+}
+
+// personalise replaces the forgery-token marker in content with this reader's own
+// token, and sends the cookie the token is checked against.
+//
+// This is what lets a page with a form be cached. What is stored, shared between
+// readers and handed to everyone waiting on one render, is a body with a marker in
+// it — a string nobody can compute without the application's key. What goes on the
+// wire is that body with the reader's own token in place of the marker.
+//
+// A body with no marker is returned untouched, which is every page that has no form.
+func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []byte, etag string) ([]byte, string, bool) {
+	if h.csrf == nil {
+		return content, etag, false
+	}
+	marker := []byte(h.csrf.Marker())
+	if !bytes.Contains(content, marker) {
+		return content, etag, false
+	}
+
+	token, _, err := h.csrf.TokenFor(r)
+	if err != nil {
+		// Nothing to substitute with. Serving the marker would render a form that
+		// is refused on submission with nothing to explain why, so this is a
+		// failure rather than a body.
+		h.logger.Error("collage: could not issue a forgery token", "err", err)
+		return content, etag, false
+	}
+
+	personalised := bytes.ReplaceAll(content, marker, []byte(token))
+	http.SetCookie(w, h.csrf.Cookie(r, token))
+	// Recomputed, because this body is not the one the ETag was made from. An ETag
+	// that names a body nobody was sent is how a conditional request is answered
+	// 304 for content the client never had.
+	return personalised, cache.ETag(personalised), true
 }
 
 // renderPage renders one page and returns what to write, or why nothing can be.
@@ -705,30 +734,19 @@ func (h *Handler) renderPage(
 	}
 	content := afterRender.HTML
 
-	// A page that put a forgery token in its markup belongs to the visitor it was
-	// rendered for, and to nobody else. Caching it would hand the next visitor a
-	// token that is not theirs — and hand every visitor the same one, which is a
-	// token that no longer proves anything.
-	issuedToken := rc.IssuedCSRF()
-
 	// A degraded render is complete enough to serve but must never be cached:
 	// caching it would pin one request's transient fragment failure in front of
 	// every later request. A HEAD is served from cache but never populates it —
 	// it produced no body to store.
 	etag := ""
-	if cacheable && r.Method == http.MethodGet && !result.Degraded() && issuedToken == "" {
+	if cacheable && r.Method == http.MethodGet && !result.Degraded() {
 		etag = h.writeCache(r, key, page, content, result.DependencyTags)
 	}
 	if etag == "" {
 		etag = cache.ETag(content)
 	}
 
-	return &outcome{
-		content:    content,
-		etag:       etag,
-		renderTime: renderTime,
-		csrfToken:  issuedToken,
-	}
+	return &outcome{content: content, etag: etag, renderTime: renderTime}
 }
 
 // cacheGet is the cache lookup, which never finds anything in development. See the
@@ -744,9 +762,18 @@ func (h *Handler) cacheGet(ctx context.Context, key string) ([]byte, string, boo
 // the stored ETag, otherwise a 200 carrying the stored content. It returns the
 // status it wrote.
 func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *types.Page, content []byte, etag string) int {
+	// The stored body carries a marker where this reader's forgery token goes, so
+	// what is written is not what was stored — and the ETag has to name what was
+	// written, or a conditional request is answered 304 for a body the client was
+	// never sent.
+	content, etag, personal := h.personalise(w, r, content, etag)
+
 	header := w.Header()
 	header.Set("ETag", etag)
 	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
+	if personal {
+		header.Set("Cache-Control", "private, no-store")
+	}
 
 	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		// No Content-Type and no body: a 304 tells the client its copy is still

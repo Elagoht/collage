@@ -447,6 +447,11 @@ func TestCache_DiskCacheDerivesItsVersion(t *testing.T) {
 	build := func() *App {
 		app := newTestAppWith(t, defaultTemplates(), func(cfg *Config) {
 			cfg.Cache = CacheConfig{Enabled: true, Type: "disk", Dir: dir, DefaultTTL: time.Minute}
+			// Set for the same reason a deployment sets one. A generated key
+			// differs every run, and the forgery marker derived from it is part
+			// of the cache namespace, so without one these two runs would not
+			// share a directory — which is the thing this test is about.
+			cfg.Security.CSRFKey = []byte("a stable key for this test")
 		})
 		page := newHomePage()
 		page.Strategy = types.StrategyIncremental
@@ -473,6 +478,9 @@ func TestCache_DiskCacheDerivesItsVersion(t *testing.T) {
 	}
 
 	// And a second run of the same binary finds it: the fingerprint is stable.
+	// The key is set for the same reason a deployment sets one — a generated key
+	// differs every run, and the forgery marker it produces is part of the cache
+	// namespace, so without one this run and the last would not share a directory.
 	rec2 := httptest.NewRecorder()
 	build().Handler().ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/", nil))
 	if got, want := rec2.Header().Get("ETag"), rec.Header().Get("ETag"); got != want {

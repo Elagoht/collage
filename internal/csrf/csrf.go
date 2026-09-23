@@ -86,6 +86,23 @@ func New(cfg Config) (*Guard, error) {
 	return g, nil
 }
 
+// Marker is the placeholder a rendered page carries in place of a token.
+//
+// It exists so that a page with a form can still be cached. A token belongs to one
+// visitor, so a cached body must not contain one — but it may contain something that
+// stands for one, replaced with the reader's own token as the response is written.
+// The expensive part, the render, is shared; the one per-visitor string is not.
+//
+// Derived from the key rather than random, which is what makes it work at all: a
+// body cached by one process is served by the next, and a marker that changed per
+// process would be served literally. Derived rather than constant, because a
+// constant one appears in content an application did not write — a comment, a
+// paste — and substitution would then put the reader's token wherever someone else
+// chose. A value nobody can compute without the key cannot be planted.
+func (g *Guard) Marker() string {
+	return "collage-csrf-" + g.sign("marker")[:32]
+}
+
 // CookieName returns the cookie a token is carried in.
 func (g *Guard) CookieName() string { return g.cookieName }
 

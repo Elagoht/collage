@@ -140,6 +140,55 @@ func (b *PageBuilder) WithSEO(key string, value any) *PageBuilder { // any: Page
 	return b
 }
 
+// WithAction gives this page's own URL a method it would otherwise refuse.
+//
+// This is what an HTML form needs: a form's action is the page it sits on, so the
+// POST arrives at the page's URL. The action inherits the page's paths, in every
+// locale the page declares.
+//
+//	collage.NewPage("new-post").
+//		WithContent(form).
+//		WithPath("en", "/posts/new").
+//		WithAction("POST", createPost)
+func (b *PageBuilder) WithAction(method string, h ActionHandlerFunc) *PageBuilder {
+	b.page.Actions = append(b.page.Actions, &Action{
+		Methods: []string{method},
+		Handler: h,
+	})
+	return b
+}
+
+// WithActionFor attaches an action built with NewAction to this page's URL, for what
+// the WithAction shorthand does not offer: several methods, a body limit, or the
+// CSRF opt-out. Its own paths are replaced by the page's.
+func (b *PageBuilder) WithActionFor(action *Action) *PageBuilder {
+	b.page.Actions = append(b.page.Actions, action)
+	return b
+}
+
+// WithFragmentPath opens one of this page's fragments at its own URL, so it can be
+// fetched on its own: the search results without the page around them, a panel a
+// fetch() refreshes, the row a form just created.
+//
+// Nothing is reachable unless it is declared here. A framework that exposed every
+// fragment automatically would put every internal part of every page on the public
+// web, and turning that off again is not something anyone remembers to do.
+//
+//	collage.NewPage("search").
+//		WithContent(searchContent).
+//		WithPath("en", "/search").
+//		WithFragmentPath("en", "/search/results", resultsFragment)
+func (b *PageBuilder) WithFragmentPath(locale, pattern string, f *Fragment) *PageBuilder {
+	if b.page.FragmentPaths == nil {
+		b.page.FragmentPaths = make(map[string]map[string]*Fragment)
+	}
+	if b.page.FragmentPaths[locale] == nil {
+		b.page.FragmentPaths[locale] = make(map[string]*Fragment)
+	}
+	b.page.FragmentPaths[locale][pattern] = f
+	return b
+}
+
 // Build returns the Page constructed so far. It never panics and never returns nil
 // for a non-nil builder, even if WithX calls recorded errors along the way, or if no
 // content fragment was ever set (which records ErrMissingContent); call BuildErr to

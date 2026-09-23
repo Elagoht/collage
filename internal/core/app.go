@@ -476,13 +476,26 @@ func New(cfg Config) (*App, error) {
 	metrics := observability.MetricsOrNoop(cfg.Observability.Metrics)
 	tracer := observability.TracerOrNoop(cfg.Observability.Tracer)
 
+	// Before the cache, deliberately: a stored body carries the forgery marker,
+	// which is derived from the key, so the key is part of what makes a cached
+	// body still correct. buildCache mixes it into the namespace.
+	guard, err := buildCSRF(cfg.Security, logger)
+	if err != nil {
+		return nil, fmt.Errorf("collage: csrf: %w", err)
+	}
+	app.csrf = guard
+
 	// A caller-supplied Store wins over Type, and is taken exactly as given: this
 	// is the one cache the application will use, so nothing here wraps, copies, or
 	// second-guesses it. Enabled remains the master switch — a Store on a disabled
 	// cache is not silently turned on, because "caching is off" must mean off.
 	var store cache.Cache
 	if cfg.Cache.Enabled {
-		built, err := buildCache(cfg, devMode, logger)
+		marker := ""
+		if guard != nil {
+			marker = guard.Marker()
+		}
+		built, err := buildCache(cfg, devMode, marker, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -504,7 +517,7 @@ func New(cfg Config) (*App, error) {
 		Tracer:         tracer,
 		DevMode:        devMode,
 		AssetURL:       app.assetURL,
-		CSRFToken:      app.csrfToken,
+		CSRFMarker:     app.csrfMarker,
 	})
 	app.store = store
 	app.tracker = tracker
@@ -521,12 +534,6 @@ func New(cfg Config) (*App, error) {
 	app.vary = varyHeaders(cfg.Locale)
 	app.pages = make(map[string]*types.Page)
 	app.bound = make(map[*types.Page]bool)
-	guard, err := buildCSRF(cfg.Security, logger)
-	if err != nil {
-		return nil, fmt.Errorf("collage: csrf: %w", err)
-	}
-	app.csrf = guard
-
 	app.documents = make(map[string]*types.Document)
 	app.actions = make(map[string]*types.Action)
 	app.listening = make(chan struct{})
