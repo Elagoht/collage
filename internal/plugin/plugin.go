@@ -34,8 +34,10 @@ package plugin
 
 import (
 	"context"
+	"io/fs"
 	"log/slog"
 
+	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -108,6 +110,22 @@ type Host interface {
 	// the CLI (Task 13); a Host implementation that has no CLI may simply store
 	// cmd or reject it, at its own discretion.
 	RegisterCommand(cmd Command) error
+	// Config decodes this plugin's section of the application's plugin
+	// configuration into v, leaving v untouched when the plugin has no section —
+	// so v carries the plugin's defaults in and comes back either unchanged or
+	// overlaid.
+	Config(v any) error // any: restates encoding/json's own parameter type
+	// RegisterPage registers a page the plugin contributes. It fails on the same
+	// terms as the application's own registration — a duplicate name, a path
+	// another route already claims — and for the same reason: a plugin's page
+	// colliding with the application's is a startup error, not a race decided by
+	// registration order.
+	RegisterPage(page *types.Page) error
+	// RegisterDocument registers a document the plugin contributes.
+	RegisterDocument(doc *types.Document) error
+	// Mount serves fsys under prefix. A plugin that rewrites URLs into its own
+	// namespace — an image optimiser, say — uses this to serve what it rewrote to.
+	Mount(prefix string, fsys fs.FS, opts ...asset.Option) error
 }
 
 // Command is a CLI subcommand a plugin contributes via Host.RegisterCommand.

@@ -12,13 +12,15 @@ import (
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// TestApp_SatisfiesPluginHost is the compile-time assertion, restated as a test
-// so the requirement is visible in the suite and not only in a var declaration:
-// *App must be usable wherever a plugin expects its Host.
-func TestApp_SatisfiesPluginHost(t *testing.T) {
+// TestHostView_ForwardsCapabilities states the narrowing the other way round from
+// the way it used to be stated. *App deliberately no longer satisfies plugin.Host —
+// Host gained methods only hostView implements — so "a plugin cannot assert its Host
+// back to the application" is now a compile error rather than a runtime check. What
+// is left to test is that the view still forwards what it is supposed to.
+func TestHostView_ForwardsCapabilities(t *testing.T) {
 	app := newTestApp(t, nil)
 
-	var host plugin.Host = app
+	var host plugin.Host = &hostView{app: app, name: "test/plugin"}
 	if host.DevMode() {
 		t.Fatal("DevMode through Host = true, want false for the default fixture")
 	}
@@ -26,16 +28,13 @@ func TestApp_SatisfiesPluginHost(t *testing.T) {
 		t.Fatal("Logger through Host = nil")
 	}
 	if pages := host.Pages(); len(pages) != 0 {
-		t.Fatalf("Pages through Host = %v, want none before registration", pages)
+		t.Fatalf("Pages through Host = %d entries, want 0 before anything is registered", len(pages))
 	}
-	if _, ok := host.Page("home"); ok {
-		t.Fatal("Page through Host found a page before registration")
+	if _, ok := host.Page("nothing"); ok {
+		t.Fatal("Page through Host found a page that was never registered")
 	}
-	if err := host.InvalidateTags(context.Background(), "nothing"); err != nil {
-		t.Fatalf("InvalidateTags through Host: %v", err)
-	}
-	if err := host.RegisterCommand(plugin.Command{Name: "demo"}); err != nil {
-		t.Fatalf("RegisterCommand through Host: %v", err)
+	if err := host.InvalidateTags(t.Context(), "tag"); err != nil {
+		t.Fatalf("InvalidateTags through Host = %v, want nil", err)
 	}
 }
 

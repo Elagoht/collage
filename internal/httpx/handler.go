@@ -5,10 +5,12 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -230,16 +232,81 @@ func New(d Deps) (*Handler, error) {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	ctx, span := h.tracer.StartSpan(r.Context(), "collage.http")
+	ctx, span := h.startRequestSpan(r)
 	defer span.End()
-	span.SetAttribute("http.method", r.Method)
-	span.SetAttribute("http.path", r.URL.Path)
 	r = r.WithContext(ctx)
 
 	status := h.serveGuarded(w, r)
 
 	span.SetAttribute("http.status_code", strconv.Itoa(status))
 	h.metrics.HTTPResponse(ctx, status, r.URL.Path, time.Since(start))
+}
+
+// startRequestSpan opens the request's span, containing a panic from an
+// application's Tracer instead of letting it reach net/http.
+//
+// This is the one part of the tracing bracket that runs before anything has been
+// written, so it is the one part where a panic costs the client its response: the
+// connection closes with no status line, and the caller sees what looks like a
+// network failure rather than a bug in its tracer. A tracer that cannot start a
+// span is a reason to serve the page without tracing, not a reason not to serve it.
+//
+// SetAttribute is inside the guard because it runs here too, before the response.
+// When it panics the span is abandoned rather than ended: End would be a third call
+// into a Tracer that has already demonstrated it panics, and the framework has
+// nothing to gain by making it.
+func (h *Handler) startRequestSpan(r *http.Request) (ctx context.Context, span observability.Span) {
+	ctx, span = r.Context(), observability.NoopSpan{}
+
+	defer func() {
+		if rec := recover(); rec != nil {
+			h.logger.Error("collage: tracer panicked starting the request span",
+				"panic", rec, "path", r.URL.Path, "stack", string(debug.Stack()))
+			ctx, span = r.Context(), observability.NoopSpan{}
+		}
+	}()
+
+	ctx, span = h.tracer.StartSpan(r.Context(), "collage.http")
+	span.SetAttribute("http.method", r.Method)
+	span.SetAttribute("http.path", r.URL.Path)
+	return ctx, span
+}
+
+// queryVary turns a request's query into the cache-key dimensions a route declares.
+//
+// A nil allow keeps the raw query whole, which is the default and the conservative
+// reading: the framework cannot know which parameters a data handler consults, and
+// merging two representations serves one visitor another's page. The cost is that
+// every "?utm_source=..." variant is its own entry, so a crawler can evict a bounded
+// cache without ever asking for a distinct page — which is why a route can say
+// otherwise.
+//
+// A non-nil allow — including an empty one, which drops the query entirely — selects
+// only the named parameters, and canonicalises what survives. Canonicalising is safe
+// precisely here and not above: once the route has said which parameters matter,
+// their order and the absence of everything else are no longer facts about the
+// representation. Values are kept in their given order within a parameter, because
+// repeating a parameter is how a request expresses a list.
+func queryVary(u *url.URL, allow []string) []string {
+	if allow == nil {
+		return []string{u.RawQuery}
+	}
+	if len(allow) == 0 || u.RawQuery == "" {
+		return nil
+	}
+
+	values := u.Query()
+	selected := make(url.Values, len(allow))
+	for _, name := range allow {
+		if vs, ok := values[name]; ok {
+			selected[name] = vs
+		}
+	}
+	if len(selected) == 0 {
+		return nil
+	}
+	// url.Values.Encode sorts by key, which is the canonicalisation.
+	return []string{selected.Encode()}
 }
 
 // serveGuarded runs serve and turns a panic escaping it into a 500 on the normal
@@ -254,14 +321,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // dependency Tracker, a Metrics implementation called from serve, an asset mount's
 // fs.FS, and a plugin hook.
 //
-// It does not cover the tracer and metric calls in ServeHTTP itself — StartSpan,
-// SetAttribute, End, and HTTPResponse all run outside this guard, and a panic in
-// any of them still unwinds into net/http. That is deliberate rather than
-// overlooked: those calls bracket the response instead of producing it, so by the
-// time three of the four run there is no status left to write and nothing a 500
-// could add, and moving them inside would mean reporting a failed span through the
-// very Tracer that just panicked. The comment used to claim otherwise, which is the
-// kind of promise a panic guard must not make loosely.
+// It does not cover the span-closing and metric calls in ServeHTTP itself —
+// SetAttribute, End, and HTTPResponse after the response — and a panic in any of
+// them still unwinds into net/http. That is deliberate rather than overlooked:
+// those calls bracket the response instead of producing it, so by the time they run
+// there is no status left to write and nothing a 500 could add, and moving them
+// inside would mean reporting a failed span through the very Tracer that just
+// panicked. The comment used to claim it covered all of them, which is the kind of
+// promise a panic guard must not make loosely.
+//
+// The tracer calls that run *before* the response are a different case and are
+// guarded, by startRequestSpan rather than here: a panic there costs the client its
+// response entirely.
 //
 // The response's content type follows what the request resolved to, not what this
 // frame knows: serve records the resolved route in route, so a panic in an
@@ -406,20 +477,16 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	key := ""
 	cacheable := h.cache != nil && page.Strategy.Cacheable() && (r.Method == http.MethodGet || r.Method == http.MethodHead)
 	if cacheable {
-		// The raw query is a cache dimension, not decoration: a fragment's data
+		// The query is a cache dimension, not decoration: a fragment's data
 		// handler receives the whole *http.Request and may legitimately render
 		// from r.URL.Query(), so two queries against one path are two
-		// representations. This does fragment the cache across utm_* and other
-		// tracking variants of the same page, and it varies on parameter order
-		// because the query is not canonicalized — correctness over hit rate. A
-		// per-page allowlist of significant query parameters would recover both
-		// and is the obvious future enhancement; it is deliberately not built
-		// here, since guessing which parameters matter is the application's call.
+		// representations. Which parts of it discriminate is the page's own
+		// declaration — see queryVary and Page.CacheParams.
 		key = cache.Key(cache.KeyInput{
 			Path:   r.URL.Path,
 			Locale: match.Locale,
 			Params: match.PathParams,
-			Vary:   []string{r.URL.RawQuery},
+			Vary:   queryVary(r.URL, page.CacheParams),
 		})
 		lookupStart := time.Now()
 		if content, etag, found := h.cache.Get(ctx, key); found {
@@ -449,8 +516,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		})
 	}
 
+	// Held rather than inlined: the render's SharedData is what a plugin reads to
+	// reach what the page was built from, and the context is the only thing that
+	// carries it out of the render.
+	rc := types.NewRenderContext(ctx, r, page, match.Locale, match.PathParams)
+
 	renderStart := time.Now()
-	result, err := h.renderer.Render(ctx, types.NewRenderContext(ctx, r, page, match.Locale, match.PathParams))
+	result, err := h.renderer.Render(ctx, rc)
 	renderTime := time.Since(renderStart)
 	if err != nil {
 		// result is non-nil on every Render path, including a fatal error, so
@@ -480,6 +552,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		Page:     page,
 		Locale:   match.Locale,
 		Degraded: result.Degraded(),
+		Data:     rc.SharedData,
 		HTML:     result.HTML,
 	}
 	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {

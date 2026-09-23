@@ -11,6 +11,7 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	htmltemplate "html/template"
@@ -48,6 +49,13 @@ import (
 // RegisterCommand is deliberately exempt: plugins register their commands from
 // inside Init, which by definition runs after the application has started.
 var ErrAppStarted = errors.New("collage: application already started")
+
+// ErrConfigurerRegisteredLate is returned by RegisterPlugin for a plugin
+// implementing plugin.Configurer. Configure runs inside New, before templates are
+// parsed, and RegisterPlugin is called afterwards — so such a plugin belongs in
+// Config.Plugins. Skipping its Configure silently would leave a plugin that
+// registered a template function wondering why no template can call it.
+var ErrConfigurerRegisteredLate = errors.New("collage: plugin needs Configure and must be supplied in Config.Plugins")
 
 // ErrNilPage is returned by the page registration methods when passed a nil page.
 var ErrNilPage = errors.New("collage: nil page")
@@ -125,6 +133,20 @@ type Config struct {
 	Server ServerConfig
 	// Template configures template loading and rendering.
 	Template TemplateConfig
+	// Plugins are registered and configured while the App is built.
+	//
+	// A plugin implementing plugin.Configurer must arrive here rather than through
+	// RegisterPlugin: Configure runs before templates are parsed, and RegisterPlugin
+	// is called after New has already parsed them. RegisterPlugin refuses such a
+	// plugin by name rather than silently skipping its Configure.
+	Plugins []plugin.Plugin
+	// PluginConfig is each plugin's own configuration, keyed by plugin name.
+	//
+	// The framework does not read a file: the application loads this however it
+	// likes — JSON, YAML, environment — so no format is imposed on it. A key
+	// matching no registered plugin is a startup error, because the alternative is
+	// an operator certain a plugin was configured while it ran on defaults.
+	PluginConfig map[string]json.RawMessage
 	// Cache configures the render output cache.
 	Cache CacheConfig
 	// Locale configures locale resolution.
@@ -233,6 +255,14 @@ type App struct {
 	// devMode is the effective development-mode flag: cfg.DevMode or
 	// cfg.Template.DevMode, resolved once so the two cannot drift apart.
 	devMode bool
+	// pluginFuncs are template functions contributed by plugins during Configure.
+	// They are merged under the application's own Template.Funcs, so an
+	// application always wins a name a plugin also claims: the application is the
+	// party that can see both and decide.
+	pluginFuncs map[string]any // any: html/template.FuncMap's own value type
+	// mountWrappers transform every mounted filesystem, in the order plugins
+	// registered them during Configure.
+	mountWrappers []func(fs.FS) fs.FS
 	// logger is the structured logger handed to the handler, the plugin registry,
 	// and plugins through Host.Logger.
 	logger *slog.Logger
@@ -374,12 +404,45 @@ func New(cfg Config) (*App, error) {
 		logger = slog.Default()
 	}
 
+	// The App exists before the template engine because plugins get to influence
+	// it. Only the fields Configure can reach are filled in here; the rest are set
+	// below, once there is an engine to build a renderer from.
+	app := &App{
+		cfg:         cfg,
+		devMode:     devMode,
+		logger:      logger,
+		plugins:     plugin.NewRegistry(logger),
+		pluginFuncs: make(map[string]any), // any: html/template.FuncMap's own value type
+	}
+
+	for _, p := range cfg.Plugins {
+		if err := app.plugins.Register(p); err != nil {
+			return nil, fmt.Errorf("collage: register plugin: %w", err)
+		}
+	}
+	if err := app.plugins.CheckConfigKeys(cfg.PluginConfig); err != nil {
+		return nil, err
+	}
+	if err := app.plugins.Configure(context.Background(), func(name string) plugin.ConfigHost {
+		return &configHostView{app: app, name: name}
+	}); err != nil {
+		return nil, err
+	}
+
+	// Plugin functions go in first and the application's own on top, so an
+	// application always wins a name a plugin also claims: it is the party that can
+	// see both and decide, and a plugin silently shadowing a function the templates
+	// were written against is not a failure anyone would trace back here.
+	funcs := make(map[string]any, len(app.pluginFuncs)+len(cfg.Template.Funcs)) // any: html/template.FuncMap's own value type
+	maps.Copy(funcs, app.pluginFuncs)
+	maps.Copy(funcs, cfg.Template.Funcs)
+
 	tmpl, err := template.NewHTML(template.HTMLConfig{
 		FS:        cfg.Template.FS,
 		Root:      cfg.Template.Root,
 		Extension: cfg.Template.Extension,
 		DevMode:   devMode,
-		Funcs:     cfg.Template.Funcs,
+		Funcs:     funcs,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("collage: template engine: %w", err)
@@ -420,36 +483,32 @@ func New(cfg Config) (*App, error) {
 	tracker := dependency.NewMemory()
 	tracker.MaxKeysPerTag = cfg.Cache.MaxKeysPerTag
 
-	app := &App{
-		cfg:     cfg,
-		devMode: devMode,
-		logger:  logger,
-		tmpl:    tmpl,
-		renderer: render.New(tmpl, render.Options{
-			DefaultTimeout: cfg.Template.Timeout,
-			Metrics:        metrics,
-			Tracer:         tracer,
-			DevMode:        devMode,
-		}),
-		store:   store,
-		tracker: tracker,
-		routes: router.New(router.LocaleOptions{
-			Default:             cfg.Locale.Default,
-			Supported:           cfg.Locale.Supported,
-			DisablePathLocale:   cfg.Locale.DisablePathLocale,
-			DisableHeaderLocale: cfg.Locale.DisableHeaderLocale,
-			CookieName:          cfg.Locale.CookieName,
-			DisableCookieLocale: cfg.Locale.DisableCookieLocale,
-		}),
-		plugins:   plugin.NewRegistry(logger),
-		metrics:   metrics,
-		tracer:    tracer,
-		vary:      varyHeaders(cfg.Locale),
-		pages:     make(map[string]*types.Page),
-		bound:     make(map[*types.Page]bool),
-		documents: make(map[string]*types.Document),
-		listening: make(chan struct{}),
-	}
+	app.tmpl = tmpl
+	app.tmpl = tmpl
+	app.renderer = render.New(tmpl, render.Options{
+		DefaultTimeout: cfg.Template.Timeout,
+		Metrics:        metrics,
+		Tracer:         tracer,
+		DevMode:        devMode,
+	})
+	app.store = store
+	app.tracker = tracker
+	app.routes = router.New(router.LocaleOptions{
+		Default:             cfg.Locale.Default,
+		Supported:           cfg.Locale.Supported,
+		DisablePathLocale:   cfg.Locale.DisablePathLocale,
+		DisableHeaderLocale: cfg.Locale.DisableHeaderLocale,
+		CookieName:          cfg.Locale.CookieName,
+		DisableCookieLocale: cfg.Locale.DisableCookieLocale,
+	})
+	app.metrics = metrics
+	app.tracer = tracer
+	app.vary = varyHeaders(cfg.Locale)
+	app.pages = make(map[string]*types.Page)
+	app.bound = make(map[*types.Page]bool)
+	app.documents = make(map[string]*types.Document)
+	app.listening = make(chan struct{})
+
 	return app, nil
 }
 
@@ -478,6 +537,13 @@ func varyHeaders(cfg LocaleConfig) []string {
 // disjunction of Config.DevMode and Config.Template.DevMode, resolved at New.
 func (a *App) DevMode() bool {
 	return a.devMode
+}
+
+// DefaultLocale returns the locale served without a path prefix. A static build
+// reads it to decide which locale occupies the bare output path and which get a
+// directory of their own; see internal/build.
+func (a *App) DefaultLocale() string {
+	return a.cfg.Locale.Default
 }
 
 // Logger returns the application's structured logger.
@@ -556,13 +622,30 @@ func (a *App) buildHandler() (http.Handler, error) {
 	}
 	a.handlerBuilt = true
 
+	// Plugin Init runs before registration closes, because a plugin contributes to
+	// the application: a page, a document, a mount, all through Host. Closing
+	// registration first would refuse every one of them with ErrAppStarted, which
+	// is what this used to do — the capability existed and nothing could use it.
+	//
+	// context.Background, not a request context: Init is startup work whose
+	// lifetime is the process, and every plugin's Shutdown is what ends it.
+	//
+	// hostView, not a, is what goes across: a plugin holding the *App could assert
+	// its way back to Shutdown, ListenAndServe, Handler, and RenderPath, which is
+	// exactly what plugin.Host exists to keep out of reach. See host.go.
+	if err := a.plugins.Init(context.Background(), func(name string) plugin.Host {
+		return &hostView{app: a, name: name}
+	}); err != nil {
+		return a.buildFailed(err)
+	}
+
 	a.mu.Lock()
 	a.started = true
 	a.mu.Unlock()
 
-	// Run once registration is closed and before any plugin sees the application:
-	// an unregistered error page is a configuration error, not something a plugin
-	// should be initialised into the middle of.
+	// Run once registration is closed — which now means after plugins have had
+	// their say, so a page a plugin contributed is checked on the same terms as
+	// one the application registered.
 	if err := a.checkErrorPagesRegistered(); err != nil {
 		return a.buildFailed(err)
 	}
@@ -592,16 +675,6 @@ func (a *App) buildHandler() (http.Handler, error) {
 		Mounts:     a.Mounts(),
 	})
 	if err != nil {
-		return a.buildFailed(err)
-	}
-
-	// context.Background, not a request context: Init is startup work whose
-	// lifetime is the process, and every plugin's Shutdown is what ends it.
-	//
-	// hostView, not a, is what goes across: a plugin holding the *App could assert
-	// its way back to Shutdown, ListenAndServe, Handler, and RenderPath, which is
-	// exactly what plugin.Host exists to keep out of reach. See host.go.
-	if err := a.plugins.Init(context.Background(), &hostView{app: a}); err != nil {
 		return a.buildFailed(err)
 	}
 

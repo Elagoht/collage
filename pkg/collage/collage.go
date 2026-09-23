@@ -72,6 +72,23 @@ type CacheInvalidateHook = plugin.CacheInvalidateHook
 // while serving a request.
 type ErrorHook = plugin.ErrorHook
 
+// Configurer is implemented by a plugin that must act while the application is
+// built rather than before it serves — to register a template function, or to wrap
+// every mounted filesystem. Such a plugin is supplied through Config.Plugins;
+// RegisterPlugin refuses it, because Configure has already run by then.
+type Configurer = plugin.Configurer
+
+// ConfigHost is the narrower capability surface Configure receives.
+type ConfigHost = plugin.ConfigHost
+
+// DocumentRenderedHook is implemented by a plugin that wants to transform a
+// document's bytes before they are served — the non-HTML counterpart to
+// AfterRenderHook.
+type DocumentRenderedHook = plugin.DocumentRenderedHook
+
+// DocumentRenderedEvent describes a document that has just produced its body.
+type DocumentRenderedEvent = plugin.DocumentRenderedEvent
+
 // PageResolvedEvent describes a request having been resolved to a page.
 type PageResolvedEvent = plugin.PageResolvedEvent
 
@@ -253,6 +270,19 @@ var ErrEmptyPluginName = plugin.ErrEmptyPluginName
 // Name is already registered.
 var ErrDuplicatePlugin = plugin.ErrDuplicatePlugin
 
+// ErrDuplicateTemplateFunc is returned by ConfigHost.AddTemplateFunc when another
+// plugin already registered that name.
+var ErrDuplicateTemplateFunc = plugin.ErrDuplicateTemplateFunc
+
+// ErrUnknownPluginConfig is returned by New when Config.PluginConfig holds a key
+// matching no registered plugin — the typo case, which would otherwise leave a
+// plugin running on defaults and an operator certain it was configured.
+var ErrUnknownPluginConfig = plugin.ErrUnknownPluginConfig
+
+// ErrConfigurerRegisteredLate is returned by RegisterPlugin for a plugin
+// implementing Configurer, which must be supplied in Config.Plugins instead.
+var ErrConfigurerRegisteredLate = core.ErrConfigurerRegisteredLate
+
 // ErrMaxDepthExceeded is the render failure reported when a fragment tree nests
 // deeper than the engine allows, which almost always means a fragment was bound,
 // directly or indirectly, into one of its own slots.
@@ -334,6 +364,8 @@ func toCoreConfig(cfg *Config) core.Config {
 			IdleTimeout:     cfg.Server.IdleTimeout,
 			ShutdownTimeout: cfg.Server.ShutdownTimeout,
 		},
+		Plugins:      cfg.Plugins,
+		PluginConfig: cfg.PluginConfig,
 		Template: core.TemplateConfig{
 			FS:        cfg.Template.FS,
 			Root:      cfg.Template.Root,

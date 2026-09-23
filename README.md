@@ -129,6 +129,22 @@ cd examples/newsroom-api && go run .
 cd examples/magazine     && go run .
 ```
 
+### Plugins
+
+Three worked plugins live in [`plugins/`](plugins), each its own module, built the
+way a third-party one would be — nothing about shipping with the framework makes
+them privileged.
+
+| | |
+|---|---|
+| [`elagoht/minimizer`](plugins/minimizer) | strips whitespace and comments from pages, documents and mounted assets |
+| [`elagoht/jsonld`](plugins/jsonld) | emits schema.org structured data from the render's own data |
+| [`imns/opti-image`](plugins/opti-image) | rewrites declared-size images to resized copies it serves itself |
+
+`examples/magazine` runs all three, configured from a `plugins-config.json` it loads
+itself — the framework reads no file and imposes no format. See
+[`docs/plugins.md`](docs/plugins.md).
+
 ## What it guarantees
 
 - **No silent failures.** A fragment naming a template that does not exist, a

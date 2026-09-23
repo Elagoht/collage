@@ -238,3 +238,43 @@ func TestPageBuilder_BuildErr_NilWhenContentSet(t *testing.T) {
 		t.Fatalf("BuildErr() = %v, want nil", err)
 	}
 }
+
+func TestPageBuilder_WithCacheParams(t *testing.T) {
+	page := NewPage("listing").
+		WithContent(NewFragment("c", "c.html").Build()).
+		WithPath("en", "/listing").
+		WithCacheParams("page", "sort").
+		Build()
+
+	if got := page.CacheParams; len(got) != 2 || got[0] != "page" || got[1] != "sort" {
+		t.Fatalf("CacheParams = %v, want [page sort]", got)
+	}
+}
+
+func TestPageBuilder_WithCacheParams_NoneIsNotNil(t *testing.T) {
+	// "This page ignores its query" and "this page never said" are different
+	// statements, and only a non-nil empty slice can carry the first.
+	page := NewPage("static-ish").
+		WithContent(NewFragment("c", "c.html").Build()).
+		WithPath("en", "/x").
+		WithCacheParams().
+		Build()
+
+	if page.CacheParams == nil {
+		t.Fatal("CacheParams = nil, want an empty non-nil slice — nil means every parameter")
+	}
+	if len(page.CacheParams) != 0 {
+		t.Fatalf("CacheParams = %v, want empty", page.CacheParams)
+	}
+}
+
+func TestPageBuilder_CacheParamsDefaultToNil(t *testing.T) {
+	page := NewPage("plain").
+		WithContent(NewFragment("c", "c.html").Build()).
+		WithPath("en", "/y").
+		Build()
+
+	if page.CacheParams != nil {
+		t.Fatalf("CacheParams = %v, want nil — the default keeps every query parameter", page.CacheParams)
+	}
+}

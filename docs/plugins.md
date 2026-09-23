@@ -252,3 +252,138 @@ for _, cmd := range app.Commands() {
 	fmt.Printf("%s\t%s\n", cmd.Name, cmd.Short)
 }
 ```
+
+## Contributing, not only observing
+
+The hooks above let a plugin watch a request and rewrite what it produced. A plugin
+can also contribute things the framework then serves.
+
+### The two phases
+
+`Init` runs at startup, after the application has registered its own pages. A
+plugin that wants to read those pages, or add one, belongs there.
+
+Some contributions have to happen earlier. A template function must exist before
+templates are parsed — `html/template` resolves a name at execution time but can only
+call one that was in the `FuncMap` at parse time — and parsing happens while the
+application is built. So there is a second, earlier phase:
+
+```go
+type Configurer interface {
+	Configure(ctx context.Context, host collage.ConfigHost) error
+}
+```
+
+`Configure` is optional and discovered by type assertion, exactly as the hooks are.
+It runs inside `New`, and it receives a narrower host: at that point the application
+has registered nothing, so there are no pages to read.
+
+**A plugin implementing `Configurer` must be supplied in `Config.Plugins`.**
+`RegisterPlugin` is called after `New` has already parsed the templates, so it
+refuses such a plugin by name (`ErrConfigurerRegisteredLate`) rather than skipping
+its `Configure` silently — a plugin whose template function never arrived would
+otherwise leave you wondering why no template can call it.
+
+```go
+app, err := collage.New(&collage.Config{
+	Plugins: []collage.Plugin{minimizer.New()},
+})
+```
+
+### What each phase offers
+
+| | `ConfigHost` (Configure) | `Host` (Init) |
+|---|---|---|
+| `DevMode`, `Logger`, `Config` | yes | yes |
+| `AddTemplateFunc` | yes | — |
+| `WrapMount` | yes | — |
+| `Pages`, `Page`, `InvalidateTags` | — | yes |
+| `RegisterPage`, `RegisterDocument`, `Mount` | — | yes |
+| `RegisterCommand` | — | yes |
+
+`WrapMount` wraps the mounted filesystem rather than transforming a response,
+because a mount serves through `http.ServeContent` and therefore supports `Range`.
+Transforming bytes per request shifts every offset, and a range request then returns
+the wrong slice of a file whose advertised length no longer matches. A minifier
+returns an `fs.FS` whose files are already minified.
+
+### Documents
+
+`DocumentRenderedHook` is `AfterRenderHook`'s counterpart for the non-HTML routes:
+
+```go
+func (p *Plugin) OnDocumentRendered(ctx context.Context, ev *collage.DocumentRenderedEvent) error {
+	if strings.HasSuffix(ev.ContentType, "/json") {
+		ev.Body = compact(ev.Body)
+	}
+	return nil
+}
+```
+
+Without it a plugin that post-processes output covers pages and silently skips every
+sitemap, feed and JSON endpoint.
+
+### The render's own data
+
+`AfterRenderEvent.Data` is the render's `SharedData` — whatever the page's fragments
+exchanged while producing the HTML. It is how a plugin reaches what the page was
+built *from* rather than what it was rendered *into*: a structured-data plugin wants
+the article, not the markup it would otherwise parse back.
+
+What is in it is entirely the application's convention; the framework puts nothing
+there.
+
+## Configuration
+
+`Config.PluginConfig` is a `map[string]json.RawMessage`, keyed by plugin name:
+
+```go
+app, err := collage.New(&collage.Config{
+	Plugins:      []collage.Plugin{minimizer.New()},
+	PluginConfig: pluginConfig,
+})
+```
+
+The framework reads no file and imposes no format. The application fills the map
+however it likes — `collage.LoadPluginConfig(path)` is a convenience for a JSON
+file, and nothing depends on it, so an application whose configuration lives in YAML
+or the environment is not shut out.
+
+A plugin reads its own section into its own typed struct:
+
+```go
+func (p *Plugin) Configure(_ context.Context, host collage.ConfigHost) error {
+	p.cfg = Config{HTML: true} // defaults
+	return host.Config(&p.cfg) // overlaid by the application's section, if any
+}
+```
+
+An absent section leaves the value alone, so defaults survive: "not configured" and
+"configured to the zero value" are different statements, and only this can tell them
+apart.
+
+**A key matching no registered plugin is a startup error** (`ErrUnknownPluginConfig`).
+Ignoring `"elagoht/minimzer"` would leave the plugin running on defaults and the
+operator certain it was configured.
+
+Plugin names should read like module paths — `elagoht/minimizer` — so the
+configuration key and the plugin are the same identifier rather than two that have
+to be kept in step.
+
+## Third-party plugins need no mechanism
+
+Go compiles plugins in. `plugin.Open` is Linux and macOS only, demands an identical
+toolchain and identical dependency versions, and is not a basis for an ecosystem. A
+third-party plugin is an ordinary Go module:
+
+```go
+import optiimage "github.com/imns/opti-image"
+
+app, err := collage.New(&collage.Config{
+	Plugins: []collage.Plugin{optiimage.New()},
+})
+```
+
+Nothing about a plugin shipped alongside the framework is privileged. The three in
+[`plugins/`](../plugins) are each their own module for exactly that reason — they are
+built the way anyone else's would be.

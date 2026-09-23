@@ -3,11 +3,13 @@ package plugin
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -240,7 +242,7 @@ func TestRegistry_Register(t *testing.T) {
 		if err := r.Register(&testPlugin{name: "a"}); err != nil {
 			t.Fatalf("Register() error = %v, want nil", err)
 		}
-		if err := r.Init(context.Background(), fakeHost{}); err != nil {
+		if err := r.Init(context.Background(), hostFor); err != nil {
 			t.Fatalf("Init() error = %v, want nil", err)
 		}
 		err := r.Register(&testPlugin{name: "b"})
@@ -258,7 +260,7 @@ func TestRegistry_Init(t *testing.T) {
 		mustRegister(t, r, &testPlugin{name: "b", log: log})
 		mustRegister(t, r, &testPlugin{name: "c", log: log})
 
-		if err := r.Init(context.Background(), fakeHost{}); err != nil {
+		if err := r.Init(context.Background(), hostFor); err != nil {
 			t.Fatalf("Init() error = %v, want nil", err)
 		}
 
@@ -277,7 +279,7 @@ func TestRegistry_Init(t *testing.T) {
 		mustRegister(t, r, &testPlugin{name: "c", log: log, initErr: errBoom})
 		mustRegister(t, r, &testPlugin{name: "d", log: log})
 
-		err := r.Init(context.Background(), fakeHost{})
+		err := r.Init(context.Background(), hostFor)
 		if err == nil {
 			t.Fatal("Init() error = nil, want non-nil")
 		}
@@ -305,7 +307,7 @@ func TestRegistry_Init(t *testing.T) {
 		mustRegister(t, r, &testPlugin{name: "a", log: log, shutdownErr: errShutdown})
 		mustRegister(t, r, &testPlugin{name: "b", log: log, initErr: errInit})
 
-		err := r.Init(context.Background(), fakeHost{})
+		err := r.Init(context.Background(), hostFor)
 		if !errors.Is(err, errInit) {
 			t.Fatalf("Init() error = %v, want it to wrap the init failure", err)
 		}
@@ -320,7 +322,7 @@ func TestRegistry_Init(t *testing.T) {
 		mustRegister(t, r, &testPlugin{name: "a", log: log})
 		mustRegister(t, r, &testPlugin{name: "panicky", log: log, initPanics: true})
 
-		err := r.Init(context.Background(), fakeHost{})
+		err := r.Init(context.Background(), hostFor)
 		if err == nil {
 			t.Fatal("Init() error = nil, want non-nil for a panicking plugin")
 		}
@@ -335,14 +337,14 @@ func TestRegistry_Init(t *testing.T) {
 
 	t.Run("nil registry is a no-op", func(t *testing.T) {
 		var r *Registry
-		if err := r.Init(context.Background(), fakeHost{}); err != nil {
+		if err := r.Init(context.Background(), hostFor); err != nil {
 			t.Fatalf("Init() on nil *Registry error = %v, want nil", err)
 		}
 	})
 
 	t.Run("empty registry is a no-op", func(t *testing.T) {
 		r := NewRegistry(nil)
-		if err := r.Init(context.Background(), fakeHost{}); err != nil {
+		if err := r.Init(context.Background(), hostFor); err != nil {
 			t.Fatalf("Init() on empty Registry error = %v, want nil", err)
 		}
 	})
@@ -355,7 +357,7 @@ func TestRegistry_Shutdown(t *testing.T) {
 		mustRegister(t, r, &testPlugin{name: "a", log: log})
 		mustRegister(t, r, &testPlugin{name: "b", log: log})
 		mustRegister(t, r, &testPlugin{name: "c", log: log})
-		if err := r.Init(context.Background(), fakeHost{}); err != nil {
+		if err := r.Init(context.Background(), hostFor); err != nil {
 			t.Fatalf("Init() error = %v, want nil", err)
 		}
 		log.calls = nil // discard the Init calls, keep only Shutdown's
@@ -455,12 +457,19 @@ func TestRegistry_PluginWithNoHooksIsNeverCalled(t *testing.T) {
 // the parameter, not exercise it.
 type fakeHost struct{}
 
-func (fakeHost) DevMode() bool                                            { return false }
-func (fakeHost) Pages() []*types.Page                                     { return nil }
-func (fakeHost) Page(name string) (*types.Page, bool)                     { return nil, false }
-func (fakeHost) InvalidateTags(ctx context.Context, tags ...string) error { return nil }
-func (fakeHost) Logger() *slog.Logger                                     { return slog.Default() }
-func (fakeHost) RegisterCommand(cmd Command) error                        { return nil }
+func (fakeHost) DevMode() bool                                               { return false }
+func (fakeHost) Pages() []*types.Page                                        { return nil }
+func (fakeHost) Page(name string) (*types.Page, bool)                        { return nil, false }
+func (fakeHost) InvalidateTags(ctx context.Context, tags ...string) error    { return nil }
+func (fakeHost) Logger() *slog.Logger                                        { return slog.Default() }
+func (fakeHost) RegisterCommand(cmd Command) error                           { return nil }
+func (fakeHost) Config(v any) error                                          { return nil } // any: restates encoding/json's own parameter type
+func (fakeHost) RegisterPage(page *types.Page) error                         { return nil }
+func (fakeHost) RegisterDocument(doc *types.Document) error                  { return nil }
+func (fakeHost) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error { return nil }
+
+// hostFor is what Registry.Init takes: one host per plugin, chosen by name.
+func hostFor(string) Host { return fakeHost{} }
 
 var _ Host = fakeHost{}
 

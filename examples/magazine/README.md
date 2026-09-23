@@ -34,6 +34,31 @@ the framework's mechanisms one at a time against an in-process store, and it is 
 framework's end-to-end test, so it lives inside the framework's own module. This one
 is about what the mechanisms are *for* once a backend is involved.
 
+## Plugins
+
+The site runs all three of the repository's plugins, configured from
+`plugins-config.json` which it loads itself:
+
+```json
+{
+  "elagoht/minimizer": { "html": true, "json": true, "css": true, "js": false },
+  "elagoht/jsonld":    { "siteName": "The Wire", "siteURL": "http://localhost:3000" },
+  "imns/opti-image":   { "allowedOrigins": [] }
+}
+```
+
+A missing file is not an error: every plugin's defaults already describe what
+"unconfigured" means. The one line tying the site to JSON is the `LoadPluginConfig`
+call — the framework takes a map and does not care where it came from.
+
+`opti-image` ships with an empty origin list, so it is inert until a deployment names
+the host its images come from. An empty list never means "any host".
+
+The minifier and the image optimiser are supplied through `Config.Plugins` rather
+than `RegisterPlugin`, because both need the `Configure` phase — one wraps every
+mounted filesystem, the other registers the route it serves from, and both happen
+while the application is built.
+
 ## Routes
 
 | Path (en) | Path (tr) | Strategy |
@@ -97,10 +122,19 @@ into the page for the whole TTL: the sidebar returns on the next request rather 
 fifteen minutes later. `TestSite_DegradedRendersAreNotCached` asserts it by counting
 backend requests, since both responses are `200` with different bodies.
 
-**Search is never cached, and `robots.txt` says so.** A page's cache key includes
-the raw query string, so caching search would mint an entry per distinct `?q=` —
-waste with an ordinary crawler, an eviction attack with an attacker-chosen
-parameter. Rendering it fresh costs one API call.
+**Every page says which query parameters it reads.** By default the whole query
+string discriminates, which is correct and expensive: a newsletter link carrying
+`?utm_source=` caches a second copy of the front page, and a crawler walking
+variants evicts the real archive from a bounded cache without ever asking for a
+distinct page. The listings declare `WithCacheParams("page")`; an article declares
+`WithCacheParams()` with nothing at all, because it renders the same whatever the
+query says.
+
+**Search is still never cached, and `robots.txt` says so.** The allowlist does not
+rescue it: the offending parameter is the one the page is about. `q` has to
+discriminate, and its values are chosen by whoever is asking — a cache keyed on
+arbitrary reader input is an eviction attack with a text field for a trigger.
+Rendering it fresh costs one API call.
 
 **The feed and the sitemap are marshalled, not rendered.** `html/template` applies
 HTML escaping rules, which are wrong for XML at exactly the characters that most

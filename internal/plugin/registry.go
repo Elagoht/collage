@@ -101,7 +101,7 @@ func (r *Registry) Plugins() []Plugin {
 // plugin itself is not shut down, since it never finished initialising), and
 // returns an error that wraps both the original failure and any error from that
 // rollback via errors.Join. A nil Registry does nothing and returns nil.
-func (r *Registry) Init(ctx context.Context, host Host) error {
+func (r *Registry) Init(ctx context.Context, hostFor func(name string) Host) error {
 	if r == nil {
 		return nil
 	}
@@ -112,6 +112,9 @@ func (r *Registry) Init(ctx context.Context, host Host) error {
 	r.mu.Unlock()
 
 	for i, p := range plugins {
+		// One host per plugin, not one shared: a plugin's Config call has to find
+		// its own section, and the section is chosen by the plugin's name.
+		host := hostFor(p.Name())
 		if err := safeCall(func() error { return p.Init(ctx, host) }); err != nil {
 			initErr := fmt.Errorf("collage: plugin %q init: %w", p.Name(), err)
 
@@ -302,4 +305,22 @@ func safeCall(fn func() error) (err error) {
 		}
 	}()
 	return fn()
+}
+
+// DocumentRendered dispatches ev to every registered plugin implementing
+// DocumentRenderedHook, in registration order. A plugin may replace ev.Body; later
+// plugins see what earlier ones produced. It stops and returns a wrapped error at
+// the first hook failure, including a contained panic. A nil Registry, or one with
+// no plugin implementing the hook, is a no-op that returns nil.
+func (r *Registry) DocumentRendered(ctx context.Context, ev *DocumentRenderedEvent) error {
+	for _, p := range r.snapshot() {
+		hook, ok := p.(DocumentRenderedHook)
+		if !ok {
+			continue
+		}
+		if err := runHook(p.Name(), "OnDocumentRendered", func() error { return hook.OnDocumentRendered(ctx, ev) }); err != nil {
+			return err
+		}
+	}
+	return nil
 }

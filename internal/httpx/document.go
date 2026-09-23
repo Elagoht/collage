@@ -61,7 +61,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			Path:   r.URL.Path,
 			Locale: match.Locale,
 			Params: match.PathParams,
-			Vary:   []string{r.URL.RawQuery},
+			Vary:   queryVary(r.URL, doc.CacheParams),
 		})
 		lookupStart := time.Now()
 		if content, etag, found := h.cache.Get(ctx, key); found {
@@ -93,6 +93,26 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 
 	if len(result.Body) == 0 {
 		err := fmt.Errorf("%w: document %q", types.ErrEmptyDocumentBody, doc.Name)
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
+	}
+
+	// Dispatched before the ETag is computed and before anything is cached, so a
+	// plugin that rewrites the body — a minifier, most obviously — is what gets
+	// stored and what the ETag describes. Doing it after would serve one thing and
+	// cache another, and hand clients an ETag for a body they never received.
+	documentEvent := &plugin.DocumentRenderedEvent{
+		Document:    doc,
+		ContentType: doc.ContentType,
+		Locale:      match.Locale,
+		Path:        r.URL.Path,
+		Body:        result.Body,
+	}
+	if err := h.plugins.DocumentRendered(ctx, documentEvent); err != nil {
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
+	}
+	result.Body = documentEvent.Body
+	if len(result.Body) == 0 {
+		err := fmt.Errorf("%w: document %q, after plugin post-processing", types.ErrEmptyDocumentBody, doc.Name)
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
 	}
 

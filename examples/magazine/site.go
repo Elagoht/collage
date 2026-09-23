@@ -2,11 +2,16 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
+
+	"example.com/jsonld"
+	"example.com/minimizer"
+	optiimage "example.com/opti-image"
 )
 
 // templatesFS carries the site's markup. Embedding it is what lets the binary run
@@ -38,6 +43,8 @@ type config struct {
 	// DevMode surfaces failed fragments as HTML comments and disables template
 	// caching.
 	DevMode bool
+	// PluginConfig is each plugin's own configuration, keyed by plugin name.
+	PluginConfig map[string]json.RawMessage
 	// Logger receives the framework's own structured output as well as the site's.
 	Logger *slog.Logger
 }
@@ -53,6 +60,16 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 	app, err := collage.New(&collage.Config{
 		DevMode: cfg.DevMode,
 		Logger:  cfg.Logger,
+		// Two of these need Configure, which runs while the application is built:
+		// the minifier wraps every mounted filesystem, and the image optimiser
+		// registers the route it serves from. RegisterPlugin would refuse them by
+		// name rather than skip their Configure silently.
+		Plugins: []collage.Plugin{
+			minimizer.New(),
+			jsonld.New(),
+			optiimage.New(),
+		},
+		PluginConfig: cfg.PluginConfig,
 		Server: collage.ServerConfig{
 			Host: cfg.Host,
 			Port: cfg.Port,
@@ -180,6 +197,10 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 			Build()).
 		WithPath("en", "/").
 		WithPath("tr", "/").
+		// Only the page number changes what this renders. Without saying so, every
+		// "?utm_source=..." a newsletter or a crawler appends would mint its own
+		// cache entry and evict a real page to make room.
+		WithCacheParams("page").
 		WithNotFoundPage(notFound).
 		WithErrorPage(serverError).
 		Incremental(time.Minute).
@@ -197,6 +218,7 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 			Build()).
 		WithPath("en", "/category/{slug}").
 		WithPath("tr", "/kategori/{slug}").
+		WithCacheParams("page").
 		WithNotFoundPage(notFound).
 		WithErrorPage(serverError).
 		Incremental(2 * time.Minute).
@@ -211,6 +233,7 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 			Build()).
 		WithPath("en", "/author/{slug}").
 		WithPath("tr", "/yazar/{slug}").
+		WithCacheParams("page").
 		WithNotFoundPage(notFound).
 		WithErrorPage(serverError).
 		Incremental(5 * time.Minute).
@@ -229,6 +252,9 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 			Build()).
 		WithPath("en", "/{year}/{month}/{slug}").
 		WithPath("tr", "/{year}/{month}/{slug}").
+		// No arguments: an article renders the same whatever the query says, so
+		// nothing in it should reach the cache key.
+		WithCacheParams().
 		WithNotFoundPage(articleNotFound).
 		WithErrorPage(serverError).
 		Incremental(15 * time.Minute).
@@ -237,10 +263,11 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 
 	// Search is the one page that is never cached.
 	//
-	// A page's cache key includes the raw query string, so every distinct "?q="
-	// would mint its own entry. With an attacker-chosen parameter that is an
-	// eviction attack on every other page in the cache; with an ordinary crawler
-	// it is merely waste. Rendering it fresh costs one API call.
+	// WithCacheParams does not rescue it. That bounds *which* parameters
+	// discriminate, and here the offending parameter is the one the page is about:
+	// "q" has to discriminate, and its values are chosen by whoever is asking. A
+	// cache keyed on arbitrary reader input is an eviction attack with a text
+	// field for a trigger. Rendering fresh costs one API call.
 	search := collage.NewPage("search").
 		WithLayout(layoutWith(headFor("head-search", d.headSearch))).
 		WithContent(collage.NewFragment("search-content", "pages/search.html").

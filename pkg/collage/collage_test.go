@@ -2,6 +2,7 @@ package collage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -507,3 +508,33 @@ func TestObservability_ImplementableFromThePublicPackage(t *testing.T) {
 		t.Fatal("the Metrics implementation received nothing")
 	}
 }
+
+// TestToCoreConfig_CarriesPluginFields extends the field-parity check to the two
+// plugin fields. It is separate from TestToCoreConfig_CarriesEveryField only
+// because that test's fixture predates them; the purpose is the same — a field
+// added to one struct and forgotten in the conversion must fail here.
+func TestToCoreConfig_CarriesPluginFields(t *testing.T) {
+	p := &parityPlugin{}
+	cfg := &Config{
+		Plugins: []Plugin{p},
+		PluginConfig: map[string]json.RawMessage{
+			"parity/plugin": json.RawMessage(`{"on":true}`),
+		},
+	}
+
+	core := toCoreConfig(cfg)
+
+	if len(core.Plugins) != 1 || core.Plugins[0] != Plugin(p) {
+		t.Errorf("Plugins = %v, want the configured plugin", core.Plugins)
+	}
+	if got, ok := core.PluginConfig["parity/plugin"]; !ok || string(got) != `{"on":true}` {
+		t.Errorf("PluginConfig = %v, want the configured section", core.PluginConfig)
+	}
+}
+
+type parityPlugin struct{}
+
+func (*parityPlugin) Name() string                     { return "parity/plugin" }
+func (*parityPlugin) Version() string                  { return "0.0.1" }
+func (*parityPlugin) Init(context.Context, Host) error { return nil }
+func (*parityPlugin) Shutdown(context.Context) error   { return nil }

@@ -21,6 +21,10 @@ import (
 // template engine, router, and render pipeline.
 type fakeRenderer struct {
 	pages []*types.Page
+	// defaultLocale is the locale written to the bare output path. An empty value
+	// means every locale gets a directory, which is what a test asserting the
+	// prefix on its own wants.
+	defaultLocale string
 
 	mu    sync.Mutex
 	calls []renderCall
@@ -66,6 +70,16 @@ type renderCall struct {
 
 func renderKey(path, locale string) string {
 	return locale + "\x00" + path
+}
+
+// DefaultLocale mirrors core.App, which defaults an unset Locale.Default to "en"
+// in New — so a test that does not care about locales sees the same unprefixed
+// output paths the real application produces.
+func (f *fakeRenderer) DefaultLocale() string {
+	if f.defaultLocale == "" {
+		return "en"
+	}
+	return f.defaultLocale
 }
 
 func (f *fakeRenderer) Pages() []*types.Page {
@@ -305,9 +319,12 @@ func TestBuild_RootPath(t *testing.T) {
 
 func TestBuild_MultipleLocales(t *testing.T) {
 	out := resolvedTempDir(t)
+	// The Turkish pattern carries no "/tr": path-locale resolution strips the
+	// prefix before matching, so "/blog" in the tr tree is served at "/tr/blog",
+	// and writing the prefix here would produce "/tr/tr/blog".
 	page := newTestPage("blog", types.StrategyStatic, map[string]string{
 		"en": "/blog",
-		"tr": "/tr/blog",
+		"tr": "/blog",
 	})
 	app := &fakeRenderer{pages: []*types.Page{page}}
 
@@ -335,9 +352,12 @@ func TestBuild_MultipleLocales(t *testing.T) {
 
 func TestBuild_LocaleFilter(t *testing.T) {
 	out := resolvedTempDir(t)
+	// The Turkish pattern carries no "/tr": path-locale resolution strips the
+	// prefix before matching, so "/blog" in the tr tree is served at "/tr/blog",
+	// and writing the prefix here would produce "/tr/tr/blog".
 	page := newTestPage("blog", types.StrategyStatic, map[string]string{
 		"en": "/blog",
-		"tr": "/tr/blog",
+		"tr": "/blog",
 	})
 	app := &fakeRenderer{pages: []*types.Page{page}}
 
@@ -1065,5 +1085,71 @@ func TestBuild_PanicInOnePageDoesNotKillTheBuild(t *testing.T) {
 			t.Fatalf("Report.Written[%d] = %q, want %q", i, report.Written[i], path)
 		}
 		readFile(t, path)
+	}
+}
+
+// TestBuild_SameePatternInTwoLocalesDoesNotCollide is the shape a real
+// multi-locale site has. The router strips the locale prefix before matching, so a
+// page registered at Paths{"en": "/", "tr": "/"} is served at "/" and at "/tr/" —
+// the author does not write the prefix, and writing it would produce "/tr/tr/".
+//
+// The builder used to ignore the locale entirely when choosing an output file, so
+// both locales resolved to <out>/index.html and whichever rendered second silently
+// overwrote the first. A site could not be built in two languages at all, and
+// nothing said so.
+func TestBuild_SamePatternInTwoLocalesDoesNotCollide(t *testing.T) {
+	out := resolvedTempDir(t)
+	page := newTestPage("home", types.StrategyStatic, map[string]string{"en": "/", "tr": "/"})
+	app := &fakeRenderer{pages: []*types.Page{page}, defaultLocale: "en"}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(report.Errors) != 0 {
+		t.Fatalf("Errors = %v", report.Errors)
+	}
+
+	en := filepath.Join(out, "index.html")
+	tr := filepath.Join(out, "tr", "index.html")
+
+	if got := readFile(t, en); got != "<html>en|/</html>" {
+		t.Errorf("default locale file = %q, want the English render", got)
+	}
+	if got := readFile(t, tr); got != "<html>tr|/</html>" {
+		t.Errorf("prefixed locale file = %q, want the Turkish render", got)
+	}
+	if len(report.Written) != 2 {
+		t.Fatalf("Written = %v, want two distinct files", report.Written)
+	}
+}
+
+// TestBuild_TwoPagesOnOneOutputPathIsAnError covers what the locale prefix cannot:
+// a PathProvider that returns the same path twice, or two pages whose patterns
+// resolve to the same file. Silently writing one over the other loses a page from
+// the build with nothing in the report to show for it.
+func TestBuild_TwoPagesOnOneOutputPathIsAnError(t *testing.T) {
+	out := resolvedTempDir(t)
+	first := newTestPage("first", types.StrategyStatic, map[string]string{"en": "/duplicate"})
+	second := newTestPage("second", types.StrategyStatic, map[string]string{"en": "/duplicate/"})
+	app := &fakeRenderer{pages: []*types.Page{first, second}, defaultLocale: "en"}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err == nil {
+		t.Fatal("Build error = nil, want a collision error")
+	}
+	if !errors.Is(err, ErrOutputPathCollision) {
+		t.Fatalf("Build error = %v, want ErrOutputPathCollision", err)
+	}
+	if len(report.Written) > 1 {
+		t.Errorf("Written = %v, want at most one file; the collision must stop the second write", report.Written)
 	}
 }

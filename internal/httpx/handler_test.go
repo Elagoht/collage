@@ -1857,3 +1857,142 @@ func TestPageRequestUnaffectedByMountsBeingConfigured(t *testing.T) {
 		t.Errorf("HTTPResponse calls = %+v, want one 200 for \"/\"", responses)
 	}
 }
+
+// panickingTracer panics from StartSpan. It is the hostile double for the one
+// tracer call that runs before anything has been written.
+type panickingTracer struct{ observability.NoopTracer }
+
+func (panickingTracer) StartSpan(ctx context.Context, name string) (context.Context, observability.Span) {
+	panic("tracer: start span exploded")
+}
+
+// panickingSpan starts fine and panics when an attribute is set — the other call
+// that runs before the response.
+type panickingSpanTracer struct{ observability.NoopTracer }
+
+func (panickingSpanTracer) StartSpan(ctx context.Context, name string) (context.Context, observability.Span) {
+	return ctx, panickingSpan{}
+}
+
+type panickingSpan struct{ observability.NoopSpan }
+
+func (panickingSpan) SetAttribute(key, value string) { panic("tracer: set attribute exploded") }
+
+func TestHandler_TracerPanicStillServesTheRequest(t *testing.T) {
+	// A tracer that cannot start a span is a reason to serve the page without
+	// tracing, not a reason not to serve it. Unguarded, the panic unwinds into
+	// net/http, which closes the connection with no status line — the caller sees a
+	// network failure rather than a request that was answered.
+	for _, tc := range []struct {
+		name   string
+		tracer observability.Tracer
+	}{
+		{"StartSpan panics", panickingTracer{}},
+		{"SetAttribute panics", panickingSpanTracer{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			page := testPage("home", "/", types.StrategyStatic)
+			env := newEnv(t, []*types.Page{page}, func(d *Deps) { d.Tracer = tc.tracer })
+			env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+			res := env.get("/")
+
+			if res.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 — the request must still be answered", res.Code)
+			}
+			if res.Body.Len() == 0 {
+				t.Error("no body was written")
+			}
+			if env.logs.count("collage: tracer panicked starting the request span") == 0 {
+				t.Error("the tracer panic was swallowed without a log line")
+			}
+		})
+	}
+}
+
+// TestServe_CacheParamsRestrictTheKey is the defect a real application hits first.
+//
+// The raw query string is a cache-key dimension, which is correct — a data handler
+// receives the whole request and may render from it — but it means every tracking
+// parameter mints its own entry. A crawler walking "?utm_source=..." variants
+// evicts the real archive from a bounded cache without ever requesting a distinct
+// page. WithCacheParams names the parameters the page actually reads; everything
+// else stops discriminating.
+func TestServe_CacheParamsRestrictTheKey(t *testing.T) {
+	page := testPage("home", "/", types.StrategyIncremental)
+	page.CacheTTL = time.Minute
+	page.CacheParams = []string{"page"}
+	env := newEnv(t, []*types.Page{page})
+	env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+	env.get("/?page=2")
+	after := env.engine.pageCalls("home")
+
+	// Same "page", different tracking junk: one representation, one entry.
+	env.get("/?page=2&utm_source=newsletter")
+	if got := env.engine.pageCalls("home"); got != after {
+		t.Errorf("renders = %d, want %d — an unlisted parameter must not mint a cache entry", got, after)
+	}
+
+	// The listed parameter still discriminates.
+	env.get("/?page=3")
+	if got := env.engine.pageCalls("home"); got != after+1 {
+		t.Errorf("renders = %d, want %d — a listed parameter must still be a cache dimension", got, after+1)
+	}
+}
+
+func TestServe_CacheParamsIgnoreParameterOrder(t *testing.T) {
+	// The raw query is not canonicalised, so "?a=1&b=2" and "?b=2&a=1" are two
+	// entries for one representation. Restricting the key is the point at which
+	// that can be fixed without guessing which parameters matter.
+	page := testPage("home", "/", types.StrategyIncremental)
+	page.CacheTTL = time.Minute
+	page.CacheParams = []string{"a", "b"}
+	env := newEnv(t, []*types.Page{page})
+	env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+	env.get("/?a=1&b=2")
+	after := env.engine.pageCalls("home")
+
+	env.get("/?b=2&a=1")
+	if got := env.engine.pageCalls("home"); got != after {
+		t.Errorf("renders = %d, want %d — parameter order is not a representation", got, after)
+	}
+}
+
+func TestServe_NoCacheParamsKeepsEveryQueryAsADimension(t *testing.T) {
+	// The default must stay "everything". Narrowing by default would silently
+	// merge two representations of a page whose handler reads a parameter nobody
+	// remembered to declare.
+	page := testPage("home", "/", types.StrategyIncremental)
+	page.CacheTTL = time.Minute
+	env := newEnv(t, []*types.Page{page})
+	env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+	env.get("/?anything=1")
+	after := env.engine.pageCalls("home")
+
+	env.get("/?anything=2")
+	if got := env.engine.pageCalls("home"); got != after+1 {
+		t.Errorf("renders = %d, want %d — with no allowlist every query is a dimension", got, after+1)
+	}
+}
+
+func TestServe_EmptyCacheParamsDropsTheQueryEntirely(t *testing.T) {
+	// A declared-but-empty allowlist is a statement, not an omission: this page
+	// renders the same whatever the query says. It has to be distinguishable from
+	// nil, or a page that genuinely ignores its query has no way to say so.
+	page := testPage("home", "/", types.StrategyIncremental)
+	page.CacheTTL = time.Minute
+	page.CacheParams = []string{}
+	env := newEnv(t, []*types.Page{page})
+	env.engine.set("home", fakeRender{html: "<html>home</html>"})
+
+	env.get("/?anything=1")
+	after := env.engine.pageCalls("home")
+
+	env.get("/?anything=2&more=3")
+	if got := env.engine.pageCalls("home"); got != after {
+		t.Errorf("renders = %d, want %d — an empty allowlist means no query discriminates", got, after)
+	}
+}
