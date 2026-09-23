@@ -181,6 +181,10 @@ type Handler struct {
 	defaultTTL time.Duration
 	vary       string
 	mounts     []*asset.Mount
+	// flight coalesces concurrent renders of one cache key, so an expiring
+	// popular page costs one render rather than one per request that arrives
+	// while it is being re-made.
+	flight *flight
 }
 
 var _ http.Handler = (*Handler)(nil)
@@ -219,6 +223,7 @@ func New(d Deps) (*Handler, error) {
 		// Cloned for the same reason: a caller mutating d.Mounts after New returns
 		// must not change what this Handler serves.
 		mounts: slices.Clone(d.Mounts),
+		flight: newFlight(),
 	}, nil
 }
 
@@ -499,6 +504,62 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		h.metrics.CacheEvent(ctx, observability.CacheMiss, key)
 	}
 
+	// One render serves every request that wants this key, and the rest wait for
+	// it. Without the flight, the moment a popular page expires is the moment
+	// every request in flight becomes a cache miss and renders — identical work,
+	// multiplied by traffic, aimed at the upstream that has just been shown to be
+	// slow. See flight.
+	//
+	// A page with no key is rendered directly. There is nothing to coalesce on,
+	// and a page the application declared dynamic is two renders for two requests
+	// by its own declaration.
+	produce := func() *outcome { return h.renderPage(ctx, r, page, match, key, cacheable) }
+
+	var out *outcome
+	shared := false
+	if key != "" {
+		out, shared = h.flight.do(ctx, key, produce)
+	} else {
+		out = produce()
+	}
+	if shared {
+		// Not a hit: nothing was in the cache when this request asked. It is the
+		// other outcome that costs nothing, and it is worth being able to see
+		// separately — a large coalesced count is what a too-short TTL looks
+		// like from the outside.
+		h.metrics.CacheEvent(ctx, observability.CacheCoalesced, key)
+	}
+
+	if out.fail != nil {
+		return h.serveFailure(w, r, *out.fail)
+	}
+
+	header := w.Header()
+	header.Set("Content-Type", contentTypeHTML)
+	header.Set("ETag", out.etag)
+	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
+	if h.devMode {
+		header.Set(renderTimeHeader, out.renderTime.String())
+	}
+	w.WriteHeader(http.StatusOK)
+	writeBody(w, out.content)
+
+	return http.StatusOK
+}
+
+// renderPage renders one page and returns what to write, or why nothing can be.
+//
+// It writes nothing itself, and that is the point: the work may be being done on
+// behalf of several requests at once, and each of them writes its own response from
+// the value this returns.
+func (h *Handler) renderPage(
+	ctx context.Context,
+	r *http.Request,
+	page *types.Page,
+	match *router.MatchResult,
+	key string,
+	cacheable bool,
+) *outcome {
 	// Deliberately after the cache lookup: BeforeRenderHook documents that it
 	// does not fire when a cached render is served instead of a fresh one, which
 	// is what distinguishes it from PageResolvedHook.
@@ -512,13 +573,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		Locale:  match.Locale,
 		Path:    r.URL.Path,
 	}); err != nil {
-		return h.serveFailure(w, r, failure{
+		return &outcome{fail: &failure{
 			status: http.StatusInternalServerError,
 			err:    err,
 			page:   page,
 			locale: match.Locale,
 			stage:  stageBeforeRender,
-		})
+		}}
 	}
 
 	renderStart := time.Now()
@@ -536,14 +597,14 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			// NotFoundPage through errorPageFor exactly as a router miss does.
 			status = http.StatusNotFound
 		}
-		return h.serveFailure(w, r, failure{
+		return &outcome{fail: &failure{
 			status:   status,
 			err:      err,
 			page:     page,
 			locale:   match.Locale,
 			fragment: failedFragment(result),
 			stage:    stageRender,
-		})
+		}}
 	}
 
 	// The hook may replace the HTML, and the replacement is what goes on the wire
@@ -559,13 +620,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// No fragment is named: the failure is the plugin's, and pointing the dev
 		// page at a fragment that merely happened to be degraded would send a
 		// developer looking in the wrong place.
-		return h.serveFailure(w, r, failure{
+		return &outcome{fail: &failure{
 			status: http.StatusInternalServerError,
 			err:    err,
 			page:   page,
 			locale: match.Locale,
 			stage:  stageAfterRender,
-		})
+		}}
 	}
 	content := afterRender.HTML
 
@@ -581,17 +642,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		etag = cache.ETag(content)
 	}
 
-	header := w.Header()
-	header.Set("Content-Type", contentTypeHTML)
-	header.Set("ETag", etag)
-	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
-	if h.devMode {
-		header.Set(renderTimeHeader, renderTime.String())
-	}
-	w.WriteHeader(http.StatusOK)
-	writeBody(w, content)
-
-	return http.StatusOK
+	return &outcome{content: content, etag: etag, renderTime: renderTime}
 }
 
 // serveCached writes a cache hit: a 304 when the request's If-None-Match matches

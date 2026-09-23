@@ -50,6 +50,13 @@ const (
 	CacheEvict CacheEvent = "evict"
 	// CacheInvalidate means an entry was removed by an explicit invalidation.
 	CacheInvalidate CacheEvent = "invalidate"
+	// CacheCoalesced means a lookup found no entry, but a render of the same key
+	// was already running and this request was served by it rather than starting
+	// one of its own. It is not a hit — nothing was cached when the request asked
+	// — and it is not a miss that cost a render. A count that climbs is a page
+	// expiring faster than it can be re-made, which is what a too-short TTL looks
+	// like from the outside.
+	CacheCoalesced CacheEvent = "coalesced"
 )
 
 // Timing records where a render spent its time. The render engine fills one of

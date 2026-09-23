@@ -174,6 +174,9 @@ const (
 	CacheEvict = observability.CacheEvict
 	// CacheInvalidate means an entry was removed by an explicit invalidation.
 	CacheInvalidate = observability.CacheInvalidate
+	// CacheCoalesced means the request was served by a render of the same cache
+	// key that was already running, rather than starting one of its own.
+	CacheCoalesced = observability.CacheCoalesced
 )
 
 // ETag returns the strong HTTP ETag the framework itself computes for content: the

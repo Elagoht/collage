@@ -166,6 +166,33 @@ different caches.
 Plugins observe invalidation through `OnCacheInvalidate`, and a plugin triggers
 one through `Host.InvalidateTags`.
 
+## Concurrent misses render once
+
+When a cached page expires, every request that arrives before the first re-render
+finishes is a cache miss. Without anything in the way, each of them renders: the
+same page, the same upstream calls, at the same moment — and the number of them
+grows with traffic, which is the shape of an outage rather than of a slow page.
+
+So the first request for a key renders and the rest wait for it. They are handed the
+same bytes and each writes its own response. Nothing is configurable here and
+nothing needs to be: it is how the handler serves a miss.
+
+Two things follow that are worth knowing.
+
+**Only cacheable pages coalesce.** A page declared `Dynamic()` has no cache key, and
+two requests for it are two renders by the page's own declaration.
+
+**A coalesced request is reported as its own cache event**, `CacheCoalesced`, rather
+than as a hit or a miss. It is not a hit — nothing was cached when the request asked
+— and calling it a miss would suggest it cost a render. Watch it: a count that
+climbs steadily is a page expiring faster than it can be re-made, which is what a
+too-short `Incremental` TTL looks like from the outside.
+
+A request whose own connection goes away stops waiting. And a render that fails
+because the *first* request was cancelled is not passed on to the requests behind
+it — they try again — so one reader pressing stop cannot turn into an error page for
+everyone who happened to ask at the same moment.
+
 ## What is never cached
 
 - **A degraded render.** If any fragment failed — even one a fallback covered for
