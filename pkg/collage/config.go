@@ -64,7 +64,18 @@ type Config struct {
 	// for the effective value, which also considers Template.DevMode.
 	DevMode bool
 	// Logger is the structured logger the framework writes through, and the one
-	// plugins receive from Host.Logger. A nil Logger means slog.Default().
+	// plugins receive from Host.Logger.
+	//
+	// A nil Logger means the framework picks. When the output is a terminal and
+	// nothing has replaced slog's own default handler, it picks one meant for a
+	// person: one line per record, a coloured marker for the level, the time
+	// without the date, the attributes dimmed after the message. Anywhere else —
+	// a pipe, a file, a CI log — it is slog.Default(), unchanged, so nothing that
+	// parses this output has to learn a new format.
+	//
+	// An application that called slog.SetDefault has chosen a handler, and that
+	// choice is honoured: noticing a terminal is not a reason to override a
+	// decision somebody made on purpose. Pass a Logger to be certain.
 	//
 	// ApplyDefaults deliberately leaves it nil rather than filling in
 	// slog.Default(): nil is already unambiguous, and resolving it at construction

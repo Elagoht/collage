@@ -130,7 +130,10 @@ type Config struct {
 	// Security configures request-forgery protection.
 	Security SecurityConfig
 	// Logger is the structured logger the framework writes through and hands to
-	// plugins via Host.Logger. A nil Logger means slog.Default().
+	// plugins via Host.Logger. A nil Logger means the framework picks one: a
+	// terminal-friendly handler when the output is a terminal and nothing has
+	// replaced slog's own default, and slog.Default() otherwise. See
+	// defaultLogger.
 	Logger *slog.Logger
 	// Server configures the HTTP server.
 	Server ServerConfig
@@ -424,7 +427,7 @@ func New(cfg Config) (*App, error) {
 	devMode := cfg.DevMode || cfg.Template.DevMode
 	logger := cfg.Logger
 	if logger == nil {
-		logger = slog.Default()
+		logger = defaultLogger()
 	}
 
 	// The App exists before the template engine because plugins get to influence

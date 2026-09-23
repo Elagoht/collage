@@ -46,6 +46,28 @@ A scaffolded project calls it, and so does `examples/magazine` — the one place
 that program that prints rather than logs, because a build is a command somebody ran
 and is watching.
 
+## Logs on a terminal
+
+An application that configures no `Logger` gets one shaped for a person when its
+output is a terminal:
+
+```
+23:06:09 • collage: listening  addr=127.0.0.1:3000
+23:06:09 ▲ collage: no Security.CSRFKey set, so one was generated for this process  action=signup:POST
+23:06:10 ✗ collage: request failed  path=/about stage=render
+```
+
+One line per record, a coloured marker instead of the level spelled out, the time
+without the date — it is the same date as the terminal it is being read in — and the
+attributes dimmed after the message.
+
+Anywhere that is not a terminal it is `slog.Default()`, unchanged, so nothing that
+parses these logs has to learn a new format. And an application that called
+`slog.SetDefault` keeps the handler it chose: noticing a terminal is not a reason to
+override a decision somebody made on purpose. Setting `Config.Logger` settles it
+either way — `examples/magazine` passes a JSON handler, which is what a program whose
+logs are read by a machine should do.
+
 ## What `collage new` gives you
 
 Two pages, and the difference between them is the lesson:
