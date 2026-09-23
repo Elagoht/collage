@@ -41,7 +41,14 @@ type documentRenderer interface {
 // write, tag tracking — minus the render hooks, which do not fire for a document
 // because no render occurs: see plugin.BeforeRenderHook's doc comment. It returns
 // the status it wrote.
-func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *router.MatchResult) int {
+//
+// route is serveGuarded's record of the resolved route, already marked as this
+// document by serve before this was called. Every failure below is built through
+// it and written by serveFailure, so a document's plain-text error surface is not
+// something this function remembers to reach for: it is what the resolved route
+// makes serveFailure write, here and in the panic guard two frames up alike. See
+// routeKind.
+func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *router.MatchResult, route *routeRef) int {
 	doc := match.Document
 	ctx := r.Context()
 
@@ -68,9 +75,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	docRenderer, ok := h.renderer.(documentRenderer)
 	if !ok {
 		err := fmt.Errorf("%w: %T", ErrDocumentRenderingUnsupported, h.renderer)
-		h.reportError(r, failure{status: http.StatusInternalServerError, err: err, document: doc, stage: stageRender})
-		writePlainText(w, r, http.StatusInternalServerError, h.devMode, doc.Name, err)
-		return http.StatusInternalServerError
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
 	}
 
 	rc := types.NewRenderContext(ctx, r, nil, match.Locale, match.PathParams)
@@ -83,23 +88,19 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		if result != nil && result.NotFound {
 			status = http.StatusNotFound
 		}
-		h.reportError(r, failure{status: status, err: err, document: doc, stage: stageRender})
-		writePlainText(w, r, status, h.devMode, doc.Name, err)
-		return status
+		return h.serveFailure(w, r, route.failure(status, stageRender, err))
 	}
 
 	if len(result.Body) == 0 {
 		err := fmt.Errorf("%w: document %q", types.ErrEmptyDocumentBody, doc.Name)
-		h.reportError(r, failure{status: http.StatusInternalServerError, err: err, document: doc, stage: stageRender})
-		writePlainText(w, r, http.StatusInternalServerError, h.devMode, doc.Name, err)
-		return http.StatusInternalServerError
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
 	}
 
 	// Only a GET populates the cache; a HEAD is served from cache but never
 	// populates it — it produced no body worth storing under its own request.
 	etag := ""
 	if cacheable && r.Method == http.MethodGet {
-		etag = h.writeDocumentCache(r, key, doc, result)
+		etag = h.writeDocumentCache(r, key, doc, result, route)
 	}
 	if etag == "" {
 		etag = cache.ETag(result.Body)
@@ -150,7 +151,17 @@ func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, do
 //
 // It returns the ETag the cache stored the entry under, or the empty string when
 // nothing was written.
-func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Document, result *render.DocumentResult) string {
+//
+// Its failures are reported, never served: they carry a zero status because the
+// document is already on its way out, so they go through reportError rather than
+// serveFailure. They are still built through route, so the log record names the
+// document exactly as a served failure's would.
+//
+// CacheWriteEvent.Page is deliberately left nil here: a document was never
+// rendered from a *types.Page and there is none to carry. That nil is documented
+// on the field itself, because a plugin that dereferences it unguarded panics on
+// every document request and loses the cache write with it.
+func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Document, result *render.DocumentResult, route *routeRef) string {
 	ctx := r.Context()
 
 	event := &plugin.CacheWriteEvent{
@@ -159,7 +170,7 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 		Tags: result.Tags,
 	}
 	if err := h.plugins.CacheWrite(ctx, event); err != nil {
-		h.reportError(r, failure{err: err, document: doc, stage: stageCacheWrite})
+		h.reportError(r, route.failure(0, stageCacheWrite, err))
 		return ""
 	}
 	if event.Skip {
@@ -174,13 +185,13 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 		etag, err = h.cache.Set(ctx, key, result.Body, event.TTL)
 	}
 	if err != nil {
-		h.reportError(r, failure{err: fmt.Errorf("collage: cache write: %w", err), document: doc, stage: stageCacheWrite})
+		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: cache write: %w", err)))
 		return ""
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
 
 	if err := h.tracker.Track(ctx, key, event.Tags); err != nil {
-		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), document: doc, stage: stageCacheWrite})
+		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: track %q: %w", key, err)))
 	}
 	return etag
 }

@@ -31,19 +31,37 @@ type failure struct {
 	// fragment names the fragment whose failure produced err, or is empty when no
 	// single fragment is responsible.
 	fragment string
-	// document is the document being served when the failure happened, or nil
-	// when a page was being served or nothing had been resolved yet. At most one
-	// of page and document is ever set.
-	document *types.Document
+	// kind is the kind of route the request resolved to, and it alone decides
+	// whether this failure is written as the HTML error page or as plain text.
+	// It is never set by hand at a call site: every failure raised after a route
+	// resolves is built through routeRef.failure, and one raised before a route
+	// resolves keeps the zero value, routeKindPage. See routeKind.
+	kind routeKind
+	// route identifies the resolved route in a dev-mode plain-text body: a
+	// document's Name, a mount's Prefix. It is empty for a page and for an
+	// unresolved request, neither of which writes a plain-text body.
+	route string
 	// stage names where in the pipeline the failure happened.
 	stage string
 }
 
-// serveFailure logs f, dispatches it to plugins, and writes the error response:
-// the registered error page when one resolves and renders, otherwise the built-in
-// page. It returns the status it wrote.
+// serveFailure logs f, dispatches it to plugins, and writes the error response. It
+// returns the status it wrote.
+//
+// It is the single writer of every error response this package produces, and the
+// one place that decides what an error looks like on the wire. That decision is
+// f.kind's and nothing else's: a document or a mount gets plain text, a page — or
+// a request that failed before it resolved to anything — gets the registered error
+// page when one resolves and renders, otherwise the built-in HTML page. No caller
+// picks the writer, so no caller can pick the wrong one. See routeKind for why
+// that is worth a type.
 func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure) int {
 	h.reportError(r, f)
+
+	if f.kind.plainText() {
+		writePlainText(w, r, f.status, h.devMode, f.route, f.err)
+		return f.status
+	}
 
 	if page := h.errorPageFor(f); page != nil {
 		if content, ok := h.renderErrorPage(r, page, f); ok {
@@ -83,7 +101,7 @@ func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure
 // write that failed after the page rendered — which is logged and reported like any
 // other error but changes nothing the client sees.
 //
-// When f.document is set, the log record also names it, so an operator chasing a
+// When f names a document, the log record also names it, so an operator chasing a
 // failing sitemap or feed can tell which document broke. It is deliberately left
 // off ErrorEvent: ErrorEvent.Page already exists for a page and stays nil here for a
 // document, since the event's Path already identifies the route, and widening a
@@ -96,12 +114,12 @@ func (h *Handler) reportError(r *http.Request, f failure) {
 	case f.stage == stageAsset && f.status < http.StatusInternalServerError:
 		level = slog.LevelDebug
 	}
-	if f.document != nil {
+	if f.kind == routeKindDocument {
 		h.logger.Log(r.Context(), level, "collage: request failed",
 			"path", r.URL.Path,
 			"stage", f.stage,
 			"fragment", f.fragment,
-			"document", f.document.Name,
+			"document", f.route,
 			"error", f.err,
 		)
 	} else {

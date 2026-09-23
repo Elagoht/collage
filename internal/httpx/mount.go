@@ -2,8 +2,8 @@ package httpx
 
 import (
 	"fmt"
+	"io"
 	"net/http"
-	"runtime/debug"
 
 	"github.com/Elagoht/collage/internal/asset"
 )
@@ -16,50 +16,27 @@ import (
 // returns — this only needs to supply the status those two callers cannot get any
 // other way, since asset.Mount is an http.Handler and cannot return one.
 //
-// It never writes a response of its own for a normal return: asset.Mount owns
-// everything it serves, including its plain-text 404, and this only observes what
-// went out over the ResponseWriter it was given. A panic is the one case where
-// this writes something itself — see the recover below for why it cannot simply
-// defer to serveGuarded's own panic guard the way the router and cache do.
-func (h *Handler) serveMount(w http.ResponseWriter, r *http.Request, mount *asset.Mount) (status int) {
+// It never writes a response of its own: asset.Mount owns everything it serves,
+// including its plain-text 404, and this only observes what went out over the
+// ResponseWriter it was given.
+//
+// It has no panic guard of its own, and deliberately so. It used to: a panic
+// inside mount.ServeHTTP — most plausibly its fs.FS's Open — had to be recovered
+// here because serveGuarded's outer guard rendered the framework's built-in HTML
+// error page, which is the one response every other asset failure exists to avoid.
+// That is no longer true. serve records the resolved route before calling this
+// (route.resolved(routeKindMount, ...)), and serveFailure writes plain text for a
+// mount wherever the failure is caught, so the outer guard now produces exactly
+// what this local one did — with one recovery instead of two, and without a second
+// copy of the rule to keep in step. See routeKind.
+func (h *Handler) serveMount(w http.ResponseWriter, r *http.Request, mount *asset.Mount, route *routeRef) int {
 	capture := &statusCapturingWriter{ResponseWriter: w}
-
-	// A panic inside mount.ServeHTTP — most plausibly its fs.FS's Open — is
-	// recovered here, not left to serveGuarded's outer guard. That guard is
-	// correct for a page or a document: it calls serveFailure, which renders
-	// the framework's built-in HTML error page. An asset request follows a
-	// different rule, enforced everywhere else in this feature (a document's
-	// error body, an ordinary asset 404): the error's content type follows the
-	// route kind, never the request, and a mount is never an HTML route. Left
-	// to the outer guard, a panicking mount would get the one response every
-	// other asset failure deliberately avoids. Recovering here, instead of
-	// also leaving the outer guard to try, is also what keeps this to a single
-	// recovery: a panic recovered here never reaches serveGuarded at all, so
-	// the two are not racing to write the same ResponseWriter.
-	defer func() {
-		recovered := recover()
-		if recovered == nil {
-			return
-		}
-		err := fmt.Errorf("%w: %v\n%s", ErrPanic, recovered, debug.Stack())
-		h.reportError(r, failure{
-			status: http.StatusInternalServerError,
-			err:    err,
-			stage:  stagePanic,
-		})
-		writePlainText(capture, r, http.StatusInternalServerError, h.devMode, mount.Prefix(), err)
-		status = http.StatusInternalServerError
-	}()
 
 	mount.ServeHTTP(capture, r)
 
-	status = capture.Status()
+	status := capture.Status()
 	if status >= http.StatusBadRequest {
-		h.reportError(r, failure{
-			status: status,
-			err:    fmt.Errorf("%w: status %d", ErrAssetFailed, status),
-			stage:  stageAsset,
-		})
+		h.reportError(r, route.failure(status, stageAsset, fmt.Errorf("%w: status %d", ErrAssetFailed, status)))
 	}
 	return status
 }
@@ -69,6 +46,15 @@ func (h *Handler) serveMount(w http.ResponseWriter, r *http.Request, mount *asse
 // asset.Mount is a plain http.Handler and so cannot report back what it served any
 // other way, and the caller needs that status to time, trace, and count the
 // response the same way it does for a page or a document.
+//
+// It forwards io.ReaderFrom and http.Flusher as well as the ResponseWriter
+// contract itself. That is not optional politeness: asset.Mount serves files
+// through http.ServeContent, which type-asserts the writer it is given for
+// io.ReaderFrom and uses it to hand the copy to the kernel (sendfile) when the
+// body is a file. A wrapper that implements only http.ResponseWriter makes that
+// assertion fail, and every mounted audio file, video, or archive silently falls
+// back to a 32 KiB user-space copy loop. Wrapping for observability must not cost
+// throughput.
 type statusCapturingWriter struct {
 	http.ResponseWriter
 	status      int
@@ -76,7 +62,11 @@ type statusCapturingWriter struct {
 	wroteBody   bool
 }
 
-var _ http.ResponseWriter = (*statusCapturingWriter)(nil)
+var (
+	_ http.ResponseWriter = (*statusCapturingWriter)(nil)
+	_ io.ReaderFrom       = (*statusCapturingWriter)(nil)
+	_ http.Flusher        = (*statusCapturingWriter)(nil)
+)
 
 // WriteHeader records status the first time it is called, then forwards it to the
 // wrapped ResponseWriter regardless — a later, superfluous call is still the
@@ -101,6 +91,40 @@ func (s *statusCapturingWriter) Write(b []byte) (int, error) {
 	}
 	s.wroteBody = true
 	return s.ResponseWriter.Write(b)
+}
+
+// ReadFrom copies src into the wrapped ResponseWriter through its own ReadFrom
+// when it has one, which is how net/http reaches sendfile for a file body, and
+// falls back to io.Copy over Write when it does not. It records the same implicit
+// 200 and body flag Write does, since a body written this way is just as much a
+// response as one written a byte slice at a time.
+//
+// The fallback is what makes this safe to declare unconditionally: a
+// ResponseWriter that is not an io.ReaderFrom — an httptest.ResponseRecorder, a
+// middleware wrapper of the application's own — still gets a correct copy,
+// performed through the same Write path it would have received anyway.
+func (s *statusCapturingWriter) ReadFrom(src io.Reader) (int64, error) {
+	if !s.wroteHeader {
+		s.WriteHeader(http.StatusOK)
+	}
+	s.wroteBody = true
+
+	if rf, ok := s.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(src)
+	}
+	// s.ResponseWriter, not s: copying through s would re-enter this method's own
+	// bookkeeping for no reason, and the flags above are already set.
+	return io.Copy(s.ResponseWriter, src)
+}
+
+// Flush forwards to the wrapped ResponseWriter's Flush when it has one, and does
+// nothing when it does not. Without it, wrapping a flushable writer takes
+// flushing away from everything below, which for a large file body means the
+// response sits in net/http's buffer instead of moving.
+func (s *statusCapturingWriter) Flush() {
+	if flusher, ok := s.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }
 
 // Status returns the status code the wrapped handler wrote, or http.StatusOK when

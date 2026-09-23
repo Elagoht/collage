@@ -247,32 +247,56 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // ServeHTTP reports — instead of letting it unwind into net/http, which closes the
 // connection with no status line at all.
 //
-// The render engine already recovers a panic inside a data handler or a template
-// function, and turns it into an ordinary fragment failure. This covers everywhere
-// else a request touches code the framework did not write: a Router of the
-// application's own, a Cache implementation, a Metrics or Tracer implementation, and
-// a plugin hook.
+// The render engine already recovers a panic inside a data handler, a template
+// function, or a document handler, and turns it into an ordinary failure. This
+// covers everywhere else *inside serve* a request touches code the framework did
+// not write: a Router of the application's own, a Cache implementation, a
+// dependency Tracker, a Metrics implementation called from serve, an asset mount's
+// fs.FS, and a plugin hook.
+//
+// It does not cover the tracer and metric calls in ServeHTTP itself — StartSpan,
+// SetAttribute, End, and HTTPResponse all run outside this guard, and a panic in
+// any of them still unwinds into net/http. That is deliberate rather than
+// overlooked: those calls bracket the response instead of producing it, so by the
+// time three of the four run there is no status left to write and nothing a 500
+// could add, and moving them inside would mean reporting a failed span through the
+// very Tracer that just panicked. The comment used to claim otherwise, which is the
+// kind of promise a panic guard must not make loosely.
+//
+// The response's content type follows what the request resolved to, not what this
+// frame knows: serve records the resolved route in route, so a panic in an
+// application's Cache on a document route produces the document's plain text and a
+// panic on a page route produces the HTML error page. See routeKind — that record
+// is the whole reason this frame does not have to be told what it is serving.
 //
 // A panic raised after the response headers are already on the wire — from inside
 // the body write — cannot be turned into a 500 any more; serveFailure will try, and
 // net/http will log the superfluous WriteHeader. That is still better than dropping
 // the connection, and there is nothing else left to do at that point.
 func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request) (status int) {
+	var route routeRef
 	defer func() {
 		recovered := recover()
 		if recovered == nil {
 			return
 		}
-		status = h.serveFailure(w, r, failure{
-			status: http.StatusInternalServerError,
-			err:    fmt.Errorf("%w: %v\n%s", ErrPanic, recovered, debug.Stack()),
-			stage:  stagePanic,
-		})
+		status = h.serveFailure(w, r, route.failure(
+			http.StatusInternalServerError,
+			stagePanic,
+			fmt.Errorf("%w: %v\n%s", ErrPanic, recovered, debug.Stack()),
+		))
 	}()
-	return h.serve(w, r)
+	return h.serve(w, r, &route)
 }
 
 // serve runs the request lifecycle and returns the status code it wrote.
+//
+// route is serveGuarded's record of what the request resolved to, and serve is the
+// only frame that can fill it in: it is the frame that reads the match. It does so
+// the instant a mount claims the request or the router reports a document, before
+// calling anything that could panic on that route's behalf, so every failure from
+// that point on — including one caught two frames up in serveGuarded — is answered
+// in the content type that route requires. See routeKind.
 //
 // A mount is checked before routing, exactly as before, but no longer returns
 // straight to net/http: internal/core's checkMountsDoNotShadow refuses to build a
@@ -292,10 +316,11 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request) (status i
 // normal error path, and ServeHTTP is what times the request and reports the
 // HTTPResponse metric. A mount request goes through serveMount so it gets all of
 // that instead of bypassing it.
-func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
+func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef) int {
 	for _, mount := range h.mounts {
 		if mount.Handles(r.URL.Path) {
-			return h.serveMount(w, r, mount)
+			route.resolved(routeKindMount, mount.Prefix())
+			return h.serveMount(w, r, mount, route)
 		}
 	}
 
@@ -343,7 +368,8 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request) int {
 	// Page and Document is set), and the nil-Page check below would otherwise
 	// treat every matched document as a 404 before this branch ever ran.
 	if match.Document != nil {
-		return h.serveDocument(w, r, match)
+		route.resolved(routeKindDocument, match.Document.Name)
+		return h.serveDocument(w, r, match, route)
 	}
 
 	// A nil Page is treated as not-found even when IsNotFound is false: Router is
