@@ -14,10 +14,10 @@ module example.com/thewire
 go 1.26
 
 require (
-	github.com/Elagoht/collage v0.3.0
-	github.com/Elagoht/collage-jsonld v0.0.0-20260923132010-f271fefa3281
-	github.com/Elagoht/collage-minimizer v0.0.0-20260923121011-ca8447f9380d
-	github.com/Elagoht/collage-opti-image v0.0.0-20260923125628-ba6632d57ea6
+	github.com/Elagoht/collage v0.4.0
+	github.com/Elagoht/collage-jsonld v0.0.0-20260923204436-351e162af588
+	github.com/Elagoht/collage-minimizer v0.0.0-20260923204438-34409a927648
+	github.com/Elagoht/collage-opti-image v0.0.0-20260923204434-15a82cc91a9d
 )
 
 require (
