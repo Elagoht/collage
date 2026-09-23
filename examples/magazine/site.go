@@ -48,10 +48,6 @@ type config struct {
 	// CacheDir keeps rendered pages on disk so a restart serves them rather than
 	// rendering them again. Empty means memory only.
 	CacheDir string
-	// BuildID identifies this build's rendered output. Required alongside CacheDir,
-	// because a disk cache outlives the process that filled it and a new binary
-	// must not serve the previous one's HTML.
-	BuildID string
 	// Logger receives the framework's own structured output as well as the site's.
 	Logger *slog.Logger
 }
@@ -98,9 +94,10 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 			// last run rendered. The framework substitutes memory in dev mode
 			// whatever this says, because that is where the output changes between
 			// runs and no version bump would catch it.
-			Type:          cacheType(cfg.CacheDir),
-			Dir:           cfg.CacheDir,
-			Version:       cfg.BuildID,
+			Type: cacheType(cfg.CacheDir),
+			Dir:  cfg.CacheDir,
+			// No Version: the framework derives one from the running executable,
+			// which changes exactly when this site's output might.
 			DefaultTTL:    cfg.CacheTTL,
 			MaxEntries:    512,
 			MaxKeysPerTag: 2048,

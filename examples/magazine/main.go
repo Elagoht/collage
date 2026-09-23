@@ -39,6 +39,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
@@ -53,8 +54,7 @@ func main() {
 	apiURL := flag.String("api", env("MAGAZINE_API_URL", "http://localhost:8080"), "newsroom API base URL (env MAGAZINE_API_URL)")
 	publicURL := flag.String("public-url", env("PUBLIC_BASE_URL", ""), "public origin for feed and sitemap links; defaults to http://host:port (env PUBLIC_BASE_URL)")
 	cacheTTL := flag.Duration("cache-ttl", envDuration("CACHE_TTL", 5*time.Minute), "default page cache lifetime (env CACHE_TTL)")
-	cacheDir := flag.String("cache-dir", env("CACHE_DIR", ""), "keep rendered pages here so a restart does not re-render them; empty means memory only (env CACHE_DIR)")
-	buildID := flag.String("build-id", env("BUILD_ID", ""), "identifies this build's rendered output; required with -cache-dir (env BUILD_ID)")
+	cacheDir := flag.String("cache-dir", env("CACHE_DIR", defaultCacheDir()), "keep rendered pages here so a restart does not re-render them; empty means memory only (env CACHE_DIR)")
 	logLevel := flag.String("log-level", env("LOG_LEVEL", "info"), "debug, info, warn or error (env LOG_LEVEL)")
 	pluginConfig := flag.String("plugins", env("PLUGINS_CONFIG", "plugins-config.json"), "plugin configuration file; a missing one means every plugin runs on its defaults (env PLUGINS_CONFIG)")
 	buildDir := flag.String("build", "", "render the site to this directory and exit instead of serving")
@@ -91,7 +91,6 @@ func main() {
 		Logger:        log,
 		PluginConfig:  plugins,
 		CacheDir:      *cacheDir,
-		BuildID:       *buildID,
 	}
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "http://" + *host + ":" + strconv.Itoa(*port)
@@ -212,4 +211,18 @@ func withImageOrigin(plugins map[string]json.RawMessage, apiURL string, log *slo
 	}
 	plugins[optimage.Name] = merged
 	return plugins
+}
+
+// defaultCacheDir is where rendered pages are kept between restarts.
+//
+// Under the temporary directory rather than beside the source: a program that drops
+// files where it was started from is a program whose output turns up in the next
+// commit. It is on by default because the alternative is re-rendering every page
+// after every restart to save a directory the operating system already cleans up,
+// and "-cache-dir=" turns it off for anyone who would rather it did not.
+//
+// No build identifier goes with it. The framework derives one from the running
+// executable, which changes exactly when the rendered output might.
+func defaultCacheDir() string {
+	return filepath.Join(os.TempDir(), "thewire-cache")
 }

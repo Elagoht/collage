@@ -252,21 +252,21 @@ API and the collage process both stopped.
 
 ## Keeping the cache across restarts
 
-By default everything is rendered again after a restart. Point the site at a
-directory and it is not:
+Nothing to pass. A restart serves what the last run rendered:
 
 ```
-go run . -cache-dir /var/cache/thewire -build-id "$(git rev-parse --short HEAD)"
+go run .
 ```
 
-`-build-id` is required alongside it. A disk cache outlives the process that filled
-it, so without one a new binary would serve the previous build's HTML — entries live
-under a directory named for the id, so changing it starts a fresh cache rather than
-reading a stale one. Verified both ways: the same id restarts without re-rendering
-the article, a different id re-renders it.
+Rendered pages go to `<temp>/thewire-cache`, under the temporary directory rather
+than beside the source so nothing turns up in your next commit. `-cache-dir` moves
+it, `-cache-dir=` turns it off.
 
-The framework substitutes an in-memory cache in dev mode whatever this says, because
-that is where the output changes between runs and no version bump would catch it.
+There is no build identifier to supply. The framework derives one from a hash of the
+running executable, which changes exactly when the output might — so rebuilding
+after editing a template starts a fresh cache by itself, and two runs of an unchanged
+binary share one. In dev mode the framework uses memory whatever any of this says,
+because that is where output changes between runs.
 
 The images have their own disk cache, in the image plugin — see its `cacheDir`.
 

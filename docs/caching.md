@@ -409,16 +409,27 @@ Cache: collage.CacheConfig{
 	Enabled: true,
 	Type:    "disk",
 	Dir:     "/var/cache/mysite",
-	Version: buildID,   // a git commit, a release tag, a build timestamp
 }
 ```
 
-`Version` is required, and the reason is the whole design. **A disk cache outlives
-the process that filled it**, so without one a new binary serves HTML the old one
-rendered — a changed template, a changed data handler, and a page nobody can
-explain. Entries live under a subdirectory named for a hash of the version, so a
-different version reads a different directory and finds nothing. There is no check
-to forget and no sweep to schedule; the old directory simply stops being read.
+A directory is all it takes. **A disk cache outlives the process that filled it**, so
+something has to stop a new binary serving HTML the old one rendered — a changed
+template, a changed handler, and a page nobody can explain. Entries therefore live
+under a subdirectory named for the build, and `Version` names it.
+
+Leave `Version` empty and it is a hash of the running executable, which changes
+exactly when the rendered output might. Two runs of an unchanged program derive the
+same value — including under `go run`, whose build cache hands back the same binary
+— and so does every machine in a fleet running the same build, so they share a
+cache. It costs one to two milliseconds at startup.
+
+Set it when something outside the binary decides what the output looks like: a
+content revision, a configuration digest. Not to identify the build, which the
+framework does better than a string anyone has to remember to update.
+
+Not the VCS revision from `debug.ReadBuildInfo`, for what it is worth: `go run`
+usually omits it, and it says nothing about uncommitted edits — which are exactly
+the edits a developer is looking at when a page comes back stale.
 
 **A disk cache is never used in development.** `Config.DevMode` or
 `Template.DevMode` substitutes an in-memory one and logs that it did. Development is

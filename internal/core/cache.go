@@ -1,8 +1,12 @@
 package core
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"log/slog"
+	"os"
 
 	"github.com/Elagoht/collage/internal/cache"
 )
@@ -41,18 +45,67 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 			logger.Info("collage: dev mode, using an in-memory cache instead of the configured disk cache")
 			return memory(), nil
 		}
+		version := cfg.Cache.Version
+		if version == "" {
+			derived, err := buildFingerprint()
+			if err != nil {
+				// Without a fingerprint there is no safe way to tell this build's
+				// output from the last one's, and serving the last one's is the
+				// failure this whole mechanism exists to prevent. Memory is the
+				// answer, not a guess.
+				logger.Warn("collage: cannot identify this build, using an in-memory cache instead of the configured disk cache",
+					"err", err)
+				return memory(), nil
+			}
+			version = derived
+		}
+
 		disk, err := cache.NewDisk(cache.DiskConfig{
 			Dir:        cfg.Cache.Dir,
-			Version:    cfg.Cache.Version,
+			Version:    version,
 			DefaultTTL: cfg.Cache.DefaultTTL,
 		})
 		if err != nil {
 			return nil, err
 		}
-		logger.Info("collage: caching to disk", "dir", disk.Dir(), "version", cfg.Cache.Version)
+		logger.Info("collage: caching to disk", "dir", disk.Dir(), "version", version)
 		return disk, nil
 
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrUnsupportedCache, cfg.Cache.Type)
 	}
+}
+
+// buildFingerprint identifies the running build by hashing the executable.
+//
+// The executable's contents change exactly when the rendered output might: a
+// changed template compiled in, a changed data handler, a changed dependency. A
+// version string a human maintains changes when the human remembers, which is a
+// different thing.
+//
+// It is also stable where it needs to be. Two invocations of an unchanged program
+// hash the same, including under "go run", whose build cache hands back the same
+// binary; and every machine in a fleet running the same build hashes the same, so
+// they share a cache. Measured at one to two milliseconds for a binary of a few
+// megabytes, paid once at startup.
+//
+// Not the VCS revision from debug.ReadBuildInfo: "go run" usually omits it, and it
+// says nothing about uncommitted edits — which are exactly the edits a developer is
+// looking at when a page comes back stale.
+func buildFingerprint() (string, error) {
+	path, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	sum := sha256.New()
+	if _, err := io.Copy(sum, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(sum.Sum(nil)[:16]), nil
 }

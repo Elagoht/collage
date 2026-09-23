@@ -438,3 +438,47 @@ func TestCache_DiskCacheSurvivesARestart(t *testing.T) {
 		t.Errorf("ETag = %q, want %q — a restart must not change what a client is holding", got, want)
 	}
 }
+
+func TestCache_DiskCacheDerivesItsVersion(t *testing.T) {
+	// The friendly path: a directory and nothing else. The version comes from a
+	// hash of the running executable, which changes exactly when the output might
+	// — so nobody has to remember to pass one, and nobody can pass a stale one.
+	dir := t.TempDir()
+	build := func() *App {
+		app := newTestAppWith(t, defaultTemplates(), func(cfg *Config) {
+			cfg.Cache = CacheConfig{Enabled: true, Type: "disk", Dir: dir, DefaultTTL: time.Minute}
+		})
+		page := newHomePage()
+		page.Strategy = types.StrategyIncremental
+		page.CacheTTL = time.Minute
+		if err := app.RegisterPage(page); err != nil {
+			t.Fatalf("RegisterPage: %v", err)
+		}
+		return app
+	}
+
+	rec := httptest.NewRecorder()
+	build().Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first request = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// One version directory, named for something rather than empty.
+	versions, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(versions) != 1 || !versions[0].IsDir() || versions[0].Name() == "" {
+		t.Fatalf("cache directory holds %v, want one version subdirectory", versions)
+	}
+
+	// And a second run of the same binary finds it: the fingerprint is stable.
+	rec2 := httptest.NewRecorder()
+	build().Handler().ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/", nil))
+	if got, want := rec2.Header().Get("ETag"), rec.Header().Get("ETag"); got != want {
+		t.Errorf("ETag = %q, want %q — the derived version is not stable across runs", got, want)
+	}
+	if versions, _ := os.ReadDir(dir); len(versions) != 1 {
+		t.Errorf("a second run made %d version directories, want 1", len(versions))
+	}
+}

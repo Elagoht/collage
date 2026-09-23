@@ -324,11 +324,10 @@ func TestConfig_Validate_EmptyRootWithoutFSIsInvalid(t *testing.T) {
 	}
 }
 
-func TestConfig_Validate_DiskCacheNeedsADirectoryAndAVersion(t *testing.T) {
-	// A disk cache outlives the process that filled it, so a version is not a
-	// nicety: without one a new binary serves the previous build's HTML. Both are
-	// refused at Validate rather than defaulted, because there is no safe default
-	// for either.
+func TestConfig_Validate_DiskCacheNeedsADirectory(t *testing.T) {
+	// The directory has no safe default — a library that writes files somewhere
+	// nobody chose is a library that turns up in a commit — so it is refused rather
+	// than invented.
 	base := func() Config {
 		c := Config{Cache: CacheConfig{Enabled: true, Type: "disk"}}
 		c.ApplyDefaults()
@@ -340,16 +339,12 @@ func TestConfig_Validate_DiskCacheNeedsADirectoryAndAVersion(t *testing.T) {
 		t.Errorf("Validate() = %v, want ErrEmptyCacheDir", err)
 	}
 
+	// No version is fine: it is derived from the running executable, which changes
+	// exactly when the rendered output might. Requiring one would be asking for a
+	// worse answer than the framework can work out for itself.
 	c = base()
 	c.Cache.Dir = "/tmp/collage"
-	if err := c.Validate(); !errors.Is(err, ErrEmptyCacheVersion) {
-		t.Errorf("Validate() = %v, want ErrEmptyCacheVersion", err)
-	}
-
-	c = base()
-	c.Cache.Dir = "/tmp/collage"
-	c.Cache.Version = "abc123"
 	if err := c.Validate(); err != nil {
-		t.Errorf("Validate() = %v, want nil", err)
+		t.Errorf("Validate() with no version = %v, want nil", err)
 	}
 }

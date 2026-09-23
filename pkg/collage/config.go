@@ -203,15 +203,22 @@ type CacheConfig struct {
 	MaxEntries int
 	// Dir is where a "disk" cache stores its entries. Required for that type.
 	Dir string
-	// Version identifies the build whose rendered output a "disk" cache holds, and
-	// is required for that type. Anything that changes when the output could: a
-	// git commit, a release tag, a build timestamp.
+	// Version identifies the build whose rendered output a "disk" cache holds.
+	//
+	// Leave it empty and it is derived from a hash of the running executable, which
+	// changes exactly when the rendered output might: a changed template compiled
+	// in, a changed handler, a changed dependency. Two runs of an unchanged program
+	// derive the same value, and so does every machine in a fleet running the same
+	// build, so they share a cache.
+	//
+	// Set it to override that — a git commit, a release tag — when something
+	// outside the binary decides what the output looks like.
 	//
 	// It exists because a disk cache outlives the process that filled it. Without
-	// it a new binary serves HTML the old one rendered — a changed template, a
-	// changed data handler, and a page nobody can explain. Entries live under a
-	// subdirectory named for a hash of this, so a different version reads a
-	// different directory and finds nothing; there is no check to forget.
+	// one a new binary would serve HTML the old one rendered — a changed template,
+	// a changed handler, and a page nobody can explain. Entries live under a
+	// subdirectory named for a hash of it, so a different version reads a different
+	// directory and finds nothing; there is no check to forget.
 	//
 	// A disk cache is never used in development. Config.DevMode or
 	// Template.DevMode substitutes an in-memory one and says so, because that is
@@ -360,9 +367,6 @@ func (c *Config) Validate() error {
 		case "disk":
 			if c.Cache.Dir == "" {
 				return ErrEmptyCacheDir
-			}
-			if c.Cache.Version == "" {
-				return ErrEmptyCacheVersion
 			}
 		default:
 			return fmt.Errorf("%w: %q", ErrInvalidCacheType, c.Cache.Type)
