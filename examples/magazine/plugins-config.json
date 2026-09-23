@@ -1,0 +1,20 @@
+{
+  "elagoht/minimizer": {
+    "html": true,
+    "json": true,
+    "css": true,
+    "js": false
+  },
+
+  "elagoht/jsonld": {
+    "siteName": "The Wire",
+    "siteURL": "http://localhost:3000",
+    "searchURL": "http://localhost:3000/search?q={query}"
+  },
+
+  "imns/opti-image": {
+    "allowedOrigins": [],
+    "prefix": "/_image/",
+    "quality": 82
+  }
+}

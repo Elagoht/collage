@@ -2,11 +2,16 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
+
+	"example.com/jsonld"
+	"example.com/minimizer"
+	optiimage "example.com/opti-image"
 )
 
 // templatesFS carries the site's markup. Embedding it is what lets the binary run
@@ -38,6 +43,8 @@ type config struct {
 	// DevMode surfaces failed fragments as HTML comments and disables template
 	// caching.
 	DevMode bool
+	// PluginConfig is each plugin's own configuration, keyed by plugin name.
+	PluginConfig map[string]json.RawMessage
 	// Logger receives the framework's own structured output as well as the site's.
 	Logger *slog.Logger
 }
@@ -53,6 +60,16 @@ func newSite(cfg config) (*collage.App, *Client, error) {
 	app, err := collage.New(&collage.Config{
 		DevMode: cfg.DevMode,
 		Logger:  cfg.Logger,
+		// Two of these need Configure, which runs while the application is built:
+		// the minifier wraps every mounted filesystem, and the image optimiser
+		// registers the route it serves from. RegisterPlugin would refuse them by
+		// name rather than skip their Configure silently.
+		Plugins: []collage.Plugin{
+			minimizer.New(),
+			jsonld.New(),
+			optiimage.New(),
+		},
+		PluginConfig: cfg.PluginConfig,
 		Server: collage.ServerConfig{
 			Host: cfg.Host,
 			Port: cfg.Port,

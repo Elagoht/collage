@@ -9,6 +9,8 @@ import (
 	"strconv"
 
 	"github.com/Elagoht/collage/pkg/collage"
+
+	"example.com/jsonld"
 )
 
 // newsroomData is the signature every data handler in this file has before bind
@@ -320,6 +322,27 @@ func (d *deps) articleData(ctx context.Context, rc *collage.RenderContext) (*vie
 		return nil, nil, fmt.Errorf("%w: article %q is not dated %s/%s",
 			collage.ErrNotFound, slug, rc.Param("year"), rc.Param("month"))
 	}
+
+	// Structured data for this piece. It goes through the render's shared data, so
+	// the plugin reads what the handler already fetched rather than parsing a
+	// headline back out of the markup it is about to annotate.
+	jsonld.Emit(rc,
+		jsonld.Article{
+			Headline:      art.Title,
+			Description:   art.Dek,
+			URL:           art.Path(),
+			Section:       art.Category,
+			Keywords:      art.Tags,
+			DatePublished: art.PublishedAt,
+			AuthorName:    art.Author,
+			PublisherName: site.Name,
+		},
+		jsonld.BreadcrumbList{Items: []jsonld.Breadcrumb{
+			{Name: site.Name, URL: base(rc).URL.Home()},
+			{Name: art.Category, URL: base(rc).URL.Category(art.Category)},
+			{Name: art.Title, URL: base(rc).URL.Article(art)},
+		}},
+	)
 
 	v := base(rc)
 	v.Article = &art

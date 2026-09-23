@@ -39,6 +39,8 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/Elagoht/collage/pkg/collage"
 )
 
 func main() {
@@ -48,10 +50,22 @@ func main() {
 	publicURL := flag.String("public-url", env("PUBLIC_BASE_URL", ""), "public origin for feed and sitemap links; defaults to http://host:port (env PUBLIC_BASE_URL)")
 	cacheTTL := flag.Duration("cache-ttl", envDuration("CACHE_TTL", 5*time.Minute), "default page cache lifetime (env CACHE_TTL)")
 	logLevel := flag.String("log-level", env("LOG_LEVEL", "info"), "debug, info, warn or error (env LOG_LEVEL)")
+	pluginConfig := flag.String("plugins", env("PLUGINS_CONFIG", "plugins-config.json"), "plugin configuration file; a missing one means every plugin runs on its defaults (env PLUGINS_CONFIG)")
 	devMode := flag.Bool("dev", envBool("DEV_MODE", false), "surface failed fragments as HTML comments (env DEV_MODE)")
 	flag.Parse()
 
 	log := newLogger(*logLevel)
+
+	// A missing file is not an error: every plugin's defaults already describe what
+	// "unconfigured" means, and a deployment that configures none should not have
+	// to create an empty file to say so. This is also the one line that ties the
+	// site to JSON — the framework takes a map and does not care where it came
+	// from, so swapping this for YAML or the environment changes nothing else.
+	plugins, err := collage.LoadPluginConfig(*pluginConfig)
+	if err != nil {
+		log.Error("site: plugin configuration is unusable", "path", *pluginConfig, "err", err)
+		os.Exit(1)
+	}
 
 	cfg := config{
 		Host:          *host,
@@ -61,6 +75,7 @@ func main() {
 		CacheTTL:      *cacheTTL,
 		DevMode:       *devMode,
 		Logger:        log,
+		PluginConfig:  plugins,
 	}
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "http://" + *host + ":" + strconv.Itoa(*port)
