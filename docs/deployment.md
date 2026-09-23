@@ -157,7 +157,16 @@ put on any static host:
 collage export -clean
 ```
 
-The output is in `dist/`. Pages declared `Dynamic()` are skipped and named, and a
+The output is in `dist/`, with the site's own `404.html` beside it — one per
+locale, `404.html` and `tr/404.html`, because hosts differ on which they consult.
+It comes from whatever was registered with `RegisterNotFoundPage`, and its render
+strategy is not consulted: whether a page is worth caching and whether it belongs in
+an export are different questions, and a not-found page is almost always `Dynamic()`
+because it is never worth caching. A site exported without one answers an unknown
+URL with whatever the host decided to show — somebody else's page, in somebody
+else's language, with none of the navigation a reader needs to get back.
+
+Pages declared `Dynamic()` are skipped and named, and a
 page carrying a form is refused outright — a form needs somewhere to post to, and a
 static host is not it. See [actions](actions.md).
 

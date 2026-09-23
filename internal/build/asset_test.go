@@ -282,3 +282,76 @@ func TestBuild_RefusesAPageWithAnUnresolvedToken(t *testing.T) {
 		t.Errorf("Written = %v, want nothing", report.Written)
 	}
 }
+
+// A static host answers an unknown URL with the site's own 404.html. An export
+// without one answers with whatever that host decided to show — a page from
+// somebody else's site, in somebody else's language, with none of the navigation a
+// reader needs to get back.
+func TestBuild_WritesTheNotFoundPage(t *testing.T) {
+	out := resolvedTempDir(t)
+	app := &fakeRenderer{
+		pages: []*types.Page{{
+			Name:            "home",
+			Paths:           map[string]string{"en": "/", "tr": "/"},
+			Strategy:        types.StrategyStatic,
+			ContentFragment: &types.Fragment{Name: "home-content", TemplatePath: "home.html"},
+		}},
+		defaultLocale: "en",
+		notFoundHTML:  "<h1>not here</h1>",
+	}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := b.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	// One per locale: at the root for the default locale's tree, and under the
+	// locale's own directory for the rest, because hosts differ on which they
+	// consult and writing both costs a page.
+	for path, wantLocale := range map[string]string{
+		filepath.Join(out, "404.html"):       "en",
+		filepath.Join(out, "tr", "404.html"): "tr",
+	} {
+		body := readFile(t, path)
+		if !strings.Contains(body, "not here") {
+			t.Errorf("%s = %q, want the not-found page", path, body)
+		}
+		if !strings.Contains(body, wantLocale) {
+			t.Errorf("%s was rendered for the wrong locale: %q", path, body)
+		}
+	}
+}
+
+// An application that registered no not-found page gets no file and no complaint.
+// It declared nothing, so there is nothing to report.
+func TestBuild_WithoutANotFoundPage(t *testing.T) {
+	out := resolvedTempDir(t)
+	app := &fakeRenderer{
+		pages: []*types.Page{{
+			Name:            "home",
+			Paths:           map[string]string{"en": "/"},
+			Strategy:        types.StrategyStatic,
+			ContentFragment: &types.Fragment{Name: "home-content", TemplatePath: "home.html"},
+		}},
+		defaultLocale: "en",
+	}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(out, "404.html")); !os.IsNotExist(err) {
+		t.Errorf("a 404.html was written for a site that registered no not-found page (stat err = %v)", err)
+	}
+	if len(report.Skipped) != 0 {
+		t.Errorf("Skipped = %v, want nothing: declaring no 404 page is not a skip", report.Skipped)
+	}
+}

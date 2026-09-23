@@ -159,6 +159,10 @@ type Renderer interface {
 	// forgery protection. A static build refuses to write a page containing it:
 	// see checkNoUnresolvedToken.
 	CSRFMarker() string
+	// RenderNotFound renders the registered not-found page for locale, or reports
+	// that there is none with a nil result and a nil error. A not-found page has
+	// no path, so RenderPath cannot reach it; a static host needs it as 404.html.
+	RenderNotFound(ctx context.Context, locale string) (*render.Result, error)
 }
 
 // PathProvider supplies the concrete paths a dynamic page's pattern expands to. A
@@ -399,6 +403,13 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	report.Skipped = append(report.Skipped, docSkipped...)
 	report.Written = append(report.Written, docWritten...)
 	errs = append(errs, docErrs...)
+
+	// After the pages, because it renders one: whatever a plugin set up during the
+	// page renders is set up by now, so the 404 page is built in the same state
+	// every other page was.
+	notFoundWritten, notFoundErrs := b.writeNotFoundPages(ctx, outDirResolved)
+	report.Written = append(report.Written, notFoundWritten...)
+	errs = append(errs, notFoundErrs...)
 
 	assetWritten, assetErrs := b.copyAssets(outDirResolved)
 	report.Written = append(report.Written, assetWritten...)

@@ -78,7 +78,9 @@ server is closer but is still not a static host. This one behaves like one:
   asks.
 - **`/about` resolves to `about/index.html`**, which is what `collage export` writes
   and what every static host looks for.
-- **`404.html` is served with a 404** when the export has one.
+- **`404.html` is served with a 404.** `collage export` writes one from the page
+  registered with `RegisterNotFoundPage`, so this is the site's own 404, not a
+  default.
 - **Nothing is cached.** The point is to look at what was just exported, and a
   browser holding the previous one is what stops that.
 

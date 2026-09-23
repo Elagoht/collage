@@ -1028,7 +1028,22 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	// the argument instead let the two disagree — RenderPath(ctx, "/tr/blog", "en",
 	// nil) served the tr page with a RenderContext.Locale of "en", so every
 	// locale-dependent fragment on it rendered in the wrong language.
-	rc := types.NewRenderContext(ctx, req, match.Page, match.Locale, merged)
+	return a.renderResolved(ctx, req, match.Page, match.Locale, merged, path)
+}
+
+// renderResolved renders page for locale and returns what the hooks left behind.
+// It is the half of RenderPath after the router has decided, shared with
+// RenderNotFound — which has no router decision to make, because a not-found page
+// is reached by failing to match rather than by matching.
+func (a *App) renderResolved(
+	ctx context.Context,
+	req *http.Request,
+	page *types.Page,
+	locale string,
+	params map[string]string,
+	path string,
+) (*render.Result, error) {
+	rc := types.NewRenderContext(ctx, req, page, locale, params)
 
 	// The render hooks fire here as well as in the HTTP handler, and that is the
 	// point rather than a convenience.
@@ -1046,8 +1061,8 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	// up in one and uses it in the other is not handed half of each.
 	if err := a.plugins.BeforeRender(ctx, &plugin.BeforeRenderEvent{
 		Context: rc,
-		Page:    match.Page,
-		Locale:  match.Locale,
+		Page:    page,
+		Locale:  locale,
 		Path:    path,
 	}); err != nil {
 		return nil, err
@@ -1059,8 +1074,8 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	}
 
 	event := &plugin.AfterRenderEvent{
-		Page:     match.Page,
-		Locale:   match.Locale,
+		Page:     page,
+		Locale:   locale,
 		Degraded: result.Degraded(),
 		HTML:     result.HTML,
 		Data:     rc.SharedData,
@@ -1113,4 +1128,38 @@ func (a *App) localeCookieName() string {
 		return defaultLocaleCookie
 	}
 	return a.cfg.Locale.CookieName
+}
+
+// RenderNotFound renders the registered not-found page for locale, or reports that
+// there is none with a nil result and a nil error.
+//
+// A not-found page is reached by failing to match, so it has no path and RenderPath
+// cannot reach it. A static build needs it anyway: a static host answers an unknown
+// URL with the site's own 404.html, and a site exported without one answers with
+// whatever the host's default is.
+//
+// The page's render strategy is deliberately not consulted. Whether a page is worth
+// caching and whether it belongs in a static export are different questions, and a
+// not-found page declared Dynamic — which is the usual declaration, since it is
+// never worth caching — would otherwise have no 404.html at all.
+func (a *App) RenderNotFound(ctx context.Context, locale string) (*render.Result, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := a.buildHandler(); err != nil {
+		return nil, err
+	}
+
+	page := a.routes.NotFoundPage()
+	if page == nil {
+		return nil, nil
+	}
+
+	// A path that cannot be a route, because that is what the page is for: a
+	// fragment reading rc.Request sees a request that did not match, which is the
+	// truth about why it is rendering.
+	const path = "/404"
+	req := a.syntheticRequest(ctx, path, locale)
+
+	return a.renderResolved(ctx, req, page, locale, map[string]string{}, path)
 }
