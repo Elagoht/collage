@@ -14,8 +14,8 @@ module example.com/thewire
 go 1.26
 
 require (
-	github.com/Elagoht/collage v0.2.0
-	github.com/Elagoht/collage-jsonld v0.0.0-20260923121014-0725f00da048
+	github.com/Elagoht/collage v0.3.0
+	github.com/Elagoht/collage-jsonld v0.0.0-20260923132010-f271fefa3281
 	github.com/Elagoht/collage-minimizer v0.0.0-20260923121011-ca8447f9380d
 	github.com/Elagoht/collage-opti-image v0.0.0-20260923125628-ba6632d57ea6
 )

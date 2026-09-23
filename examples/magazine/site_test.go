@@ -550,6 +550,8 @@ func TestSite_EveryPageHasItsOwnTitle(t *testing.T) {
 	_, api := newBackend(t)
 	site := newTestSite(t, api.URL)
 
+	// Counted, not merely contained: a layout writing its own <title> beside a
+	// hoisted one produces two, and every assertion built on Contains passes.
 	for _, tc := range []struct{ target, want string }{
 		{"/", "<title>Latest — The Wire</title>"},
 		{"/tr/", "<title>En yeni — The Wire</title>"},
@@ -562,6 +564,12 @@ func TestSite_EveryPageHasItsOwnTitle(t *testing.T) {
 		_, body := request(t, site, tc.target)
 		if !strings.Contains(body, tc.want) {
 			t.Errorf("GET %s: title missing %q", tc.target, tc.want)
+		}
+		if n := strings.Count(body, "<title>"); n != 1 {
+			t.Errorf("GET %s has %d <title> elements, want 1", tc.target, n)
+		}
+		if n := strings.Count(body, `<meta name="description"`); n != 1 {
+			t.Errorf("GET %s has %d description meta elements, want 1", tc.target, n)
 		}
 	}
 }

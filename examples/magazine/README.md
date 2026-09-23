@@ -126,14 +126,16 @@ Turkish would resolve to `tr`, look `/category/climate` up in the Turkish tree, 
 URL means the same page for everyone — which is also what makes the pages shareable
 and the cache sound.
 
-**The document head is a slot, not part of the layout.** A layout's data handler
-runs before its content slot renders — fragments render depth-first, and a slot is
-filled during the parent's template execution — so the layout cannot see the
-headline the content fragment is about to fetch. Building `<title>` from the
-layout's own data gives every page the site name and nothing else. Each page binds
-its own head fragment instead, and the article and section lookups are memoised into
-`RenderContext.SharedData` so the head and the content share one request rather than
-making two.
+**The head is hoisted, not sliced.** A layout's data handler runs before its content
+renders — fragments go depth-first — so the layout cannot see the headline the
+content is about to fetch. It writes `{{hoist "head"}}` and a default title; the
+content fragment declares its own under the same key, from wherever it is nested,
+and wins because the innermost declaration of a key does. No head fragment, no
+layout per page.
+
+This example carried both of those before the framework had hoisting. Removing them
+took one template line and moved five title handlers into the content handlers that
+already had the data.
 
 **The layout performs no I/O.** Everything the chrome needs from the backend — the
 section nav, the "most read" sidebar — lives in its own fragment with its own

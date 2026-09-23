@@ -2,10 +2,14 @@ github.com/Elagoht/collage v0.1.0 h1:4wOvb/2YCrXdi52dTa7B+rs7ttiXLo2ZVDR9imjfhAU
 github.com/Elagoht/collage v0.1.0/go.mod h1:tyGWGpujZXtCFFxn9pjws85HOFOt4QdiuRswwQhj1Qw=
 github.com/Elagoht/collage v0.2.0 h1:E0aXCXCTHJEwy5yVvwvzc+p69RPakW2Iy+nl9xBoGTA=
 github.com/Elagoht/collage v0.2.0/go.mod h1:tyGWGpujZXtCFFxn9pjws85HOFOt4QdiuRswwQhj1Qw=
+github.com/Elagoht/collage v0.3.0 h1:i+0G/vHDbRaJMvFvPzFxMp1E+vLlJFgTJog6lvWz0Rg=
+github.com/Elagoht/collage v0.3.0/go.mod h1:tyGWGpujZXtCFFxn9pjws85HOFOt4QdiuRswwQhj1Qw=
 github.com/Elagoht/collage-jsonld v0.0.0-20260923102701-5248e9b3f38e h1:jRjYfVmlNZHIOePJvSObu9sDOEZLPd6HE5u6M0Oy504=
 github.com/Elagoht/collage-jsonld v0.0.0-20260923102701-5248e9b3f38e/go.mod h1:NGpY5BTYKWKJRnFkWzCIgaJnH6p1kjwKccQFhJoFY3s=
 github.com/Elagoht/collage-jsonld v0.0.0-20260923121014-0725f00da048 h1:QwSpRfvSWf5il+SFEvfPkwIsHC2xiuwl68Uc9ZEDdfs=
 github.com/Elagoht/collage-jsonld v0.0.0-20260923121014-0725f00da048/go.mod h1:Mhy8dsTn4Pef2HdS9Wm+4ESG63BMNOyWe5ICyyOjXwE=
+github.com/Elagoht/collage-jsonld v0.0.0-20260923132010-f271fefa3281 h1:XGijW749na8F1Vnl25fCqhsEEwdbl/23Bzoaoy0BN5w=
+github.com/Elagoht/collage-jsonld v0.0.0-20260923132010-f271fefa3281/go.mod h1:KIBM5FgEcYzbJlUwjIMadOprTP8wc1iDZZn6QT4b2JE=
 github.com/Elagoht/collage-minimizer v0.0.0-20260923102700-ff1566d7cd4e h1:UrXsLVol0WTDE4zWXeNvLtSUe4w+TnXxeHGPFjrS2pQ=
 github.com/Elagoht/collage-minimizer v0.0.0-20260923102700-ff1566d7cd4e/go.mod h1:5LUK1jOD/AXMUKETh+duyZel37pKb6Sls2RKp2cO8lU=
 github.com/Elagoht/collage-minimizer v0.0.0-20260923121011-ca8447f9380d h1:uvfrLMQh9ZPrpL7F7k+VHHYskIeCvJ5f3dtiWYiKaSQ=
