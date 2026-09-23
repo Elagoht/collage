@@ -234,17 +234,21 @@ What is skipped, and why, is printed rather than left to be discovered:
 - `rss.xml`, `sitemap.xml` and `robots.txt` are one file serving both locales, so
   the Turkish copies would write over the English ones.
 
-The plugins run. A built page is byte-for-byte what the server sends — minified,
-carrying its structured data, with the image URLs rewritten — with one exception
-below.
+The plugins run, and the images are written out with everything else. A built page
+is what the server sends — minified, carrying its structured data, with the images
+resized and linked as files:
 
-**The image URLs will not work in the built site.** Two things are true at once: the
-optimiser signs its URLs with a key generated per process, so a build's URLs are not
-valid for any later process; and the route that would serve them is skipped by the
-build anyway, because its path is dynamic and no `DocumentPathProvider` can enumerate
-signatures that do not exist yet. A statically built site needs its images somewhere
-a file server can reach — the origin directly, or a CDN — which means leaving the
-optimiser off for the build. It is a real limit of combining the two, not a setting.
+```
+out/2026/09/seawalls-buy-time-not-safety/index.html
+out/_image/44e936fed551f11923f2d1e5f46cd883.webp        6,162 bytes
+```
+
+108 files for this corpus, 40 of them images — twenty articles at two sizes, the
+thumbnail and the lead.
+
+The result needs nothing running behind it. Serving `out/` with any file server —
+`python3 -m http.server` will do — gives the whole site, images included, with the
+API and the collage process both stopped.
 
 ## Configuration
 

@@ -334,6 +334,13 @@ unminified where the server minified, unannotated where it annotated, and — be
 a plugin reading its configuration in `Init` never got it — running on defaults in
 one and configured in the other. One source, two sites, with nothing saying so.
 
+A plugin that produces files, rather than only transforming them, should serve them
+from a mount rather than a route. A build copies every mounted filesystem into its
+output *after* every page has rendered, so a filesystem that records what the pages
+asked for can hand the builder exactly the right set — and the built site needs
+nothing running behind it. A routed document cannot be enumerated that way when its
+path is dynamic, because a build has no way to guess what would be requested.
+
 `PageResolved` deliberately does not fire. Its contract is "once per request,
 immediately after the router resolves it", and a build is not a request; firing it
 would make every plugin counting requests count renders nobody asked for.
