@@ -1,6 +1,7 @@
 package collage
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
@@ -65,6 +66,22 @@ type Config struct {
 	Server ServerConfig
 	// Template configures template loading and rendering.
 	Template TemplateConfig
+	// Plugins are registered and configured while the App is built.
+	//
+	// A plugin implementing Configurer must arrive here rather than through
+	// RegisterPlugin: Configure runs before templates are parsed, so that a plugin
+	// can contribute a template function, and RegisterPlugin is called after New
+	// has already parsed them.
+	Plugins []Plugin
+	// PluginConfig is each plugin's own configuration, keyed by plugin name, which
+	// should read like a module path — "elagoht/minimizer".
+	//
+	// The framework reads no file and imposes no format: the application fills this
+	// however it likes. LoadPluginConfig is a convenience for the common case of a
+	// JSON file. A key matching no registered plugin is a startup error
+	// (ErrUnknownPluginConfig), because the alternative is an operator certain a
+	// plugin was configured while it ran on defaults.
+	PluginConfig map[string]json.RawMessage
 	// Cache configures the render output cache.
 	Cache CacheConfig
 	// Locale configures locale resolution.

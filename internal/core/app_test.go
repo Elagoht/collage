@@ -1048,9 +1048,11 @@ func TestPluginHost_CannotRecoverTheApp(t *testing.T) {
 	if spy.host == nil {
 		t.Fatal("plugin Init never ran: no Host was captured")
 	}
-	if _, ok := spy.host.(*App); ok {
-		t.Fatal("Host is the *App itself: a plugin can reach the whole application")
-	}
+	// No assertion back to *App: Host now carries methods only hostView
+	// implements, so "the Host is the application" stopped being something a test
+	// could even express — the compiler rejects the type assertion. What follows
+	// still checks that none of the App's dangerous methods leaked into the
+	// interface by accident.
 	if _, ok := spy.host.(interface {
 		Shutdown(context.Context) error
 	}); ok {

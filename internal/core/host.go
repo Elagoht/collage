@@ -2,8 +2,11 @@ package core
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
 	"log/slog"
 
+	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -27,6 +30,8 @@ import (
 // embedded field promotes the whole method set, which is the thing being prevented.
 type hostView struct {
 	app *App
+	// name is the plugin this view was made for, so Config can find its section.
+	name string
 }
 
 // hostView, not *App, is what plugin.Init receives, so it is what must satisfy
@@ -63,4 +68,75 @@ func (h *hostView) Logger() *slog.Logger {
 // RegisterCommand registers cmd as one of the application's CLI subcommands.
 func (h *hostView) RegisterCommand(cmd plugin.Command) error {
 	return h.app.RegisterCommand(cmd)
+}
+
+// Config decodes this plugin's section of the application's plugin configuration
+// into v.
+func (h *hostView) Config(v any) error { // any: restates encoding/json's own parameter type
+	return plugin.DecodeConfig(h.app.cfg.PluginConfig, h.name, v)
+}
+
+// RegisterPage registers a page the plugin contributes.
+//
+// It goes through the application's own RegisterPage, so a plugin's page collides
+// with the application's on exactly the same terms — a duplicate name, a path
+// another route claims — and fails at startup rather than being decided by
+// registration order.
+func (h *hostView) RegisterPage(page *types.Page) error {
+	return h.app.RegisterPage(page)
+}
+
+// RegisterDocument registers a document the plugin contributes.
+func (h *hostView) RegisterDocument(doc *types.Document) error {
+	return h.app.RegisterDocument(doc)
+}
+
+// Mount serves fsys under prefix, on the same terms as the application's own Mount:
+// a prefix shadowing a registered route is refused when the handler is built.
+func (h *hostView) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error {
+	return h.app.Mount(prefix, fsys, opts...)
+}
+
+// configHostView is the plugin.ConfigHost a plugin receives in Configure.
+//
+// It is a separate type from hostView rather than a subset of it because the two
+// phases genuinely offer different things: at Configure time the application has
+// registered nothing, so Pages would return an empty slice and InvalidateTags would
+// have no cache to reach. Handing over a Host whose methods are all technically
+// callable and mostly meaningless is worse than handing over a smaller interface.
+type configHostView struct {
+	app  *App
+	name string
+}
+
+var _ plugin.ConfigHost = (*configHostView)(nil)
+
+// DevMode reports whether the application is running in development mode.
+func (h *configHostView) DevMode() bool { return h.app.cfg.DevMode || h.app.cfg.Template.DevMode }
+
+// Logger returns the application's structured logger.
+func (h *configHostView) Logger() *slog.Logger { return h.app.logger }
+
+// Config decodes this plugin's section of the application's plugin configuration
+// into v.
+func (h *configHostView) Config(v any) error { // any: restates encoding/json's own parameter type
+	return plugin.DecodeConfig(h.app.cfg.PluginConfig, h.name, v)
+}
+
+// AddTemplateFunc registers fn under name, for every template parsed after this
+// call — which, since Configure runs before parsing, means all of them.
+func (h *configHostView) AddTemplateFunc(name string, fn any) error { // any: restates html/template.FuncMap's own value type
+	if _, taken := h.app.pluginFuncs[name]; taken {
+		return fmt.Errorf("%w: %q", plugin.ErrDuplicateTemplateFunc, name)
+	}
+	h.app.pluginFuncs[name] = fn
+	return nil
+}
+
+// WrapMount registers a transformation applied to every mounted filesystem.
+func (h *configHostView) WrapMount(wrap func(fs.FS) fs.FS) {
+	if wrap == nil {
+		return
+	}
+	h.app.mountWrappers = append(h.app.mountWrappers, wrap)
 }

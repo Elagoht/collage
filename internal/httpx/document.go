@@ -96,6 +96,26 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
 	}
 
+	// Dispatched before the ETag is computed and before anything is cached, so a
+	// plugin that rewrites the body — a minifier, most obviously — is what gets
+	// stored and what the ETag describes. Doing it after would serve one thing and
+	// cache another, and hand clients an ETag for a body they never received.
+	documentEvent := &plugin.DocumentRenderedEvent{
+		Document:    doc,
+		ContentType: doc.ContentType,
+		Locale:      match.Locale,
+		Path:        r.URL.Path,
+		Body:        result.Body,
+	}
+	if err := h.plugins.DocumentRendered(ctx, documentEvent); err != nil {
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
+	}
+	result.Body = documentEvent.Body
+	if len(result.Body) == 0 {
+		err := fmt.Errorf("%w: document %q, after plugin post-processing", types.ErrEmptyDocumentBody, doc.Name)
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
+	}
+
 	// Only a GET populates the cache; a HEAD is served from cache but never
 	// populates it — it produced no body worth storing under its own request.
 	etag := ""

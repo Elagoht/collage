@@ -516,8 +516,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		})
 	}
 
+	// Held rather than inlined: the render's SharedData is what a plugin reads to
+	// reach what the page was built from, and the context is the only thing that
+	// carries it out of the render.
+	rc := types.NewRenderContext(ctx, r, page, match.Locale, match.PathParams)
+
 	renderStart := time.Now()
-	result, err := h.renderer.Render(ctx, types.NewRenderContext(ctx, r, page, match.Locale, match.PathParams))
+	result, err := h.renderer.Render(ctx, rc)
 	renderTime := time.Since(renderStart)
 	if err != nil {
 		// result is non-nil on every Render path, including a fatal error, so
@@ -547,6 +552,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		Page:     page,
 		Locale:   match.Locale,
 		Degraded: result.Degraded(),
+		Data:     rc.SharedData,
 		HTML:     result.HTML,
 	}
 	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {

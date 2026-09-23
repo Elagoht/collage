@@ -33,6 +33,37 @@ type AfterRenderHook interface {
 	OnAfterRender(ctx context.Context, ev *AfterRenderEvent) error
 }
 
+// DocumentRenderedHook is implemented by a plugin that wants to observe, or
+// transform, a document's output before it is served.
+//
+// It is AfterRenderHook's counterpart for the non-HTML half of the site. Without
+// it a plugin that post-processes output — a minifier, most obviously — covers
+// pages and silently skips every sitemap, feed and JSON endpoint.
+type DocumentRenderedHook interface {
+	// OnDocumentRendered is called after a document's handler produces its body
+	// and before that body is served or cached. A plugin implementing this hook
+	// may replace ev.Body.
+	OnDocumentRendered(ctx context.Context, ev *DocumentRenderedEvent) error
+}
+
+// DocumentRenderedEvent describes a document that has just produced its body.
+type DocumentRenderedEvent struct {
+	// Document is the live *types.Document that produced Body. Not copied for
+	// this event, and not defended against mutation; see PageResolvedEvent.Page.
+	Document *types.Document
+	// ContentType is the document's declared content type, so a hook can decide
+	// whether it handles this format without parsing the body to find out.
+	ContentType string
+	// Locale is the locale the document was produced for. This event's own copy.
+	Locale string
+	// Path is the request path being served. This event's own copy.
+	Path string
+	// Body is the document's output. A plugin implementing DocumentRenderedHook
+	// MAY replace this slice; the replacement is what the caller serves and,
+	// unless a CacheWriteHook suppresses it, caches.
+	Body []byte
+}
+
 // CacheWriteHook is implemented by a plugin that wants to observe, or adjust, a
 // render result about to be written to the cache.
 type CacheWriteHook interface {
@@ -107,6 +138,19 @@ type AfterRenderEvent struct {
 	// replace this slice to add a post-process step; the replaced value is what
 	// the caller serves and, unless a CacheWriteHook suppresses it, caches.
 	HTML []byte
+	// Data is the render's SharedData: whatever the page's fragments exchanged
+	// while producing HTML.
+	//
+	// It is how a plugin reaches what the page was built *from* rather than what
+	// it was rendered *into* — a structured-data plugin wants the article, not the
+	// markup it would otherwise have to parse back. What is in it is entirely the
+	// application's convention; the framework puts nothing there.
+	//
+	// It is the live map rather than a copy, for the same reason Page is: copying
+	// it on every render would cost the hot path. Writing to it from a hook races
+	// nothing (the render has finished) but is pointless, and a plugin that keeps
+	// a reference past the hook is holding request-scoped state.
+	Data map[string]any // any: SharedData's own value type, which fragments define
 }
 
 // CacheWriteEvent describes a render result about to be written to the cache.

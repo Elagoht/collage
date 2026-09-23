@@ -340,6 +340,13 @@ func (a *App) RegisterPlugin(p plugin.Plugin) error {
 	if started {
 		return ErrAppStarted
 	}
+	// A Configurer registered here has already missed its phase: Configure runs
+	// inside New, before templates are parsed, and this is called afterwards.
+	// Silently skipping it would leave a plugin that registered a template
+	// function wondering why no template can call it.
+	if _, ok := p.(plugin.Configurer); ok {
+		return fmt.Errorf("%w: plugin %q", ErrConfigurerRegisteredLate, p.Name())
+	}
 	return a.plugins.Register(p)
 }
 

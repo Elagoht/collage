@@ -39,6 +39,15 @@ func (a *App) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error {
 		return fmt.Errorf("%w: cannot mount %q", ErrAppStarted, prefix)
 	}
 
+	// Plugin wrappers are applied in registration order, so a later plugin sees
+	// what an earlier one produced. They wrap the filesystem rather than the
+	// response because a mount serves through http.ServeContent: transforming
+	// bytes per request would shift every offset and make a Range request return
+	// the wrong slice of a file whose advertised length no longer matches.
+	for _, wrap := range a.mountWrappers {
+		fsys = wrap(fsys)
+	}
+
 	m, err := asset.New(prefix, fsys, opts...)
 	if err != nil {
 		return err
