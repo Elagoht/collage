@@ -204,6 +204,44 @@ With `-fail-every 2` you will see *nothing* degrade, which is also the point: th
 client retries once, and with every second request failing the retry always lands on
 a success.
 
+## Building it to files
+
+```
+go run . -build ./out -api http://localhost:8080
+```
+
+The backend has to be running: a static build asks it which articles, sections and
+writers exist, and renders each one. 68 files for this corpus.
+
+```
+out/index.html                                    the front page
+out/tr/index.html                                 and in Turkish
+out/category/climate/index.html                   a section
+out/2026/09/seawalls-buy-time-not-safety/index.html
+out/rss.xml  out/sitemap.xml  out/robots.txt
+out/static/magazine.css                           the mount, copied
+```
+
+A live server answers `/category/{slug}` for whatever arrives; a directory of files
+has to be told which ones exist. `build.go` answers that with a `PathProvider`
+reading the same API the site renders from — which is the application's job, because
+only it knows where the content comes from.
+
+What is skipped, and why, is printed rather than left to be discovered:
+
+- `search`, `/healthz` and the error pages use the `Dynamic` strategy, which has no
+  static answer by definition;
+- `rss.xml`, `sitemap.xml` and `robots.txt` are one file serving both locales, so
+  the Turkish copies would write over the English ones.
+
+**Three of the plugins do not run during a build.** The stylesheet is minified,
+because that happens by wrapping the mounted filesystem, which a build copies from.
+But the HTML is not minified, no structured data is emitted, and the images are left
+pointing at the backend — `AfterRender` and `OnDocumentRendered` are dispatched by
+the HTTP handler, and a build renders through `RenderPath`, which does not go
+through it. A statically built site is therefore not byte-for-byte what the server
+serves. Worth knowing before putting a build behind a CDN.
+
 ## Configuration
 
 Flags, or the environment: `HOST`, `PORT`, `MAGAZINE_API_URL`, `PUBLIC_BASE_URL`,

@@ -55,6 +55,7 @@ func main() {
 	cacheTTL := flag.Duration("cache-ttl", envDuration("CACHE_TTL", 5*time.Minute), "default page cache lifetime (env CACHE_TTL)")
 	logLevel := flag.String("log-level", env("LOG_LEVEL", "info"), "debug, info, warn or error (env LOG_LEVEL)")
 	pluginConfig := flag.String("plugins", env("PLUGINS_CONFIG", "plugins-config.json"), "plugin configuration file; a missing one means every plugin runs on its defaults (env PLUGINS_CONFIG)")
+	buildDir := flag.String("build", "", "render the site to this directory and exit instead of serving")
 	devMode := flag.Bool("dev", envBool("DEV_MODE", false), "surface failed fragments as HTML comments (env DEV_MODE)")
 	flag.Parse()
 
@@ -90,6 +91,14 @@ func main() {
 	}
 	if cfg.PublicBaseURL == "" {
 		cfg.PublicBaseURL = "http://" + *host + ":" + strconv.Itoa(*port)
+	}
+
+	if *buildDir != "" {
+		if err := runBuild(cfg, *buildDir); err != nil {
+			log.Error("site: build failed", "err", err)
+			os.Exit(1)
+		}
+		return
 	}
 
 	app, client, err := newSite(cfg)
