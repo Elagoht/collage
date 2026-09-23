@@ -94,6 +94,7 @@ var builtins = []builtinDescription{
 	{"dev", "Run the current directory's project in development mode"},
 	{"build", "Compile the current directory's project into the binary you deploy"},
 	{"export", "Render the current directory's project to static files"},
+	{"serve", "Serve a static export the way a static host would"},
 	{"version", "Print the collage CLI version"},
 	{"help", "Show help for a command, or list every command"},
 }
@@ -133,6 +134,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.runBuild(ctx, rest)
 	case "export":
 		return c.runExport(ctx, rest)
+	case "serve":
+		return c.runServe(ctx, rest)
 	}
 
 	if cmd, ok := c.findPluginCommand(name); ok {
@@ -249,6 +252,9 @@ func (c *CLI) printCommandHelp(w io.Writer, name string) error {
 		return nil
 	case "export":
 		fmt.Fprint(w, exportUsage)
+		return nil
+	case "serve":
+		fmt.Fprint(w, serveUsage)
 		return nil
 	case "version":
 		fmt.Fprintln(w, "Usage: collage version")

@@ -160,3 +160,14 @@ collage export -clean
 The output is in `dist/`. Pages declared `Dynamic()` are skipped and named, and a
 page carrying a form is refused outright — a form needs somewhere to post to, and a
 static host is not it. See [actions](actions.md).
+
+Look at it before you deploy it:
+
+```
+collage serve
+```
+
+which serves `dist/` the way a static host does — clean URLs, no directory
+listings, `404.html` with a 404, nothing cached. Opening `dist/index.html` from the
+file system does not work, because a `file://` page has no root and every absolute
+link in the export is broken.

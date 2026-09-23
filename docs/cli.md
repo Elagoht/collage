@@ -62,6 +62,35 @@ The binary goes to `bin/` and the static site to `dist/` deliberately: `collage
 export -clean` removes `dist/`'s contents, which would delete a binary sitting in
 it.
 
+## `serve`: looking at an export before deploying it
+
+```
+collage export
+collage serve          # http://localhost:4000
+```
+
+Opening `dist/index.html` from the file system does not work: a `file://` page has
+no root, so every absolute link and stylesheet in the export is broken. A plain file
+server is closer but is still not a static host. This one behaves like one:
+
+- **A directory answers with its `index.html`, or 404s.** No listings — no static
+  host shows one, and showing one puts the shape of an export in front of anyone who
+  asks.
+- **`/about` resolves to `about/index.html`**, which is what `collage export` writes
+  and what every static host looks for.
+- **`404.html` is served with a 404** when the export has one.
+- **Nothing is cached.** The point is to look at what was just exported, and a
+  browser holding the previous one is what stops that.
+
+Port 4000 rather than 3000, so this and a project under `collage dev` can be up at
+once — which is exactly when somebody compares them. `-dir`, `-host` and `-port`
+change the rest.
+
+It serves files and does not run the project. For that, `collage dev`.
+
+Running it before exporting is the usual mistake, so an empty or missing directory
+says what to run rather than serving a site that looks broken.
+
 ## Reading a build's output
 
 `collage.PrintBuildReport` writes what a build did, and what it writes is shaped
