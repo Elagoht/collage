@@ -62,6 +62,15 @@ Turkish would resolve to `tr`, look `/category/climate` up in the Turkish tree, 
 URL means the same page for everyone — which is also what makes the pages shareable
 and the cache sound.
 
+**The document head is a slot, not part of the layout.** A layout's data handler
+runs before its content slot renders — fragments render depth-first, and a slot is
+filled during the parent's template execution — so the layout cannot see the
+headline the content fragment is about to fetch. Building `<title>` from the
+layout's own data gives every page the site name and nothing else. Instead each page
+binds its own head fragment, and the article and section lookups are memoised into
+`RenderContext.SharedData` so the head and the content share one request rather than
+making two.
+
 **The layout performs no I/O.** Everything the chrome needs from the backend — the
 section nav, the "most read" sidebar — lives in its own fragment with its own
 fallback, bound into a slot. A layout that can fail is a layout that can take down

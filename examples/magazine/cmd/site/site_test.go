@@ -25,6 +25,11 @@ type backend struct {
 	store *newsroom.Store
 	// failPrefixes lists path prefixes that answer 503 instead of data.
 	failPrefixes []string
+	// failFirst, when above zero, answers 503 to that many requests and then
+	// serves normally. It exists to fail one fragment's lookup without failing the
+	// next fragment's: the client retries once, so a lookup only fails outright
+	// when two consecutive attempts do.
+	failFirst atomic.Int64
 	// hits counts requests per path prefix, so a test can prove a render happened
 	// again rather than being served from the page cache.
 	hits atomic.Int64
@@ -44,6 +49,12 @@ func newBackend(t *testing.T, failPrefixes ...string) (*backend, *httptest.Serve
 
 func (b *backend) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.hits.Add(1)
+
+	if b.failFirst.Load() > 0 {
+		b.failFirst.Add(-1)
+		http.Error(w, "injected", http.StatusServiceUnavailable)
+		return
+	}
 
 	for _, prefix := range b.failPrefixes {
 		if strings.HasPrefix(r.URL.Path, prefix) {
@@ -417,3 +428,69 @@ func TestSite_InvalidatingATagDropsTheCachedPage(t *testing.T) {
 // compile-time check that the site builder returns the framework's App, so a
 // refactor cannot quietly change what main receives.
 var _ func(config) (*collage.App, *newsroom.Client, error) = newSite
+
+func TestSite_EveryPageHasItsOwnTitle(t *testing.T) {
+	// The reason the head is a slot. The layout's data handler runs before the
+	// content slot renders — fragments render depth-first and a slot is filled
+	// during the parent's template execution — so a <title> built from the layout's
+	// own data is the site name on every page, which is what the simpler
+	// arrangement produces.
+	_, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	for _, tc := range []struct{ target, want string }{
+		{"/", "<title>Latest — The Wire</title>"},
+		{"/tr/", "<title>En yeni — The Wire</title>"},
+		{"/category/technology", "<title>Technology — The Wire</title>"},
+		{"/author/noor-haddad", "<title>Noor Haddad — The Wire</title>"},
+		{"/2026/09/seawalls-buy-time-not-safety", "<title>Seawalls Buy Time, Not Safety — The Wire</title>"},
+		{"/search?q=grid", "<title>grid — Search — The Wire</title>"},
+		{"/nothing/here", "<title>Not found — The Wire</title>"},
+	} {
+		_, body := fetch(t, site, tc.target)
+		if !strings.Contains(body, tc.want) {
+			t.Errorf("GET %s: title missing %q", tc.target, tc.want)
+		}
+	}
+}
+
+func TestSite_ArticleIsFetchedOncePerRender(t *testing.T) {
+	// The head fragment and the content fragment both need the article. Without the
+	// SharedData memoisation each uncached page view costs two identical requests.
+	b, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+
+	before := b.hits.Load()
+	if rec, _ := fetch(t, site, "/2026/09/seawalls-buy-time-not-safety"); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	paths := b.hits.Load() - before
+
+	// nav + popular + the article itself.
+	if paths != 3 {
+		t.Errorf("one article render made %d backend requests, want 3 (nav, popular, article); the article is being fetched twice", paths)
+	}
+}
+
+func TestSite_HeadFailureLeavesAUsableTitle(t *testing.T) {
+	// The head is not required and has a fallback, so a page whose metadata could
+	// not be fetched still has a <title> rather than losing its <head> entirely.
+	//
+	// Exactly two requests are failed: the head fragment's attempt and its one
+	// retry. Everything after that — including the content fragment's own lookup —
+	// succeeds, which is what isolates the head's failure from the page's.
+	b, api := newBackend(t)
+	site := newTestSite(t, api.URL)
+	b.failFirst.Store(2)
+
+	rec, body := fetch(t, site, "/category/technology")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: a failing head must not take the page down", rec.Code)
+	}
+	if !strings.Contains(body, "<title>The Wire</title>") {
+		t.Error("the head fallback did not render a usable title")
+	}
+	if !strings.Contains(body, "Technology") {
+		t.Error("the page content did not render")
+	}
+}

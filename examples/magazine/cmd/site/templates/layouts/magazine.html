@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{if .Heading}}{{.Heading}} — {{end}}{{.Site.Name}}</title>
-<meta name="description" content="{{if .Standfirst}}{{.Standfirst}}{{else}}{{.Site.Tagline}}{{end}}">
+{{slot "head"}}
 <link rel="stylesheet" href="/static/magazine.css">
 <link rel="alternate" type="application/rss+xml" title="{{.Site.Name}}" href="/rss.xml">
 </head>

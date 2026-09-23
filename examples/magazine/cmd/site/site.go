@@ -100,57 +100,81 @@ func newSite(cfg config) (*collage.App, *newsroom.Client, error) {
 	client := newsroom.NewClient(cfg.APIBaseURL)
 	d := &deps{client: client, log: cfg.Logger}
 
-	// The chrome. Its own data handler performs no I/O, so the layout cannot fail;
-	// everything it needs from the backend hangs off a slot with a fallback below.
-	// A layout that can fail is a layout that can take down the error page
-	// explaining why the site is broken.
-	layout := collage.NewFragment("layout", "layouts/magazine.html").
-		WithSlot("content", true, false).
-		WithSlot("nav", false, false).
-		WithSlot("sidebar", false, false).
-		WithSlotFragment("nav", collage.NewFragment("nav", "partials/nav.html").
-			WithDataHandler(bind(d.navData)).
-			WithFallback(collage.NewFragment("nav-unavailable", "partials/nav-unavailable.html").
-				WithDataHandler(bind(d.sidebarUnavailableData)).
+	// The chrome, built per page.
+	//
+	// A layout instance carries the fragments bound into its slots, and the head
+	// fragment differs per page — that is the whole reason it is a slot. So the
+	// layout is built by a function rather than shared: five instances of a few
+	// structs, binding the same three template paths, which the engine parsed once.
+	//
+	// Its own data handler performs no I/O, and that is the point: the layout wraps
+	// every page including the error pages, so a layout that can fail is a layout
+	// that can take down the page explaining why the site is broken. Everything the
+	// chrome needs from the backend hangs off a slot with a fallback.
+	layoutWith := func(head *collage.Fragment) *collage.Fragment {
+		return collage.NewFragment("layout", "layouts/magazine.html").
+			WithSlot("content", true, false).
+			WithSlot("head", false, false).
+			WithSlot("nav", false, false).
+			WithSlot("sidebar", false, false).
+			WithSlotFragment("head", head).
+			WithSlotFragment("nav", collage.NewFragment("nav", "partials/nav.html").
+				WithDataHandler(bind(d.navData)).
+				WithFallback(collage.NewFragment("nav-unavailable", "partials/nav-unavailable.html").
+					WithDataHandler(bind(d.chromeFallbackData)).
+					Build()).
+				WithTimeout(2*time.Second).
 				Build()).
-			WithTimeout(2*time.Second).
-			Build()).
-		WithSlotFragment("sidebar", collage.NewFragment("popular", "partials/popular.html").
-			WithDataHandler(bind(d.popularData)).
-			WithFallback(collage.NewFragment("popular-unavailable", "partials/popular-unavailable.html").
-				WithDataHandler(bind(d.sidebarUnavailableData)).
+			WithSlotFragment("sidebar", collage.NewFragment("popular", "partials/popular.html").
+				WithDataHandler(bind(d.popularData)).
+				WithFallback(collage.NewFragment("popular-unavailable", "partials/popular-unavailable.html").
+					WithDataHandler(bind(d.chromeFallbackData)).
+					Build()).
+				WithTimeout(2*time.Second).
 				Build()).
-			WithTimeout(2*time.Second).
-			Build()).
-		WithDataHandler(bind(d.layoutData)).
-		Build()
-
-	// The error pages. They use the same layout, which is safe precisely because
-	// the layout does no I/O: the condition that broke the page cannot also break
-	// the page that reports it.
-	notFound := collage.NewPage("not-found").
-		WithLayout(layout).
-		WithContent(collage.NewFragment("404", "errors/404.html").
 			WithDataHandler(bind(d.layoutData)).
+			Build()
+	}
+
+	// headFor builds a head fragment from the handler that knows that page's title,
+	// with the same fallback everywhere: a page whose metadata could not be fetched
+	// still needs a <title>, and the site name is always true.
+	headFor := func(name string, handler newsroomData) *collage.Fragment {
+		return collage.NewFragment(name, "partials/head.html").
+			WithDataHandler(bind(handler)).
+			WithFallback(collage.NewFragment(name+"-unavailable", "partials/head-unavailable.html").
+				WithDataHandler(bind(d.chromeFallbackData)).
+				Build()).
+			WithTimeout(2 * time.Second).
+			Build()
+	}
+
+	// The error pages. They use a layout too, which is safe precisely because the
+	// layout does no I/O: the condition that broke the page cannot also break the
+	// page that reports it. Their heads are static for the same reason.
+	notFound := collage.NewPage("not-found").
+		WithLayout(layoutWith(headFor("head-404", d.headNotFound))).
+		WithContent(collage.NewFragment("404", "errors/404.html").
+			WithDataHandler(bind(d.chromeFallbackData)).
 			Build()).
 		Build()
 
 	articleNotFound := collage.NewPage("article-not-found").
-		WithLayout(layout).
+		WithLayout(layoutWith(headFor("head-article-404", d.headNotFound))).
 		WithContent(collage.NewFragment("article-404", "errors/article-404.html").
-			WithDataHandler(bind(d.layoutData)).
+			WithDataHandler(bind(d.chromeFallbackData)).
 			Build()).
 		Build()
 
 	serverError := collage.NewPage("server-error").
-		WithLayout(layout).
+		WithLayout(layoutWith(headFor("head-500", d.headServerError))).
 		WithContent(collage.NewFragment("500", "errors/500.html").
-			WithDataHandler(bind(d.layoutData)).
+			WithDataHandler(bind(d.chromeFallbackData)).
 			Build()).
 		Build()
 
 	home := collage.NewPage("home").
-		WithLayout(layout).
+		WithLayout(layoutWith(headFor("head-home", d.headHome))).
 		WithContent(collage.NewFragment("home-content", "pages/home.html").
 			WithDataHandler(bind(d.homeData)).
 			Required().
@@ -167,7 +191,7 @@ func newSite(cfg config) (*collage.App, *newsroom.Client, error) {
 	// above: "/category/climate" and "/kategori/climate" are different routes in
 	// different trees, and the URL is what decides which one a request means.
 	category := collage.NewPage("category").
-		WithLayout(layout).
+		WithLayout(layoutWith(headFor("head-category", d.headCategory))).
 		WithContent(collage.NewFragment("category-content", "pages/category.html").
 			WithDataHandler(bind(d.categoryData)).
 			Required().
@@ -181,7 +205,7 @@ func newSite(cfg config) (*collage.App, *newsroom.Client, error) {
 		Build()
 
 	author := collage.NewPage("author").
-		WithLayout(layout).
+		WithLayout(layoutWith(headFor("head-author", d.headAuthor))).
 		WithContent(collage.NewFragment("author-content", "pages/author.html").
 			WithDataHandler(bind(d.authorData)).
 			Required().
@@ -195,7 +219,7 @@ func newSite(cfg config) (*collage.App, *newsroom.Client, error) {
 		Build()
 
 	article := collage.NewPage("article").
-		WithLayout(layout).
+		WithLayout(layoutWith(headFor("head-article", d.headArticle))).
 		WithContent(collage.NewFragment("article-content", "pages/article.html").
 			WithDataHandler(bind(d.articleData)).
 			// Required: a piece without its text is not a page worth serving. An
@@ -219,7 +243,7 @@ func newSite(cfg config) (*collage.App, *newsroom.Client, error) {
 	// eviction attack on every other page in the cache; with an ordinary crawler
 	// it is merely waste. Rendering it fresh costs one API call.
 	search := collage.NewPage("search").
-		WithLayout(layout).
+		WithLayout(layoutWith(headFor("head-search", d.headSearch))).
 		WithContent(collage.NewFragment("search-content", "pages/search.html").
 			WithDataHandler(bind(d.searchData)).
 			Required().
