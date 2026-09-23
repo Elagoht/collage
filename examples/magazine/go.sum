@@ -6,3 +6,9 @@ github.com/Elagoht/collage-minimizer v0.0.0-20260923102700-ff1566d7cd4e h1:UrXsL
 github.com/Elagoht/collage-minimizer v0.0.0-20260923102700-ff1566d7cd4e/go.mod h1:5LUK1jOD/AXMUKETh+duyZel37pKb6Sls2RKp2cO8lU=
 github.com/Elagoht/collage-opti-image v0.0.0-20260923102701-b053a3bbd570 h1:hk+s/ZiJKZf23PO9cv68+uR1Xwxp2Ll7a7TK5HY1DYM=
 github.com/Elagoht/collage-opti-image v0.0.0-20260923102701-b053a3bbd570/go.mod h1:fQhzD4KiBbXKV0PpGRawUJzesIfkVhxHko1Rd9MQiCg=
+github.com/Elagoht/collage-opti-image v0.0.0-20260923111957-9692a89e5b7f h1:SL46968J3qxwtT55zELCDwOyt3NkqzSOOmliiNG9g+U=
+github.com/Elagoht/collage-opti-image v0.0.0-20260923111957-9692a89e5b7f/go.mod h1:EHAiDhOP4NTBbWLSS/QJskfNwmK50MlAMfS8SSNisC0=
+github.com/HugoSmits86/nativewebp v1.3.0 h1:n1egtEzSV4KwFtealr7dzdYq1wI/uj/bOQ/QcTcIyVE=
+github.com/HugoSmits86/nativewebp v1.3.0/go.mod h1:YNQuWenlVmSUUASVNhTDwf4d7FwYQGbGhklC8p72Vr8=
+golang.org/x/image v0.24.0 h1:AN7zRgVsbvmTfNyqIbbOraYL8mSwcKncEj8ofjgzcMQ=
+golang.org/x/image v0.24.0/go.mod h1:4b/ITuLfqYq1hqZcjofwctIhi7sZh2WaCjvsBNjjya8=

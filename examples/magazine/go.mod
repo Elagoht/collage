@@ -17,5 +17,10 @@ require (
 	github.com/Elagoht/collage v0.1.0
 	github.com/Elagoht/collage-jsonld v0.0.0-20260923102701-5248e9b3f38e
 	github.com/Elagoht/collage-minimizer v0.0.0-20260923102700-ff1566d7cd4e
-	github.com/Elagoht/collage-opti-image v0.0.0-20260923102701-b053a3bbd570
+	github.com/Elagoht/collage-opti-image v0.0.0-20260923111957-9692a89e5b7f
+)
+
+require (
+	github.com/HugoSmits86/nativewebp v1.3.0 // indirect
+	golang.org/x/image v0.24.0 // indirect
 )

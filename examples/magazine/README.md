@@ -76,13 +76,20 @@ article, PNG         760x428   32,177 bytes
 article, WebP        760x428    6,162 bytes   (with -tags webp)
 ```
 
-`plugins-config.json` asks for WebP. It only happens in a binary built with
-`-tags webp`, which is what links the encoder; without the tag the same
-configuration serves PNG and nothing complains, because a missing encoder is a
-reason to serve the source format rather than to fail:
+`plugins-config.json` asks for WebP, and it arrives in a binary built with
+`-tags webp` — the tag is what links the encoder:
 
 ```
 go run -tags webp .
+```
+
+Without the tag the same configuration serves PNG, which is the right fallback: a
+missing encoder is a reason to serve the source format, not to refuse to start. It
+is not a silent one, though — the plugin says so at startup:
+
+```
+WARN opti-image: WebP is configured but no encoder is linked; serving the source
+     format instead  fix="build with -tags webp, ..."
 ```
 
 That encoder is lossless, which is why it wins so heavily here and would lose on a
