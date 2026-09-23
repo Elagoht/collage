@@ -57,6 +57,21 @@ var ErrPathEscapesOutDir = errors.New("collage: resolved path escapes the output
 // Such a page has no way to enumerate the concrete paths a static build must write.
 var ErrDynamicPathUnresolved = errors.New("collage: dynamic path pattern requires a path provider")
 
+// ErrDuplicateOutputPath is recorded, as a SkipRecord.Reason, when two document
+// build tasks resolve to the same output file — most often one document whose
+// pattern is registered identically under two locales, which is the form that
+// actually serves both "/sitemap.xml" and "/tr/sitemap.xml". Only one of them is
+// built; the rest are skipped by name rather than racing to overwrite one file.
+//
+// It is a skip and not an error deliberately: the build is correct and complete
+// for every URL the application can distinguish, and the only thing missing is a
+// second copy of one file under a name the application never asked for. Choosing
+// that name would be the builder inventing a URL scheme. It is not
+// ErrDuplicateRoute either — nothing is ambiguous at request time, where the
+// locale is part of the cache key and the two responses differ; the collision
+// exists only on a filesystem, which has no locale.
+var ErrDuplicateOutputPath = errors.New("collage: two build tasks write the same output path")
+
 // ErrBuildPanic is recorded in Report.Errors when rendering or writing one page
 // panicked. The build worker recovers it, records it against that page, and carries
 // on with the rest: a static build is often the last step of a deploy, and letting

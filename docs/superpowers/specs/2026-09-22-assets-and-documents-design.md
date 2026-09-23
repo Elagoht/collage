@@ -205,7 +205,12 @@ dispatch `OnError`.
 
 **Preserved invariants.** Documents use the same cache key, the same `Vary`
 handling, the same tracker bound and the same `InvalidateTags` path as pages.
-`Paths` is locale-keyed, so `/tr/sitemap.xml` works without new machinery.
+`Paths` is locale-keyed, so a per-locale document needs no new machinery. Note
+that a pattern must not repeat the locale prefix: path-locale resolution strips
+`/tr` before the router matches, so `/tr/sitemap.xml` is reached by registering
+`/sitemap.xml` under the `tr` key, exactly as a page is. (An earlier draft of
+this line said `/tr/sitemap.xml` works as a `tr` pattern. It does not, and
+docs/documents.md carried that mistake into a copy-pasteable example.)
 
 ## Non-goals
 

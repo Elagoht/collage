@@ -203,14 +203,34 @@ machinery:
 ```go
 feed := collage.NewDocument("feed", "application/rss+xml").
 	WithPath("en", "/feed.xml").
-	WithPath("tr", "/tr/feed.xml").
+	WithPath("tr", "/feed.xml").
 	WithHandler(feedHandler).
 	Incremental(15 * time.Minute).
 	Build()
 ```
 
+**A pattern must not repeat the locale prefix.** With `Supported: {"en", "tr"}`
+the URL `/tr/feed.xml` reaches the `tr` entry above, because path-locale
+resolution strips the `/tr` segment *before* the router matches — so the `tr`
+tree must hold `/feed.xml`, not `/tr/feed.xml`. Writing `WithPath("tr",
+"/tr/feed.xml")` registers the `tr` tree's `/tr/feed.xml`, which is reached only
+by `/tr/tr/feed.xml`, and `/tr/feed.xml` answers 404. This is the same rule
+[routing.md](routing.md) states for pages; documents share the page tree and are
+not an exception to it.
+
+The two URLs that reach the document above are therefore `/feed.xml` — whose
+locale comes from the `Accept-Language` header, the locale cookie, or the default
+— and `/tr/feed.xml`. A locale that wants a genuinely different URL gets one by
+writing a different pattern (`WithPath("tr", "/akis.xml")`), not by prefixing.
+
 The handler reads the resolved locale from `rc.Locale`. The locale is part of the
 cache key, so the two feeds are two entries.
+
+One consequence for the static build: two locales pointing at the *same* literal
+pattern resolve to one output file, since a document writes to its literal path.
+The builder detects that collision and records the later locale in
+`Report.Skipped` rather than letting two goroutines race to write one file. Give
+each locale its own pattern when the build needs to emit both.
 
 ## Registration
 

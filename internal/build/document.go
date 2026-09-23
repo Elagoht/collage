@@ -120,6 +120,61 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 	return tasks, skipped, errs
 }
 
+// dedupeDocumentTargets drops every task whose output file another task has
+// already claimed, returning the surviving tasks and a SkipRecord for each drop.
+//
+// It exists because a document writes to its literal path, so two tasks can
+// resolve to one file where two pages never could. The documented, working way to
+// serve one document in two locales is to register the same pattern under both —
+// {"en": "/sitemap.xml", "tr": "/sitemap.xml"} — because path-locale resolution
+// strips the "/tr" prefix before matching. That is two build tasks with the same
+// output path. Left alone, and with Options.Concurrency above 1, both goroutines
+// called os.WriteFile on that path: one locale's body won nondeterministically,
+// Report.Written listed the file twice, and nothing anywhere reported a problem.
+//
+// The first task to claim a path keeps it. Task order is deterministic —
+// App.Documents is registration order and Document.Locales is sorted — so which
+// locale wins is stable across builds rather than a race, and the losers are named
+// in Report.Skipped instead of disappearing. A build that needs every locale's
+// body on disk gives each locale its own pattern; that is a decision about URLs,
+// which the builder is not entitled to make on the application's behalf, so it
+// reports rather than invents a filename.
+//
+// Comparison is on the resolved target path, not on the URL pattern: two patterns
+// can differ and still resolve to one file, and the file is what collides.
+func dedupeDocumentTargets(outDirResolved string, tasks []documentTask) ([]documentTask, []SkipRecord) {
+	claimed := make(map[string]documentTask, len(tasks))
+	kept := make([]documentTask, 0, len(tasks))
+	var skipped []SkipRecord
+
+	for _, task := range tasks {
+		target, err := documentTarget(outDirResolved, task.path)
+		if err != nil {
+			// Not this function's failure to report: renderAndWriteDocument
+			// resolves the same target and turns the error into a build error
+			// naming the document. Keeping the task preserves that, rather than
+			// converting an error into a silent skip here.
+			kept = append(kept, task)
+			continue
+		}
+
+		if owner, taken := claimed[target]; taken {
+			skipped = append(skipped, SkipRecord{
+				Page:   task.doc.Name,
+				Locale: task.locale,
+				Reason: fmt.Sprintf("%v: path %q resolves to the same output file as locale %q's path %q",
+					ErrDuplicateOutputPath, task.path, owner.locale, owner.path),
+			})
+			continue
+		}
+
+		claimed[target] = task
+		kept = append(kept, task)
+	}
+
+	return kept, skipped
+}
+
 // buildDocuments renders every static-eligible document to a file under
 // outDirResolved and returns the absolute paths written, the documents or document
 // locales that were skipped, and any errors encountered. It mirrors Build's own
@@ -129,6 +184,11 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 // "<path>/index.html".
 func (b *Builder) buildDocuments(ctx context.Context, outDirResolved string) ([]string, []SkipRecord, []error) {
 	tasks, skipped, errs := b.enumerateDocuments(ctx)
+
+	// Before anything is rendered or written: two tasks that resolve to one file
+	// must not both run, whatever Concurrency is set to.
+	tasks, collisions := dedupeDocumentTargets(outDirResolved, tasks)
+	skipped = append(skipped, collisions...)
 
 	written := make([]string, len(tasks))
 	taskErrs := make([]error, len(tasks))

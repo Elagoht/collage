@@ -463,3 +463,48 @@ func TestUnknownAssetIsPlainTextNotHTML(t *testing.T) {
 	assertMissing(t, path, body, "<html")
 	assertMissing(t, path, body, globalNotFoundText)
 }
+
+// TestLocalePrefixedDocument executes the corrected form of the documentation's
+// locale example. The feed registers the same pattern, "/feed.xml", under both
+// "en" and "tr", and both of these URLs must reach it:
+//
+//   - "/feed.xml", whose locale resolves from the header, the cookie, or the
+//     default;
+//   - "/tr/feed.xml", whose "/tr" segment is stripped by path-locale resolution
+//     before the router matches, leaving "/feed.xml" to match in the tr tree.
+//
+// docs/documents.md used to show WithPath("tr", "/tr/feed.xml"), which registers
+// a route reached only by "/tr/tr/feed.xml" and answers 404 at the URL the
+// example was demonstrating. This test is here so the corrected form is executed
+// rather than merely written.
+func TestLocalePrefixedDocument(t *testing.T) {
+	server, _, _ := blog(t)
+
+	for _, path := range []string{"/feed.xml", "/tr/feed.xml"} {
+		status, body, header := get(t, server, path)
+		if status != http.StatusOK {
+			t.Fatalf("GET %s: status = %d, want %d — a locale prefix is stripped before matching, so the "+
+				"tr tree holds %q, not %q\n%s", path, status, http.StatusOK, "/feed.xml", "/tr/feed.xml", body)
+		}
+		if got := header.Get("Content-Type"); got != feedContentType {
+			t.Errorf("GET %s: Content-Type = %q, want %q", path, got, feedContentType)
+		}
+		if !strings.Contains(body, "<rss version=\"2.0\">") {
+			t.Errorf("GET %s: body is not the RSS document: %s", path, body)
+		}
+	}
+
+	// The two URLs are two locales, not one document served twice: the handler
+	// reads rc.Locale, and the locale is part of the cache key, so the bodies
+	// differ.
+	_, english, _ := get(t, server, "/feed.xml")
+	_, turkish, _ := get(t, server, "/tr/feed.xml")
+	assertContains(t, "/feed.xml", english, "Collage Blog (en)")
+	assertContains(t, "/tr/feed.xml", turkish, "Collage Blog (tr)")
+
+	// And the prefixed spelling the documentation used to show really is a 404,
+	// which is why the example had to change rather than the framework.
+	if status, _, _ := get(t, server, "/tr/tr/feed.xml"); status != http.StatusNotFound {
+		t.Errorf("GET /tr/tr/feed.xml: status = %d, want %d", status, http.StatusNotFound)
+	}
+}

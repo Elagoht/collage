@@ -59,6 +59,13 @@ var ErrPathEscapesOutDir = build.ErrPathEscapesOutDir
 // BuildOptions.PathProvider is nil.
 var ErrDynamicPathUnresolved = build.ErrDynamicPathUnresolved
 
+// ErrDuplicateOutputPath is recorded, as a SkipRecord.Reason, when two document
+// build tasks resolve to the same output file — one document registered at the
+// same pattern under two locales, which is the form that serves both
+// "/sitemap.xml" and "/tr/sitemap.xml". One task is built and the rest are
+// skipped by name, rather than racing to overwrite one file.
+var ErrDuplicateOutputPath = build.ErrDuplicateOutputPath
+
 // ErrDegradedRender is recorded in BuildReport.Errors, and no file is written,
 // when a page renders with at least one failed fragment and
 // BuildOptions.AllowDegraded is false.

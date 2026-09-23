@@ -252,7 +252,7 @@ func newBlog(root string) (*collage.App, *PostStore, error) {
 	// The two non-HTML routes. They register into the same router the pages
 	// above did, so "/sitemap.xml" colliding with a page path would be a startup
 	// error here rather than a coin toss at request time.
-	for _, doc := range []*collage.Document{newSitemapDocument(store), newRobotsDocument()} {
+	for _, doc := range []*collage.Document{newSitemapDocument(store), newRobotsDocument(), newFeedDocument(store)} {
 		if err := app.RegisterDocument(doc); err != nil {
 			return nil, nil, fmt.Errorf("register document: %w", err)
 		}

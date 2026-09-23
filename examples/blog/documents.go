@@ -146,3 +146,93 @@ func newRobotsDocument() *collage.Document {
 		Static().
 		Build()
 }
+
+// feedContentType is the Content-Type the feed document is served with.
+const feedContentType = "application/rss+xml"
+
+// feedChannel is the <channel> element of an RSS 2.0 document.
+type feedChannel struct {
+	XMLName xml.Name   `xml:"channel"`
+	Title   string     `xml:"title"`
+	Link    string     `xml:"link"`
+	Items   []feedItem `xml:"item"`
+}
+
+// feedItem is one <item> in the feed.
+type feedItem struct {
+	Title string `xml:"title"`
+	Link  string `xml:"link"`
+}
+
+// feedDocument is the RSS 2.0 root element wrapping a channel.
+type feedDocument struct {
+	XMLName xml.Name    `xml:"rss"`
+	Version string      `xml:"version,attr"`
+	Channel feedChannel `xml:"channel"`
+}
+
+// newFeedDocument returns the RSS feed, and it is here to execute one thing the
+// documentation used to get wrong: a locale-prefixed document URL.
+//
+// Both locales register the *same* pattern, "/feed.xml", and that is the point.
+// Path-locale resolution strips the "/tr" segment before the router matches, so
+// the tr tree has to hold "/feed.xml" for "/tr/feed.xml" to reach it. Registering
+// "/tr/feed.xml" under the tr key would build a route reached only by
+// "/tr/tr/feed.xml", and "/tr/feed.xml" would answer 404 — which is exactly what
+// docs/documents.md used to show. Documents share the page radix tree, so this is
+// the same rule pages follow, not a document-specific one.
+//
+// The handler reads rc.Locale, so the two URLs produce two different bodies under
+// two different cache keys.
+func newFeedDocument(store *PostStore) *collage.Document {
+	return collage.NewDocument("feed", feedContentType).
+		WithPath("en", "/feed.xml").
+		WithPath("tr", "/feed.xml").
+		WithHandler(func(_ context.Context, rc *collage.RenderContext) ([]byte, []string, error) {
+			// store.List(), not store.Sitemap(): Sitemap bumps a counter the
+			// sitemap's own tests assert on, and the feed has no business
+			// moving it.
+			return buildFeed(store.List(), rc.Locale)
+		}).
+		Incremental(15 * time.Minute).
+		WithDependency("blog:posts").
+		Build()
+}
+
+// buildFeed marshals posts into an RSS 2.0 document for locale, and returns it
+// alongside the dependency tags it was derived from. The locale reaches the
+// channel title, which is what makes the two locales' bodies distinguishable in a
+// test and in a feed reader alike.
+func buildFeed(posts []Post, locale string) ([]byte, []string, error) {
+	doc := feedDocument{
+		Version: "2.0",
+		Channel: feedChannel{
+			Title: "Collage Blog (" + locale + ")",
+			Link:  siteBaseURL + "/",
+			Items: make([]feedItem, 0, len(posts)),
+		},
+	}
+	tags := make([]string, 0, len(posts)+1)
+	tags = append(tags, "blog:posts")
+	for _, post := range posts {
+		doc.Channel.Items = append(doc.Channel.Items, feedItem{
+			Title: post.Title,
+			Link:  siteBaseURL + "/blog/" + post.Slug,
+		})
+		tags = append(tags, "post:"+post.Slug)
+	}
+
+	encoded, err := xml.Marshal(doc)
+	if err != nil {
+		// Same reasoning as buildSitemap: an encoder failure is returned, never
+		// swallowed, so the request fails loudly rather than serving a silently
+		// truncated feed.
+		return nil, nil, fmt.Errorf("marshal feed: %w", err)
+	}
+
+	body := make([]byte, 0, len(xml.Header)+len(encoded)+1)
+	body = append(body, xml.Header...)
+	body = append(body, encoded...)
+	body = append(body, '\n')
+	return body, tags, nil
+}
