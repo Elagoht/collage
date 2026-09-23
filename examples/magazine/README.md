@@ -88,8 +88,12 @@ photograph — this site's images are generated gradients. See the plugin's READ
 the numbers either way.
 
 Nothing is fetched while the page renders. The rewrite happens during the render;
-the fetch and the resize happen the first time a browser asks for the rewritten URL,
-and the result is cached for thirty days behind a strong ETag.
+the fetch and the resize happen the first time a browser asks for the rewritten URL.
+
+The result is kept in memory and written to `<temp>/collage-opti-image`, so a
+restart serves it from disk instead of fetching again — the names are the content,
+so a file an earlier process wrote is still the right answer. `cacheDir` moves it,
+`noDiskCache` turns it off.
 
 ## Routes
 
