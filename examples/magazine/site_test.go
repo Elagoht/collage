@@ -584,29 +584,28 @@ func TestSite_ArticleIsFetchedOncePerRender(t *testing.T) {
 	}
 }
 
-func TestSite_HeadFailureLeavesAUsableTitle(t *testing.T) {
-	// The head is not required and has a fallback, so a page whose metadata could
-	// not be fetched still has a <title> rather than losing its <head> entirely.
-	//
-	// Exactly two requests are failed: the head fragment's attempt and its one
-	// retry. Everything after that — including the content fragment's own lookup —
-	// succeeds, which is what isolates the head's failure from the page's.
-	b, api := newBackend(t)
+// TestSite_AFailedPageKeepsTheLayoutsTitle is what the hoist default is for.
+//
+// A content fragment hoists its own title from its data handler. A handler that
+// fails never gets there — so what the reader ends up with, on the error page the
+// framework substitutes, is the layout's default. Without one the page would be
+// titleless, which in a browser's history is indistinguishable from any other page
+// on the site.
+func TestSite_AFailedPageKeepsTheLayoutsTitle(t *testing.T) {
+	_, api := newBackend(t, "/v1/categories/")
 	site := newTestSite(t, api.URL)
-	b.failFirst.Store(2)
 
 	rec, body := request(t, site, "/category/technology")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200: a failing head must not take the page down", rec.Code)
+	if rec.Code == http.StatusOK {
+		t.Fatalf("status = %d, want a failure: the category lookup is refused", rec.Code)
 	}
-	if !strings.Contains(body, "<title>The Wire</title>") {
-		t.Error("the head fallback did not render a usable title")
+	if !strings.Contains(body, "<title>") {
+		t.Errorf("the error page has no title at all:\n%s", body)
 	}
-	if !strings.Contains(body, "Technology") {
-		t.Error("the page content did not render")
+	if !strings.Contains(body, "The Wire</title>") {
+		t.Errorf("the title does not name the site:\n%s", body)
 	}
 }
-
 func TestSite_SearchPagerCarriesTheQuery(t *testing.T) {
 	// A next link built from the listing path alone sends the reader to page two of
 	// nothing: the term lives in the query string, and dropping it turns "results 3

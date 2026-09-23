@@ -1,9 +1,0 @@
-{{/* The document head, rendered from whichever page is being served.
-
-     It is a slot rather than part of the layout because the layout's own data
-     handler runs before the content slot renders — fragments render depth-first
-     and a slot is filled during the parent's template execution — so the layout
-     cannot see the headline the content fragment is about to fetch. Every page
-     would otherwise carry the same <title>. */}}
-<title>{{if .Heading}}{{.Heading}} — {{end}}{{.Site.Name}}</title>
-<meta name="description" content="{{if .Standfirst}}{{.Standfirst}}{{else}}{{.Site.Tagline}}{{end}}">

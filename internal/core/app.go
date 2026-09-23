@@ -993,9 +993,10 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	// this unambiguously is, and they fire as a pair so a plugin that sets something
 	// up in one and uses it in the other is not handed half of each.
 	if err := a.plugins.BeforeRender(ctx, &plugin.BeforeRenderEvent{
-		Page:   match.Page,
-		Locale: match.Locale,
-		Path:   path,
+		Context: rc,
+		Page:    match.Page,
+		Locale:  match.Locale,
+		Path:    path,
 	}); err != nil {
 		return nil, err
 	}

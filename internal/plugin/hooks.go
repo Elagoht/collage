@@ -115,6 +115,18 @@ type PageResolvedEvent struct {
 // and PageResolvedEvent's, for what that means. See AfterRenderEvent for the
 // point at which a plugin is meant to act on the render's output.
 type BeforeRenderEvent struct {
+	// Context is the render about to run, before any fragment has touched it.
+	//
+	// It is the only hook that gets one, and the reason is hoisting: a plugin that
+	// wants to contribute to the page — a structured-data block, a preload hint —
+	// has to declare before the tree renders, because the markers are resolved when
+	// it finishes. By AfterRender the page is assembled and the only thing left is
+	// to splice, which is what having a mechanism was meant to stop.
+	//
+	// Declaring here puts the plugin at depth zero, so anything a fragment declares
+	// under the same key wins. That is the right way round: the plugin is providing
+	// a default, the page is providing the specific thing.
+	Context *types.RenderContext
 	// Page is the live *types.Page about to be rendered. Not copied for this
 	// event, and not defended against mutation; see PageResolvedEvent.Page.
 	Page *types.Page

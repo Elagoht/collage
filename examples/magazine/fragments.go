@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
+	"html/template"
 	"log/slog"
 	"net/url"
 	"strconv"
@@ -87,6 +89,21 @@ func pageParam(rc *collage.RenderContext) int {
 // Everything the chrome needs from the backend — the category nav, the sidebar —
 // lives in its own fragment with its own fallback, bound into a slot below.
 func (d *deps) layoutData(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
+	// The defaults. A page that says nothing keeps these; one that hoists the same
+	// keys from a nested fragment replaces them.
+	d.hoistTitle(rc, "", "")
+	return d.base(rc), nil, nil
+}
+
+// notFoundData and serverErrorData title the error pages. A 404 reading "The Wire"
+// and nothing else is indistinguishable from the front page in a browser's history.
+func (d *deps) notFoundData(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
+	d.hoistTitle(rc, localized(rc.Locale, "Not found", "Bulunamadı"), "")
+	return d.base(rc), nil, nil
+}
+
+func (d *deps) serverErrorData(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
+	d.hoistTitle(rc, localized(rc.Locale, "Something went wrong", "Bir şeyler ters gitti"), "")
 	return d.base(rc), nil, nil
 }
 
@@ -127,31 +144,18 @@ func (d *deps) chromeFallbackData(_ context.Context, rc *collage.RenderContext) 
 	return d.base(rc), nil, nil
 }
 
-// headNotFound and headServerError title the error pages. A 404 that says "The Wire"
-// and nothing else is indistinguishable from the front page in a browser's history.
-func (d *deps) headNotFound(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	v := d.base(rc)
-	v.Heading = localized(rc.Locale, "Not found", "Bulunamadı")
-	return v, nil, nil
-}
-
-func (d *deps) headServerError(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	v := d.base(rc)
-	v.Heading = localized(rc.Locale, "Something went wrong", "Bir şeyler ters gitti")
-	return v, nil, nil
-}
-
 // The three lookups below are memoised into the render's SharedData.
 //
-// Each of them is wanted twice in one render: once by the head fragment, which
-// needs the headline for the <title>, and once by the content fragment. Fetching
-// twice would be correct and would double the request count on every uncached page.
-// SharedData exists for exactly this — values exchanged between fragments within a
-// single render — and a fragment's per-fragment timeout context shares it, because
-// RenderContext.WithContext copies shallowly.
+// They were written when the document head was a separate fragment that fetched the
+// same article the content fragment did, to stop one page view costing two requests.
+// Hoisting removed that second consumer, so today nothing fetches twice and these
+// memoise nothing — they are kept because the next fragment that needs an article
+// already fetched is one line away from costing a request, and because each falls
+// back to fetching when nothing is stored, so they cannot be wrong.
 //
-// Each falls back to fetching when nothing is stored, so removing the head fragment
-// changes the request count and not the behaviour.
+// SharedData is the right place for it: values exchanged between fragments within a
+// single render, shared across a fragment's per-fragment timeout context because
+// RenderContext.WithContext copies shallowly.
 
 func (d *deps) article(ctx context.Context, rc *collage.RenderContext, slug string) (Article, error) {
 	if v, ok := rc.Get("article:" + slug); ok {
@@ -195,61 +199,25 @@ func (d *deps) author(ctx context.Context, rc *collage.RenderContext, slug strin
 	return a, nil
 }
 
-// The head handlers. Each fills Heading and Standfirst, which partials/head.html
-// turns into <title> and the description. They are not required and have a fallback,
-// so a page whose metadata cannot be fetched still gets a title rather than losing
-// its <head>.
-
-func (d *deps) headHome(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	v := d.base(rc)
-	v.Heading = localized(rc.Locale, "Latest", "En yeni")
-	v.Standfirst = site.Tagline
-	return v, nil, nil
-}
-
-func (d *deps) headCategory(ctx context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	cat, err := d.category(ctx, rc, rc.Param("slug"))
-	if err != nil {
-		return nil, nil, translate(err)
+// hoistTitle declares the document title and description for this render.
+//
+// Hoisted rather than returned, because the layout writes <head> before any content
+// has rendered — see docs/fragments.md. The layout hoists a default under the same
+// keys, and loses: a content fragment is nested inside it, and the innermost
+// declaration of a key wins.
+func (d *deps) hoistTitle(rc *collage.RenderContext, heading, description string) {
+	title := site.Name
+	if heading != "" {
+		title = heading + " — " + site.Name
 	}
-	v := d.base(rc)
-	v.Heading = cat.Name
-	v.Standfirst = cat.Description
-	return v, []string{"categories"}, nil
-}
-
-func (d *deps) headAuthor(ctx context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	author, err := d.author(ctx, rc, rc.Param("slug"))
-	if err != nil {
-		return nil, nil, translate(err)
+	if description == "" {
+		description = site.Tagline
 	}
-	v := d.base(rc)
-	v.Heading = author.Name
-	v.Standfirst = author.Role
-	return v, nil, nil
-}
-
-func (d *deps) headArticle(ctx context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	art, err := d.article(ctx, rc, rc.Param("slug"))
-	if err != nil {
-		return nil, nil, translate(err)
-	}
-	v := d.base(rc)
-	v.Heading = art.Title
-	v.Standfirst = art.Dek
-	return v, []string{"articles"}, nil
-}
-
-func (d *deps) headSearch(_ context.Context, rc *collage.RenderContext) (*view, []string, error) {
-	v := d.base(rc)
-	v.Heading = localized(rc.Locale, "Search", "Arama")
-	if q := rc.Request.URL.Query().Get("q"); q != "" {
-		// Not %q: the quotes it adds are escaped to &#34; by the template engine,
-		// which renders correctly and reads badly in the page source.
-		v.Heading = q + " — " + v.Heading
-	}
-	v.Standfirst = site.Tagline
-	return v, nil, nil
+	// html.EscapeString, not the template engine: this markup goes in as written,
+	// and a headline with an ampersand in it would otherwise be malformed HTML.
+	rc.Hoist("head", "title", template.HTML("<title>"+html.EscapeString(title)+"</title>"))
+	rc.Hoist("head", "description", template.HTML(
+		`<meta name="description" content="`+html.EscapeString(description)+`">`))
 }
 
 // homeData is the front page: the newest articles, paginated.
@@ -262,6 +230,7 @@ func (d *deps) homeData(ctx context.Context, rc *collage.RenderContext) (*view, 
 	v.Heading = localized(rc.Locale, "Latest", "En yeni")
 	v.Standfirst = site.Tagline
 	v.Listing = listing
+	d.hoistTitle(rc, v.Heading, v.Standfirst)
 	v.Pager = pager{Path: v.URL.Home()}
 	return v, []string{"articles"}, nil
 }
@@ -287,6 +256,7 @@ func (d *deps) categoryData(ctx context.Context, rc *collage.RenderContext) (*vi
 	v.Standfirst = cat.Description
 	v.Listing = listing
 	v.Pager = pager{Path: v.URL.Category(slug)}
+	d.hoistTitle(rc, v.Heading, v.Standfirst)
 	return v, []string{"articles", "category:" + slug}, nil
 }
 
@@ -309,6 +279,7 @@ func (d *deps) authorData(ctx context.Context, rc *collage.RenderContext) (*view
 	v.Standfirst = author.Role
 	v.Listing = listing
 	v.Pager = pager{Path: v.URL.Author(slug)}
+	d.hoistTitle(rc, v.Heading, v.Standfirst)
 	return v, []string{"articles", "author:" + slug}, nil
 }
 
@@ -356,6 +327,7 @@ func (d *deps) articleData(ctx context.Context, rc *collage.RenderContext) (*vie
 	v.Article = &art
 	v.Heading = art.Title
 	v.Standfirst = art.Dek
+	d.hoistTitle(rc, v.Heading, v.Standfirst)
 	return v, []string{"articles", "article:" + slug}, nil
 }
 
@@ -375,6 +347,7 @@ func (d *deps) searchData(ctx context.Context, rc *collage.RenderContext) (*view
 
 	if query == "" {
 		v.Standfirst = localized(rc.Locale, "Search headlines, standfirsts and tags.", "Başlıklarda, özetlerde ve etiketlerde arayın.")
+		d.hoistTitle(rc, v.Heading, v.Standfirst)
 		return v, nil, nil
 	}
 
@@ -395,6 +368,7 @@ func (d *deps) searchData(ctx context.Context, rc *collage.RenderContext) (*view
 	default:
 		v.Standfirst = fmt.Sprintf("%d results for %q", listing.Total, query)
 	}
+	d.hoistTitle(rc, v.Query+" — "+v.Heading, v.Standfirst)
 	// No dependency tags: the search page is Dynamic, so nothing caches it and
 	// there is nothing for an invalidation to reach.
 	return v, nil, nil

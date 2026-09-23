@@ -502,10 +502,15 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// Deliberately after the cache lookup: BeforeRenderHook documents that it
 	// does not fire when a cached render is served instead of a fresh one, which
 	// is what distinguishes it from PageResolvedHook.
+	// Built before the hook, not after: a plugin contributing to the page hoists
+	// through this, and hoisting only works before the tree renders.
+	rc := types.NewRenderContext(ctx, r, page, match.Locale, match.PathParams)
+
 	if err := h.plugins.BeforeRender(ctx, &plugin.BeforeRenderEvent{
-		Page:   page,
-		Locale: match.Locale,
-		Path:   r.URL.Path,
+		Context: rc,
+		Page:    page,
+		Locale:  match.Locale,
+		Path:    r.URL.Path,
 	}); err != nil {
 		return h.serveFailure(w, r, failure{
 			status: http.StatusInternalServerError,
@@ -515,11 +520,6 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			stage:  stageBeforeRender,
 		})
 	}
-
-	// Held rather than inlined: the render's SharedData is what a plugin reads to
-	// reach what the page was built from, and the context is the only thing that
-	// carries it out of the render.
-	rc := types.NewRenderContext(ctx, r, page, match.Locale, match.PathParams)
 
 	renderStart := time.Now()
 	result, err := h.renderer.Render(ctx, rc)

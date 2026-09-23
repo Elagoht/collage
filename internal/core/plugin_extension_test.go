@@ -482,3 +482,61 @@ func TestCache_DiskCacheDerivesItsVersion(t *testing.T) {
 		t.Errorf("a second run made %d version directories, want 1", len(versions))
 	}
 }
+
+// hoistingPlugin contributes to the page the way a structured-data or preload
+// plugin does: from BeforeRender, before any fragment has run.
+type hoistingPlugin struct{ ran bool }
+
+func (*hoistingPlugin) Name() string                            { return "acme/hoist" }
+func (*hoistingPlugin) Version() string                         { return "1.0.0" }
+func (*hoistingPlugin) Init(context.Context, plugin.Host) error { return nil }
+func (*hoistingPlugin) Shutdown(context.Context) error          { return nil }
+
+func (p *hoistingPlugin) OnBeforeRender(_ context.Context, ev *plugin.BeforeRenderEvent) error {
+	p.ran = true
+	ev.Context.Hoist("head", "plugin", `<meta name="by" content="acme">`)
+	return nil
+}
+
+// TestPlugin_CanHoistFromBeforeRender is why BeforeRenderEvent carries the render
+// context and why the hook is dispatched after it is built.
+//
+// A plugin contributing to the page has to declare before the tree renders: the
+// markers are resolved when it finishes, so by AfterRender the only thing left is
+// to splice the finished HTML — which is what having a mechanism was meant to stop.
+func TestPlugin_CanHoistFromBeforeRender(t *testing.T) {
+	p := &hoistingPlugin{}
+	app := newTestAppWith(t, map[string]string{
+		"layout.html": `<html><head>{{hoist "head"}}</head><body>{{slot "content"}}</body></html>`,
+		"home.html":   `<h1>Welcome Home</h1>`,
+	}, nil)
+	if err := app.RegisterPlugin(p); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+
+	layout := &types.Fragment{
+		Name: "layout", TemplatePath: "layout.html",
+		Slots: map[string]*types.SlotDefinition{
+			types.DefaultContentSlot: {Name: types.DefaultContentSlot, Required: true},
+		},
+	}
+	content := &types.Fragment{Name: "home-content", TemplatePath: "home.html"}
+	page := &types.Page{
+		Name: "home", LayoutFragment: layout, ContentFragment: content,
+		Paths: map[string]string{"en": "/"},
+	}
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+
+	result, err := app.RenderPath(t.Context(), "/", "en", nil)
+	if err != nil {
+		t.Fatalf("RenderPath: %v", err)
+	}
+	if !p.ran {
+		t.Fatal("OnBeforeRender never ran")
+	}
+	if !bytes.Contains(result.HTML, []byte(`<meta name="by" content="acme">`)) {
+		t.Errorf("the plugin's declaration did not reach the head:\n%s", result.HTML)
+	}
+}
