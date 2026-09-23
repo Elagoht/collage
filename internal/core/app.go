@@ -167,6 +167,11 @@ type ServerConfig struct {
 	WriteTimeout time.Duration
 	// IdleTimeout bounds how long a keep-alive connection may sit idle.
 	IdleTimeout time.Duration
+	// MaxBodyBytes bounds an action's request body when the action declares no
+	// bound of its own. Zero selects the framework's default of four megabytes;
+	// negative means unbounded, which is a decision worth making deliberately,
+	// because an unbounded body is memory an anonymous caller chooses the size of.
+	MaxBodyBytes int64
 	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight
 	// requests.
 	ShutdownTimeout time.Duration
@@ -324,6 +329,12 @@ type App struct {
 	// docOrder holds the registered document names in registration order, so
 	// Documents is deterministic.
 	docOrder []string
+	// actions holds every registered action by name, and actionOrder the same in
+	// registration order. An action shares a tree node with whatever else claims
+	// its path, so unlike pages and documents it is not the node's sole occupant;
+	// see internal/router's RegisterAction.
+	actions     map[string]*types.Action
+	actionOrder []*types.Action
 	// mounts holds every mounted asset file system, in registration order. See
 	// mount.go for Mount, Mounts, and checkMountsDoNotShadow, the close-out check
 	// that keeps a mount from silently swallowing a page's or a document's route
@@ -504,6 +515,7 @@ func New(cfg Config) (*App, error) {
 	app.pages = make(map[string]*types.Page)
 	app.bound = make(map[*types.Page]bool)
 	app.documents = make(map[string]*types.Document)
+	app.actions = make(map[string]*types.Action)
 	app.listening = make(chan struct{})
 
 	return app, nil
@@ -666,18 +678,26 @@ func (a *App) buildHandler() (http.Handler, error) {
 	}
 
 	handler, err := httpx.New(httpx.Deps{
-		Router:     a.routes,
-		Renderer:   a.renderer,
-		Cache:      a.store,
-		Tracker:    a.tracker,
-		Plugins:    a.plugins,
-		Metrics:    a.metrics,
-		Tracer:     a.tracer,
-		Logger:     a.logger,
-		DevMode:    a.devMode,
-		DefaultTTL: a.cfg.Cache.DefaultTTL,
-		Vary:       a.vary,
-		Mounts:     a.Mounts(),
+		Router:       a.routes,
+		Renderer:     a.renderer,
+		Cache:        a.store,
+		Tracker:      a.tracker,
+		Plugins:      a.plugins,
+		Metrics:      a.metrics,
+		Tracer:       a.tracer,
+		Logger:       a.logger,
+		DevMode:      a.devMode,
+		DefaultTTL:   a.cfg.Cache.DefaultTTL,
+		Vary:         a.vary,
+		Mounts:       a.Mounts(),
+		MaxBodyBytes: a.cfg.Server.MaxBodyBytes,
+		// An action asks for invalidation declaratively, and this is what
+		// carries it out. Handing every handler the whole application so it
+		// could call InvalidateTags itself would put the application inside a
+		// function whose job is to answer one request.
+		Invalidator: func(ctx context.Context, tags []string) error {
+			return a.InvalidateTags(ctx, tags...)
+		},
 	})
 	if err != nil {
 		return a.buildFailed(err)

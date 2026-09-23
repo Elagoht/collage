@@ -164,23 +164,32 @@ type Deps struct {
 	// before every request is routed. A nil or empty Mounts serves no assets. See
 	// Handler.serve for why checking them first is safe.
 	Mounts []*asset.Mount
+	// MaxBodyBytes bounds an action's request body when the action declares no
+	// bound of its own. Zero selects the framework's default; negative means
+	// unbounded, which is a decision worth making deliberately.
+	MaxBodyBytes int64
+	// Invalidator drops cache entries by tag, and is what backs
+	// ActionResult.InvalidateTags. Nil makes that field inert.
+	Invalidator Invalidator
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
 // Handler is safe for concurrent use by as many requests as the server accepts.
 type Handler struct {
-	router     router.Router
-	renderer   render.Engine
-	cache      cache.Cache
-	tracker    dependency.Tracker
-	plugins    *plugin.Registry
-	metrics    observability.Metrics
-	tracer     observability.Tracer
-	logger     *slog.Logger
-	devMode    bool
-	defaultTTL time.Duration
-	vary       string
-	mounts     []*asset.Mount
+	router       router.Router
+	renderer     render.Engine
+	cache        cache.Cache
+	tracker      dependency.Tracker
+	plugins      *plugin.Registry
+	metrics      observability.Metrics
+	tracer       observability.Tracer
+	logger       *slog.Logger
+	devMode      bool
+	defaultTTL   time.Duration
+	vary         string
+	mounts       []*asset.Mount
+	maxBodyBytes int64
+	invalidator  Invalidator
 	// flight coalesces concurrent renders of one cache key, so an expiring
 	// popular page costs one render rather than one per request that arrives
 	// while it is being re-made.
@@ -222,8 +231,10 @@ func New(d Deps) (*Handler, error) {
 		vary: strings.Join(d.Vary, ", "),
 		// Cloned for the same reason: a caller mutating d.Mounts after New returns
 		// must not change what this Handler serves.
-		mounts: slices.Clone(d.Mounts),
-		flight: newFlight(),
+		mounts:       slices.Clone(d.Mounts),
+		maxBodyBytes: d.MaxBodyBytes,
+		invalidator:  d.Invalidator,
+		flight:       newFlight(),
 	}, nil
 }
 
@@ -443,6 +454,37 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// document match, Page is nil by MatchResult's own contract (exactly one of
 	// Page and Document is set), and the nil-Page check below would otherwise
 	// treat every matched document as a 404 before this branch ever ran.
+	// Before the not-found fallback and before Page, for the same reason the
+	// document branch is: a matched action leaves Page and Document nil, and the
+	// nil-Page check below would read that as a 404.
+	if match.Action != nil {
+		route.resolved(routeKindAction, match.Action.Name)
+		return h.serveAction(w, r, match, route)
+	}
+
+	// A path that exists but does not answer this method. Distinct from a 404,
+	// and the distinction is the whole point: the reader is told the URL is real
+	// and what it does accept, rather than that it is not a URL.
+	if match.MethodNotAllowed {
+		w.Header().Set("Allow", strings.Join(match.Allowed, ", "))
+		return h.serveFailure(w, r, failure{
+			status: http.StatusMethodNotAllowed,
+			err:    fmt.Errorf("%w: %s %s", ErrMethodNotAllowed, r.Method, r.URL.Path),
+			locale: match.Locale,
+			stage:  stageRoute,
+		})
+	}
+
+	// An OPTIONS request that no action claimed. The router already worked out
+	// what the path accepts, so answering here keeps one list in one place.
+	if r.Method == http.MethodOptions && len(match.Allowed) > 0 {
+		header := w.Header()
+		header.Set("Allow", strings.Join(match.Allowed, ", "))
+		header.Set("Content-Length", "0")
+		w.WriteHeader(http.StatusNoContent)
+		return http.StatusNoContent
+	}
+
 	if match.Document != nil {
 		route.resolved(routeKindDocument, match.Document.Name)
 		return h.serveDocument(w, r, match, route)

@@ -335,6 +335,12 @@ type pageOnlyEngine struct{}
 var _ render.Engine = pageOnlyEngine{}
 
 // Render is never exercised by these tests; it exists only to satisfy render.Engine.
+// RenderFragment is never reached: this engine exists to prove a document never
+// consults the page renderer.
+func (pageOnlyEngine) RenderFragment(context.Context, *types.RenderContext, *types.Fragment) ([]byte, error) {
+	panic("pageOnlyEngine.RenderFragment must not be called")
+}
+
 func (pageOnlyEngine) Render(context.Context, *types.RenderContext) (*render.Result, error) {
 	return &render.Result{}, nil
 }

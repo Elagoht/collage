@@ -97,6 +97,23 @@ func (e *fakeEngine) Render(_ context.Context, rc *types.RenderContext) (*render
 }
 
 // totalCalls returns how many renders the engine has performed in all.
+// RenderFragment renders one fragment on its own. The body names the fragment, so a
+// test can tell which one was asked for without a template engine.
+func (e *fakeEngine) RenderFragment(_ context.Context, _ *types.RenderContext, f *types.Fragment) ([]byte, error) {
+	e.mu.Lock()
+	e.calls["fragment:"+f.Name]++
+	e.total++
+	out, ok := e.byPage["fragment:"+f.Name]
+	e.mu.Unlock()
+	if ok && out.err != nil {
+		return nil, out.err
+	}
+	if ok {
+		return []byte(out.html), nil
+	}
+	return []byte("<div>" + f.Name + "</div>"), nil
+}
+
 func (e *fakeEngine) totalCalls() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -160,6 +177,9 @@ func (s *stubRouter) ErrorPage() *types.Page { return s.errorPage }
 // package consults claimed paths — internal/core's mount close-out check is the
 // only caller.
 func (s *stubRouter) ClaimedPaths() []router.ClaimedPath { return nil }
+
+// RegisterAction is never called: the stub answers from a canned MatchResult.
+func (s *stubRouter) RegisterAction(*types.Action) error { return nil }
 
 // plainCache wraps a Cache so that it does NOT satisfy cache.TaggedCache, forcing
 // the handler down its Set path. It exists to prove that tags still reach the
@@ -836,24 +856,36 @@ func TestDynamicStrategyIsNeverCached(t *testing.T) {
 	}
 }
 
-func TestPostIsNeverCached(t *testing.T) {
+// A page answers GET and HEAD. A POST to it, with no action declared for that URL,
+// is a 405 naming what the path does accept — not a rendered page.
+//
+// The old behaviour was to render: any method reached the page and got HTML back.
+// That is the wrong answer to a form submission, and wrong in the quietest possible
+// way, because the reader is handed a page that looks like nothing happened while
+// the application never saw the submission at all.
+func TestPostToAPageWithNoActionIsRefused(t *testing.T) {
 	page := testPage("home", "/", types.StrategyStatic)
 	env := newEnv(t, []*types.Page{page})
 
 	res := env.do(httptest.NewRequest(http.MethodPost, "/", nil))
 
-	if res.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", res.Code, http.StatusOK)
+	if res.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusMethodNotAllowed)
+	}
+	allow := res.Header().Get("Allow")
+	for _, want := range []string{http.MethodGet, http.MethodHead, http.MethodOptions} {
+		if !strings.Contains(allow, want) {
+			t.Errorf("Allow = %q, want it to contain %s", allow, want)
+		}
+	}
+	if strings.Contains(allow, http.MethodPost) {
+		t.Errorf("Allow = %q, want it not to offer POST", allow)
 	}
 	if entries := env.cacheEntries(); entries != 0 {
-		t.Errorf("cache entries = %d, want 0: an unsafe method must not populate the cache", entries)
+		t.Errorf("cache entries = %d, want 0: a refused method must not populate the cache", entries)
 	}
-
-	// And the POST must not have been served from a cache it could not read
-	// either: the following GET renders for itself.
-	env.get("/")
-	if env.engine.pageCalls("home") != 2 {
-		t.Errorf("render calls = %d, want 2", env.engine.pageCalls("home"))
+	if env.engine.pageCalls("home") != 0 {
+		t.Errorf("render calls = %d, want 0: the page must not render for a method it does not answer", env.engine.pageCalls("home"))
 	}
 }
 
@@ -1419,6 +1451,9 @@ func (p *panickingRouter) Match(*http.Request) (*router.MatchResult, error) {
 
 // ClaimedPaths returns nothing; see stubRouter.ClaimedPaths.
 func (p *panickingRouter) ClaimedPaths() []router.ClaimedPath { return nil }
+
+// RegisterAction is never called; this router exists to panic from Match.
+func (p *panickingRouter) RegisterAction(*types.Action) error { return nil }
 
 // TestStaticPageDoesNotExpireAtTheDefaultTTL is the I3 regression. StrategyStatic is
 // documented as "render once and serve until explicitly invalidated", but Static()

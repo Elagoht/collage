@@ -28,6 +28,9 @@ type Engine interface {
 	// only when the render failed as a whole; an isolated fragment failure is
 	// reported through the Result instead, see Result.Degraded.
 	Render(ctx context.Context, rc *types.RenderContext) (*Result, error)
+	// RenderFragment renders one fragment and its subtree on its own, with no
+	// page around it. It is what answers a request for part of a page.
+	RenderFragment(ctx context.Context, rc *types.RenderContext, f *types.Fragment) ([]byte, error)
 }
 
 // Result is one page's rendered output.

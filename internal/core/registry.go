@@ -51,6 +51,14 @@ func (a *App) RegisterPage(p *types.Page) error {
 	if err := a.routes.Register(p); err != nil {
 		return err
 	}
+	// After the page's own paths are in the tree: an attached action inherits
+	// them, so there is nothing to inherit until they exist.
+	if err := a.registerPageActions(p); err != nil {
+		return err
+	}
+	if err := a.registerFragmentPaths(p); err != nil {
+		return err
+	}
 	a.remember(p)
 	return nil
 }

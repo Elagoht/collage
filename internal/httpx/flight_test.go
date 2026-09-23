@@ -242,6 +242,10 @@ func newBlockingEngine(inner *fakeEngine) *blockingEngine {
 	}
 }
 
+func (b *blockingEngine) RenderFragment(ctx context.Context, rc *types.RenderContext, f *types.Fragment) ([]byte, error) {
+	return b.inner.RenderFragment(ctx, rc, f)
+}
+
 func (b *blockingEngine) Render(ctx context.Context, rc *types.RenderContext) (*render.Result, error) {
 	b.once.Do(func() { close(b.started) })
 	<-b.release

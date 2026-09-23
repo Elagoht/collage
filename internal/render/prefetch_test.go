@@ -210,26 +210,42 @@ func TestPrefetch_TagsSurvive(t *testing.T) {
 }
 
 // A handler started for a slot the template never renders is cancelled once the
-// template is done, rather than left running against an upstream that nobody is
-// waiting for. It is the difference between one level of speculation and a request
-// that outlives the page it was speculating for.
+// template is done, rather than left running against an upstream nobody is waiting
+// for. It is the difference between one level of speculation and a request that
+// outlives the page it was speculating for.
+//
+// Two children, in two slots, of which the template renders one. The rendered one's
+// handler waits until the unrendered one's has started, which is what removes the
+// race: without it, the release can land before the unused goroutine has run at all
+// — a perfectly good outcome, since nothing ran, but not the one this test is about.
 func TestPrefetch_UnusedHandlerIsCancelled(t *testing.T) {
 	engine := newEngine(t, Options{})
+	unusedStarted := make(chan struct{})
 	cancelled := make(chan struct{})
 
-	// plain.html renders no slot, so this handler's result is never taken.
-	parent := declare(fragment("parent", "plain.html"), &types.SlotDefinition{Name: "inner"})
-	child := fragment("child", "leaf.html")
+	// section.html renders {{slot "inner"}} and nothing else.
+	parent := declare(fragment("parent", "section.html"), &types.SlotDefinition{Name: "inner"})
+	declare(parent, &types.SlotDefinition{Name: "unused"})
+
+	used := fragment("used", "leaf.html")
+	used.DataHandler = func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+		<-unusedStarted
+		return nil, nil, nil
+	}
+	bind(t, parent, "inner", used)
+
+	unused := fragment("unused", "leaf.html")
 	// Far longer than the test waits, so the only thing that can end this handler
 	// is the release. Without it the fragment's own timeout would eventually fire
 	// and the test would pass for the wrong reason, slowly.
-	child.Timeout = time.Minute
-	child.DataHandler = func(ctx context.Context, _ *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	unused.Timeout = time.Minute
+	unused.DataHandler = func(ctx context.Context, _ *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+		close(unusedStarted)
 		<-ctx.Done()
 		close(cancelled)
 		return nil, nil, ctx.Err()
 	}
-	bind(t, parent, "inner", child)
+	bind(t, parent, "unused", unused)
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	bind(t, layout, "content", parent)
@@ -240,7 +256,7 @@ func TestPrefetch_UnusedHandlerIsCancelled(t *testing.T) {
 
 	select {
 	case <-cancelled:
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Error("a handler for a slot that was never rendered was left running after the render finished")
 	}
 }
