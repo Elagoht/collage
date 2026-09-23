@@ -5,14 +5,13 @@
     "css": true,
     "js": false
   },
-
   "elagoht/jsonld": {
     "siteName": "The Wire",
     "siteURL": "http://localhost:3000",
     "searchURL": "http://localhost:3000/search?q={query}"
   },
-
   "elagoht/opti-image": {
+    "webp": true,
     "quality": 82,
     "maxSourceBytes": 8388608
   }

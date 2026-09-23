@@ -71,9 +71,23 @@ declared size is the only statement of how large the picture will actually be dr
 copy at that size:
 
 ```
-source     1600x900   92,906 bytes   (from the API)
-article     760x428   32,177 bytes   (what the page loads)
+source              1600x900   92,906 bytes   (from the API)
+article, PNG         760x428   32,177 bytes
+article, WebP        760x428    6,162 bytes   (with -tags webp)
 ```
+
+`plugins-config.json` asks for WebP. It only happens in a binary built with
+`-tags webp`, which is what links the encoder; without the tag the same
+configuration serves PNG and nothing complains, because a missing encoder is a
+reason to serve the source format rather than to fail:
+
+```
+go run -tags webp .
+```
+
+That encoder is lossless, which is why it wins so heavily here and would lose on a
+photograph — this site's images are generated gradients. See the plugin's README for
+the numbers either way.
 
 Nothing is fetched while the page renders. The rewrite happens during the render;
 the fetch and the resize happen the first time a browser asks for the rewritten URL,
