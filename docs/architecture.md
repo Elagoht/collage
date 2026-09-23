@@ -68,7 +68,10 @@ viable over 500 MB per request.
 Documents register into the *same* radix tree as pages, so a collision between
 `/sitemap.xml` and `/{slug}` is a startup error. Mounts claim a URL prefix
 instead, checked before routing — which is safe only because a startup check
-refuses a mount prefix that would shadow any registered page or document path.
+refuses a mount prefix that would shadow URL space the router already claims. It
+asks the router for that, rather than enumerating the registries itself: page
+paths, document paths and redirect sources alike, each in the locale-prefixed
+spelling a visitor actually types.
 
 See [documents.md](documents.md) and [assets.md](assets.md).
 

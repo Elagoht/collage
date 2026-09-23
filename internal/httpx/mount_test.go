@@ -45,8 +45,10 @@ func TestStatusCapturingWriter_KeepsTheSendfilePath(t *testing.T) {
 	inner := &readerFromWriter{ResponseRecorder: httptest.NewRecorder()}
 	capture := &statusCapturingWriter{ResponseWriter: inner}
 
-	// The assertion http.ServeContent itself makes.
-	rf, ok := any(capture).(io.ReaderFrom)
+	// The assertion http.ServeContent itself makes, through an
+	// http.ResponseWriter-typed value exactly as it sees one.
+	var served http.ResponseWriter = capture
+	rf, ok := served.(io.ReaderFrom)
 	if !ok {
 		t.Fatal("statusCapturingWriter is not an io.ReaderFrom; http.ServeContent will fall back to a 32 KiB copy loop")
 	}

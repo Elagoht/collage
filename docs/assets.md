@@ -165,12 +165,27 @@ page router, which is why a missing stylesheet gets a plain-text 404 rather than
 your site-wide HTML not-found page.
 
 That is only safe because of a startup check. A mount prefix that would shadow a
-registered page or document path is refused with
+URL path the router already answers to is refused with
 `collage.ErrMountShadowsRoute`, naming both, and two mounts with overlapping
 prefixes are refused with `collage.ErrMountConflict`. Both checks run once
 registration closes rather than inside `Mount`, so **registration order does not
 matter**: a mount registered before the page it would shadow fails exactly as
 loudly as one registered after it.
+
+"URL path the router already answers to" is deliberately wider than "page or
+document path". It covers all three registries — a page path, a document path,
+and a registered `Redirect.From` — because a redirect colliding with a route is a
+startup error in either order everywhere else, and a mount is not an exception.
+It also covers each route's **locale-prefixed** URL: a page registered at
+`Paths{"tr": "/about"}` is reached at `/tr/about`, so a mount at `/tr/` is
+refused even though the pattern alone shows no `/tr`.
+
+What the check establishes is narrower than "the mount owns URL space no route
+answers to", and the difference is worth knowing: it compares prefixes against
+registered patterns, so it cannot see a *dynamic* pattern registered above the
+prefix. A catch-all at `/{rest...}` would have matched URLs under `/static/`, and
+mounting that prefix takes them. That is the documented trade of claiming a
+prefix, not a silent shadowing of a route you named.
 
 Because those checks run when the handler is built, they surface the way every
 other startup failure does: `App.Handler()` returns a handler that answers `503`

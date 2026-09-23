@@ -23,8 +23,10 @@ rather than a coin toss at request time.
 [Mounted assets](assets.md) are not in that tree at all. A mount claims its whole
 URL prefix and is checked **before** the router runs, so nothing under
 `/static/` ever reaches a route — which is safe only because a startup check
-refuses a mount prefix that would swallow a registered page or document path
-(`collage.ErrMountShadowsRoute`), in either registration order. A request under a
+refuses a mount prefix that would swallow a URL the router already answers to
+(`collage.ErrMountShadowsRoute`), in either registration order. That covers all
+three registries, a registered `Redirect.From` included, and each route's
+locale-prefixed URL; see [assets.md](assets.md) for what it does not cover. A request under a
 mount prefix that names no file is the mount's own plain-text 404, not the
 site-wide not-found page, and a method other than `GET` or `HEAD` is a 405.
 
