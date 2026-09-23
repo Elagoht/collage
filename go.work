@@ -15,4 +15,5 @@ use (
 	.
 	./examples/magazine
 	./examples/newsroom-api
+	./plugins/minimizer
 )
