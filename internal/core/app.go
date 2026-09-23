@@ -667,6 +667,15 @@ func (a *App) ListenAndServe() error {
 	a.mu.Unlock()
 	a.listenOnce.Do(func() { close(a.listening) })
 
+	// Logged here rather than by the caller, because this is the first point at
+	// which serving is a fact rather than an intention: the port is bound and the
+	// handler is built. A caller that logs before calling ListenAndServe prints a
+	// success message that a bind failure then contradicts one line later.
+	//
+	// The address comes from the listener, not from the configuration, so a
+	// configured port of 0 reports the port the kernel actually chose.
+	a.Logger().Info("collage: listening", "addr", listener.Addr().String())
+
 	served := make(chan error, 1)
 	go func() {
 		served <- server.Serve(listener)
@@ -676,9 +685,11 @@ func (a *App) ListenAndServe() error {
 	case err := <-served:
 		return cleanStop(err)
 	case <-signals:
+		a.Logger().Info("collage: shutting down", "timeout", a.cfg.Server.ShutdownTimeout)
 		ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Server.ShutdownTimeout)
 		defer cancel()
 		shutdownErr := a.Shutdown(ctx)
+		a.Logger().Info("collage: stopped")
 		// Serve always returns once Shutdown has closed the listener, so this
 		// receive cannot block the caller indefinitely and the goroutine above
 		// cannot leak.

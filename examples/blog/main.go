@@ -107,11 +107,9 @@ func main() {
 		log.Fatalf("blog: %v", err)
 	}
 
-	// "starting", not "serving": ListenAndServe does the binding, so at this point
-	// the port could still be taken and the next line could be a fatal error. A
-	// success message printed before the thing succeeds is how a bind failure gets
-	// read as a working server.
-	log.Printf("blog: starting on http://%s:%d", *host, *port)
+	// No "starting" line here: ListenAndServe logs "collage: listening" once the
+	// port is actually bound, which is the only moment the claim is true. Printing
+	// one before the call is how a bind failure gets read as a working server.
 	if err := app.ListenAndServe(); err != nil {
 		log.Fatalf("blog: %v", err)
 	}
