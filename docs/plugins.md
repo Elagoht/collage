@@ -158,6 +158,27 @@ already identifies the route, and the framework's own log line names the
 document. See `docs/documents.md` for the full reasoning; this table and that
 page are kept in agreement on it.
 
+**`CacheWriteEvent.Page` is `nil` for a document too**, and for the same reason:
+nothing rendered it from a page. `OnCacheWrite` is one of the three hooks a
+document *does* dispatch, so this is the one nil a plugin written for pages will
+actually meet:
+
+```go
+func (p *myPlugin) OnCacheWrite(_ context.Context, ev *collage.CacheWriteEvent) error {
+	if ev.Page == nil {
+		// A document: ev.Key, ev.TTL and ev.Tags are all still valid.
+		return nil
+	}
+	ev.TTL = p.ttlFor(ev.Page.Name)
+	return nil
+}
+```
+
+Getting that check wrong is worse than it looks. `safeCall` contains the panic,
+so the request still completes — but the cache write it was dispatched for is
+abandoned, so the document is **never cached**, on any request, and the only
+symptom is one error line per request.
+
 A mounted asset request dispatches only `OnError`, and only for a 4xx or 5xx
 response, or for a panic recovered while serving it: an asset is neither a page
 nor a document, so none of the cache or render hooks apply to it either.

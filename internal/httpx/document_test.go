@@ -378,3 +378,57 @@ func TestDocument_RendererWithoutDocumentSupportIs500(t *testing.T) {
 		t.Fatalf("Content-Type = %q, want text/plain", ct)
 	}
 }
+
+// TestDocument_CacheWriteEventCarriesNoPage pins the nil that
+// CacheWriteEvent.Page's doc comment now promises. OnCacheWrite is one of the
+// three hooks a document dispatches, so it is the one place a plugin written for
+// pages meets a document, and `ev.Page.Name` there panics on every single document
+// request. safeCall contains the panic, but the cache write is abandoned with it,
+// so the document is never cached — one error line per request and no other
+// symptom.
+func TestDocument_CacheWriteEventCarriesNoPage(t *testing.T) {
+	doc := &types.Document{
+		Name: "sitemap", ContentType: "application/xml",
+		Paths:    map[string]string{"en": "/sitemap.xml"},
+		Strategy: types.StrategyStatic,
+		Handler: func(ctx context.Context, rc *types.RenderContext) ([]byte, []string, error) {
+			return []byte("<urlset/>"), []string{"blog:posts"}, nil
+		},
+	}
+	recorder := &recordingPlugin{}
+	h := documentEnvWithPlugin(t, doc, recorder)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/sitemap.xml", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	written := recorder.cacheWritten()
+	if len(written) != 1 {
+		t.Fatalf("OnCacheWrite fired %d times, want 1", len(written))
+	}
+	if written[0] != nil {
+		t.Fatalf("CacheWriteEvent.Page = %v for a document, want nil: a document renders no page", written[0])
+	}
+}
+
+// TestPage_CacheWriteEventCarriesThePage is the other half: the field is nil only
+// for a document, and a page's cache write still carries the live page it was
+// rendered from. Without this control, "Page is nil" could be satisfied by a
+// regression that stopped populating it everywhere.
+func TestPage_CacheWriteEventCarriesThePage(t *testing.T) {
+	page := testPage("home", "/", types.StrategyStatic)
+	recorder := &recordingPlugin{}
+	env := newEnv(t, []*types.Page{page}, withPlugins(t, recorder))
+
+	env.get("/")
+
+	written := recorder.cacheWritten()
+	if len(written) != 1 {
+		t.Fatalf("OnCacheWrite fired %d times, want 1", len(written))
+	}
+	if written[0] != page {
+		t.Fatalf("CacheWriteEvent.Page = %v, want the live page %q", written[0], page.Name)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/internal/core"
+	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -13,6 +14,18 @@ import (
 // machinery, but renders no templates and composes no fragments — its handler
 // returns bytes directly.
 type Document = types.Document
+
+// DocumentResult is one document's executed output, as returned by
+// App.RenderDocumentPath: the body, the content type to serve it with, the
+// dependency tags the body was derived from, whether it failed because the content
+// does not exist, and how long the handler took. A caller MUST check
+// RenderDocumentPath's error before reading Body.
+//
+// It is Result's sibling for documents, and exists for the same reason Result
+// does: RenderDocumentPath is public surface reached through the App alias, so a
+// caller must be able to name what it returns — to declare a variable, a struct
+// field, or a helper's parameter — using nothing but this package.
+type DocumentResult = render.DocumentResult
 
 // DocumentHandlerFunc produces a document's body. It returns the bytes to serve,
 // the dependency tags the body was derived from, and an error. Returning an error

@@ -201,6 +201,10 @@ type recordingPlugin struct {
 	errs        []error
 	replaceHTML []byte
 	skipCache   bool
+	// cacheWritePages records the Page every OnCacheWrite carried, nils
+	// included: CacheWriteEvent.Page is nil for a document, and a test asserting
+	// that has to be able to see the nil rather than have it dropped.
+	cacheWritePages []*types.Page
 }
 
 var (
@@ -266,6 +270,7 @@ func (p *recordingPlugin) OnCacheWrite(_ context.Context, ev *plugin.CacheWriteE
 	p.record("CacheWrite")
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.cacheWritePages = append(p.cacheWritePages, ev.Page)
 	if p.skipCache {
 		ev.Skip = true
 	}
@@ -280,6 +285,14 @@ func (p *recordingPlugin) OnError(_ context.Context, ev *plugin.ErrorEvent) erro
 	defer p.mu.Unlock()
 	p.errs = append(p.errs, ev.Err)
 	return nil
+}
+
+// cacheWritten returns a copy of the Page each OnCacheWrite carried, in dispatch
+// order, nils included.
+func (p *recordingPlugin) cacheWritten() []*types.Page {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]*types.Page(nil), p.cacheWritePages...)
 }
 
 // reportedErrors returns a copy of the errors passed to OnError, in dispatch order.

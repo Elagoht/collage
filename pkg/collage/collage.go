@@ -82,8 +82,10 @@ type BeforeRenderEvent = plugin.BeforeRenderEvent
 // HTML field to post-process the page.
 type AfterRenderEvent = plugin.AfterRenderEvent
 
-// CacheWriteEvent describes a render result about to be written to the cache. A
-// plugin may set its Skip field or adjust its TTL and Tags.
+// CacheWriteEvent describes a render result about to be written to the cache, for
+// a page or a document alike. A plugin may set its Skip field or adjust its TTL
+// and Tags. Its Page field is nil for a document, so a hook that reads it must
+// check it first.
 type CacheWriteEvent = plugin.CacheWriteEvent
 
 // CacheInvalidateEvent describes a cache invalidation that has just happened.

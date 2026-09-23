@@ -114,8 +114,15 @@ type CacheWriteEvent struct {
 	// Key is the cache key the result would be stored under. This event's own
 	// copy; changing it does not redirect where the write goes.
 	Key string
-	// Page is the live *types.Page the result was rendered from. Not copied for
-	// this event, and not defended against mutation; see PageResolvedEvent.Page.
+	// Page is the live *types.Page the result was rendered from, or nil when the
+	// result is a document's: a document renders no page, and there is none to
+	// carry. A hook that reads Page MUST check it, exactly as one reading
+	// ErrorEvent.Page must — dereferencing it unguarded panics on every document
+	// request, and because a panicking hook abandons the cache write it was
+	// dispatched for, the document is then never cached at all.
+	//
+	// When non-nil, it is not copied for this event and not defended against
+	// mutation; see PageResolvedEvent.Page.
 	Page *types.Page
 	// TTL is how long the cached entry would remain valid. A plugin implementing
 	// CacheWriteHook may adjust it.
