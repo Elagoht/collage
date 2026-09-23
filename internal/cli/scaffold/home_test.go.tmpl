@@ -153,3 +153,19 @@ func TestUnsupportedMethodIsRefused(t *testing.T) {
 		t.Errorf("Allow = %q, want it to name what the URL accepts", allow)
 	}
 }
+
+// The health check answers without rendering a template, which is the point of it:
+// it cannot start failing because a page did.
+func TestHealthCheck(t *testing.T) {
+	rec, body := get(t, handler(t), "/healthz")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /healthz = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(body, `"status":"ok"`) {
+		t.Errorf("body = %q, want a status", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+}

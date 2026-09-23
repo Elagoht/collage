@@ -202,3 +202,24 @@ func (s *store) add(address string) {
 	defer s.mu.Unlock()
 	s.list[address] = struct{}{}
 }
+
+// ---------------------------------------------------------------------------
+// Operations
+// ---------------------------------------------------------------------------
+
+// healthDocument answers "/healthz" with a fixed body, which is what a container
+// orchestrator, a load balancer or an uptime check asks for.
+//
+// A document rather than a page: it returns bytes and a content type rather than
+// rendering templates, so a health check cannot start failing because a template
+// did. Dynamic, so the answer is always this process saying it is up rather than
+// something cached from when it was.
+func healthDocument() *collage.Document {
+	return collage.NewDocument("health", "application/json").
+		WithPath("en", "/healthz").
+		WithHandler(func(context.Context, *collage.RenderContext) ([]byte, []string, error) {
+			return []byte(`{"status":"ok"}`), nil, nil
+		}).
+		Dynamic().
+		Build()
+}

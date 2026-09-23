@@ -62,6 +62,25 @@ another issued.
 COLLAGE_CSRF_KEY=$(head -c 32 /dev/urandom | base64) go run .
 ```
 
+## Deploying
+
+There is no `collage start`: this is a Go program, so production is a binary.
+
+```
+CGO_ENABLED=0 go build -o @@NAME@@ .
+HOST=0.0.0.0 PORT=8080 COLLAGE_CSRF_KEY=... ./@@NAME@@
+```
+
+Templates and static files are embedded, so the binary is the whole site — nothing
+to copy next to it, and a container image can be that binary and nothing else.
+It traps `SIGTERM` and drains in-flight requests before exiting, answers `/healthz`
+for a liveness check, and caches rendered pages under `.cache` so a restart does not
+re-render everything.
+
+It serves plain HTTP; put it behind whatever terminates TLS for you, or wrap
+`app.Handler()` in an `http.Server` of your own. The full story is in the framework's
+`docs/deployment.md`.
+
 ## The collage CLI contract
 
 - **`collage dev`** runs `go run .` here with `COLLAGE_DEV=1` set. `main.go`

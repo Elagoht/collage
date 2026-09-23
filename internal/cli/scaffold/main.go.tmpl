@@ -22,6 +22,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
@@ -86,6 +87,21 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 			Root:      "templates",
 			Extension: ".html",
 		},
+		Cache: collage.CacheConfig{
+			// On in production and effectively off in development: with
+			// DevMode set, collage never reads from the cache — a cached page
+			// would hide the template you just edited — and substitutes an
+			// in-memory cache for the disk one, so nothing survives a restart
+			// to confuse you.
+			//
+			// The disk cache keeps rendered pages under .cache, so a restart
+			// does not re-render the whole site. It is namespaced by a hash of
+			// this binary, so a new build never serves the last one's pages.
+			Enabled:    true,
+			Type:       "disk",
+			Dir:        ".cache",
+			DefaultTTL: 5 * time.Minute,
+		},
 		Security: collage.SecurityConfig{
 			// Signs the forgery tokens this project's forms carry. Leave it
 			// unset and one is generated per process, which is fine while you
@@ -108,6 +124,9 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 		if err := app.RegisterPage(page); err != nil {
 			return nil, fmt.Errorf("register page %q: %w", page.Name, err)
 		}
+	}
+	if err := app.RegisterDocument(healthDocument()); err != nil {
+		return nil, fmt.Errorf("register health document: %w", err)
 	}
 
 	assets, err := staticFiles(devMode)

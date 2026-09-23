@@ -225,11 +225,19 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	if !strings.Contains(buildOut, "3 files written") {
 		t.Fatalf("build output = %q, want it to report three files written", buildOut)
 	}
-	if !strings.Contains(buildOut, "1 page skipped") || !strings.Contains(buildOut, "signup") {
-		t.Errorf("build output = %q, want it to name the skipped form page", buildOut)
+	// Two skips, and naming them is the point: the form page, because a form needs
+	// a server to post to, and the health check, because what it reports is this
+	// process being up rather than something cached from when it was.
+	if !strings.Contains(buildOut, "2 pages skipped") {
+		t.Errorf("build output = %q, want it to count the skips", buildOut)
+	}
+	for _, name := range []string{"signup", "health"} {
+		if !strings.Contains(buildOut, name) {
+			t.Errorf("build output = %q, want it to name the skipped %q", buildOut, name)
+		}
 	}
 	// The last line is the one people read, so it has to carry the counts.
-	if !strings.Contains(buildOut, "3 written · 1 skipped · 0 failed") {
+	if !strings.Contains(buildOut, "3 written · 2 skipped · 0 failed") {
 		t.Errorf("build output = %q, want a summary line carrying every count", buildOut)
 	}
 

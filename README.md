@@ -288,6 +288,8 @@ Details in [docs/caching.md](docs/caching.md),
 | [docs/caching.md](docs/caching.md) | Render strategies, the cache key, ETags, `Vary`, dependency tags, invalidation, custom caches |
 | [docs/plugins.md](docs/plugins.md) | The `Plugin` contract, the `Host`, every hook, dispatch and error semantics, lifecycle |
 | [docs/routing.md](docs/routing.md) | Path patterns, locales, redirects, error-page resolution, registration errors |
+| [docs/actions.md](docs/actions.md) | `Action`: methods, forms, `ActionResult`, request-forgery tokens, fragments at their own URLs |
+| [docs/deployment.md](docs/deployment.md) | Building a binary, containers, signals, TLS, the cache in production, health checks |
 | [docs/cli.md](docs/cli.md) | `collage new`/`dev`/`build`, plugin subcommands, and the static site builder |
 
 `docs/spec/usage-examples.md` holds the canonical examples the original
