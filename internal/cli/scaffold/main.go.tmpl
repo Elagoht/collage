@@ -79,6 +79,17 @@ func main() {
 // pick. What they exercise is then the site that actually runs, rather than a
 // second wiring that can drift from it.
 func newApp(devMode bool, port int) (*collage.App, error) {
+	// Plugin configuration, keyed by plugin name. A missing file is not an
+	// error: every plugin then runs on its defaults.
+	//
+	// Loaded here rather than left for you to wire up, because a configuration
+	// file that is written and never read is the quietest kind of broken — the
+	// plugin runs, on defaults, and the settings you wrote do nothing.
+	pluginConfig, err := collage.LoadPluginConfig("plugins-config.json")
+	if err != nil {
+		return nil, fmt.Errorf("plugin configuration: %w", err)
+	}
+
 	app, err := collage.New(&collage.Config{
 		DevMode: devMode,
 		Server: collage.ServerConfig{
@@ -105,6 +116,14 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 			Dir:        ".cache",
 			DefaultTTL: 5 * time.Minute,
 		},
+		PluginConfig: pluginConfig,
+		// Plugins go here, and their settings in plugins-config.json:
+		//
+		//	Plugins: []collage.Plugin{minimizer.New(), jsonld.New()},
+		//
+		// A plugin that contributes to the document head — structured data,
+		// preload hints — reaches it through {{hoist "head"}} in the layout.
+		// Without that marker it produces nothing at all.
 		Security: collage.SecurityConfig{
 			// Signs the forgery tokens this project's forms carry. Leave it
 			// unset and one is generated per process, which is fine while you

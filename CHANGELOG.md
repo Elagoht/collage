@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.4
+
+- A scaffolded project reads `plugins-config.json`. It was written into every new
+  project and never loaded, so a plugin's settings did nothing — a configuration
+  file that is written and never read is the quietest kind of broken.
+- Its layout has `{{hoist "head"}}`, so a plugin that contributes to the document
+  head has somewhere to land, and its pages hoist their own `<title>` through it.
+- `collage version` reports the version the binary was built from, rather than the
+  constant that had said 0.1.0 since 0.1.0.
+
 ## v0.4.1
 
 - `collage new` scaffolds a not-found page, so a new project's export has a
