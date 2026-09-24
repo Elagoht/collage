@@ -39,6 +39,10 @@ type Fragment = types.Fragment
 // fragments bound to it.
 type SlotDefinition = types.SlotDefinition
 
+// SlotResolverFunc returns the fragments a slot holds for one render. See
+// FragmentBuilder.WithSlotResolver.
+type SlotResolverFunc = types.SlotResolverFunc
+
 // DataHandlerFunc fetches the data a fragment renders with.
 type DataHandlerFunc = types.DataHandlerFunc
 
@@ -75,6 +79,10 @@ var ErrUnknownSlot = types.ErrUnknownSlot
 // ErrSlotOccupied is returned when binding a fragment to a slot that already has a
 // fill and does not allow multiple.
 var ErrSlotOccupied = types.ErrSlotOccupied
+
+// ErrSlotResolved is recorded when one slot is given both a resolver and bound
+// fragments.
+var ErrSlotResolved = types.ErrSlotResolved
 
 // ErrFragmentCycle is returned when a fragment tree contains a fragment reachable
 // from itself.

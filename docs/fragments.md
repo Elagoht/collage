@@ -186,6 +186,41 @@ sidebar := collage.NewFragment("sidebar", "partials/sidebar.html").
 Referring to a slot the fragment never declared is an error, not empty output: a
 typo in a template would otherwise become a section that is simply missing.
 
+### Slots filled per render
+
+When the sections of a page come from content — a CMS's block list, in the order an
+editor chose — bind a resolver instead of fragments:
+
+```go
+page := collage.NewFragment("sections", "pages/sections.html").
+	WithDataHandler(collage.DataHandler(loadSections)). // rc.Set("sections", blocks)
+	WithSlot("sections", false, true).
+	WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
+		value, _ := rc.Get("sections")
+		blocks, _ := value.([]block)
+		fragments := make([]*collage.Fragment, 0, len(blocks))
+		for _, b := range blocks {
+			fragments = append(fragments, sectionFragments[b.Kind])
+		}
+		return fragments, nil
+	}).
+	Build()
+```
+
+Adding, removing or reordering a section in the content then needs no restart, and
+no guard against the code's order disagreeing with the data's.
+
+- The resolver runs **after its own fragment's data handler**, so it reads what that
+  handler fetched, and **before the fragments it returns start theirs**, which still
+  run concurrently.
+- What it returns is held to the slot's rules when the page renders: one fragment
+  unless the slot allows multiple, at least one if it is required. An error from it
+  fails its fragment, and the fragment's failure policy applies.
+- A slot is filled by a resolver or by `WithSlotFragment`, never both —
+  `ErrSlotResolved`.
+- Templates are all parsed at startup, so a returned fragment whose template does
+  not exist fails that render rather than registration.
+
 The nesting limit is 32 levels, which exists to catch a fragment bound, directly
 or indirectly, into one of its own slots.
 
@@ -242,7 +277,9 @@ collage.NewFragment("blog-post", "pages/blog-post.html").
 ```
 
 It is generic over the handler's return type, so there is one adapter for every
-view type and no `any` in the application at all. On an error it drops the data
+view type and no `any` in the application at all. A fragment that only declares
+things for the page — a title, structured data — and renders nothing takes
+`collage.Effect(func(ctx, rc) error)` instead. On an error it drops the data
 rather than boxing it: a nil `*pageData` returned alongside an error would
 otherwise become a non-nil interface value, a typed nil that reads as present.
 
@@ -466,8 +503,16 @@ So it declares, and the layout decides where declarations land:
 
 ```go
 // in a fragment's data handler
-rc.Hoist("head", "css:/static/gallery.css",
-	`<link rel="stylesheet" href="/static/gallery.css">`)
+rc.HoistTitle(post.Title)
+rc.HoistMeta("description", post.Summary)
+rc.HoistProperty("og:image", post.CoverURL)
+rc.HoistLink("canonical", canonicalURL)
+rc.HoistStylesheet("/static/gallery.css") // its content-addressed URL
+```
+
+```html
+<!-- or from the fragment's own template -->
+{{stylesheet "/static/gallery.css"}}
 ```
 
 ```html
@@ -475,6 +520,21 @@ rc.Hoist("head", "css:/static/gallery.css",
 <head>
   {{hoist "head"}}
 </head>
+```
+
+The helpers write to the `"head"` area, escape what they are given, and choose the
+key — `title`, `meta:description`, `link:canonical`, `stylesheet:/static/gallery.css`
+— so a more specific fragment's declaration replaces a less specific one's, and a
+stylesheet several fragments ask for appears once. `rc.Asset(path)` is the
+content-addressed URL `{{asset}}` renders, for when Go needs it.
+
+Underneath them is `rc.Hoist(area, key, html)`, which inserts `html` exactly as
+written — the right tool for anything the helpers do not cover, and the one where
+escaping is yours:
+
+```go
+rc.Hoist("head", "alternate:tr", template.HTML(
+	`<link rel="alternate" hreflang="tr" href="`+html.EscapeString(trURL)+`">`))
 ```
 
 `{{hoist}}` writes a marker rather than content, because nothing below it has

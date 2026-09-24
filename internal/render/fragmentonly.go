@@ -48,6 +48,7 @@ func (e *SlotEngine) RenderFragment(ctx context.Context, rc *types.RenderContext
 	span.SetAttribute("fragment", f.Name)
 	span.SetAttribute("locale", rc.Locale)
 	rc = rc.WithContext(ctx)
+	e.bindAssets(rc)
 
 	state := &renderState{
 		page:       name,

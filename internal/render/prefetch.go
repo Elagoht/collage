@@ -58,7 +58,7 @@ func (p *prefetch) wait() (any, []string, time.Duration, error) { // any: see th
 //
 // A fragment with no data handler is not launched. There is nothing to overlap, and
 // a prefetch entry for it would only add a channel to wait on.
-func (e *SlotEngine) prefetchChildren(rc *types.RenderContext, f *types.Fragment, state *renderState) map[*types.Fragment][]*prefetch {
+func (e *SlotEngine) prefetchChildren(rc *types.RenderContext, f *types.Fragment, state *renderState, fills slotFills) map[*types.Fragment][]*prefetch {
 	// One level deeper than the fragment starting them: if that is past the limit,
 	// the render is going to fail there anyway and starting upstream calls for a
 	// tree that cannot render is pure waste.
@@ -72,7 +72,7 @@ func (e *SlotEngine) prefetchChildren(rc *types.RenderContext, f *types.Fragment
 		if !ok || slot == nil {
 			continue
 		}
-		for _, child := range slot.Fill {
+		for _, child := range fills.of(slot) {
 			if child == nil || child.DataHandler == nil {
 				continue
 			}

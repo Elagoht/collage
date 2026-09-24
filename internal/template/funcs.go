@@ -37,6 +37,7 @@ func DefaultFuncs() template.FuncMap {
 		"join":       join,
 		"hoist":      hoistPlaceholder,
 		"asset":      assetPlaceholder,
+		"stylesheet": assetPlaceholder,
 		"csrfToken":  csrfPlaceholder,
 		"formatTime": formatTime,
 		"pageURL":    pageURLPlaceholder,

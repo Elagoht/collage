@@ -92,6 +92,44 @@ func (b *FragmentBuilder) WithSlotFragment(slotName string, child *Fragment) *Fr
 	return b
 }
 
+// WithSlotResolver fills the slot named slotName per render rather than at build
+// time: resolve returns the fragments it holds for one request.
+//
+//	sections := collage.NewFragment("sections", "pages/sections.html").
+//		WithDataHandler(collage.DataHandler(loadSections)). // puts the section list in SharedData
+//		WithSlot("sections", false, true).
+//		WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
+//			list, _ := rc.Get("sections")
+//			return fragmentsFor(list), nil
+//		}).
+//		Build()
+//
+// It is for a page whose parts come from content — a CMS's blocks in the order an
+// editor chose — so adding, removing or reordering them needs no restart and no
+// guard against the code's order disagreeing with the data's.
+//
+// The resolver runs after this fragment's own data handler, so it can read what
+// that handler fetched, and before the fragments it returns start theirs, which
+// still run concurrently. What it returns is held to the slot's own rules — one
+// fragment unless it allows multiple, at least one if it is required — when the
+// page renders. Declare the slot first with WithSlot. A slot is filled either by
+// a resolver or by WithSlotFragment, never both; mixing them records
+// ErrSlotResolved.
+func (b *FragmentBuilder) WithSlotResolver(slotName string, resolve SlotResolverFunc) *FragmentBuilder {
+	slot, ok := b.fragment.Slots[slotName]
+	switch {
+	case !ok:
+		b.errs = append(b.errs, fmt.Errorf("%w: %q on fragment %q", ErrUnknownSlot, slotName, b.fragment.Name))
+	case resolve == nil:
+		b.errs = append(b.errs, fmt.Errorf("collage: nil slot resolver for %q on fragment %q", slotName, b.fragment.Name))
+	case len(slot.Fill) > 0:
+		b.errs = append(b.errs, fmt.Errorf("%w: %q on fragment %q already has fragments bound", ErrSlotResolved, slotName, b.fragment.Name))
+	default:
+		slot.Resolve = resolve
+	}
+	return b
+}
+
 // Required marks the fragment being built as required: a failed render of it must
 // fail the page render rather than falling back to its Fallback fragment.
 func (b *FragmentBuilder) Required() *FragmentBuilder {

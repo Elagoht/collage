@@ -225,6 +225,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	span.SetAttribute("page", rc.Page.Name)
 	span.SetAttribute("locale", rc.Locale)
 	rc = rc.WithContext(ctx)
+	e.bindAssets(rc)
 
 	state := &renderState{
 		page:       rc.Page.Name,

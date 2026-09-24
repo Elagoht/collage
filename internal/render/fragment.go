@@ -265,7 +265,13 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		}
 	}
 
-	if err := requiredSlotsFilled(f); err != nil {
+	// After the handler, so a resolver can read what it fetched; before the
+	// children start, so what it returns is prefetched like anything bound.
+	fills, err := resolveSlots(rc, f)
+	if err != nil {
+		return nil, err
+	}
+	if err := requiredSlotsFilled(f, fills); err != nil {
 		return nil, err
 	}
 
@@ -273,7 +279,7 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	// sibling's upstream call is already in flight by the time the slot that needs
 	// it is reached. Released afterwards, so a slot the template decided not to
 	// render does not leave a call running for nobody.
-	started := e.prefetchChildren(rc, f, state)
+	started := e.prefetchChildren(rc, f, state, fills)
 	defer release(started)
 
 	var buf bytes.Buffer
@@ -284,8 +290,8 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	// timeout is imposed here — Fragment.Timeout bounds the data handler, which is
 	// the part that talks to the outside world — but the render's context still
 	// applies.
-	err := Execute(rc.Context(), 0, func(ctx context.Context) error {
-		return e.tmpl.RenderWithFuncs(ctx, &buf, f.TemplatePath, data, e.slotFuncs(rc, f, state, started))
+	err = Execute(rc.Context(), 0, func(ctx context.Context) error {
+		return e.tmpl.RenderWithFuncs(ctx, &buf, f.TemplatePath, data, e.slotFuncs(rc, f, state, started, fills))
 	})
 	state.templateTime += time.Since(renderStarted) - (state.childTotal - childTotalBefore)
 	if err != nil {
@@ -302,7 +308,7 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 // It can only rebind a function name the templates were parsed with; "slot" is
 // registered as a placeholder at parse time precisely so this override has a name to
 // take over.
-func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state *renderState, started map[*types.Fragment][]*prefetch) htmltemplate.FuncMap {
+func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state *renderState, started map[*types.Fragment][]*prefetch, fills slotFills) htmltemplate.FuncMap {
 	// taken counts how many of a fragment's prefetches have been consumed, so the
 	// same fragment bound into two slots — or twice into one — takes a different
 	// one each time rather than sharing a single result. Two bindings of one
@@ -310,10 +316,13 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 	taken := make(map[*types.Fragment]int)
 	return htmltemplate.FuncMap{
 		"slot": func(name string) (htmltemplate.HTML, error) {
-			return e.renderSlot(rc, f, name, state, started, taken)
+			return e.renderSlot(rc, f, name, state, started, taken, fills)
 		},
-		"hoist":     hoistFunc(state.hoistToken),
-		"asset":     e.assetFunc(),
+		"hoist": hoistFunc(state.hoistToken),
+		"asset": e.assetFunc(),
+		"stylesheet": func(urlPath string) (string, error) {
+			return "", rc.HoistStylesheet(urlPath)
+		},
 		"csrfToken": e.csrfFunc(rc),
 		"pageURL":   e.pageURLFunc(rc),
 		"pageURLIn": e.pageURLInFunc(),
@@ -335,6 +344,7 @@ func (e *SlotEngine) renderSlot(
 	state *renderState,
 	started map[*types.Fragment][]*prefetch,
 	taken map[*types.Fragment]int,
+	fills slotFills,
 ) (htmltemplate.HTML, error) {
 	slot, ok := f.Slot(name)
 	if !ok {
@@ -349,7 +359,7 @@ func (e *SlotEngine) renderSlot(
 	}
 
 	var buf strings.Builder
-	for _, child := range slot.Fill {
+	for _, child := range fills.of(slot) {
 		out, err := e.renderFragment(rc, child, state, take(started, taken, child))
 		if err != nil {
 			return "", err
@@ -357,6 +367,56 @@ func (e *SlotEngine) renderSlot(
 		buf.Write(out)
 	}
 	return htmltemplate.HTML(buf.String()), nil
+}
+
+// slotFills is what each resolved slot of one fragment holds for one render, by
+// slot name. A slot not in it holds its bound Fill.
+type slotFills map[string][]*types.Fragment
+
+// of returns what slot holds in this render.
+func (fills slotFills) of(slot *types.SlotDefinition) []*types.Fragment {
+	if resolved, ok := fills[slot.Name]; ok {
+		return resolved
+	}
+	return slot.Fill
+}
+
+// resolveSlots runs f's slot resolvers, in slot-name order, and checks what each
+// returned by the rules a bound slot is held to at build time.
+//
+// Through Execute, like a data handler and a template, so a resolver that panics
+// fails its fragment rather than the process.
+func resolveSlots(rc *types.RenderContext, f *types.Fragment) (slotFills, error) {
+	var fills slotFills
+	for _, name := range f.SlotNames() {
+		slot := f.Slots[name]
+		if slot == nil || slot.Resolve == nil {
+			continue
+		}
+		var resolved []*types.Fragment
+		err := Execute(rc.Context(), 0, func(context.Context) error {
+			var resolveErr error
+			resolved, resolveErr = slot.Resolve(rc)
+			return resolveErr
+		})
+		if err != nil {
+			return nil, wrapFragment("slot resolver "+name, f.Name, err)
+		}
+		if len(resolved) > 1 && !slot.AllowMultiple {
+			return nil, fmt.Errorf("%w: fragment %q slot %q: the resolver returned %d fragments for a slot that holds one",
+				types.ErrSlotOccupied, f.Name, name, len(resolved))
+		}
+		for _, child := range resolved {
+			if child == nil {
+				return nil, fmt.Errorf("%w: fragment %q slot %q: the resolver returned a nil fragment", types.ErrNilFragment, f.Name, name)
+			}
+		}
+		if fills == nil {
+			fills = make(slotFills)
+		}
+		fills[slot.Name] = resolved
+	}
+	return fills, nil
 }
 
 // take returns the next unconsumed prefetch for child, or nil if there is none —
@@ -377,10 +437,10 @@ func take(started map[*types.Fragment][]*prefetch, taken map[*types.Fragment]int
 // function so that a required slot is enforced even when the template never asks for
 // it, and it walks the slots in sorted order so the same tree always names the same
 // slot.
-func requiredSlotsFilled(f *types.Fragment) error {
+func requiredSlotsFilled(f *types.Fragment, fills slotFills) error {
 	for _, name := range f.SlotNames() {
 		slot := f.Slots[name]
-		if slot != nil && slot.Required && len(slot.Fill) == 0 {
+		if slot != nil && slot.Required && len(fills.of(slot)) == 0 {
 			return fmt.Errorf("%w: fragment %q slot %q", ErrRequiredSlotEmpty, f.Name, name)
 		}
 	}
@@ -397,6 +457,14 @@ func devComment(name string, err error) []byte {
 		" failed: " +
 		htmltemplate.HTMLEscapeString(err.Error()) +
 		" -->")
+}
+
+// bindAssets gives rc's data handlers the resolver behind {{asset}}, so rc.Asset
+// and rc.HoistStylesheet work in Go too.
+func (e *SlotEngine) bindAssets(rc *types.RenderContext) {
+	if e.assetURL != nil {
+		types.BindAssets(rc, e.assetURL)
+	}
 }
 
 // assetFunc is the per-render implementation of {{asset "/static/app.css"}}. It

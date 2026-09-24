@@ -23,7 +23,17 @@ type SlotDefinition struct {
 	AllowMultiple bool
 	// Fill holds the fragments bound to this slot, rendered in binding order.
 	Fill []*Fragment
+	// Resolve, when set, decides the slot's fragments per render instead of Fill:
+	// a page whose sections come from content — a CMS's list of blocks, in the
+	// order an editor chose — rather than from the code. It runs after its own
+	// fragment's data handler, so it can read what that handler put in SharedData,
+	// and before the fragments it returns start their own handlers, which still
+	// run concurrently. A slot has either Fill or Resolve, never both.
+	Resolve SlotResolverFunc
 }
+
+// SlotResolverFunc returns the fragments a slot holds for one render.
+type SlotResolverFunc func(rc *RenderContext) ([]*Fragment, error)
 
 // Fragment is the framework's unit of composition: a template, an optional data
 // contract, and the slots it exposes to child fragments.
@@ -89,6 +99,9 @@ func (f *Fragment) Bind(slotName string, child *Fragment) error {
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrUnknownSlot, slotName)
 	}
+	if slot.Resolve != nil {
+		return fmt.Errorf("%w: %q", ErrSlotResolved, slotName)
+	}
 	if len(slot.Fill) > 0 && !slot.AllowMultiple {
 		return fmt.Errorf("%w: %q", ErrSlotOccupied, slotName)
 	}
@@ -149,7 +162,9 @@ func (f *Fragment) validate(stack map[*Fragment]bool) error {
 		if slot.Name != key {
 			return fmt.Errorf("%w: slot key %q does not match slot name %q", ErrInvalidSlotDefinition, key, slot.Name)
 		}
-		if slot.Required && len(slot.Fill) == 0 {
+		// A resolved slot's fragments are not known until a render asks for them;
+		// the render checks them instead.
+		if slot.Required && len(slot.Fill) == 0 && slot.Resolve == nil {
 			return fmt.Errorf("%w: required slot %q has no fill", ErrRequiredSlotUnfilled, slot.Name)
 		}
 		for _, child := range slot.Fill {

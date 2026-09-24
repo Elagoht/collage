@@ -52,6 +52,9 @@ type RenderContext struct {
 type renderShared struct {
 	mu   sync.Mutex
 	once map[string]*onceCall
+	// assets resolves a mounted file's content-addressed URL, bound by the
+	// render engine; see BindAssets.
+	assets func(urlPath string) (string, error)
 }
 
 // NewRenderContext builds a RenderContext for one render. It copies params into a

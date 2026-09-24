@@ -25,6 +25,11 @@ var ErrOnceTypeMismatch = errors.New("collage: once key fetched as two different
 // fill and does not allow multiple.
 var ErrSlotOccupied = errors.New("collage: slot already occupied")
 
+// ErrSlotResolved is returned when a fragment is bound to a slot a resolver fills,
+// or a resolver is given to a slot fragments are bound to. One slot, one source of
+// what is in it.
+var ErrSlotResolved = errors.New("collage: slot is filled by a resolver")
+
 // ErrFragmentCycle is returned when a fragment tree contains a fragment reachable
 // from itself.
 var ErrFragmentCycle = errors.New("collage: fragment cycle detected")
