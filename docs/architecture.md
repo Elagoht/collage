@@ -116,17 +116,45 @@ one and then to the framework's built-in page. An error response is always
 logged and reported to plugins, but the page has already rendered, so it is
 served uncached rather than turned into a 500.
 
-## Rendering is sequential, on purpose
+## Data is fetched concurrently; markup is written in order
 
-`internal/render` walks the fragment tree strictly depth-first, one fragment at a
-time, on the request goroutine. Fragments are not rendered in parallel.
+`internal/render` walks the fragment tree depth-first and executes templates one
+at a time, in order, on the request goroutine. What runs concurrently is the part
+that waits: before a fragment's template runs, the data handlers of every fragment
+in its slots are started at once, so a page of independent parts makes its upstream
+calls together rather than one after another.
 
-The reason is determinism: the same page rendered twice from the same inputs must
-produce byte-identical output, because that output is cached, ETagged, and
-conditionally re-served. Concurrent fragment rendering buys latency only when
-several fragments each block on I/O, and pays for it with output that can differ
-between renders, error ordering that depends on scheduling, and a fragment tree
-whose shared `RenderContext.SharedData` would need locking.
+The split is deliberate. Output must be deterministic — the same page rendered twice
+from the same inputs is byte-identical, because it is cached, ETagged and
+conditionally re-served — and template execution in order gives that for free,
+while fetching in parallel is where the time goes. `SharedData` is locked because
+sibling handlers do run at once; `collage.Once` exists for the same reason.
+
+## Why the page is not streamed
+
+A page is rendered whole and then written, so its first byte waits for its slowest
+fragment. Next.js streams instead: the shell goes out first and slow parts follow.
+collage does not, and it is a trade rather than an omission.
+
+- **Hoisting needs the whole tree.** `{{hoist "head"}}` sits in the `<head>`, but a
+  fragment deep in the body declares what goes there — its title, its stylesheet,
+  its structured data. The head can only be written once every fragment has had its
+  say.
+- **A cached page is a complete page.** The cache stores bytes and an ETag; a
+  response that is still being written has neither.
+- **The status comes last.** A required fragment finding that its record does not
+  exist turns the page into a 404. Once the first byte is on the wire, the status
+  has already been sent as 200.
+
+What to do instead when a part of a page is slow:
+
+- **Bound it.** `WithTimeout` on the slow fragment, with a `WithFallback`, caps what
+  it can cost the page.
+- **Cache it.** An `Incremental` page renders once per TTL, not once per reader;
+  a slow upstream then costs one request in thousands.
+- **Load it separately.** Give the slow fragment its own URL with
+  `WithFragmentPath`, render a placeholder where it goes, and fetch it after the page
+  has loaded — streaming's effect, with the page itself still cached whole.
 
 `render.Execute`, which wraps every data handler and every template execution,
 runs `fn` on the calling goroutine for a related reason. Running it on a spawned

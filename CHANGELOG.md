@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.8.0
+
+- **A development page with a broken part says so.** A fragment that failed — even
+  one a fallback covered — puts a panel on top of the page naming it and its error,
+  with the template's file and line; your own 500 page gets the same panel with the
+  failure behind it. Before, the error was in an HTML comment, or nowhere. Only in
+  development, and never cached.
+- **`collage.SkipCache(r)`**, from middleware, answers a request with a fresh render
+  that is neither read from the cache nor written to it — what a preview of a draft
+  needs. [docs/http.md](docs/http.md) has a complete preview with a signed cookie.
+- **`collage.Get[T](rc, key)`** reads shared data as the type it was stored as.
+- **An action answering with an unregistered page is refused by name**
+  (`ErrUnregisteredPage`) instead of rendering a layout around nothing.
+- **Why a page is not streamed**, and what to do about a slow part instead, is in
+  [docs/architecture.md](docs/architecture.md).
+
 ## v0.7.1
 
 - A development page no longer misses a change made the moment it connects. The

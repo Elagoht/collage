@@ -88,7 +88,8 @@ different. Three consequences follow, in order of how likely they are to matter.
 
 *Read and write `SharedData` through `Get` and `Set`, not as a bare map.* Two
 siblings writing a map directly is a data race. `Get` and `Set` hold the render's
-lock.
+lock. `collage.Get[T](rc, key)` reads a value as the type it was stored as, so a
+read needs no type assertion: `post, ok := collage.Get[Post](rc, "post")`.
 
 *Prefer `Once` to a read-then-write.* This shape has a hole in it:
 
@@ -483,6 +484,12 @@ before each render, turns on the failed-fragment comments, adds an
 fragment and the full error chain. **It must be off in production**: those
 diagnostics routinely carry hostnames, filesystem paths, and credentials from an
 error message.
+
+**A page with a broken part says so.** In development a fragment that failed —
+even one whose fallback covered for it — puts a panel on top of the page naming the
+fragment and the error, and for a template the file and line. Your own error page
+gets the same panel above it, with the failure it is standing in for. Neither ever
+reaches the cache, and neither exists outside development.
 
 Every page it serves in answer to a GET carries a small script that reloads it
 when a template or a mounted file changes, and when the program restarts — so under
