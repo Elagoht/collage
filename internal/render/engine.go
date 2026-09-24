@@ -133,6 +133,13 @@ type Options struct {
 	// token, which the response layer replaces per reader. Nil leaves the template
 	// function reporting that forgery protection is off.
 	CSRFMarker func() (string, error)
+	// URL builds the path of the page or document registered as name, in
+	// locale, and is what backs {{pageURL}}, {{pageURLIn}} and {{localeURL}}.
+	// Nil leaves those functions reporting that no routes are known.
+	URL func(name, locale string, params map[string]string) (string, error)
+	// DefaultLocale is the locale {{pageURL}} falls back to for a route with no
+	// path in the render's own.
+	DefaultLocale string
 }
 
 // SlotEngine is the Engine implementation that resolves {{slot "name"}} against the
@@ -147,6 +154,8 @@ type SlotEngine struct {
 	devMode        bool
 	assetURL       func(string) (string, error)
 	csrfMarker     func() (string, error)
+	url            func(name, locale string, params map[string]string) (string, error)
+	defaultLocale  string
 }
 
 var _ Engine = (*SlotEngine)(nil)
@@ -169,6 +178,8 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 		devMode:        opts.DevMode,
 		assetURL:       opts.AssetURL,
 		csrfMarker:     opts.CSRFMarker,
+		url:            opts.URL,
+		defaultLocale:  opts.DefaultLocale,
 	}
 }
 

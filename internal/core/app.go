@@ -509,6 +509,8 @@ func New(cfg Config) (*App, error) {
 		DevMode:        devMode,
 		AssetURL:       app.assetURL,
 		CSRFMarker:     app.csrfMarker,
+		URL:            app.URL,
+		DefaultLocale:  cfg.Locale.Default,
 	})
 	app.store = store
 	app.tracker = tracker

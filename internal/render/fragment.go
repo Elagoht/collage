@@ -315,6 +315,9 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 		"hoist":     hoistFunc(state.hoistToken),
 		"asset":     e.assetFunc(),
 		"csrfToken": e.csrfFunc(rc),
+		"pageURL":   e.pageURLFunc(rc),
+		"pageURLIn": e.pageURLInFunc(),
+		"localeURL": e.localeURLFunc(rc),
 	}
 }
 
@@ -414,6 +417,80 @@ func (e *SlotEngine) assetFunc() func(string) (string, error) {
 		}
 		return resolved, nil
 	}
+}
+
+// pageURLFunc is the per-render implementation of
+// {{pageURL "blog-post" "slug" .Slug}}: the route's path in the render's own
+// locale, or in the default locale when the route has none in this one — a
+// Turkish page linking a page that exists only in English links the English one.
+func (e *SlotEngine) pageURLFunc(rc *types.RenderContext) func(string, ...string) (string, error) {
+	return func(name string, pairs ...string) (string, error) {
+		params, err := routeParams(name, pairs)
+		if err != nil {
+			return "", err
+		}
+		built, err := e.buildURL(name, rc.Locale, params)
+		if errors.Is(err, types.ErrNoPathInLocale) && rc.Locale != e.defaultLocale {
+			return e.buildURL(name, e.defaultLocale, params)
+		}
+		return built, err
+	}
+}
+
+// pageURLInFunc is the per-render implementation of
+// {{pageURLIn "tr" "about"}}: the route's path in exactly that locale.
+func (e *SlotEngine) pageURLInFunc() func(string, string, ...string) (string, error) {
+	return func(locale, name string, pairs ...string) (string, error) {
+		params, err := routeParams(name, pairs)
+		if err != nil {
+			return "", err
+		}
+		return e.buildURL(name, locale, params)
+	}
+}
+
+// localeURLFunc is the per-render implementation of {{localeURL "tr"}}: the page
+// being rendered, in another locale, with the same path parameters. It is what a
+// language switcher is made of.
+//
+// A page with no path in that locale is the empty string rather than an error, so
+// a switcher can skip it with {{with localeURL "tr"}}; a locale no URL can reach
+// is still an error, because that is a mistake in the template rather than a page
+// nobody translated.
+func (e *SlotEngine) localeURLFunc(rc *types.RenderContext) func(string) (string, error) {
+	return func(locale string) (string, error) {
+		if rc.Page == nil {
+			return "", fmt.Errorf("collage: localeURL %q: this render is not a page", locale)
+		}
+		built, err := e.buildURL(rc.Page.Name, locale, rc.PathParams)
+		if errors.Is(err, types.ErrNoPathInLocale) {
+			return "", nil
+		}
+		return built, err
+	}
+}
+
+// buildURL calls the application's URL builder.
+func (e *SlotEngine) buildURL(name, locale string, params map[string]string) (string, error) {
+	if e.url == nil {
+		return "", fmt.Errorf("%w: %q: this engine knows no routes", types.ErrUnknownRoute, name)
+	}
+	return e.url(name, locale, params)
+}
+
+// routeParams turns a template's "name" "value" pairs into a map.
+func routeParams(route string, pairs []string) (map[string]string, error) {
+	if len(pairs)%2 != 0 {
+		return nil, fmt.Errorf("%w: %q: parameters come in name and value pairs, got %d values", types.ErrRouteParams, route, len(pairs))
+	}
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	params := make(map[string]string, len(pairs)/2)
+	for i := 0; i < len(pairs); i += 2 {
+		params[pairs[i]] = pairs[i+1]
+	}
+	return params, nil
 }
 
 // csrfFunc is the per-render implementation of {{csrfToken}}. It returns the hidden

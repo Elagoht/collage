@@ -105,7 +105,9 @@ it:
   and passing the decision to data handlers through the request context. Then call
   `collage.Vary(r, "Accept-Language", lang)` so the cache keeps the versions apart.
 
-Both are in [http.md](http.md).
+Both are in [http.md](http.md). Whichever it is, link between pages by name with
+`{{pageURL}}` and build the switcher with `{{localeURL}}`, which know each page's
+path in each locale — see [fragments.md](fragments.md#links-by-name).
 
 ### Translation is not the framework's job
 

@@ -367,6 +367,49 @@ Available in every template:
 | `upper`, `lower`, `title` | Case conversion |
 | `join sep items` | `strings.Join` |
 | `formatTime t layout` | `t.Format(layout)` |
+| `pageURL "name" "param" value ...` | The URL of a page or document, in this render's locale — see below |
+| `pageURLIn "tr" "name" ...` | The same, in exactly the locale given |
+| `localeURL "tr"` | The page being rendered, in another locale; empty when it has no path there |
+| `asset "/static/app.css"` | A mounted file's content-addressed URL |
+| `csrfToken` | The hidden input a form's forgery token travels in |
+| `hoist "area"` | Where hoisted content lands — see [Hoisting](#hoisting) |
+
+### Links by name
+
+A link written as a path breaks silently when the path changes, and cannot know
+which locale it is in. Link by the name the page was registered under instead:
+
+```html
+<a href="{{pageURL "about"}}">About</a>
+<a href="{{pageURL "blog-post" "slug" .Slug}}">{{.Title}}</a>
+<link rel="alternate" type="application/rss+xml" href="{{pageURL "feed"}}">
+```
+
+- **Locale-aware.** On `/tr/hakkinda`, `pageURL "blog-post"` is `/tr/yazi/...`. A
+  page with no path in the current locale links its default-locale one instead,
+  so a Turkish page linking a page that exists only in English still renders.
+  `pageURLIn` asks for one locale and does not fall back.
+- **Strict.** An unknown name, a missing or empty parameter, or a parameter the
+  pattern has no placeholder for fails the render: a link that cannot be built is
+  a bug to find in development, not a 404 for a reader. Values are escaped, and a
+  value of `.` or `..` — which a browser would resolve as a path step — is refused.
+- **Values are strings.** Pass a number through `printf`:
+  `{{pageURL "user" "id" (printf "%d" .ID)}}`.
+
+A language switcher is `localeURL`, which keeps the page's own path parameters
+and is empty for a language the page has not been translated into:
+
+```html
+{{with localeURL "en"}}<a hreflang="en" href="{{.}}">English</a>{{end}}
+{{with localeURL "tr"}}<a hreflang="tr" href="{{.}}">Türkçe</a>{{end}}
+```
+
+From Go — an action redirecting to a named page — it is `app.URL`:
+
+```go
+target, err := app.URL("blog-post", "tr", map[string]string{"slug": post.Slug})
+return collage.SeeOther(target), err
+```
 
 ### Adding your own
 
@@ -404,8 +447,13 @@ fragment and the full error chain. **It must be off in production**: those
 diagnostics routinely carry hostnames, filesystem paths, and credentials from an
 error message.
 
-It does not hot-reload Go code. A change to your `.go` files still needs a
-restart.
+Every page it serves in answer to a GET carries a small script that reloads it
+when a template or a mounted file changes, and when the program restarts — so under
+`collage dev`, which rebuilds on a Go change, saving any file is enough. The script
+listens on `/_collage/reload`, a stream that exists only in development and is
+served ahead of middleware. The answer to a POST never carries it: reloading one
+would submit the form again. A strict `Content-Security-Policy` of your own may
+block the inline script in development; production pages never carry it.
 
 ## Hoisting
 

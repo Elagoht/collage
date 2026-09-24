@@ -10,7 +10,7 @@ import (
 func TestDefaultFuncs_HasAllDocumentedNames(t *testing.T) {
 	want := []string{
 		"slot", "hoist", "asset", "csrfToken", "safeHTML", "safeURL", "dict", "default",
-		"upper", "lower", "title", "join", "formatTime",
+		"upper", "lower", "title", "join", "formatTime", "pageURL", "pageURLIn", "localeURL",
 	}
 	funcs := DefaultFuncs()
 	for _, name := range want {

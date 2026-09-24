@@ -32,6 +32,11 @@ var ErrHoistOutsideRender = errors.New("collage: hoist called outside render")
 // when a template calls it outside a render that bound the real implementation.
 var ErrAssetOutsideRender = errors.New("collage: asset called outside render")
 
+// ErrURLOutsideRender is returned by the placeholder "pageURL", "pageURLIn" and
+// "localeURL" template functions when a template calls one outside a render that
+// bound the real implementation.
+var ErrURLOutsideRender = errors.New("collage: pageURL called outside render")
+
 // ErrCSRFOutsideRender is returned by the placeholder "csrfToken" template function
 // when a template calls it outside a render, and by a render with no request to
 // issue a token for.

@@ -98,3 +98,15 @@ var ErrNoDocumentHandler = errors.New("collage: document has no handler")
 // building; both of those packages already import internal/types and reach it
 // without a new dependency edge between them.
 var ErrEmptyDocumentBody = errors.New("collage: document handler produced an empty body")
+
+// ErrUnknownRoute is returned when a URL is asked for by a name no page or
+// document was registered under.
+var ErrUnknownRoute = errors.New("collage: no page or document by that name")
+
+// ErrNoPathInLocale is returned when a URL is asked for in a locale the page or
+// document has no path in.
+var ErrNoPathInLocale = errors.New("collage: no path in that locale")
+
+// ErrRouteParams is returned when the parameters given for a URL do not fill
+// its pattern exactly: one is missing or empty, or one names no placeholder.
+var ErrRouteParams = errors.New("collage: route parameters do not match the pattern")

@@ -39,7 +39,25 @@ func DefaultFuncs() template.FuncMap {
 		"asset":      assetPlaceholder,
 		"csrfToken":  csrfPlaceholder,
 		"formatTime": formatTime,
+		"pageURL":    pageURLPlaceholder,
+		"pageURLIn":  pageURLInPlaceholder,
+		"localeURL":  localeURLPlaceholder,
 	}
+}
+
+// pageURLPlaceholder, pageURLInPlaceholder and localeURLPlaceholder are the
+// parse-time stand-ins for the URL functions, which need the application's
+// routes and the render's locale and are bound per render.
+func pageURLPlaceholder(name string, _ ...string) (string, error) {
+	return "", fmt.Errorf("%w: %q", ErrURLOutsideRender, name)
+}
+
+func pageURLInPlaceholder(locale, name string, _ ...string) (string, error) {
+	return "", fmt.Errorf("%w: %q", ErrURLOutsideRender, name)
+}
+
+func localeURLPlaceholder(locale string) (string, error) {
+	return "", fmt.Errorf("%w: %q", ErrURLOutsideRender, locale)
 }
 
 // hoistPlaceholder is the parse-time stand-in for "hoist", for the same reason
