@@ -213,7 +213,9 @@ func TestCached_InADocument(t *testing.T) {
 func TestDocument_A405IsPlainText(t *testing.T) {
 	site := newAuthorSite(t, false)
 	doc := collage.NewDocument("robots", "text/plain").WithPath("en", "/robots.txt").Dynamic().
-		WithHandler(func(context.Context, *collage.RenderContext) ([]byte, []string, error) { return []byte("User-agent: *"), nil, nil }).Build()
+		WithHandler(func(context.Context, *collage.RenderContext) ([]byte, []string, error) {
+			return []byte("User-agent: *"), nil, nil
+		}).Build()
 	if err := site.app.RegisterDocument(doc); err != nil {
 		t.Fatal(err)
 	}
