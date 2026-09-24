@@ -54,7 +54,8 @@ collage serve    # serves dist/ the way a static host would
 Under `collage dev`, saving a template reloads the page in the browser, and saving
 Go code rebuilds and restarts the program and then reloads the page — no external
 watcher, nothing to install. A change that does not compile leaves the last good
-build running. `collage new mysite -minimal` starts without the demos.
+build running. `collage new mysite --template minimal` starts from one page saying
+hello instead.
 
 Where to look next: `pages/` has one file per page, `fragments/` the layout and the
 demos, `actions/` the API endpoint; `routes.go` registers them, and `main.go` has the

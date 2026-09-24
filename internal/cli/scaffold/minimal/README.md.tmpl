@@ -1,69 +1,15 @@
 # @@NAME@@
 
-A [collage](https://github.com/Elagoht/collage) project, scaffolded by
-`collage new -minimal`.
-
-## Running
+A [collage](https://collage.furkanbaytekin.dev/en/) project, scaffolded by
+`collage new --template minimal`.
 
 ```
 go mod tidy
-cp .env.example .env.development
-collage dev
+collage dev       # http://localhost:3000, reloading as you edit
+collage build     # -> bin/@@NAME@@
+collage export    # -> dist/, static files
 ```
 
-The site is at http://localhost:3000. Templates and static files are read from
-disk on every request, and the page reloads itself when one changes. A change to
-Go code is rebuilt and restarted for you; one that does not compile leaves the
-last good build running and says why.
-
-`collage dev` reads `.env.development` (or `.env` when there is none). A variable
-set in your shell wins over the file, and only `collage dev` reads these files.
-
-```
-go test ./...
-```
-
-## What is here
-
-```
-main.go       configuration, the static mount, and the collage CLI contract
-routes.go     every page, document and action — a new route goes here
-main_test.go  the tests, driving app.Handler() with no server and no port
-pages/        one file per page: layout, content, route
-fragments/    reusable pieces, starting with the layout
-templates/    the HTML, one file per fragment
-static/       CSS, JavaScript and images, at /static/
-```
-
-`collage new` without `-minimal` scaffolds a project of live demos instead — an
-API action, a form, a fragment with its own URL, a JSON document — which is a
-good place to see each of those working.
-
-## Set `COLLAGE_CSRF_KEY` before deploying
-
-It signs the tokens `{{csrfToken}}` puts in forms. Without one a key is generated
-per process, and every form submitted before a restart is refused after it.
-
-```
-openssl rand -hex 32
-```
-
-## Deploying
-
-```
-collage build       # -> bin/@@NAME@@, the binary you deploy
-collage export      # -> dist/, static files, for a site that needs no server
-HOST=0.0.0.0 PORT=8080 COLLAGE_CSRF_KEY=... ./bin/@@NAME@@
-```
-
-Templates and static files are embedded, so the binary is the whole site.
-
-## The collage CLI contract
-
-`collage dev` builds this program with `go build` and runs the binary with
-`COLLAGE_DEV=1` set, rebuilding and restarting it when its Go code changes;
-`collage export` runs `go run . -collage-build -out <dir>`. `main.go` honours
-both; if you rewrite it, keep both halves working.
-
-A plugin's own commands are run through this program, since the `collage`
-binary never loads your plugins: `go run . <command>`.
+`main.go` is how `collage dev` and `collage export` run this program: if you
+rewrite it, keep both working. The guide starts at
+https://collage.furkanbaytekin.dev/en/docs/introduction/.

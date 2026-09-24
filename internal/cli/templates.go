@@ -17,11 +17,13 @@ import (
 var scaffoldFS embed.FS
 
 // scaffoldRoot is the directory inside scaffoldFS the scaffold tree lives
-// under. It holds one layer every project gets, "common", and one directory per
-// kind of project: "demo", the default, and "minimal".
+// under. It holds one layer every project gets, "common" — main.go and its CLI
+// contract, go.mod, the layout fragment and the home page's route — and one
+// directory per template: "demo", the default, and "minimal".
 const scaffoldRoot = "scaffold"
 
-// Scaffold variants, the layer written over "common".
+// Scaffold templates, the layer written over "common" — what "collage new
+// --template" names.
 const (
 	variantDemo    = "demo"
 	variantMinimal = "minimal"
@@ -33,8 +35,8 @@ const (
 // (see targetName).
 //
 // Two layers rather than two copies, so what every project shares — main.go and
-// its CLI contract, the layout fragment, the not-found page, the environment
-// file — exists once and cannot drift between them.
+// its CLI contract, the layout fragment, the home page's route — exists once and
+// cannot drift between them.
 func writeScaffold(targetDir, module, name, variant string) error {
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return err

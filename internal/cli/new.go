@@ -13,30 +13,37 @@ import (
 // with no project name.
 var ErrMissingProjectName = errors.New("collage: missing project name")
 
+// ErrUnknownTemplate is returned by the "new" command for a -template it has no
+// scaffold for.
+var ErrUnknownTemplate = errors.New("collage: unknown template")
+
 // ErrTargetNotEmpty is returned by the "new" command when its target
 // directory already has contents and -force was not given.
 var ErrTargetNotEmpty = errors.New("collage: target directory is not empty")
 
 // newUsage is "collage help new"'s own usage text.
-const newUsage = `Usage: collage new <name> [-minimal] [-dir path] [-module path] [-force]
+const newUsage = `Usage: collage new <name> [--template demo|minimal] [--dir path] [--module path] [--force]
 
-Scaffolds a new, runnable collage project named <name>: a home page, a page of
-live demos (an API action, a form, a fragment with its own URL, a JSON
-document), their tests, a .env.example for "collage dev", a .gitignore and a
-README.
+Scaffolds a new, runnable collage project named <name>.
 
-With -minimal it is one layout, an empty home page and a not-found page — the
-same main.go and project layout, with nothing to delete before you start.
+  demo      the default: a home page, a page of live demos (an API action, a
+            form, a fragment with its own URL, a JSON document), a not-found
+            page, their tests, a .env.example for "collage dev", a .gitignore
+            and a README
+  minimal   one layout around one page saying hello, and a stylesheet with a
+            dark mode — the same main.go, with nothing to delete before you start
 
-  -minimal       scaffold without the demos
-  -dir path      directory to scaffold into (default: ./<name>)
-  -module path   the scaffolded go.mod's module path (default: <name>)
-  -force         scaffold into a non-empty directory anyway
+  --template name   the project to scaffold: demo or minimal (default: demo)
+  --dir path        directory to scaffold into (default: ./<name>)
+  --module path     the scaffolded go.mod's module path (default: <name>)
+  --force           scaffold into a non-empty directory anyway
+
+Flags take one dash or two: -template and --template are the same flag.
 `
 
 // newValueFlags names the "new" command's flags that consume a following
 // argument, for splitPositional.
-var newValueFlags = map[string]bool{"dir": true, "module": true}
+var newValueFlags = map[string]bool{"dir": true, "module": true, "template": true}
 
 // runNew implements the "new" command.
 func (c *CLI) runNew(args []string) int {
@@ -46,7 +53,7 @@ func (c *CLI) runNew(args []string) int {
 	dir := fs.String("dir", "", "directory to scaffold into")
 	module := fs.String("module", "", "the scaffolded go.mod's module path")
 	force := fs.Bool("force", false, "scaffold into a non-empty directory anyway")
-	minimal := fs.Bool("minimal", false, "scaffold one layout and an empty home page, without the demos")
+	template := fs.String("template", variantDemo, "the project to scaffold: demo or minimal")
 
 	// The stdlib flag package stops parsing at the first non-flag argument, so
 	// a flag placed after <name> — which is exactly how newUsage documents
@@ -68,6 +75,11 @@ func (c *CLI) runNew(args []string) int {
 		return 2
 	}
 	name := positional[0]
+	variant := *template
+	if variant != variantDemo && variant != variantMinimal {
+		fmt.Fprintf(c.stderr(), "%v: %q; the templates are %q and %q\n", ErrUnknownTemplate, variant, variantDemo, variantMinimal)
+		return 2
+	}
 
 	targetDir := *dir
 	if targetDir == "" {
@@ -82,10 +94,6 @@ func (c *CLI) runNew(args []string) int {
 		fmt.Fprintf(c.stderr(), "collage: %v\n", err)
 		return 1
 	}
-	variant := variantDemo
-	if *minimal {
-		variant = variantMinimal
-	}
 	if err := writeScaffold(targetDir, modulePath, name, variant); err != nil {
 		fmt.Fprintf(c.stderr(), "collage: scaffold: %v\n", err)
 		return 1
@@ -96,7 +104,9 @@ func (c *CLI) runNew(args []string) int {
 	fmt.Fprintln(out, "Next steps:")
 	fmt.Fprintf(out, "  cd %s\n", targetDir)
 	fmt.Fprintln(out, "  go mod tidy")
-	fmt.Fprintln(out, "  cp .env.example .env.development")
+	if variant == variantDemo {
+		fmt.Fprintln(out, "  cp .env.example .env.development")
+	}
 	fmt.Fprintln(out, "  collage dev")
 	return 0
 }

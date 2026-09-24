@@ -5,7 +5,7 @@ go install github.com/Elagoht/collage/cmd/collage@latest
 ```
 
 ```
-collage new <name> [-minimal] [-dir path] [-module path] [-force]
+collage new <name> [--template demo|minimal] [--dir path] [--module path] [--force]
 collage dev
 collage build [-o path] [-os name] [-arch name] [-i]
 collage export [-out dir] [-clean]
@@ -187,9 +187,11 @@ configuration and the static mount, a `routes.go` registering every route, the
 pages, fragments, action, document and their templates, the tests, a
 `.env.example`, a `.gitignore`, and a README.
 
-`-minimal` scaffolds the same project with nothing in it: one layout, an empty
-home page and a not-found page, the same `main.go`, and tests for both — for
-starting a real site without first deleting the demos.
+That is `--template demo`, the default. `--template minimal` is the least a
+project can be: the same `main.go`, `go.mod` and `routes.go`, and a layout around
+one page, `<h1>Hello from collage</h1>`, with a stylesheet that sets the background
+and text colour, dark mode included — no tests, no not-found page, nothing to
+delete before starting a real site. Flags take one dash or two.
 
 The scaffolded `main.go` mounts `static/` with `os.OpenRoot`, **not** `os.DirFS`.
 That is not a style preference: `os.DirFS` does not prevent symlink traversal, so
@@ -198,7 +200,7 @@ enforced by the kernel. See [assets.md](assets.md).
 
 ```
 collage new myblog                       # into ./myblog, module "myblog"
-collage new myblog -minimal              # without the demos
+collage new myblog --template minimal    # one page, nothing to delete
 collage new myblog -module github.com/me/myblog
 collage new myblog -dir . -force         # into a non-empty directory
 ```

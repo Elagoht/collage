@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.14.2
+
+### Changed
+
+- **`collage new --template demo|minimal`** replaces `-minimal`; `demo` is the
+  default, and a template it has no scaffold for is refused naming the ones there
+  are. Flags take one dash or two.
+- **The minimal template is minimal.** A layout around one page,
+  `<h1>Hello from collage</h1>`, and a stylesheet setting the background and text
+  colour with a dark mode, beside the `main.go`, `go.mod` and `routes.go` every
+  project has. The not-found page, the tests, `.env.example`,
+  `plugins-config.json` and the favicon moved to the demo template, which keeps
+  them.
+- The scaffolds link the documentation site, https://collage.furkanbaytekin.dev,
+  instead of the repository's `docs/` directory the demo's "Read the docs" pointed
+  at.
+
 ## v0.14.1
 
 ### Added

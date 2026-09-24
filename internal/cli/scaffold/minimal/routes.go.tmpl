@@ -15,10 +15,5 @@ func register(app *collage.App) error {
 			return fmt.Errorf("register page %q: %w", page.Name, err)
 		}
 	}
-	// Registered rather than given a path: it is reached by failing to match.
-	// "collage export" writes it as 404.html.
-	if err := app.RegisterNotFoundPage(pages.NotFoundPage()); err != nil {
-		return fmt.Errorf("register not-found page: %w", err)
-	}
 	return nil
 }

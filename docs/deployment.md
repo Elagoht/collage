@@ -163,11 +163,11 @@ See [caching](caching.md).
 
 ## Health checks
 
-A project scaffolded with the demos (`collage new`, not `collage new -minimal`)
+A project scaffolded with the demos (`collage new`, not `collage new --template minimal`)
 answers `/healthz` with JSON — `{"status": "ok", "date": "..."}`, the current time
 in UTC — from `documents/health.go`. It is a document rather than a page — bytes and
 a content type, no templates — so a health check cannot start failing because a
-template did. A `-minimal` project has no `/healthz`; copy that file, or write the
+template did. A minimal project has no `/healthz`; copy that file, or write the
 few lines it takes, before pointing a platform at it.
 
 Point your platform's liveness check at it. It reports that the process is up and

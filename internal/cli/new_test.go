@@ -2,9 +2,11 @@ package cli
 
 import (
 	"context"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -285,8 +287,9 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	}
 }
 
-// The minimal scaffold is a project with nothing to delete: it builds, its tests
-// pass, it exports, and none of the demos came with it.
+// The minimal template is the least a project can be: a layout around one page
+// and a stylesheet, beside the main.go every project has. It builds, it exports,
+// and nothing else came with it.
 func TestRun_New_Minimal(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
@@ -299,21 +302,35 @@ func TestRun_New_Minimal(t *testing.T) {
 
 	c, _, errOut := testCLI()
 	target := filepath.Join(t.TempDir(), "proj")
-	if code := c.Run(context.Background(), []string{"new", "site", "-minimal", "-dir", target, "-module", "collageminimaltest"}); code != 0 {
+	if code := c.Run(context.Background(), []string{"new", "site", "--template", "minimal", "--dir", target, "-module", "collageminimaltest"}); code != 0 {
 		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
 	}
 
-	for _, want := range []string{"main.go", "routes.go", "main_test.go", ".env.example", ".gitignore", "README.md",
-		filepath.Join("pages", "home.go"), filepath.Join("templates", "pages", "home.html"), filepath.Join("static", "app.css")} {
-		if _, err := os.Stat(filepath.Join(target, want)); err != nil {
-			t.Errorf("%s was not written: %v", want, err)
+	want := []string{".gitignore", "README.md", "go.mod", "main.go", "routes.go",
+		"fragments/layouts/main.go", "pages/home.go",
+		"templates/layouts/default.html", "templates/pages/home.html", "static/app.css"}
+	var got []string
+	if err := filepath.WalkDir(target, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
 		}
+		rel, _ := filepath.Rel(target, path)
+		got = append(got, filepath.ToSlash(rel))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
-	for _, demo := range []string{"actions", "documents", "store", filepath.Join("fragments", "demo"),
-		filepath.Join("pages", "features.go"), filepath.Join("static", "app.js")} {
-		if _, err := os.Stat(filepath.Join(target, demo)); err == nil {
-			t.Errorf("%s came with the minimal scaffold", demo)
-		}
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("the minimal template wrote\n  %v\nwant\n  %v", got, want)
+	}
+	home, _ := os.ReadFile(filepath.Join(target, "templates", "pages", "home.html"))
+	if strings.TrimSpace(string(home)) != "<h1>Hello from collage</h1>" {
+		t.Errorf("home.html = %q", home)
+	}
+	css, _ := os.ReadFile(filepath.Join(target, "static", "app.css"))
+	if !strings.Contains(string(css), "prefers-color-scheme: dark") {
+		t.Errorf("app.css has no dark mode:\n%s", css)
 	}
 
 	runIn := func(args ...string) string {
@@ -330,12 +347,31 @@ func TestRun_New_Minimal(t *testing.T) {
 	runIn("mod", "edit", "-replace", "github.com/Elagoht/collage="+repoRoot)
 	runIn("mod", "tidy")
 	runIn("vet", "./...")
-	runIn("test", "./...")
 
-	// The home page, the 404 page, and the stylesheet and icon, each under its
-	// own name and its content-addressed one. Nothing skipped: there is nothing
-	// here that needs a server.
-	if out := runIn("run", ".", "-collage-build", "-out", "dist"); !strings.Contains(out, "6 written · 0 skipped · 0 failed") {
-		t.Errorf("build output = %q, want six files written and nothing skipped", out)
+	// The home page, and the stylesheet under its own name and its
+	// content-addressed one. Nothing skipped: there is nothing here that needs a
+	// server.
+	if out := runIn("run", ".", "-collage-build", "-out", "dist"); !strings.Contains(out, "3 written · 0 skipped · 0 failed") {
+		t.Errorf("build output = %q, want three files written and nothing skipped", out)
+	}
+	page, err := os.ReadFile(filepath.Join(target, "dist", "index.html"))
+	if err != nil || !strings.Contains(string(page), "<h1>Hello from collage</h1>") || !strings.Contains(string(page), "<title>site</title>") {
+		t.Errorf("dist/index.html is not the page, in the layout: %v\n%s", err, page)
+	}
+}
+
+// A template the command has no scaffold for is refused, naming the ones it has,
+// and writes nothing.
+func TestRun_New_UnknownTemplate(t *testing.T) {
+	c, _, errOut := testCLI()
+	target := filepath.Join(t.TempDir(), "proj")
+	if code := c.Run(context.Background(), []string{"new", "site", "--template", "blog", "--dir", target}); code != 2 {
+		t.Fatalf("Run() = %d, want 2", code)
+	}
+	if msg := errOut.String(); !strings.Contains(msg, `unknown template: "blog"`) || !strings.Contains(msg, `"demo"`) || !strings.Contains(msg, `"minimal"`) {
+		t.Errorf("stderr = %q, want the template refused and the ones there are named", msg)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("%s was created for a refused template", target)
 	}
 }
