@@ -18,7 +18,8 @@ import (
 type DocumentPathProvider interface {
 	// Paths returns every concrete path a static build should render doc at, for
 	// locale. Path values are user-supplied and are validated against
-	// Options.OutDir before anything is written; see ErrPathEscapesOutDir.
+	// Options.OutDir before its own file is written — an escaping path fails that
+	// task alone; see ErrPathEscapesOutDir.
 	Paths(ctx context.Context, doc *types.Document, locale string) ([]PathInstance, error)
 }
 

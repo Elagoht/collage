@@ -206,7 +206,11 @@ func (e extraFiles) write(name, dir string) ([]string, error) {
 	var written []string
 
 	if e.dockerfile {
-		path, err := writeIfAbsent(filepath.Join(dir, "Dockerfile"), dockerfileFor(name))
+		// Asked of the project being built, which is the current directory:
+		// the one file a scaffolded project reads from its working directory
+		// rather than from the binary.
+		_, statErr := os.Stat(pluginConfigFile)
+		path, err := writeIfAbsent(filepath.Join(dir, "Dockerfile"), dockerfileFor(name, statErr == nil))
 		if err != nil {
 			return written, err
 		}
@@ -277,13 +281,25 @@ func (c *CLI) stdinOrDefault() io.Reader {
 }
 
 // dockerfileFor is the two-stage image a scaffolded project deploys as.
-func dockerfileFor(name string) string {
+// pluginConfigFile is the plugin configuration a scaffolded main.go reads from its
+// working directory.
+const pluginConfigFile = "plugins-config.json"
+
+func dockerfileFor(name string, pluginConfig bool) string {
+	// Read from the working directory rather than embedded, so a container
+	// without it runs every plugin on its defaults, silently. Copied when the
+	// project has one.
+	copyConfig := ""
+	if pluginConfig {
+		copyConfig = "# Read from the working directory, not the binary: without it every plugin\n" +
+			"# runs on its defaults.\nCOPY --from=build /src/" + pluginConfigFile + " /srv/" + pluginConfigFile + "\n"
+	}
 	return `# Built by "collage build -i".
 #
-# Two stages, and the second one holds the binary and nothing else: a collage
-# project embeds its templates and its static files, so there is nothing beside
-# the binary to copy. CGO is off, which is what makes the binary static enough
-# for a distroless base.
+# Two stages, and the second one holds the binary and what it reads from its
+# working directory: a collage project embeds its templates and its static
+# files, so that is plugins-config.json at most. CGO is off, which is what makes
+# the binary static enough for a distroless base.
 FROM golang:` + goVersion() + ` AS build
 WORKDIR /src
 # Dependencies first, so editing your own code does not re-download them. If
@@ -300,7 +316,7 @@ FROM gcr.io/distroless/static-debian12
 # process was started. Everything else about this project travels in the binary.
 WORKDIR /srv
 COPY --from=build /` + name + ` /usr/local/bin/` + name + `
-ENV HOST=0.0.0.0 PORT=8080
+` + copyConfig + `ENV HOST=0.0.0.0 PORT=8080
 # Set this to at least 32 random bytes, kept with your other secrets. Without
 # it a key is generated per process, and every form submitted before a restart
 # is refused after it.

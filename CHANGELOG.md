@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.11.1
+
+- The Dockerfile `collage build -i` writes copies `plugins-config.json` when the
+  project has one. The binary reads it from its working directory, and a container
+  without it ran every plugin on its defaults without a word.
+- `ErrVaryOutsideRequest` names `SkipCache` too; the path providers' comments say
+  each path is checked before its own file is written.
+
 ## v0.11.0
 
 Found auditing the documentation site against the source.

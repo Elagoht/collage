@@ -84,7 +84,7 @@ func (h *Handler) serveChained(w http.ResponseWriter, r *http.Request) {
 
 // ErrVaryOutsideRequest is returned by Vary for a request that is not being
 // served by a collage handler.
-var ErrVaryOutsideRequest = errors.New("collage: Vary called on a request collage is not serving")
+var ErrVaryOutsideRequest = errors.New("collage: Vary or SkipCache called on a request collage is not serving")
 
 // ErrVaryTooLate is returned by Vary once the request's cache key has been
 // computed. A dimension declared after the lookup would be one the lookup

@@ -189,3 +189,16 @@ func TestBuild_OutsideAProject(t *testing.T) {
 		t.Errorf("output = %q, want it to mention go.mod", out.String())
 	}
 }
+
+// The Dockerfile carries plugins-config.json when the project has one: the binary
+// reads it from its working directory, and a container without it runs every
+// plugin on its defaults without a word.
+func TestDockerfile_CopiesThePluginConfigurationWhenThereIsOne(t *testing.T) {
+	with := dockerfileFor("site", true)
+	if !strings.Contains(with, "COPY --from=build /src/plugins-config.json /srv/plugins-config.json") {
+		t.Errorf("Dockerfile does not copy plugins-config.json:\n%s", with)
+	}
+	if strings.Contains(dockerfileFor("site", false), "plugins-config.json /srv") {
+		t.Error("Dockerfile copies a plugins-config.json the project does not have")
+	}
+}
