@@ -359,7 +359,7 @@ func (a *App) checkReferencedPage(from, referenced *types.Page, role string) err
 // registration order; afterwards this returns ErrAppStarted.
 func (a *App) RegisterPlugin(p plugin.Plugin) error {
 	a.mu.Lock()
-	started := a.started
+	started := a.started || a.startAttempted
 	a.mu.Unlock()
 
 	if started {

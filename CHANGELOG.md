@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.12.0
+
+### Changed
+
+- **A page's head is the same on every render.** A hoisted key used to be written
+  where its first declaration *arrived*, and sibling fragments' handlers run
+  concurrently, so two siblings' stylesheets or meta tags could swap places from one
+  request to the next — the cascade included. A key is now placed at its earliest
+  declaration in the tree's own order: the declaring fragment's position, then the
+  order that fragment declared in. Which declaration wins a key is unchanged.
+
+### Fixed
+
+- **Concurrent misses on a document are coalesced**, as a page's are: an expiring
+  feed polled by many clients runs its handler once, not once per client.
+- **`RegisterPlugin` after any failed start is `ErrAppStarted`**, including a start
+  refused for a plugin configuration key no plugin claims, which runs before any
+  plugin's `Init`.
+
 ## v0.11.1
 
 - The Dockerfile `collage build -i` writes copies `plugins-config.json` when the

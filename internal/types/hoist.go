@@ -2,6 +2,7 @@ package types
 
 import (
 	"html/template"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -31,12 +32,27 @@ type hoistEntry struct {
 
 // hoistArea is the declarations for one marker, keyed and ordered.
 type hoistArea struct {
-	// order is the keys in the order they were first declared, which is the order
-	// they are written in. First-seen rather than innermost-wins order, so a page
-	// does not reshuffle its own <head> because a nested fragment happened to
-	// override a title.
-	order []string
-	byKey map[string]hoistEntry
+	// position is where each key is written: at its earliest declaration in the
+	// tree's own order — the declaring fragment's launch number, then the order
+	// that fragment declared in. Not in the order declarations arrived: sibling
+	// handlers run concurrently, so arrival order is whichever goroutine won, and
+	// a page's <head> — the order of its stylesheets included — changed from one
+	// request to the next. Earliest rather than winning declaration, so a nested
+	// fragment overriding a title does not move it.
+	position map[string]hoistPosition
+	// declared counts each fragment's declarations so far, by launch number,
+	// which is what orders one fragment's own declarations among themselves.
+	declared map[int]int
+	byKey    map[string]hoistEntry
+}
+
+// hoistPosition is where a declaration sits in the tree's order.
+type hoistPosition struct {
+	order, seq int
+}
+
+func (p hoistPosition) before(other hoistPosition) bool {
+	return p.order < other.order || (p.order == other.order && p.seq < other.seq)
 }
 
 // Hoisted collects what the fragments of one render declared.
@@ -84,14 +100,23 @@ func (h *Hoisted) Add(area, key string, depth, order int, html template.HTML) {
 
 	a, ok := h.areas[area]
 	if !ok {
-		a = &hoistArea{byKey: make(map[string]hoistEntry)}
+		a = &hoistArea{
+			position: make(map[string]hoistPosition),
+			declared: make(map[int]int),
+			byKey:    make(map[string]hoistEntry),
+		}
 		h.areas[area] = a
+	}
+
+	here := hoistPosition{order: order, seq: a.declared[order]}
+	a.declared[order]++
+	if first, seen := a.position[key]; !seen || here.before(first) {
+		a.position[key] = here
 	}
 
 	entry := hoistEntry{depth: depth, order: order, html: html}
 	previous, seen := a.byKey[key]
 	if !seen {
-		a.order = append(a.order, key)
 		a.byKey[key] = entry
 		return
 	}
@@ -100,7 +125,8 @@ func (h *Hoisted) Add(area, key string, depth, order int, html template.HTML) {
 	}
 }
 
-// HTML returns everything declared for area, in first-declared order.
+// HTML returns everything declared for area, each key at its earliest declaration
+// in the tree's order.
 func (h *Hoisted) HTML(area string) template.HTML {
 	if h == nil {
 		return ""
@@ -112,8 +138,14 @@ func (h *Hoisted) HTML(area string) template.HTML {
 		return ""
 	}
 
+	keys := make([]string, 0, len(a.position))
+	for key := range a.position {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return a.position[keys[i]].before(a.position[keys[j]]) })
+
 	var out strings.Builder
-	for _, key := range a.order {
+	for _, key := range keys {
 		out.WriteString(string(a.byKey[key].html))
 	}
 	return template.HTML(out.String()) // any: the concatenation of values already marked safe by their declarers

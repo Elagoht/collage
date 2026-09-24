@@ -2,6 +2,7 @@ package collage_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -212,3 +213,29 @@ func TestNew_AnUnwritableCacheDirectoryFallsBackToMemory(t *testing.T) {
 		t.Errorf("New = %v, want the application built on a memory cache", err)
 	}
 }
+
+// A start that failed — here on a configuration key no plugin claims, before any
+// plugin's Init — still closes plugin registration.
+func TestRegisterPlugin_AfterAFailedStartIsErrAppStarted(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server:       collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template:     collage.TemplateConfig{FS: fstest.MapFS{"t/x.html": {Data: []byte(`x`)}}, Root: "t"},
+		PluginConfig: map[string]json.RawMessage{"nobody": json.RawMessage(`{}`)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Start(); err == nil {
+		t.Fatal("Start() = nil, want the unknown plugin configuration refused")
+	}
+	if err := app.RegisterPlugin(&hookless{}); !errors.Is(err, collage.ErrAppStarted) {
+		t.Errorf("RegisterPlugin after a failed start = %v, want ErrAppStarted", err)
+	}
+}
+
+type hookless struct{}
+
+func (*hookless) Name() string                             { return "hookless" }
+func (*hookless) Version() string                          { return "1.0.0" }
+func (*hookless) Init(context.Context, collage.Host) error { return nil }
+func (*hookless) Shutdown(context.Context) error           { return nil }

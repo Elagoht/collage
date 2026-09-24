@@ -338,6 +338,9 @@ type App struct {
 	// that keeps a mount from silently swallowing a page's or a document's route
 	// regardless of which was registered first.
 	mounts []*asset.Mount
+	// startAttempted is set as soon as the application tries to start; see
+	// RegisterPlugin.
+	startAttempted bool
 	// handlers holds every http.Handler mounted with Handle, and middleware
 	// every wrapper registered with Use, both in registration order. See
 	// handle.go.
@@ -642,6 +645,12 @@ func (a *App) buildHandler() (http.Handler, error) {
 		return a.handler, a.handlerErr
 	}
 	a.handlerBuilt = true
+	// Registration of plugins closes the moment a start is attempted, whether it
+	// then succeeds or not, so RegisterPlugin after a failed start is refused the
+	// same way as after a successful one.
+	a.mu.Lock()
+	a.startAttempted = true
+	a.mu.Unlock()
 
 	// Checked here rather than in New, because RegisterPlugin can add a plugin
 	// after New and a key naming one of those would otherwise be reported as

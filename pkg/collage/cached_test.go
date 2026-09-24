@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -223,5 +224,45 @@ func TestDocument_A405IsPlainText(t *testing.T) {
 	site.app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/robots.txt", nil))
 	if rec.Code != http.StatusMethodNotAllowed || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
 		t.Errorf("POST /robots.txt = %d %q, want a plain-text 405", rec.Code, rec.Header().Get("Content-Type"))
+	}
+}
+
+// Concurrent misses on one document run its handler once, as a page's do.
+func TestDocument_ConcurrentMissesAreCoalesced(t *testing.T) {
+	var runs atomic.Int32
+	release := make(chan struct{})
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/x.html": {Data: []byte(`x`)}}, Root: "t"},
+		Cache:    collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := collage.NewDocument("feed", "application/xml").WithPath("en", "/feed.xml").Incremental(time.Minute).
+		WithHandler(func(context.Context, *collage.RenderContext) ([]byte, []string, error) {
+			runs.Add(1)
+			<-release
+			return []byte("<rss/>"), nil, nil
+		}).Build()
+	if err := app.RegisterDocument(doc); err != nil {
+		t.Fatal(err)
+	}
+	h := app.Handler()
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Go(func() {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/feed.xml", nil))
+			if rec.Body.String() != "<rss/>" {
+				t.Errorf("body = %q", rec.Body.String())
+			}
+		})
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if runs.Load() != 1 {
+		t.Errorf("handler runs = %d, want 1 for ten concurrent misses", runs.Load())
 	}
 }

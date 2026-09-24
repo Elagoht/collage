@@ -74,72 +74,93 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		h.metrics.CacheEvent(ctx, observability.CacheMiss, key)
 	}
 
-	docRenderer, ok := h.renderer.(documentRenderer)
-	if !ok {
-		err := fmt.Errorf("%w: %T", ErrDocumentRenderingUnsupported, h.renderer)
-		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
-	}
-
-	rc := types.NewRenderContext(ctx, r, nil, match.Locale, match.PathParams)
-	if skipsCache(r) {
-		types.SkipDataCache(rc)
-	}
-	result, err := docRenderer.ExecuteDocument(ctx, doc, rc)
-	if err != nil {
-		// result is non-nil on every ExecuteDocument path, including a failure,
-		// so NotFound can be read here safely; the error is checked first, as
-		// ExecuteDocument's contract requires.
-		status := http.StatusInternalServerError
-		if result != nil && result.NotFound {
-			status = http.StatusNotFound
+	failed := func(f failure) *outcome { return &outcome{fail: &f} }
+	produce := func() *outcome {
+		docRenderer, ok := h.renderer.(documentRenderer)
+		if !ok {
+			err := fmt.Errorf("%w: %T", ErrDocumentRenderingUnsupported, h.renderer)
+			return failed(route.failure(http.StatusInternalServerError, stageRender, err))
 		}
-		return h.serveFailure(w, r, route.failure(status, stageRender, err))
+
+		rc := types.NewRenderContext(ctx, r, nil, match.Locale, match.PathParams)
+		if skipsCache(r) {
+			types.SkipDataCache(rc)
+		}
+		result, err := docRenderer.ExecuteDocument(ctx, doc, rc)
+		if err != nil {
+			// result is non-nil on every ExecuteDocument path, including a failure,
+			// so NotFound can be read here safely; the error is checked first, as
+			// ExecuteDocument's contract requires.
+			status := http.StatusInternalServerError
+			if result != nil && result.NotFound {
+				status = http.StatusNotFound
+			}
+			return failed(route.failure(status, stageRender, err))
+		}
+
+		if len(result.Body) == 0 {
+			err := fmt.Errorf("%w: document %q", types.ErrEmptyDocumentBody, doc.Name)
+			return failed(route.failure(http.StatusInternalServerError, stageRender, err))
+		}
+
+		// Dispatched before the ETag is computed and before anything is cached, so a
+		// plugin that rewrites the body — a minifier, most obviously — is what gets
+		// stored and what the ETag describes. Doing it after would serve one thing and
+		// cache another, and hand clients an ETag for a body they never received.
+		documentEvent := &plugin.DocumentRenderedEvent{
+			Document:    doc,
+			ContentType: doc.ContentType,
+			Locale:      match.Locale,
+			Path:        r.URL.Path,
+			Body:        result.Body,
+		}
+		if err := h.plugins.DocumentRendered(ctx, documentEvent); err != nil {
+			return failed(route.failure(http.StatusInternalServerError, stageRender, err))
+		}
+		result.Body = documentEvent.Body
+		if len(result.Body) == 0 {
+			err := fmt.Errorf("%w: document %q, after plugin post-processing", types.ErrEmptyDocumentBody, doc.Name)
+			return failed(route.failure(http.StatusInternalServerError, stageRender, err))
+		}
+
+		// Only a GET populates the cache; a HEAD is served from cache but never
+		// populates it — it produced no body worth storing under its own request.
+		etag := ""
+		if cacheable && r.Method == http.MethodGet {
+			etag = h.writeDocumentCache(r, key, doc, result, route)
+		}
+		if etag == "" {
+			etag = cache.ETag(result.Body)
+		}
+		return &outcome{content: result.Body, etag: etag, renderTime: result.Timing.Total}
 	}
 
-	if len(result.Body) == 0 {
-		err := fmt.Errorf("%w: document %q", types.ErrEmptyDocumentBody, doc.Name)
-		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
+	// Concurrent misses on one key share one run of the handler, as a page's do:
+	// an expiring feed that everyone polls costs one render, not one per poller.
+	var out *outcome
+	if key != "" {
+		var shared bool
+		out, shared = h.flight.do(ctx, key, produce)
+		if shared {
+			h.metrics.CacheEvent(ctx, observability.CacheCoalesced, key)
+		}
+	} else {
+		out = produce()
 	}
-
-	// Dispatched before the ETag is computed and before anything is cached, so a
-	// plugin that rewrites the body — a minifier, most obviously — is what gets
-	// stored and what the ETag describes. Doing it after would serve one thing and
-	// cache another, and hand clients an ETag for a body they never received.
-	documentEvent := &plugin.DocumentRenderedEvent{
-		Document:    doc,
-		ContentType: doc.ContentType,
-		Locale:      match.Locale,
-		Path:        r.URL.Path,
-		Body:        result.Body,
+	if out.fail != nil {
+		return h.serveFailure(w, r, *out.fail)
 	}
-	if err := h.plugins.DocumentRendered(ctx, documentEvent); err != nil {
-		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
-	}
-	result.Body = documentEvent.Body
-	if len(result.Body) == 0 {
-		err := fmt.Errorf("%w: document %q, after plugin post-processing", types.ErrEmptyDocumentBody, doc.Name)
-		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
-	}
-
-	// Only a GET populates the cache; a HEAD is served from cache but never
-	// populates it — it produced no body worth storing under its own request.
-	etag := ""
-	if cacheable && r.Method == http.MethodGet {
-		etag = h.writeDocumentCache(r, key, doc, result, route)
-	}
-	if etag == "" {
-		etag = cache.ETag(result.Body)
-	}
+	etag := out.etag
 
 	header := w.Header()
 	header.Set("Content-Type", doc.ContentType)
 	header.Set("ETag", etag)
 	h.setCacheHeaders(header, r, doc.Strategy, doc.CacheTTL)
 	if h.devMode {
-		header.Set(renderTimeHeader, result.Timing.Total.String())
+		header.Set(renderTimeHeader, out.renderTime.String())
 	}
 	w.WriteHeader(http.StatusOK)
-	writeBody(w, result.Body)
+	writeBody(w, out.content)
 
 	return http.StatusOK
 }
