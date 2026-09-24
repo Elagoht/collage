@@ -47,12 +47,14 @@ collage export   # -> dist/, static files, for a site that needs no server
 collage serve    # serves dist/ the way a static host would
 ```
 
-Editing `templates/pages/home.html` under `collage dev` and reloading shows the
-change. Editing Go code rebuilds and restarts the program — no external watcher —
-and a change that does not compile leaves the last good build running.
+Under `collage dev`, saving a template reloads the page in the browser, and saving
+Go code rebuilds and restarts the program and then reloads the page — no external
+watcher, nothing to install. A change that does not compile leaves the last good
+build running. `collage new mysite -minimal` starts without the demos.
 
 Where to look next: `pages/` has one file per page, `fragments/` the layout and the
-demos, `actions/` the API endpoint; `main.go` has the configuration and the routes. The rest of this file is what
+demos, `actions/` the API endpoint; `routes.go` registers them, and `main.go` has the
+configuration. The rest of this file is what
 those are made of, and [docs/](docs/) is the detail.
 
 **Adding collage to a project you already have** is `go get

@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.6.0
+
+- **Links by name.** `{{pageURL "blog-post" "slug" .Slug}}` builds a page's or a
+  document's URL in the render's locale, falling back to the default locale for a
+  page with no path in this one; `{{pageURLIn "tr" "about"}}` asks for one locale
+  exactly; `{{localeURL "tr"}}` is the current page in another language, empty
+  when it has not been translated — a language switcher in two lines. From Go it is
+  `app.URL(name, locale, params)`. A link that cannot be built — an unknown name, a
+  missing or extra parameter, a `..` — fails the render rather than shipping a
+  404. See [docs/fragments.md](docs/fragments.md#links-by-name).
+- **The browser reloads itself in development.** A page served in development
+  reloads when a template or a mounted file changes, and when the program comes
+  back from a rebuild, over a stream at `/_collage/reload` that exists only in
+  development. The answer to a POST never carries it, and shutdown closes the
+  streams rather than waiting on them.
+- **`collage new -minimal`** scaffolds one layout, an empty home page and a
+  not-found page, for starting a real site without deleting the demos. The
+  scaffold's routes now live in `routes.go`, and `main.go` is shared by both.
+
 ## v0.5.1
 
 - **Licensed under MIT.**
