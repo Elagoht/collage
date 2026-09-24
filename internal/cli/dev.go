@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 )
 
 // CommandRunner runs an external command. dev and build go through this
@@ -31,6 +32,16 @@ The scaffolded main.go (see "collage new") reads COLLAGE_DEV and turns on
 development mode, which reloads templates from disk on every request. It does
 NOT hot-reload Go code: a change to this project's own .go files still
 requires stopping and re-running "collage dev".
+
+Variables are read from .env.development in the current directory, or from
+.env when there is no .env.development — one file, never both. It holds
+KEY=value lines, "#" comments and blank lines; an "export " prefix and quotes
+around a value are allowed. A variable already set in the shell wins over the
+file, so "PORT=4000 collage dev" still works, and COLLAGE_DEV=1 is always set.
+The file read is named on stderr when there is one; no file is not an error.
+
+Only "collage dev" reads these files. "collage build", "collage export" and the
+built binary take their environment from wherever they run.
 `
 
 // runDev implements the "dev" command.
@@ -52,7 +63,19 @@ func (c *CLI) runDev(ctx context.Context, args []string) int {
 		return 2
 	}
 
-	err := c.runner().Run(ctx, "", []string{"COLLAGE_DEV=1"}, c.stdout(), c.stderr(), "go", "run", ".")
+	env, loaded, err := loadDevEnv(".", os.LookupEnv)
+	if err != nil {
+		fmt.Fprintf(c.stderr(), "collage: dev: %v\n", err)
+		return 1
+	}
+	if loaded != "" {
+		fmt.Fprintf(c.stderr(), "collage: dev: loaded %s\n", loaded)
+	}
+	// Last, so no file can turn development mode off: a later duplicate wins
+	// in the started process's environment.
+	env = append(env, "COLLAGE_DEV=1")
+
+	err = c.runner().Run(ctx, "", env, c.stdout(), c.stderr(), "go", "run", ".")
 	if err != nil {
 		fmt.Fprintf(c.stderr(), "collage: dev: %v\n", err)
 		return 1
