@@ -29,10 +29,6 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
-
-	"@@MODULE@@/actions"
-	"@@MODULE@@/documents"
-	"@@MODULE@@/pages"
 )
 
 // Templates and static files are embedded, so this binary runs from anywhere:
@@ -75,8 +71,8 @@ func main() {
 	}
 }
 
-// newApp builds the application: its configuration, its routes, and its static
-// mount.
+// newApp builds the application: its configuration, its routes — registered in
+// routes.go — and its static mount.
 //
 // It is separate from main so that the tests can build the same application
 // and drive it through app.Handler(), with no server listening and no port to
@@ -130,25 +126,9 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 		return nil, err
 	}
 
-	for _, page := range []*collage.Page{pages.HomePage(), pages.FeaturesPage(), pages.HelloPage()} {
-		if err := app.RegisterPage(page); err != nil {
-			return nil, fmt.Errorf("register page %q: %w", page.Name, err)
-		}
-	}
-	for _, document := range []*collage.Document{documents.HealthDocument()} {
-		if err := app.RegisterDocument(document); err != nil {
-			return nil, fmt.Errorf("register document %q: %w", document.Name, err)
-		}
-	}
-	for _, action := range []*collage.Action{actions.CountAction()} {
-		if err := app.RegisterAction(action); err != nil {
-			return nil, fmt.Errorf("register action %q: %w", action.Name, err)
-		}
-	}
-	// Registered rather than given a path: it is reached by failing to match.
-	// "collage export" writes it as 404.html.
-	if err := app.RegisterNotFoundPage(pages.NotFoundPage()); err != nil {
-		return nil, fmt.Errorf("register not-found page: %w", err)
+	// Every page, document and action this project has — see routes.go.
+	if err := register(app); err != nil {
+		return nil, err
 	}
 
 	assets, err := staticFiles(devMode)

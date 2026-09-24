@@ -1,0 +1,42 @@
+package main
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// Testing a collage application needs no server and no port: app.Handler() is an
+// ordinary http.Handler, so net/http/httptest drives it directly. It goes through
+// the same newApp main uses, so what it exercises is the site that actually runs.
+func get(t *testing.T, target string) *httptest.ResponseRecorder {
+	t.Helper()
+	app, err := newApp(false, 0)
+	if err != nil {
+		t.Fatalf("newApp() = %v, want nil", err)
+	}
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	return rec
+}
+
+func TestHomePage(t *testing.T) {
+	rec := get(t, "/")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "<h1>@@NAME@@</h1>") {
+		t.Errorf("the home page does not contain its heading:\n%s", rec.Body.String())
+	}
+}
+
+func TestNotFoundPage(t *testing.T) {
+	rec := get(t, "/there-is-nothing-here")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "There is nothing at this address") {
+		t.Errorf("body = %q, want this site's own not-found page", rec.Body.String())
+	}
+}

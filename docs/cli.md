@@ -174,9 +174,14 @@ it has an action that could verify a token.
 
 ## `collage new`
 
-Scaffolds the runnable project described above: a `go.mod`, a `main.go` wiring
-the routes and mounting `static/`, the pages, fragments, action, document and
-their templates, the tests, a `.env.example`, a `.gitignore`, and a README.
+Scaffolds the runnable project described above: a `go.mod`, a `main.go` with the
+configuration and the static mount, a `routes.go` registering every route, the
+pages, fragments, action, document and their templates, the tests, a
+`.env.example`, a `.gitignore`, and a README.
+
+`-minimal` scaffolds the same project with nothing in it: one layout, an empty
+home page and a not-found page, the same `main.go`, and tests for both — for
+starting a real site without first deleting the demos.
 
 The scaffolded `main.go` mounts `static/` with `os.OpenRoot`, **not** `os.DirFS`.
 That is not a style preference: `os.DirFS` does not prevent symlink traversal, so
@@ -185,6 +190,7 @@ enforced by the kernel. See [assets.md](assets.md).
 
 ```
 collage new myblog                       # into ./myblog, module "myblog"
+collage new myblog -minimal              # without the demos
 collage new myblog -module github.com/me/myblog
 collage new myblog -dir . -force         # into a non-empty directory
 ```
@@ -231,6 +237,9 @@ tool to install:
   that looking every 300 ms costs nothing noticeable.
 - A program that exits by itself — a panic at startup, a port already in use — is
   not restarted in a loop; the next change is what starts it again.
+- **The browser reloads too.** A development page reloads itself when a template or
+  a static file changes, and when the program comes back from a rebuild — see
+  [fragments.md](fragments.md#development-mode). Nothing to install in the browser.
 
 ### Environment files
 

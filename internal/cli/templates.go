@@ -17,21 +17,46 @@ import (
 var scaffoldFS embed.FS
 
 // scaffoldRoot is the directory inside scaffoldFS the scaffold tree lives
-// under.
+// under. It holds one layer every project gets, "common", and one directory per
+// kind of project: "demo", the default, and "minimal".
 const scaffoldRoot = "scaffold"
 
-// writeScaffold writes the embedded scaffold tree into targetDir, substituting
-// module and name into every file (see substitute) and mapping each embedded
-// path to the name it is written under (see targetName).
-func writeScaffold(targetDir, module, name string) error {
-	prefix := scaffoldRoot + "/"
+// Scaffold variants, the layer written over "common".
+const (
+	variantDemo    = "demo"
+	variantMinimal = "minimal"
+)
 
-	return fs.WalkDir(scaffoldFS, scaffoldRoot, func(path string, d fs.DirEntry, err error) error {
+// writeScaffold writes the embedded scaffold into targetDir — the common layer,
+// then variant's over it — substituting module and name into every file (see
+// substitute) and mapping each embedded path to the name it is written under
+// (see targetName).
+//
+// Two layers rather than two copies, so what every project shares — main.go and
+// its CLI contract, the layout fragment, the not-found page, the environment
+// file — exists once and cannot drift between them.
+func writeScaffold(targetDir, module, name, variant string) error {
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		return err
+	}
+	for _, layer := range []string{"common", variant} {
+		if err := writeLayer(targetDir, scaffoldRoot+"/"+layer, module, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeLayer writes one embedded scaffold layer, rooted at root, into targetDir.
+func writeLayer(targetDir, root, module, name string) error {
+	prefix := root + "/"
+
+	return fs.WalkDir(scaffoldFS, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if path == scaffoldRoot {
-			return os.MkdirAll(targetDir, 0o755)
+		if path == root {
+			return nil
 		}
 
 		// fs.WalkDir paths, like every io/fs path, always use "/" regardless

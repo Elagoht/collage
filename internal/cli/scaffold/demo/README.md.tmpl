@@ -13,8 +13,8 @@ collage dev
 
 The site is at http://localhost:3000. `collage dev` reads `.env.development`
 (or `.env` when there is none) and runs the project in development mode:
-templates and static files are read from disk on every request, so editing one
-and reloading is enough. A change to Go code is rebuilt and restarted for you;
+templates and static files are read from disk on every request, and the page
+reloads itself when one changes. A change to Go code is rebuilt and restarted for you;
 one that does not compile leaves the last good build running and says why.
 
 A variable set in your shell wins over the file, so `PORT=4000 collage dev`
@@ -28,7 +28,8 @@ go test ./...
 ## What is here
 
 ```
-main.go       configuration and route registration, and the collage CLI contract
+main.go       configuration, the static mount, and the collage CLI contract
+routes.go     every page, document and action — a new route goes here
 main_test.go  the tests, driving app.Handler() with no server and no port
 pages/        one file per page: layout, content, route
 fragments/    reusable pieces: the layout and the demos

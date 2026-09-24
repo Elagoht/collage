@@ -284,3 +284,58 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 		t.Fatalf("stale.txt survived a -clean build (err = %v), want it removed", err)
 	}
 }
+
+// The minimal scaffold is a project with nothing to delete: it builds, its tests
+// pass, it exports, and none of the demos came with it.
+func TestRun_New_Minimal(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go binary not available")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	c, _, errOut := testCLI()
+	target := filepath.Join(t.TempDir(), "proj")
+	if code := c.Run(context.Background(), []string{"new", "site", "-minimal", "-dir", target, "-module", "collageminimaltest"}); code != 0 {
+		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
+	}
+
+	for _, want := range []string{"main.go", "routes.go", "main_test.go", ".env.example", ".gitignore", "README.md",
+		filepath.Join("pages", "home.go"), filepath.Join("templates", "pages", "home.html"), filepath.Join("static", "app.css")} {
+		if _, err := os.Stat(filepath.Join(target, want)); err != nil {
+			t.Errorf("%s was not written: %v", want, err)
+		}
+	}
+	for _, demo := range []string{"actions", "documents", "store", filepath.Join("fragments", "demo"),
+		filepath.Join("pages", "features.go"), filepath.Join("static", "app.js")} {
+		if _, err := os.Stat(filepath.Join(target, demo)); err == nil {
+			t.Errorf("%s came with the minimal scaffold", demo)
+		}
+	}
+
+	runIn := func(args ...string) string {
+		t.Helper()
+		cmd := exec.Command(goBin, args...)
+		cmd.Dir = target
+		cmd.Env = append(os.Environ(), "GOWORK=off")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("go %s: %v\n%s", strings.Join(args, " "), err, out)
+		}
+		return string(out)
+	}
+	runIn("mod", "edit", "-replace", "github.com/Elagoht/collage="+repoRoot)
+	runIn("mod", "tidy")
+	runIn("vet", "./...")
+	runIn("test", "./...")
+
+	// The home page, the 404 page, and the stylesheet and icon, each under its
+	// own name and its content-addressed one. Nothing skipped: there is nothing
+	// here that needs a server.
+	if out := runIn("run", ".", "-collage-build", "-out", "dist"); !strings.Contains(out, "6 written · 0 skipped · 0 failed") {
+		t.Errorf("build output = %q, want six files written and nothing skipped", out)
+	}
+}

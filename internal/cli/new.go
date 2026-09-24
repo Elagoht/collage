@@ -18,13 +18,17 @@ var ErrMissingProjectName = errors.New("collage: missing project name")
 var ErrTargetNotEmpty = errors.New("collage: target directory is not empty")
 
 // newUsage is "collage help new"'s own usage text.
-const newUsage = `Usage: collage new <name> [-dir path] [-module path] [-force]
+const newUsage = `Usage: collage new <name> [-minimal] [-dir path] [-module path] [-force]
 
 Scaffolds a new, runnable collage project named <name>: a home page, a page of
 live demos (an API action, a form, a fragment with its own URL, a JSON
 document), their tests, a .env.example for "collage dev", a .gitignore and a
 README.
 
+With -minimal it is one layout, an empty home page and a not-found page — the
+same main.go and project layout, with nothing to delete before you start.
+
+  -minimal       scaffold without the demos
   -dir path      directory to scaffold into (default: ./<name>)
   -module path   the scaffolded go.mod's module path (default: <name>)
   -force         scaffold into a non-empty directory anyway
@@ -42,6 +46,7 @@ func (c *CLI) runNew(args []string) int {
 	dir := fs.String("dir", "", "directory to scaffold into")
 	module := fs.String("module", "", "the scaffolded go.mod's module path")
 	force := fs.Bool("force", false, "scaffold into a non-empty directory anyway")
+	minimal := fs.Bool("minimal", false, "scaffold one layout and an empty home page, without the demos")
 
 	// The stdlib flag package stops parsing at the first non-flag argument, so
 	// a flag placed after <name> — which is exactly how newUsage documents
@@ -77,7 +82,11 @@ func (c *CLI) runNew(args []string) int {
 		fmt.Fprintf(c.stderr(), "collage: %v\n", err)
 		return 1
 	}
-	if err := writeScaffold(targetDir, modulePath, name); err != nil {
+	variant := variantDemo
+	if *minimal {
+		variant = variantMinimal
+	}
+	if err := writeScaffold(targetDir, modulePath, name, variant); err != nil {
 		fmt.Fprintf(c.stderr(), "collage: scaffold: %v\n", err)
 		return 1
 	}

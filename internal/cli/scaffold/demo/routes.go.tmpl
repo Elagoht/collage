@@ -1,0 +1,36 @@
+package main
+
+import (
+	"fmt"
+
+	"github.com/Elagoht/collage/pkg/collage"
+
+	"@@MODULE@@/actions"
+	"@@MODULE@@/documents"
+	"@@MODULE@@/pages"
+)
+
+// register adds every page, document and action to app. A new route goes here.
+func register(app *collage.App) error {
+	for _, page := range []*collage.Page{pages.HomePage(), pages.FeaturesPage(), pages.HelloPage()} {
+		if err := app.RegisterPage(page); err != nil {
+			return fmt.Errorf("register page %q: %w", page.Name, err)
+		}
+	}
+	for _, document := range []*collage.Document{documents.HealthDocument()} {
+		if err := app.RegisterDocument(document); err != nil {
+			return fmt.Errorf("register document %q: %w", document.Name, err)
+		}
+	}
+	for _, action := range []*collage.Action{actions.CountAction()} {
+		if err := app.RegisterAction(action); err != nil {
+			return fmt.Errorf("register action %q: %w", action.Name, err)
+		}
+	}
+	// Registered rather than given a path: it is reached by failing to match.
+	// "collage export" writes it as 404.html.
+	if err := app.RegisterNotFoundPage(pages.NotFoundPage()); err != nil {
+		return fmt.Errorf("register not-found page: %w", err)
+	}
+	return nil
+}
