@@ -163,9 +163,9 @@ func (g *Guard) Verify(r *http.Request) error {
 
 	submitted := r.Header.Get(g.headerName)
 	if submitted == "" {
-		// ParseForm is idempotent and leaves r.PostForm populated for the
-		// handler, so a handler that parses it again is not reading an empty body.
-		if err := r.ParseForm(); err != nil {
+		// Parsing is idempotent and leaves the form populated for the handler, so
+		// a handler that parses it again is not reading an empty body.
+		if err := parseForm(r); err != nil {
 			return err
 		}
 		submitted = r.PostFormValue(g.fieldName)
@@ -181,6 +181,23 @@ func (g *Guard) Verify(r *http.Request) error {
 	}
 	if !g.valid(submitted) {
 		return ErrInvalid
+	}
+	return nil
+}
+
+// multipartMemory is how much of a multipart body is held in memory while it is
+// parsed; the rest of its files spill to disk. The same figure net/http uses. It
+// is not a limit on the body — the caller's MaxBytesReader is that.
+const multipartMemory = 32 << 20
+
+// parseForm parses r's body as whichever kind of form it is.
+//
+// ParseForm alone ignores multipart/form-data, and multipart is what
+// fetch(url, {method: "POST", body: new FormData(form)}) sends. Reading only
+// URL-encoded bodies would refuse that submission with a valid token in it.
+func parseForm(r *http.Request) error {
+	if err := r.ParseMultipartForm(multipartMemory); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		return err
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package csrf
 
 import (
 	"errors"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -223,5 +224,29 @@ func TestMarker_IsStableForAKey(t *testing.T) {
 	}
 	if len(first.Marker()) < 32 {
 		t.Errorf("marker = %q, want something no one can guess", first.Marker())
+	}
+}
+
+// fetch(url, {method: "POST", body: new FormData(form)}) sends multipart, and the
+// token in it is as much a submission as one in a URL-encoded body.
+func TestVerify_ReadsAMultipartBody(t *testing.T) {
+	g := guard(t)
+	token, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+
+	var body strings.Builder
+	form := multipart.NewWriter(&body)
+	_ = form.WriteField(DefaultFieldName, token)
+	_ = form.WriteField("title", "Hello")
+	_ = form.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/posts", strings.NewReader(body.String()))
+	req.Header.Set("Content-Type", form.FormDataContentType())
+	req.AddCookie(&http.Cookie{Name: DefaultCookieName, Value: token})
+
+	if err := g.Verify(req); err != nil {
+		t.Fatalf("Verify() = %v, want nil", err)
+	}
+	if got := req.FormValue("title"); got != "Hello" {
+		t.Errorf("title = %q after Verify read the body, want %q", got, "Hello")
 	}
 }
