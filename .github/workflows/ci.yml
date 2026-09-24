@@ -1,8 +1,10 @@
 # The gate the framework has to pass before anyone depends on a commit.
 #
-# Two jobs rather than one, because they answer different questions and a reader
-# looking at a red tick should not have to guess which: does the framework hold, and
-# do the published plugins still compile against what is about to become a tag.
+# Separate jobs rather than one, because they answer different questions and a
+# reader looking at a red tick should not have to guess which: does the framework
+# hold, is it free of the mistakes a linter and the vulnerability database know
+# about, and do the published plugins still compile against what is about to
+# become a tag.
 name: ci
 
 on:
@@ -44,6 +46,28 @@ jobs:
       # single-threaded would pass through exactly the bugs that matter here.
       - name: go test -race
         run: go test -race ./...
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      # Pinned, so a new release of a tool cannot turn a commit red that was
+      # green yesterday without anything in this repository changing.
+      - name: staticcheck
+        run: go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+
+      # Deliberately not pinned to a database snapshot: a vulnerability published
+      # today in the standard library or a dependency should fail today's build.
+      # It reports only what the code actually calls, so an advisory in a corner
+      # of a package this never reaches is not a failure.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
   plugins:
     name: plugins

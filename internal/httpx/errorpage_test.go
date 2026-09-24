@@ -15,9 +15,9 @@ import (
 // errBoom is the generic render failure the error-path tests fail with.
 var errBoom = errors.New("collage: boom")
 
-// leakyError carries everything an error message must never reach a production
+// errLeaky carries everything an error message must never reach a production
 // client with: a credential, an internal hostname, and a filesystem path.
-var leakyError = errors.New(`collage: fragment "secret-fragment" data: dial tcp db.internal:5432: dsn=postgres://admin:hunter2@db.internal:5432/prod, opened at /srv/app/internal/render/fragment.go:120`)
+var errLeaky = errors.New(`collage: fragment "secret-fragment" data: dial tcp db.internal:5432: dsn=postgres://admin:hunter2@db.internal:5432/prod, opened at /srv/app/internal/render/fragment.go:120`)
 
 // ---------------------------------------------------------------------------
 // Not found
@@ -262,7 +262,7 @@ func TestErrorPageBodyOmittedForHead(t *testing.T) {
 func TestBuiltinProductionErrorPageLeaksNothing(t *testing.T) {
 	home := testPage("home", "/", types.StrategyStatic)
 	env := newEnv(t, []*types.Page{home})
-	env.engine.set("home", fakeRender{err: leakyError, degraded: "secret-fragment"})
+	env.engine.set("home", fakeRender{err: errLeaky, degraded: "secret-fragment"})
 
 	res := env.get("/")
 	body := res.Body.String()
@@ -299,7 +299,7 @@ func TestBuiltinProductionErrorPageLeaksNothing(t *testing.T) {
 func TestBuiltinDevErrorPageShowsDiagnostics(t *testing.T) {
 	home := testPage("home", "/", types.StrategyStatic)
 	env := newEnv(t, []*types.Page{home}, withDevMode())
-	env.engine.set("home", fakeRender{err: leakyError, degraded: "secret-fragment"})
+	env.engine.set("home", fakeRender{err: errLeaky, degraded: "secret-fragment"})
 
 	res := env.get("/")
 	body := res.Body.String()

@@ -10,13 +10,6 @@ import (
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// capturingLogs records what an application logged, so a test can assert on a
-// warning without reading a terminal.
-type capturingLogs struct {
-	slog.Handler
-	lines *strings.Builder
-}
-
 func newCapturingLogger() (*slog.Logger, *strings.Builder) {
 	var b strings.Builder
 	return slog.New(slog.NewTextHandler(&b, &slog.HandlerOptions{Level: slog.LevelWarn})), &b

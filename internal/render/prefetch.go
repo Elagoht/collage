@@ -44,9 +44,9 @@ type prefetch struct {
 }
 
 // wait blocks until the handler has finished and returns what it produced.
-func (p *prefetch) wait() (any, []string, error, time.Duration) { // any: see the data field
+func (p *prefetch) wait() (any, []string, time.Duration, error) { // any: see the data field
 	<-p.done
-	return p.data, p.tags, p.err, p.elapsed
+	return p.data, p.tags, p.elapsed, p.err
 }
 
 // prefetchChildren starts the data handlers of every fragment bound into f's slots.

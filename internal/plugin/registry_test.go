@@ -13,10 +13,10 @@ import (
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// panicValue is what a panicking test plugin panics with. Using a fixed sentinel
+// errPluginPanic is what a panicking test plugin panics with. Using a fixed sentinel
 // value (rather than any) keeps the tests within the project's no-any rule, which
 // applies to tests too.
-var panicValue = errors.New("collage: test plugin panic")
+var errPluginPanic = errors.New("collage: test plugin panic")
 
 // errTestHook is returned by a hook to simulate a plugin's own failure.
 var errTestHook = errors.New("collage: test hook failure")
@@ -60,7 +60,7 @@ func (p *testPlugin) Init(ctx context.Context, host Host) error {
 		p.log.add("init:" + p.name)
 	}
 	if p.initPanics {
-		panic(panicValue)
+		panic(errPluginPanic)
 	}
 	return p.initErr
 }
@@ -70,7 +70,7 @@ func (p *testPlugin) Shutdown(ctx context.Context) error {
 		p.log.add("shutdown:" + p.name)
 	}
 	if p.shutdownPanics {
-		panic(panicValue)
+		panic(errPluginPanic)
 	}
 	return p.shutdownErr
 }
@@ -107,7 +107,7 @@ type hookPlugin struct {
 func (p *hookPlugin) OnPageResolved(ctx context.Context, ev *PageResolvedEvent) error {
 	p.log.add("OnPageResolved:" + p.name)
 	if p.pageResolvedPanics {
-		panic(panicValue)
+		panic(errPluginPanic)
 	}
 	return p.pageResolvedErr
 }
@@ -115,7 +115,7 @@ func (p *hookPlugin) OnPageResolved(ctx context.Context, ev *PageResolvedEvent) 
 func (p *hookPlugin) OnBeforeRender(ctx context.Context, ev *BeforeRenderEvent) error {
 	p.log.add("OnBeforeRender:" + p.name)
 	if p.beforeRenderPanics {
-		panic(panicValue)
+		panic(errPluginPanic)
 	}
 	return p.beforeRenderErr
 }
@@ -123,7 +123,7 @@ func (p *hookPlugin) OnBeforeRender(ctx context.Context, ev *BeforeRenderEvent) 
 func (p *hookPlugin) OnAfterRender(ctx context.Context, ev *AfterRenderEvent) error {
 	p.log.add("OnAfterRender:" + p.name)
 	if p.afterRenderPanics {
-		panic(panicValue)
+		panic(errPluginPanic)
 	}
 	if p.afterRenderMutate != nil {
 		p.afterRenderMutate(ev)
@@ -134,7 +134,7 @@ func (p *hookPlugin) OnAfterRender(ctx context.Context, ev *AfterRenderEvent) er
 func (p *hookPlugin) OnCacheWrite(ctx context.Context, ev *CacheWriteEvent) error {
 	p.log.add("OnCacheWrite:" + p.name)
 	if p.cacheWritePanics {
-		panic(panicValue)
+		panic(errPluginPanic)
 	}
 	if p.cacheWriteMutate != nil {
 		p.cacheWriteMutate(ev)
@@ -145,7 +145,7 @@ func (p *hookPlugin) OnCacheWrite(ctx context.Context, ev *CacheWriteEvent) erro
 func (p *hookPlugin) OnCacheInvalidate(ctx context.Context, ev *CacheInvalidateEvent) error {
 	p.log.add("OnCacheInvalidate:" + p.name)
 	if p.cacheInvalidatePanics {
-		panic(panicValue)
+		panic(errPluginPanic)
 	}
 	return p.cacheInvalidateErr
 }
@@ -153,7 +153,7 @@ func (p *hookPlugin) OnCacheInvalidate(ctx context.Context, ev *CacheInvalidateE
 func (p *hookPlugin) OnError(ctx context.Context, ev *ErrorEvent) error {
 	p.log.add("OnError:" + p.name)
 	if p.errorPanics {
-		panic(panicValue)
+		panic(errPluginPanic)
 	}
 	return p.errorErr
 }

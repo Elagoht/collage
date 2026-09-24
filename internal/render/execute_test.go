@@ -40,6 +40,7 @@ func TestExecute_PassesResultsThrough(t *testing.T) {
 
 	t.Run("nil context is usable", func(t *testing.T) {
 		var got context.Context
+		//lint:ignore SA1012 a nil context is what this test exercises.
 		err := Execute(nil, 0, func(ctx context.Context) error {
 			got = ctx
 			return nil

@@ -31,7 +31,8 @@ func TestNewRenderContext_DoesNotAliasCallerParams(t *testing.T) {
 
 func TestNewRenderContext_DefaultsNilContext(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	rc := NewRenderContext(nil, req, &Page{Name: "home"}, "en", nil) // nolint:staticcheck // SA1012: deliberate nil ctx, exercising the documented default-to-Background behaviour
+	//lint:ignore SA1012 a nil context is what this test exercises: the documented default to Background.
+	rc := NewRenderContext(nil, req, &Page{Name: "home"}, "en", nil)
 	if rc.Context() == nil {
 		t.Fatal("Context() = nil, want context.Background()")
 	}

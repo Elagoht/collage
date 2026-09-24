@@ -241,7 +241,7 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		var tags []string
 		var err error
 		var elapsed time.Duration
-		data, tags, err, elapsed = pre.wait()
+		data, tags, elapsed, err = pre.wait()
 		state.dataTime += elapsed
 		state.addTags(tags)
 		if err != nil {
