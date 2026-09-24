@@ -1,7 +1,8 @@
 # Changelog
 
-## Unreleased
+## v0.5.1
 
+- **Licensed under MIT.**
 - **`collage dev` rebuilds and restarts on a Go change**, with no tool to install.
   It watches what the program is made of — `.go` files, `go.mod`, `go.sum`, the
   environment file — and never the cache, `dist`, `bin` or hidden directories, so

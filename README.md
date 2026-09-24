@@ -341,3 +341,7 @@ collage serve         # serve dist/ the way a static host would
 [CONTRIBUTING.md](CONTRIBUTING.md) has what a change needs to be merged. A
 vulnerability is reported privately — see [SECURITY.md](SECURITY.md), not an
 issue.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
