@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.7.0
+
+Found moving a real site onto collage.
+
+### Changed
+
+- **A served error page runs the render hooks.** It skipped `BeforeRender` and
+  `AfterRender`, so the 404 a server answered with was not minified, carried no
+  structured data and had no images rewritten — while the `404.html` an export
+  wrote had all three.
+- **A 404 from missing content is logged at debug**, like a route miss. A data
+  handler returning `collage.ErrNotFound` is an answer, and every bot requesting an
+  unknown slug was an ERROR line. It still reaches `OnError` as `ErrNotFound`.
+
+### Added
+
+- **Slots filled per render.** `WithSlotResolver(name, func(rc) ([]*Fragment, error))`
+  decides a slot's fragments per request, after its own fragment's data handler and
+  before theirs — for sections that come from content, reordered with no restart.
+- **Head helpers that escape.** `rc.HoistTitle`, `HoistMeta`, `HoistProperty`,
+  `HoistLink` and `HoistStylesheet`, and `{{stylesheet "/static/x.css"}}` in a
+  template, which hoists a fragment's own stylesheet into the head through its
+  content-addressed URL, once however many fragments ask. `rc.Asset(path)` is that URL
+  in Go.
+- **Export warnings.** A page that reads query parameters (`WithCacheParams`) is
+  written without them, and the report now says so: a static host answers
+  `/blogs?page=2` with the `/blogs` file.
+- **`collage.Effect`** adapts a data handler that only declares things for the page,
+  and **`collage.JSONOf(status, v)`** marshals a JSON action's answer.
+
+### Docs
+
+- The disk cache's namespace includes the forgery key, and everything sharing a
+  `Dir`, a build and a key shares entries — two `App`s in one process included. The
+  scaffolded tests now give each application its own cache directory, so a test no
+  longer reads what the previous one rendered.
+
 ## v0.6.0
 
 - **Links by name.** `{{pageURL "blog-post" "slug" .Slug}}` builds a page's or a
