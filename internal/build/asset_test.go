@@ -276,8 +276,8 @@ func TestBuild_SkipsAPageWithAnUnresolvedToken(t *testing.T) {
 		t.Fatalf("Skipped = %+v, want the one page", report.Skipped)
 	}
 	skip := report.Skipped[0]
-	if skip.Page != "signup" || skip.Locale != "en" || !strings.Contains(skip.Reason, "Dynamic()") {
-		t.Errorf("Skipped[0] = %+v, want page signup locale en with a reason naming Dynamic()", skip)
+	if skip.Page != "signup" || skip.Locale != "en" || !strings.Contains(skip.Reason, "served rather than exported") {
+		t.Errorf("Skipped[0] = %+v, want page signup locale en saying it is served rather than exported", skip)
 	}
 	// And nothing on disk: a skipped page must not leave a half-written file that
 	// a -clean build would otherwise have someone serving.

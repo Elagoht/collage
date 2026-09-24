@@ -86,7 +86,7 @@ var ErrEmptyRender = build.ErrEmptyRender
 // rendered for a static build still contains a request-forgery token placeholder. A
 // built site has no server to replace it with a reader's own token, and no server to
 // submit the form to. Any other page carrying one is not written either, but is
-// recorded in BuildReport.Skipped: declare it Dynamic() to say so up front.
+// recorded in BuildReport.Skipped: it is served rather than exported.
 var ErrUnresolvedToken = build.ErrUnresolvedToken
 
 // ErrBuildPanic is recorded in BuildReport.Errors when rendering or writing one

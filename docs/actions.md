@@ -170,8 +170,8 @@ generated key differs in every process, so a token issued before a restart is re
 after it.
 
 **A page with a form is not exported.** A built site has no server to put a token in
-it or to submit it to, so `collage export` skips such a page and says why. Declare it
-`Dynamic()` to say so up front.
+it or to submit it to, so `collage export` skips such a page and says why. It is
+still served, and still cached if its strategy says so.
 
 **A page with a form is still cached.** What is stored is the body with a *marker*
 where the token goes; what goes on the wire is that body with the reader's own token

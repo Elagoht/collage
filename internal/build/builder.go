@@ -114,14 +114,18 @@ var ErrEmptyRender = errors.New("collage: refusing to write an empty render")
 // so a Static() page with one is skipped at that point and recorded in
 // Report.Skipped with the reason — the same treatment a Dynamic() page gets before
 // it renders, because it is the same situation: a page that belongs to the served
-// site. Saying Dynamic() is how a page with a form says so up front. It is a
-// failure only for the not-found page, which a static host needs as a file.
+// site. It is a failure only for the not-found page, which a static host needs as a file.
 var ErrUnresolvedToken = errors.New("collage: refusing to write a page whose forgery token was never resolved")
 
 // unresolvedTokenReason is the SkipRecord.Reason of a page skipped for carrying a
-// form. It says what to do as well as what happened, because the fix is one call.
-const unresolvedTokenReason = "page carries {{csrfToken}}, and a form needs a server to submit to; " +
-	"declare it Dynamic() to serve it rather than export it"
+// form.
+//
+// It prescribes no strategy. A page with a form may well be Static() on purpose —
+// cached, and invalidated by tag from the action it posts to — and advice to make
+// it Dynamic() would be advice to give that up. The page is fine; it is merely
+// one that is served rather than exported.
+const unresolvedTokenReason = "page carries {{csrfToken}}; a form needs a server to submit to, " +
+	"so it is served rather than exported"
 
 // Renderer is the narrow surface Builder needs from an application: what it
 // contains — pages, documents, and mounted asset file systems — and a way to
