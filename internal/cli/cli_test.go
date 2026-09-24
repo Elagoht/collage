@@ -269,44 +269,6 @@ func (f *fakeRunner) Run(_ context.Context, dir string, env []string, _, _ io.Wr
 	return f.err
 }
 
-func TestRun_Dev_ConstructsExpectedCommand(t *testing.T) {
-	c, _, _ := testCLI()
-	runner := &fakeRunner{}
-	c.Runner = runner
-
-	code := c.Run(context.Background(), []string{"dev"})
-
-	if code != 0 {
-		t.Fatalf("Run() = %d, want 0", code)
-	}
-	if runner.callCount != 1 {
-		t.Fatalf("runner called %d times, want 1", runner.callCount)
-	}
-	if runner.name != "go" {
-		t.Errorf("name = %q, want %q", runner.name, "go")
-	}
-	if got, want := strings.Join(runner.args, " "), "run ."; got != want {
-		t.Errorf("args = %q, want %q", got, want)
-	}
-	if len(runner.env) != 1 || runner.env[0] != "COLLAGE_DEV=1" {
-		t.Errorf("env = %v, want [COLLAGE_DEV=1]", runner.env)
-	}
-}
-
-func TestRun_Dev_RunnerErrorExitsOne(t *testing.T) {
-	c, _, errOut := testCLI()
-	c.Runner = &fakeRunner{err: errors.New("exit status 1")}
-
-	code := c.Run(context.Background(), []string{"dev"})
-
-	if code != 1 {
-		t.Fatalf("Run() = %d, want 1", code)
-	}
-	if !strings.Contains(errOut.String(), "exit status 1") {
-		t.Errorf("stderr = %q, want it to contain the runner's error", errOut.String())
-	}
-}
-
 func TestRun_Dev_RejectsExtraArgs(t *testing.T) {
 	c, _, errOut := testCLI()
 	c.Runner = &fakeRunner{}

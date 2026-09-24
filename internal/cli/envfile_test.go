@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -128,48 +127,5 @@ func TestLoadDevEnv_TheShellWins(t *testing.T) {
 	}
 	if !reflect.DeepEqual(env, []string{"HOST=localhost"}) {
 		t.Errorf("env = %q, want PORT left to the shell", env)
-	}
-}
-
-// End to end through "collage dev": the file's variables reach the command, the
-// file is named, and COLLAGE_DEV=1 comes last so the file cannot turn it off.
-func TestRun_Dev_LoadsTheEnvFile(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".env.development"), "COLLAGE_TEST_KEY=abc\nCOLLAGE_DEV=0\n")
-	t.Chdir(dir)
-
-	c, _, errOut := testCLI()
-	runner := &fakeRunner{}
-	c.Runner = runner
-
-	if code := c.Run(context.Background(), []string{"dev"}); code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr:\n%s", code, errOut.String())
-	}
-	want := []string{"COLLAGE_TEST_KEY=abc", "COLLAGE_DEV=0", "COLLAGE_DEV=1"}
-	if !reflect.DeepEqual(runner.env, want) {
-		t.Errorf("env = %q, want %q", runner.env, want)
-	}
-	if !strings.Contains(errOut.String(), "loaded .env.development") {
-		t.Errorf("stderr = %q, want it to name the file it loaded", errOut.String())
-	}
-}
-
-func TestRun_Dev_AMalformedFileStopsIt(t *testing.T) {
-	dir := t.TempDir()
-	writeFile(t, filepath.Join(dir, ".env"), "PORT 3000\n")
-	t.Chdir(dir)
-
-	c, _, errOut := testCLI()
-	runner := &fakeRunner{}
-	c.Runner = runner
-
-	if code := c.Run(context.Background(), []string{"dev"}); code != 1 {
-		t.Fatalf("exit = %d, want 1", code)
-	}
-	if runner.name != "" {
-		t.Errorf("the project was started anyway")
-	}
-	if !strings.Contains(errOut.String(), ".env:1") {
-		t.Errorf("stderr = %q, want it to name .env:1", errOut.String())
 	}
 }

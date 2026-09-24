@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"time"
 )
 
 // exportUsage is "collage help export"'s own usage text.
@@ -66,14 +67,30 @@ func (c *CLI) runExport(ctx context.Context, args []string) int {
 	return 0
 }
 
+// stopGrace is how long a cancelled child process has to exit after it is
+// interrupted before it is killed.
+const stopGrace = 10 * time.Second
+
 // execRunner is the CommandRunner used outside tests: it runs the command as a
 // real child process via os/exec, connecting its stdio to the given writers.
 type execRunner struct{}
 
 // Run implements CommandRunner by starting a real child process and waiting
 // for it to exit.
+//
+// A cancelled ctx interrupts the process rather than killing it, so a served
+// application shuts down the way it would on Ctrl-C — draining its requests —
+// and is killed only if it has not exited within stopGrace.
 func (execRunner) Run(ctx context.Context, dir string, env []string, stdout, stderr io.Writer, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Cancel = func() error {
+		if err := cmd.Process.Signal(os.Interrupt); err != nil {
+			// Windows cannot deliver an interrupt to another process.
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
+	cmd.WaitDelay = stopGrace
 	cmd.Dir = dir
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr

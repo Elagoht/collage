@@ -200,7 +200,7 @@ to `go` in the current directory, exactly as you would by hand:
 
 | Command | Runs | With |
 | --- | --- | --- |
-| `collage dev` | `go run .` | `COLLAGE_DEV=1` in the environment |
+| `collage dev` | `go build`, then the binary it built — again on every change | `COLLAGE_DEV=1` in the environment |
 | `collage export` | `go run . -collage-build -out <dir>` | `-clean` appended when you passed it |
 
 That is a **contract with your `main.go`**, and the scaffolded one honours both
@@ -209,8 +209,28 @@ to static files when `-collage-build` is passed instead of starting a server. If
 you rewrite `main.go`, keep both halves working or these two commands stop doing
 anything useful in your project.
 
-`collage dev` reloads *templates* from disk on every request. It does not
-hot-reload Go code: a change to a `.go` file still needs a restart.
+### Rebuilding on change
+
+Templates and static files are read from disk on every request in development, so
+editing them needs nothing. A change to Go code is rebuilt and restarted, with no
+tool to install:
+
+- **What is watched** is what the program is made of: `.go` files (test files
+  aside), `go.mod` and `go.sum` at the root, and the environment file. Hidden
+  directories, `bin`, `dist`, `node_modules`, `testdata` and `vendor` are never
+  looked at — so nothing the running program writes, its cache or an export, can
+  set off a rebuild.
+- **The new build is made first.** Only once it compiles is the old process
+  stopped — interrupted, so it drains like it would on Ctrl-C — and the new one
+  started. A change that does not compile leaves the last good build serving, with
+  the compiler's error on screen.
+- **A burst of writes is one rebuild.** A save that touches several files, or a
+  formatter that rewrites one, is waited out before building.
+- It polls rather than subscribing to file-system events, which keeps collage free
+  of dependencies and works the same on every platform. A project is small enough
+  that looking every 300 ms costs nothing noticeable.
+- A program that exits by itself — a panic at startup, a port already in use — is
+  not restarted in a loop; the next change is what starts it again.
 
 ### Environment files
 

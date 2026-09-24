@@ -3,12 +3,12 @@
 //
 // # The collage CLI contract
 //
-// "collage dev" runs `go run .` here with COLLAGE_DEV=1 set, and the variables
-// of .env.development (or .env) added, and "collage export" runs
+// "collage dev" builds this program and runs it with COLLAGE_DEV=1 set and the
+// variables of .env.development (or .env) added, rebuilding and restarting it
+// when its Go code changes; "collage export" runs
 // `go run . -collage-build -out <dir>`. This file honours both by reading that
-// variable and those flags below. Development mode reloads templates from disk
-// on every request; it does not hot-reload Go code, so a change to any .go file
-// here still needs a restart.
+// variable and those flags below. Development mode reads templates and static
+// files from disk on every request, so editing those needs no restart at all.
 //
 // "collage build" needs nothing from this file: it compiles the program, which
 // is something go build does without being told anything.
