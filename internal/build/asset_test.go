@@ -239,13 +239,15 @@ func TestBuild_WritesFingerprintedCopiesThatWereLinked(t *testing.T) {
 	}
 }
 
-// A page carrying an unresolved forgery token is refused rather than written.
+// A page carrying an unresolved forgery token is skipped rather than written.
 //
 // The thing that replaces the placeholder with a reader's own token is the running
 // server, and a built site has no server — none to substitute, and none to submit
 // the form to either. Written, the file would ship with the placeholder in it and a
-// form that cannot work, saying nothing.
-func TestBuild_RefusesAPageWithAnUnresolvedToken(t *testing.T) {
+// form that cannot work, saying nothing. Failed, the export of a site with one form
+// on a Static() page would fail as a whole, when the page is merely one that
+// belongs to the served site — which is what a skip says.
+func TestBuild_SkipsAPageWithAnUnresolvedToken(t *testing.T) {
 	out := resolvedTempDir(t)
 	const marker = "collage-csrf-deadbeefdeadbeefdeadbeefdeadbeef"
 
@@ -267,16 +269,20 @@ func TestBuild_RefusesAPageWithAnUnresolvedToken(t *testing.T) {
 	}
 	report, buildErr := b.Build(context.Background())
 
-	if buildErr == nil {
-		t.Fatal("Build() = nil error, want a refusal")
+	if buildErr != nil {
+		t.Fatalf("Build() = %v, want nil: a page with a form is skipped, not failed", buildErr)
 	}
-	if !errors.Is(buildErr, ErrUnresolvedToken) {
-		t.Fatalf("Build() error = %v, want ErrUnresolvedToken", buildErr)
+	if len(report.Skipped) != 1 {
+		t.Fatalf("Skipped = %+v, want the one page", report.Skipped)
 	}
-	// And nothing on disk: a refused page must not leave a half-written file that
+	skip := report.Skipped[0]
+	if skip.Page != "signup" || skip.Locale != "en" || !strings.Contains(skip.Reason, "Dynamic()") {
+		t.Errorf("Skipped[0] = %+v, want page signup locale en with a reason naming Dynamic()", skip)
+	}
+	// And nothing on disk: a skipped page must not leave a half-written file that
 	// a -clean build would otherwise have someone serving.
 	if _, err := os.Stat(filepath.Join(out, "signup", "index.html")); !os.IsNotExist(err) {
-		t.Errorf("the refused page was written anyway (stat err = %v)", err)
+		t.Errorf("the skipped page was written anyway (stat err = %v)", err)
 	}
 	if len(report.Written) != 0 {
 		t.Errorf("Written = %v, want nothing", report.Written)

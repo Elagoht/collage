@@ -110,10 +110,18 @@ var ErrEmptyRender = errors.New("collage: refusing to write an empty render")
 // to explain why — assuming there were anything to submit to, which there is not,
 // because a form needs a server and a built site is files.
 //
-// So it is refused rather than written. A page with a form belongs to the served
-// site, and saying Dynamic() is how it says so; the build then skips it, with a
-// reason, instead of shipping something broken.
+// So it is not written. A page is only known to carry a form once it has rendered,
+// so a Static() page with one is skipped at that point and recorded in
+// Report.Skipped with the reason — the same treatment a Dynamic() page gets before
+// it renders, because it is the same situation: a page that belongs to the served
+// site. Saying Dynamic() is how a page with a form says so up front. It is a
+// failure only for the not-found page, which a static host needs as a file.
 var ErrUnresolvedToken = errors.New("collage: refusing to write a page whose forgery token was never resolved")
+
+// unresolvedTokenReason is the SkipRecord.Reason of a page skipped for carrying a
+// form. It says what to do as well as what happened, because the fix is one call.
+const unresolvedTokenReason = "page carries {{csrfToken}}, and a form needs a server to submit to; " +
+	"declare it Dynamic() to serve it rather than export it"
 
 // Renderer is the narrow surface Builder needs from an application: what it
 // contains — pages, documents, and mounted asset file systems — and a way to
@@ -356,6 +364,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 
 	written := make([]string, len(tasks))
 	taskErrs := make([]error, len(tasks))
+	taskSkips := make([]*SkipRecord, len(tasks))
 
 	sem := make(chan struct{}, b.opts.Concurrency)
 	var wg sync.WaitGroup
@@ -381,6 +390,16 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 				}
 			}()
 			target, err := b.renderAndWrite(ctx, outDirResolved, task)
+			if errors.Is(err, ErrUnresolvedToken) {
+				// Skipped rather than failed. Nothing is wrong with the page; it
+				// has a form, and a form needs the server a built site lacks.
+				taskSkips[i] = &SkipRecord{
+					Page:   task.page.Name,
+					Locale: task.locale,
+					Reason: unresolvedTokenReason,
+				}
+				return
+			}
 			if err != nil {
 				taskErrs[i] = err
 				return
@@ -394,6 +413,10 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	for i := range tasks {
 		if taskErrs[i] != nil {
 			errs = append(errs, taskErrs[i])
+			continue
+		}
+		if taskSkips[i] != nil {
+			report.Skipped = append(report.Skipped, *taskSkips[i])
 			continue
 		}
 		report.Written = append(report.Written, written[i])
