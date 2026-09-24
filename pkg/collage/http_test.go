@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -229,5 +230,77 @@ func TestJSONOf(t *testing.T) {
 	}
 	if _, err := collage.JSONOf(http.StatusOK, func() {}); err == nil {
 		t.Error("JSONOf(func) = nil error, want the marshal error")
+	}
+}
+
+// A preview is a fresh render nobody else is served: the published page stays in
+// the cache for everyone else, and the draft never enters it.
+func TestSkipCache_Preview(t *testing.T) {
+	version := "published"
+	var mu sync.Mutex
+	app, err := collage.New(&collage.Config{
+		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{
+			FS:   fstest.MapFS{"t/post.html": {Data: []byte(`<p>{{.}}</p>`)}},
+			Root: "t",
+		},
+		Cache: collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Minute},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	content := collage.NewFragment("post", "post.html").
+		WithDataHandler(collage.DataHandler(func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
+			if drafts, _ := ctx.Value(langKey{}).(bool); drafts {
+				return "draft", nil, nil
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			return version, nil, nil
+		})).
+		Build()
+	if err := app.RegisterPage(collage.NewPage("post").WithContent(content).WithPath("en", "/post").Incremental(time.Minute).Build()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if err := app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Preview") == "yes" {
+				if err := collage.SkipCache(r); err != nil {
+					t.Errorf("SkipCache() = %v", err)
+				}
+				r = r.WithContext(context.WithValue(r.Context(), langKey{}, true))
+			}
+			next.ServeHTTP(w, r)
+		})
+	}); err != nil {
+		t.Fatalf("Use: %v", err)
+	}
+	h := app.Handler()
+	get := func(preview bool) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet, "/post", nil)
+		if preview {
+			req.Header.Set("X-Preview", "yes")
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if body := get(false).Body.String(); body != "<p>published</p>" {
+		t.Fatalf("first reader = %q", body)
+	}
+	mu.Lock()
+	version = "published, then edited"
+	mu.Unlock()
+
+	preview := get(true)
+	if body := preview.Body.String(); body != "<p>draft</p>" {
+		t.Errorf("preview = %q, want the draft rather than the cached page", body)
+	}
+	if cc := preview.Header().Get("Cache-Control"); cc != "private, no-store" {
+		t.Errorf("preview Cache-Control = %q, want private, no-store", cc)
+	}
+	if body := get(false).Body.String(); body != "<p>published</p>" {
+		t.Errorf("reader after the preview = %q, want the cached published page: the draft must not enter the cache", body)
 	}
 }

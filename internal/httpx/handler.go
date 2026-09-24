@@ -581,7 +581,8 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// Only GET and HEAD may be served from cache, and only a cacheable strategy
 	// is looked up at all: an unsafe method's response is never a cached page.
 	key := ""
-	cacheable := h.cache != nil && page.Strategy.Cacheable() && (r.Method == http.MethodGet || r.Method == http.MethodHead)
+	cacheable := h.cache != nil && page.Strategy.Cacheable() && (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+		!requestSkipsCache(r)
 	if cacheable {
 		// The query is a cache dimension, not decoration: a fragment's data
 		// handler receives the whole *http.Request and may legitimately render
@@ -957,6 +958,11 @@ func (h *Handler) ttlFor(strategy types.RenderStrategy, cacheTTL time.Duration) 
 // see ttlFor for why it is parameterized rather than typed on either route kind.
 func (h *Handler) setCacheHeaders(header http.Header, r *http.Request, strategy types.RenderStrategy, cacheTTL time.Duration) {
 	control := h.cacheControl(strategy, cacheTTL)
+	if skipsCache(r) {
+		// A preview's page is one reader's, and must not be kept by anything
+		// between the server and them either.
+		control = "private, no-store"
+	}
 	header.Set("Cache-Control", control)
 
 	if !strings.HasPrefix(control, "public") {

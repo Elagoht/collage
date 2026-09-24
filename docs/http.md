@@ -70,6 +70,65 @@ app.Use(func(next http.Handler) http.Handler {
 This is how to negotiate a language without collage doing it for you — see
 [routing](routing.md#locales) for why it no longer does.
 
+## `collage.SkipCache`: previews
+
+An editor looking at an unpublished draft must see the draft, not the published page
+the cache holds — and the draft must never become the page everyone else is served.
+`collage.SkipCache(r)`, from middleware, gives a request a fresh render that is
+neither read from the cache nor written to it, and marks the response `private,
+no-store`.
+
+Who may preview is yours to decide; collage has no opinion about sessions. A signed
+cookie is enough for most sites. An action turns preview on when the CMS sends an
+editor to it with a secret:
+
+```go
+var previewKey = []byte(os.Getenv("PREVIEW_KEY"))
+
+func sign(value string) string {
+	mac := hmac.New(sha256.New, previewKey)
+	mac.Write([]byte(value))
+	return value + "." + hex.EncodeToString(mac.Sum(nil))
+}
+
+// GET /api/preview?secret=...&slug=... — the URL the CMS's "preview" button opens.
+func startPreview(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+	query := rc.Request.URL.Query()
+	if !hmac.Equal([]byte(query.Get("secret")), []byte(os.Getenv("PREVIEW_SECRET"))) {
+		return collage.NoContent(http.StatusUnauthorized), nil
+	}
+	target, err := app.URL("blog-post", "", map[string]string{"slug": query.Get("slug")})
+	if err != nil {
+		return nil, err
+	}
+	result := collage.SeeOther(target)
+	result.Header = http.Header{"Set-Cookie": {(&http.Cookie{
+		Name: "preview", Value: sign("on"), Path: "/", HttpOnly: true, Secure: true,
+		SameSite: http.SameSiteLaxMode, MaxAge: 3600,
+	}).String()}}
+	return result, nil
+}
+```
+
+and middleware honours it:
+
+```go
+type draftsKey struct{}
+
+app.Use(func(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if cookie, err := r.Cookie("preview"); err == nil && hmac.Equal([]byte(cookie.Value), []byte(sign("on"))) {
+			collage.SkipCache(r)
+			r = r.WithContext(context.WithValue(r.Context(), draftsKey{}, true))
+		}
+		next.ServeHTTP(w, r)
+	})
+})
+```
+
+A data handler asks the CMS for drafts when `ctx.Value(draftsKey{})` is true. A static
+export renders without a request, so it never sees a draft.
+
 ## `app.Handle`: your own handler
 
 ```go

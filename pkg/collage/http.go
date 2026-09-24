@@ -32,6 +32,28 @@ func Vary(r *http.Request, header, value string) error {
 	return httpx.Vary(r, header, value)
 }
 
+// SkipCache declares, from middleware, that r is answered with a fresh render that
+// is neither read from the page cache nor written to it, and marked private and
+// no-store. It is what a preview is made of:
+//
+//	app.Use(func(next http.Handler) http.Handler {
+//		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//			if validPreviewCookie(r) { // yours to decide
+//				collage.SkipCache(r)
+//				r = r.WithContext(withDrafts(r.Context()))
+//			}
+//			next.ServeHTTP(w, r)
+//		})
+//	})
+//
+// An editor then sees the draft rather than the published page the cache holds,
+// and nobody else is ever served the draft. Who may preview — a signed cookie, a
+// session, a token from the CMS — is the application's own decision. It returns
+// ErrVaryTooLate once the cache has been consulted.
+func SkipCache(r *http.Request) error {
+	return httpx.SkipCache(r)
+}
+
 // ErrVaryTooLate is returned by Vary once the request's cache key has been
 // computed. Declare dimensions from middleware.
 var ErrVaryTooLate = httpx.ErrVaryTooLate

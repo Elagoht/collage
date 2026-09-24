@@ -102,6 +102,9 @@ type varySet struct {
 	values  map[string]string
 	headers []string
 	frozen  bool
+	// skip is set by SkipCache: this request is neither answered from the cache
+	// nor stored in it.
+	skip bool
 }
 
 type varySetKey struct{}
@@ -146,6 +149,54 @@ func Vary(r *http.Request, header, value string) error {
 	}
 	set.values[header] = value
 	return nil
+}
+
+// SkipCache declares that r is answered with a fresh render that is neither read
+// from the page cache nor written to it, and marked private and no-store.
+//
+// It is what a preview needs: an editor looking at an unpublished draft must not be
+// served the published page from the cache, and the draft must not become the page
+// every other reader is served. Who may skip the cache is the application's to
+// decide, in its own middleware — a signed cookie, a session, a secret in the URL.
+//
+// Like Vary it must be called before the cache key is computed, which in practice
+// means from middleware registered with App.Use.
+func SkipCache(r *http.Request) error {
+	set, ok := r.Context().Value(varySetKey{}).(*varySet)
+	if !ok {
+		return ErrVaryOutsideRequest
+	}
+	set.mu.Lock()
+	defer set.mu.Unlock()
+	if set.frozen {
+		return ErrVaryTooLate
+	}
+	set.skip = true
+	return nil
+}
+
+// requestSkipsCache reports whether r declared SkipCache, and freezes its
+// declarations: whether the cache is consulted has now been decided.
+func requestSkipsCache(r *http.Request) bool {
+	set, ok := r.Context().Value(varySetKey{}).(*varySet)
+	if !ok {
+		return false
+	}
+	set.mu.Lock()
+	defer set.mu.Unlock()
+	set.frozen = true
+	return set.skip
+}
+
+// skipsCache reports whether r declared SkipCache, without freezing anything.
+func skipsCache(r *http.Request) bool {
+	set, ok := r.Context().Value(varySetKey{}).(*varySet)
+	if !ok {
+		return false
+	}
+	set.mu.Lock()
+	defer set.mu.Unlock()
+	return set.skip
 }
 
 // requestVary freezes r's declared dimensions and returns them as cache-key

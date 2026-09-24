@@ -54,7 +54,8 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 
 	// Only GET and HEAD may be served from cache, and only a cacheable strategy is
 	// looked up at all — mirrors the page path's own cacheable computation.
-	cacheable := h.cache != nil && doc.Strategy.Cacheable() && (r.Method == http.MethodGet || r.Method == http.MethodHead)
+	cacheable := h.cache != nil && doc.Strategy.Cacheable() && (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+		!requestSkipsCache(r)
 	key := ""
 	if cacheable {
 		key = cache.Key(cache.KeyInput{
