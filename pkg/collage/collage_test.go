@@ -154,8 +154,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	cfg := &Config{
-		DevMode: true,
-		Logger:  logger,
+		DevMode:  true,
+		DevWatch: []string{"content"},
+		Logger:   logger,
 		Server: ServerConfig{
 			Host:            "0.0.0.0",
 			Port:            8080,
@@ -219,6 +220,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	}
 	if !core.Cache.Enabled || core.Cache.Type != "memory" {
 		t.Errorf("Cache = %+v, want it enabled and of type memory", core.Cache)
+	}
+	if len(core.DevWatch) != 1 || core.DevWatch[0] != "content" {
+		t.Errorf("DevWatch = %v, want [content]", core.DevWatch)
 	}
 	if core.Cache.DefaultTTL != 7*time.Second || core.Cache.MaxEntries != 42 {
 		t.Errorf("Cache = %+v, want a 7s TTL and 42 entries", core.Cache)

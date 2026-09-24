@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **`Config.DevWatch`** names directories, besides the templates and the mounts,
+  whose changes reload a development page — content an application reads from disk,
+  such as Markdown. Found building the documentation site, whose pages are Markdown
+  and did not reload when edited.
+
 ## v0.9.0
 
 - **`collage.Cached` keeps data across pages and requests.** The page cache stores

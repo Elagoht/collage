@@ -125,6 +125,8 @@ type Config struct {
 	// DevMode enables development-mode behaviour across the framework. The
 	// effective value is this or Template.DevMode; see App.DevMode.
 	DevMode bool
+	// DevWatch lists directories whose changes reload a development page.
+	DevWatch []string
 	// Security configures request-forgery protection.
 	Security SecurityConfig
 	// Logger is the structured logger the framework writes through and hands to
@@ -748,10 +750,19 @@ func (a *App) pageReady(p *types.Page) bool {
 // devSources are the file systems, besides the mounts, whose changes reload a
 // development page: the templates, when they are read from disk.
 func (a *App) devSources() []fs.FS {
-	if a.devTemplateDir == "" {
-		return nil
+	var sources []fs.FS
+	if a.devTemplateDir != "" {
+		sources = append(sources, os.DirFS(a.devTemplateDir))
 	}
-	return []fs.FS{os.DirFS(a.devTemplateDir)}
+	for _, dir := range a.cfg.DevWatch {
+		// A directory that is not there is not an error: the same configuration
+		// runs from wherever the binary is started, and in production none of it
+		// is read.
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			sources = append(sources, os.DirFS(dir))
+		}
+	}
+	return sources
 }
 
 // buildFailed memoises a failed handler build: it logs err once, installs the

@@ -495,6 +495,10 @@ fragment and the error, and for a template the file and line. Your own error pag
 gets the same panel above it, with the failure it is standing in for. Neither ever
 reaches the cache, and neither exists outside development.
 
+Content your application reads from disk in development — Markdown pages, JSON data
+— is neither a template nor a mount, so name its directory in `Config.DevWatch` to
+have a page reload when it changes too.
+
 Every page it serves in answer to a GET carries a small script that reloads it
 when a template or a mounted file changes, and when the program restarts — so under
 `collage dev`, which rebuilds on a Go change, saving any file is enough. The script

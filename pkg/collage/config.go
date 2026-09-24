@@ -63,6 +63,10 @@ type Config struct {
 	// DevMode enables development-mode behaviour across the framework. See IsDevMode
 	// for the effective value, which also considers Template.DevMode.
 	DevMode bool
+	// DevWatch lists directories, besides the templates and the mounts, whose
+	// changes reload a development page: content the application reads from disk
+	// in development — Markdown pages, JSON data. Ignored outside development.
+	DevWatch []string
 	// Logger is the structured logger the framework writes through, and the one
 	// plugins receive from Host.Logger.
 	//

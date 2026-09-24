@@ -357,8 +357,9 @@ func New(cfg *Config) (*App, error) {
 // adding a field to one and forgetting the other becomes visible.
 func toCoreConfig(cfg *Config) core.Config {
 	return core.Config{
-		DevMode: cfg.DevMode,
-		Logger:  cfg.Logger,
+		DevMode:  cfg.DevMode,
+		DevWatch: cfg.DevWatch,
+		Logger:   cfg.Logger,
 		Server: core.ServerConfig{
 			Host:            cfg.Server.Host,
 			Port:            cfg.Server.Port,
