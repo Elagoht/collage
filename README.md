@@ -2,6 +2,10 @@
 
 A Go framework for server-side, component-based rendering.
 
+**Documentation: [collage.furkanbaytekin.dev](https://collage.furkanbaytekin.dev)** — the guide,
+from a first page to deployment. The site is itself a collage application, exported to static
+files; its source is [Elagoht/collage-docs](https://github.com/Elagoht/collage-docs).
+
 A page is a **layout fragment** wrapped around a **content fragment**, and a
 fragment is a template plus an optional data handler plus the slots it exposes to
 its children. Fragments compose; pages are configuration. Output is cached by
