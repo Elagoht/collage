@@ -361,3 +361,40 @@ func TestBuild_WithoutANotFoundPage(t *testing.T) {
 		t.Errorf("Skipped = %v, want nothing: declaring no 404 page is not a skip", report.Skipped)
 	}
 }
+
+// A page that reads query parameters is written without them, and the report says
+// so: a static host answers /blogs?page=2 with the /blogs file.
+func TestBuild_WarnsAboutAPageThatReadsTheQuery(t *testing.T) {
+	out := resolvedTempDir(t)
+	list := &types.Page{
+		Name:            "blogs",
+		Paths:           map[string]string{"en": "/blogs"},
+		Strategy:        types.StrategyStatic,
+		CacheParams:     []string{"page", "tag"},
+		ContentFragment: &types.Fragment{Name: "blogs-content", TemplatePath: "blogs.html"},
+	}
+	plain := &types.Page{
+		Name:            "about",
+		Paths:           map[string]string{"en": "/about"},
+		Strategy:        types.StrategyStatic,
+		CacheParams:     []string{},
+		ContentFragment: &types.Fragment{Name: "about-content", TemplatePath: "about.html"},
+	}
+	app := &fakeRenderer{pages: []*types.Page{list, plain}, renderHTML: "<p>page</p>"}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, buildErr := b.Build(context.Background())
+	if buildErr != nil {
+		t.Fatalf("Build() = %v", buildErr)
+	}
+	if len(report.Written) != 2 {
+		t.Errorf("Written = %v, want both pages written", report.Written)
+	}
+	if len(report.Warnings) != 1 || report.Warnings[0].Page != "blogs" ||
+		!strings.Contains(report.Warnings[0].Reason, "page, tag") {
+		t.Errorf("Warnings = %+v, want one for blogs naming its parameters", report.Warnings)
+	}
+}

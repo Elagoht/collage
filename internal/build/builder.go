@@ -242,6 +242,14 @@ type Options struct {
 	AllowDegraded bool
 }
 
+// WarningRecord describes a page the build wrote, but not all of.
+type WarningRecord struct {
+	// Page is the page's Name.
+	Page string
+	// Reason explains what the written file does not contain.
+	Reason string
+}
+
 // SkipRecord describes one page or document, or one locale of one, that a static
 // build could not produce, and why.
 type SkipRecord struct {
@@ -266,6 +274,10 @@ type Report struct {
 	// Skipped lists every page or document, or locale of one, the build could not
 	// produce statically.
 	Skipped []SkipRecord
+	// Warnings lists every page that was written but is not the whole of what
+	// the served page is — one whose content depends on a query string, which a
+	// file has no way to carry.
+	Warnings []WarningRecord
 	// Errors lists every render, path-resolution, or write failure encountered.
 	// Build's returned error is errors.Join of exactly these, so a caller that
 	// wants the individual failures can read them here instead of unwrapping the
@@ -414,6 +426,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	wg.Wait()
 
 	errs := append([]error(nil), enumerateErrs...)
+	warned := make(map[*types.Page]bool)
 	for i := range tasks {
 		if taskErrs[i] != nil {
 			errs = append(errs, taskErrs[i])
@@ -424,6 +437,20 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 			continue
 		}
 		report.Written = append(report.Written, written[i])
+
+		// A page that declared which query parameters it reads renders
+		// differently for each of them, and a file has no query string: a static
+		// host answers /blogs?page=2 with the /blogs file, so pagination and
+		// filters look like they work and do not. Written anyway — the page
+		// without a query is a real page — but said.
+		if page := tasks[i].page; len(page.CacheParams) > 0 && !warned[page] {
+			warned[page] = true
+			report.Warnings = append(report.Warnings, WarningRecord{
+				Page: page.Name,
+				Reason: fmt.Sprintf("reads the query parameters %s, and a static file has no query string: only the page without them was written",
+					strings.Join(page.CacheParams, ", ")),
+			})
+		}
 	}
 
 	docWritten, docSkipped, docErrs := b.buildDocuments(ctx, outDirResolved)

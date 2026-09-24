@@ -36,6 +36,10 @@ type PathInstance = build.PathInstance
 // could not produce, and why.
 type SkipRecord = build.SkipRecord
 
+// WarningRecord describes a page a static build wrote, but not all of: one whose
+// content depends on a query string. See BuildReport.Warnings.
+type WarningRecord = build.WarningRecord
+
 // ErrOutputPathCollision is returned by Build when two pages would be written to
 // the same file — two patterns differing only in a trailing slash, or a
 // PathProvider returning one path twice. It is reported before anything renders, so

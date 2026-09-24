@@ -116,6 +116,12 @@ truncated: a skip is the build telling you a page is not in its output, and that
 what a build is for saying. The last line carries every count and is coloured by the
 worst of them, so it answers "how did that go" without being read.
 
+A **warning** is a page that was written but is not the whole of what the server
+answers: one that declared, with `WithCacheParams`, which query parameters it reads.
+A static host answers `/blogs?page=2` with the `/blogs` file, so pagination and
+filters look like they work and do not — the export writes the page without a query
+and says so, rather than letting it pass for a working archive.
+
 Colour and the ✓ ▲ ✗ markers appear only on a terminal, and not when `NO_COLOR` is
 set or `TERM` is `dumb`. Piped to a file or a CI log it is plain ASCII, because
 escape codes in a log outlive the session that wrote them.

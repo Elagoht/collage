@@ -39,6 +39,7 @@ func PrintBuildReport(w io.Writer, report *BuildReport, buildErr error) {
 
 	printWritten(w, s, report.Written)
 	printSkipped(w, s, report.Skipped)
+	printWarnings(w, s, report.Warnings)
 	printErrors(w, s, report.Errors, buildErr)
 	printSummary(w, s, report)
 }
@@ -81,6 +82,19 @@ func printSkipped(w io.Writer, s term.Style, skipped []SkipRecord) {
 	}
 }
 
+func printWarnings(w io.Writer, s term.Style, warnings []WarningRecord) {
+	if len(warnings) == 0 {
+		return
+	}
+
+	// Never truncated, for the same reason as a skip: each one is a page whose
+	// file is not the whole of what the server answers.
+	fmt.Fprintf(w, "\n%s %s\n", s.Warn(s.Mark("▲", "!")), s.Bold(plural(len(warnings), "warning", "warnings")))
+	for _, warning := range warnings {
+		fmt.Fprintf(w, "    %s  %s\n", s.Warn(warning.Page), s.Dim(warning.Reason))
+	}
+}
+
 func printErrors(w io.Writer, s term.Style, errs []error, buildErr error) {
 	// buildErr is errors.Join of exactly report.Errors, so the list is what to
 	// print — unless a build failed before it could record any, which is the one
@@ -104,8 +118,11 @@ func printSummary(w io.Writer, s term.Style, report *BuildReport) {
 		fmt.Sprintf("%d written", len(report.Written)),
 		fmt.Sprintf("%d skipped", len(report.Skipped)),
 		fmt.Sprintf("%d failed", len(report.Errors)),
-		round(report.Duration),
 	}
+	if len(report.Warnings) > 0 {
+		parts = append(parts, plural(len(report.Warnings), "warning", "warnings"))
+	}
+	parts = append(parts, round(report.Duration))
 	line := strings.Join(parts, " · ")
 
 	// Coloured by the worst thing in it, so the last line of the output says how
@@ -113,7 +130,7 @@ func printSummary(w io.Writer, s term.Style, report *BuildReport) {
 	switch {
 	case len(report.Errors) > 0:
 		line = s.Fail(line)
-	case len(report.Skipped) > 0:
+	case len(report.Skipped) > 0 || len(report.Warnings) > 0:
 		line = s.Warn(line)
 	default:
 		line = s.OK(line)

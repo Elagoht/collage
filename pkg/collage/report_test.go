@@ -120,3 +120,18 @@ func TestPrintBuildReport_NilReportIsNotACrash(t *testing.T) {
 		t.Errorf("output = %q, want nothing", buf.String())
 	}
 }
+
+func TestPrintBuildReport_Warnings(t *testing.T) {
+	var out strings.Builder
+	PrintBuildReport(&out, &BuildReport{
+		Written:  []string{"/tmp/dist/blogs/index.html"},
+		Warnings: []WarningRecord{{Page: "blogs", Reason: "reads the query parameters page"}},
+	}, nil)
+	got := out.String()
+	if !strings.Contains(got, "1 warning") || !strings.Contains(got, "blogs  reads the query parameters page") {
+		t.Errorf("output = %q, want the warning named and counted", got)
+	}
+	if !strings.Contains(got, "1 written · 0 skipped · 0 failed · 1 warning") {
+		t.Errorf("summary = %q, want the warning in the summary line", got)
+	}
+}
