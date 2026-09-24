@@ -1414,7 +1414,12 @@ func TestRouteMissAndContentMissCarryDistinctSentinels(t *testing.T) {
 	}
 }
 
-func TestRouteMissLogsAtDebugAndContentMissAtError(t *testing.T) {
+// Neither kind of 404 is a failure of the site: a route miss is a bad link, a
+// content miss is a record that does not exist, and every bot produces both all
+// day. Both are logged below error level — and the content miss still names its
+// fragment and still reaches OnError as ErrNotFound, so a plugin that counts them
+// can.
+func TestRouteMissAndContentMissLogAtDebug(t *testing.T) {
 	page := testPage("blog", "/blog", types.StrategyStatic)
 	env := newEnv(t, []*types.Page{page})
 	env.engine.set("blog", fakeRender{
@@ -1433,8 +1438,8 @@ func TestRouteMissLogsAtDebugAndContentMissAtError(t *testing.T) {
 	if records[0].level != slog.LevelDebug || records[0].stage != stageNotFound {
 		t.Errorf("route miss logged as %+v, want debug level at stage %q", records[0], stageNotFound)
 	}
-	if records[1].level != slog.LevelError || records[1].stage != stageRender {
-		t.Errorf("content miss logged as %+v, want error level at stage %q: it is a failure inside the application", records[1], stageRender)
+	if records[1].level != slog.LevelDebug || records[1].stage != stageRender {
+		t.Errorf("content miss logged as %+v, want debug level at stage %q: a missing record is an answer, not a failure", records[1], stageRender)
 	}
 	if records[1].fragment != "post" {
 		t.Errorf("content miss record fragment = %q, want the failing fragment named", records[1].fragment)

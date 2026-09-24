@@ -182,3 +182,51 @@ func TestNotFound_FallsBackToGlobalNotFoundPage(t *testing.T) {
 		t.Errorf("cache entries = %d, want 0: a not-found render must never be cached", entries)
 	}
 }
+
+// A served error page goes through the render hooks like any other page, so it is
+// the page a plugin shaped — minified, carrying structured data, images rewritten —
+// and the same one a static export writes as 404.html.
+func TestNotFound_ServedErrorPageRunsTheRenderHooks(t *testing.T) {
+	global404 := &types.Page{
+		Name:            "global-404",
+		ContentFragment: &types.Fragment{Name: "global-404-content", TemplatePath: "global-notfound.html"},
+	}
+	rt := router.New(router.LocaleOptions{Default: "en"})
+	if err := rt.RegisterNotFound(global404); err != nil {
+		t.Fatalf("RegisterNotFound() error = %v", err)
+	}
+
+	env := newRealEndToEndEnv(t, rt)
+	env.plugins.replaceHTML = []byte("<p>shaped by a plugin</p>")
+	rec := env.get("/no-such-page")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if body := rec.Body.String(); body != "<p>shaped by a plugin</p>" {
+		t.Errorf("body = %q, want the HTML the AfterRender hook produced", body)
+	}
+	events := strings.Join(env.plugins.recorded(), ",")
+	if !strings.Contains(events, "BeforeRender") || !strings.Contains(events, "AfterRender") {
+		t.Errorf("hooks = %s, want BeforeRender and AfterRender for the error page", events)
+	}
+}
+
+// Content that does not exist is not a failure of the site: an unknown slug is
+// logged below error level, like a route miss.
+func TestNotFound_MissingContentIsNotLoggedAsAnError(t *testing.T) {
+	page := testPage("post", "/blog/{slug}", types.StrategyDynamic)
+	env := newEnv(t, []*types.Page{page})
+	env.engine.set("post", fakeRender{err: fmt.Errorf("fetch post: %w", types.ErrNotFound), notFound: true})
+
+	if rec := env.get("/blog/nope"); rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	records := env.logs.recordsFor("collage: request failed")
+	if len(records) != 1 {
+		t.Fatalf("records = %d, want the miss recorded once", len(records))
+	}
+	if records[0].level >= slog.LevelError {
+		t.Errorf("an unknown slug was logged at %v, want below error level", records[0].level)
+	}
+}

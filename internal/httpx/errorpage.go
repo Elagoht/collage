@@ -111,6 +111,12 @@ func (h *Handler) reportError(r *http.Request, f failure) {
 	switch {
 	case f.stage == stageNotFound:
 		level = slog.LevelDebug
+	case f.status == http.StatusNotFound && errors.Is(f.err, types.ErrNotFound):
+		// A data handler saying the content does not exist — an unknown slug —
+		// is a route miss one step later: the path matched a pattern, and the
+		// record behind it is not there. Every bot and every mistyped link does
+		// it, so it is logged where a route miss is.
+		level = slog.LevelDebug
 	case f.stage == stageAsset && f.status < http.StatusInternalServerError:
 		level = slog.LevelDebug
 	case f.stage == stageRoute && f.status < http.StatusInternalServerError:
@@ -190,21 +196,49 @@ func (h *Handler) resolveError(page *types.Page) *types.Page {
 // itself is an outage rather than a bad response. The render's dependency tags are
 // deliberately dropped and its output is never cached, for the same reason no error
 // response is: a transient failure must not be frozen in front of later requests.
+//
+// It runs the BeforeRender and AfterRender hooks exactly as a page does. Without
+// them the error page a server answers with is not the one a plugin shaped: the
+// minifier never ran on it, the structured data was never emitted, the images were
+// never rewritten — and the 404.html a static export writes, which goes through the
+// hooks, differs from the 404 the same site serves.
 func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) ([]byte, bool) {
 	ctx := r.Context()
-
-	result, err := h.renderer.Render(ctx, types.NewRenderContext(ctx, r, page, f.locale, nil))
-	if err != nil {
-		h.logger.Error("collage: error page render failed", "page", page.Name, "status", f.status, "error", err)
+	fail := func(message string, err error) ([]byte, bool) {
+		h.logger.Error(message, "page", page.Name, "status", f.status, "error", err)
 		h.reportErrorPageFailure(r, page, err)
 		return nil, false
 	}
-	if len(result.HTML) == 0 {
-		h.logger.Error("collage: error page rendered empty", "page", page.Name, "status", f.status)
-		h.reportErrorPageFailure(r, page, fmt.Errorf("%w: page %q", ErrEmptyErrorPage, page.Name))
-		return nil, false
+
+	rc := types.NewRenderContext(ctx, r, page, f.locale, nil)
+	if err := h.plugins.BeforeRender(ctx, &plugin.BeforeRenderEvent{
+		Context: rc,
+		Page:    page,
+		Locale:  f.locale,
+		Path:    r.URL.Path,
+	}); err != nil {
+		return fail("collage: error page before-render hook failed", err)
 	}
-	return result.HTML, true
+
+	result, err := h.renderer.Render(ctx, rc)
+	if err != nil {
+		return fail("collage: error page render failed", err)
+	}
+
+	afterRender := &plugin.AfterRenderEvent{
+		Page:     page,
+		Locale:   f.locale,
+		Degraded: result.Degraded(),
+		Data:     rc.SharedData,
+		HTML:     result.HTML,
+	}
+	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {
+		return fail("collage: error page after-render hook failed", err)
+	}
+	if len(afterRender.HTML) == 0 {
+		return fail("collage: error page rendered empty", fmt.Errorf("%w: page %q", ErrEmptyErrorPage, page.Name))
+	}
+	return afterRender.HTML, true
 }
 
 // reportErrorPageFailure tells plugins that the error page itself is broken, under
