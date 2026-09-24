@@ -107,7 +107,7 @@ twice. Send the reader somewhere that can say so:
 return collage.SeeOther("/contact/thanks"), nil
 ```
 
-`examples/magazine` does both — its newsletter form answers 303 on success and 422
+A scaffolded project does both — its sign-up form answers 303 on success and 422
 with the page on failure — so each shape is visible next to the other.
 
 The exception is a submission that changed nothing and can be repeated harmlessly: a
@@ -205,8 +205,7 @@ collage.NewPage("search").
 
 `GET /search/results?q=grid` renders that fragment and nothing else — its data
 handler runs, its children are prefetched and rendered, its failure policy applies,
-because it is the same walk started lower down. In `examples/magazine` the page is
-about 3 KB and the fragment about 700 bytes.
+because it is the same walk started lower down.
 
 It is the answer to refreshing part of a page without a client framework: fetch the
 URL, replace the element. Combined with an action that returns a `Fragment`, a form

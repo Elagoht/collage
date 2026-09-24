@@ -139,26 +139,6 @@ Later, when the homepage's content changes:
 err := app.InvalidateTags(ctx, "homepage")
 ```
 
-There are two worked examples, and they answer different questions.
-
-[`examples/blog`](examples/blog) shows the mechanisms one at a time against an
-in-process store: shared layouts, `/blog/{slug}`, page-specific 404 and 500 pages,
-redirects, incremental caching, a plugin, a sitemap document, a robots.txt and a
-mounted stylesheet. It is also the framework's end-to-end test.
-
-[`examples/magazine`](examples/magazine) puts them together against a backend that
-can be slow and can fail: a news site with per-locale paths, fragments that fall
-back instead of failing, and a search page that is deliberately never cached. It is
-a **separate module** whose `go.mod` requires collage exactly the way yours would,
-so it reads as an application rather than as part of the framework. The backend it talks to is
-[`examples/newsroom-api`](examples/newsroom-api), which is not a collage program at
-all — it serves JSON and knows nothing about what renders it.
-
-```
-cd examples/newsroom-api && go run .
-cd examples/magazine     && go run .
-```
-
 ### Plugins
 
 A plugin is an ordinary Go module that implements `collage.Plugin`. Nothing about

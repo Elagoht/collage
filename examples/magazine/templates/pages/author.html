@@ -1,8 +1,0 @@
-<header class="page-head">
-  <p class="kicker">{{if eq .Locale "tr"}}Yazar{{else}}Writer{{end}}</p>
-  <h1>{{.Heading}}</h1>
-  <p class="standfirst">{{.Standfirst}}</p>
-  {{with .Author}}<p class="bio">{{.Bio}}</p>{{end}}
-</header>
-{{template "partials/cards.html" .}}
-{{template "partials/pager.html" .}}

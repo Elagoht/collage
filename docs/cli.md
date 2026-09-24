@@ -120,9 +120,8 @@ Colour and the ✓ ▲ ✗ markers appear only on a terminal, and not when `NO_C
 set or `TERM` is `dumb`. Piped to a file or a CI log it is plain ASCII, because
 escape codes in a log outlive the session that wrote them.
 
-A scaffolded project calls it, and so does `examples/magazine` — the one place in
-that program that prints rather than logs, because a build is a command somebody ran
-and is watching.
+A scaffolded project calls it — the one place in that program that prints rather
+than logs, because a build is a command somebody ran and is watching.
 
 ## Logs on a terminal
 
@@ -143,8 +142,8 @@ Anywhere that is not a terminal it is `slog.Default()`, unchanged, so nothing th
 parses these logs has to learn a new format. And an application that called
 `slog.SetDefault` keeps the handler it chose: noticing a terminal is not a reason to
 override a decision somebody made on purpose. Setting `Config.Logger` settles it
-either way — `examples/magazine` passes a JSON handler, which is what a program whose
-logs are read by a machine should do.
+either way — a JSON handler is what a program whose logs are read by a machine
+should pass.
 
 ## What `collage new` gives you
 

@@ -1,9 +1,0 @@
-{{/* The sidebar's fallback, rendered when the API did not answer. It says so
-     rather than rendering an empty list, which would read as "nothing has been
-     read" instead of "we could not ask". The framework marks this render
-     degraded and declines to cache it, so the real list returns on the next
-     request rather than being frozen in for the page's TTL. */}}
-<section class="panel panel-degraded">
-  <h2>{{if eq .Locale "tr"}}En çok okunanlar{{else}}Most read{{end}}</h2>
-  <p class="notice">{{if eq .Locale "tr"}}Bu liste şu anda alınamıyor. Yazının kendisi etkilenmedi.{{else}}This list is unavailable right now. The article itself is unaffected.{{end}}</p>
-</section>

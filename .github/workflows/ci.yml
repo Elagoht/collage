@@ -1,9 +1,8 @@
 # The gate the framework has to pass before anyone depends on a commit.
 #
-# Three jobs rather than one, because they answer different questions and a reader
-# looking at a red tick should not have to guess which: does the framework hold, do
-# the example applications still build against it, and do the published plugins
-# still compile against what is about to become a tag.
+# Two jobs rather than one, because they answer different questions and a reader
+# looking at a red tick should not have to guess which: does the framework hold, and
+# do the published plugins still compile against what is about to become a tag.
 name: ci
 
 on:
@@ -45,33 +44,6 @@ jobs:
       # single-threaded would pass through exactly the bugs that matter here.
       - name: go test -race
         run: go test -race ./...
-
-  examples:
-    name: examples
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          cache: true
-
-      # Built through go.work, so they compile against this checkout rather than
-      # the released version their go.mod files name. That is the whole reason to
-      # run them: a framework change that breaks a consumer should fail here, not
-      # after a tag.
-      - name: build examples
-        run: |
-          go build ./examples/magazine
-          go build ./examples/newsroom-api
-
-      # Run inside each directory: they are separate modules, so a ./examples/...
-      # pattern from the root matches nothing at all — and matching nothing is a
-      # green tick that tested no code.
-      - name: test examples
-        run: |
-          (cd examples/magazine && go test ./...)
-          (cd examples/newsroom-api && go test ./...)
 
   plugins:
     name: plugins

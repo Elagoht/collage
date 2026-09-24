@@ -126,9 +126,8 @@ Template: collage.TemplateConfig{
 },
 ```
 
-The example in `examples/magazine` writes its handful of interface strings inline,
-which is the honest shape for a site with a handful of them and not a recommendation
-for a site with thousands.
+A site with a handful of interface strings can write them inline; that is the
+honest shape for a handful, and not a recommendation for a site with thousands.
 
 ## Redirects
 
