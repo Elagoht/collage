@@ -20,8 +20,10 @@ var ErrTargetNotEmpty = errors.New("collage: target directory is not empty")
 // newUsage is "collage help new"'s own usage text.
 const newUsage = `Usage: collage new <name> [-dir path] [-module path] [-force]
 
-Scaffolds a new, runnable collage project named <name>: a go.mod, a main.go
-wiring one page, a layout and a home template, a .gitignore, and a README.
+Scaffolds a new, runnable collage project named <name>: a home page, a page of
+live demos (an API action, a form, a fragment with its own URL, a JSON
+document), their tests, a .env.example for "collage dev", a .gitignore and a
+README.
 
   -dir path      directory to scaffold into (default: ./<name>)
   -module path   the scaffolded go.mod's module path (default: <name>)
@@ -85,9 +87,8 @@ func (c *CLI) runNew(args []string) int {
 	fmt.Fprintln(out, "Next steps:")
 	fmt.Fprintf(out, "  cd %s\n", targetDir)
 	fmt.Fprintln(out, "  go mod tidy")
-	fmt.Fprintln(out, "  go run .")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, `("collage dev" and "collage build" also work from inside that directory.)`)
+	fmt.Fprintln(out, "  cp .env.example .env.development")
+	fmt.Fprintln(out, "  collage dev")
 	return 0
 }
 

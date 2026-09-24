@@ -1,16 +1,74 @@
-<main>
-  <h1>It works!</h1>
-  <p>This is @@NAME@@, a collage project.</p>
+<main class="home">
+  <header class="hero">
+    <svg class="logo" viewBox="0 0 96 96" aria-hidden="true">
+      <rect class="tile tile-a" x="8" y="14" width="46" height="46" rx="6" />
+      <rect class="tile tile-b" x="40" y="8" width="44" height="34" rx="6" />
+      <rect class="tile tile-c" x="30" y="44" width="56" height="42" rx="6" />
+    </svg>
+    <h1>collage</h1>
+    <p class="tagline">Pages composed from server-rendered fragments. Written in Go, served as HTML.</p>
+    <div class="actions">
+      <a class="button button-primary" href="/features">Explore the features</a>
+      <a class="button" href="https://github.com/Elagoht/collage/tree/main/docs">Read the docs</a>
+    </div>
+  </header>
 
-  <p>
-    Edit <code>templates/pages/home.html</code> and refresh: template changes
-    reload from disk while <code>COLLAGE_DEV=1</code> is set, which
-    <code>collage dev</code> does for you. Changing Go code still needs a
-    restart.
+  <section class="terminal" aria-label="Your project">
+    <div class="terminal-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><p>@@NAME@@</p></div>
+    <pre><code><span class="dir">@@NAME@@/</span>
+├── main.go       <span class="muted">configuration and route registration</span>
+├── <span class="dir">pages/</span>        <span class="muted">one file per page: layout, content, route</span>
+├── <span class="dir">fragments/</span>    <span class="muted">reusable pieces: the layout and the demos</span>
+├── <span class="dir">actions/</span>      <span class="muted">handlers for POST and friends</span>
+├── <span class="dir">documents/</span>    <span class="muted">routes that are not HTML, like /healthz</span>
+├── <span class="dir">store/</span>        <span class="muted">the demo's in-memory state</span>
+├── <span class="dir">templates/</span>    <span class="muted">the HTML, one file per fragment</span>
+└── <span class="dir">static/</span>       <span class="muted">CSS, JavaScript and images, at /static/</span></code></pre>
+  </section>
+
+  <section class="commands" aria-label="Commands">
+    <div class="command">
+      <code>collage dev</code>
+      <p>Runs the site with templates reloaded from disk on every request.</p>
+    </div>
+    <div class="command">
+      <code>collage build</code>
+      <p>Compiles a single binary with the templates and static files inside.</p>
+    </div>
+    <div class="command">
+      <code>collage export</code>
+      <p>Writes the static pages to <code>dist/</code> for any static host.</p>
+    </div>
+  </section>
+
+  <section class="board" aria-label="What collage is made of">
+    <article class="piece piece-a">
+      <h2>Fragments</h2>
+      <p>A template, a data handler and the slots it exposes. The building block of every page.</p>
+    </article>
+    <article class="piece piece-b">
+      <h2>Pages</h2>
+      <p>Fragments composed into a layout and given a route, in as many locales as you need.</p>
+    </article>
+    <article class="piece piece-c">
+      <h2>Actions</h2>
+      <p>POST, PUT and DELETE handlers with forgery protection. Forms work without JavaScript.</p>
+    </article>
+    <article class="piece piece-c">
+      <h2>Documents</h2>
+      <p>JSON, XML, feeds and sitemaps. Routed and cached like pages, never passed through HTML.</p>
+    </article>
+    <article class="piece piece-a">
+      <h2>Caching</h2>
+      <p>Static, incremental or dynamic per page, and invalidated by the tags your data carries.</p>
+    </article>
+    <article class="piece piece-b">
+      <h2>Export</h2>
+      <p>This page is static: <code>collage export</code> writes it to a file for any static host.</p>
+    </article>
+  </section>
+
+  <p class="edit">
+    Edit <code>templates/pages/home.html</code> and reload. Run with <code>collage dev</code> and templates are read from disk on every request.
   </p>
-
-  {{/* These come from the data handler in home.go, not from this template. */}}
-  <ul>
-    {{range .Links}}<li><a href="{{.Href}}">{{.Label}}</a></li>{{end}}
-  </ul>
 </main>

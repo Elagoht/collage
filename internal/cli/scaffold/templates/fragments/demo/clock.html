@@ -1,0 +1,8 @@
+<div id="clock" class="clock">
+  <span class="clock-label">rendered at</span>
+  <time datetime="{{formatTime .Now "2006-01-02T15:04:05Z07:00"}}">{{formatTime .Now "15:04:05"}}</time>
+  <dl>
+    <div><dt>uptime</dt><dd>{{.Uptime}}</dd></div>
+    <div><dt>go</dt><dd>{{.GoVersion}}</dd></div>
+  </dl>
+</div>

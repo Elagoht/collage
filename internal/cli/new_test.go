@@ -135,8 +135,13 @@ func TestRun_New_ScaffoldsExpectedFiles(t *testing.T) {
 	for _, want := range []string{
 		"go.mod",
 		"main.go",
+		"main_test.go",
 		"README.md",
 		".gitignore",
+		".env.example",
+		"plugins-config.json",
+		filepath.Join("pages", "home.go"),
+		filepath.Join("fragments", "layouts", "main.go"),
 		filepath.Join("templates", "layouts", "default.html"),
 		filepath.Join("templates", "pages", "home.html"),
 		filepath.Join("static", "app.css"),
@@ -213,22 +218,20 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	// builder rather than some weaker stand-in the scaffold carries on its
 	// own — see docs/plans/collage-core.md's "re-export the static builder"
 	// amendment for why this distinction matters.
-	// Three files: the home page's index.html, the mounted stylesheet under its
-	// own name, and the content-addressed copy the layout links through
-	// {{asset}}. A mount is copied into the build output by default, so a
-	// scaffolded project's stylesheet is in dist/ without any further wiring.
-	//
-	// And one skip, which is the scaffold teaching something rather than
-	// failing: the sign-up page carries a form, a form needs a server to post
-	// to, and a page that says Dynamic() is not part of a static build.
+	// Eight files: the home page's index.html, the 404 page, and each of the
+	// three mounted static files under its own name and under the
+	// content-addressed name the layout links through {{asset}}. A mount is
+	// copied into the build output by default, so a scaffolded project's static
+	// files are in dist/ without any further wiring.
 	buildOut := runIn(goBin, "run", ".", "-collage-build", "-out", "dist")
-	if !strings.Contains(buildOut, "4 files written") {
-		t.Fatalf("build output = %q, want it to report four files written", buildOut)
+	if !strings.Contains(buildOut, "8 files written") {
+		t.Fatalf("build output = %q, want it to report eight files written", buildOut)
 	}
-	// Two skips, and naming them is the point: the form page, because a form needs
-	// a server to post to, and the health check, because what it reports is this
-	// process being up rather than something cached from when it was.
-	if !strings.Contains(buildOut, "2 pages skipped") {
+	// Three skips, and naming them is the point: the features page, because its
+	// forms need a server to submit to; the hello page, because it is Dynamic();
+	// and the health check, because what it reports is this process being up
+	// rather than something cached from when it was.
+	if !strings.Contains(buildOut, "3 pages skipped") {
 		t.Errorf("build output = %q, want it to count the skips", buildOut)
 	}
 	// The not-found page is in the output as 404.html, so reporting it as
@@ -239,13 +242,13 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	if !strings.Contains(buildOut, "404.html") {
 		t.Errorf("build output = %q, want it to have written a 404 page", buildOut)
 	}
-	for _, name := range []string{"signup", "health"} {
+	for _, name := range []string{"features", "hello", "health"} {
 		if !strings.Contains(buildOut, name) {
 			t.Errorf("build output = %q, want it to name the skipped %q", buildOut, name)
 		}
 	}
 	// The last line is the one people read, so it has to carry the counts.
-	if !strings.Contains(buildOut, "4 written · 2 skipped · 0 failed") {
+	if !strings.Contains(buildOut, "8 written · 3 skipped · 0 failed") {
 		t.Errorf("build output = %q, want a summary line carrying every count", buildOut)
 	}
 

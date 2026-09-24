@@ -1,0 +1,205 @@
+package main
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+// Testing a collage application needs no server and no port: app.Handler() is an
+// ordinary http.Handler, so net/http/httptest drives it directly. Everything below
+// goes through the same newApp main uses, so what these tests exercise is the site
+// that actually runs rather than a second wiring that can drift from it.
+
+func handler(t *testing.T) http.Handler {
+	t.Helper()
+	app, err := newApp(false, 0)
+	if err != nil {
+		t.Fatalf("newApp() = %v, want nil", err)
+	}
+	return app.Handler()
+}
+
+// get returns the response to a GET of target, and its body.
+func get(t *testing.T, h http.Handler, target string) (*httptest.ResponseRecorder, string) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	return rec, rec.Body.String()
+}
+
+// token reads the forgery token out of a rendered page, the way a browser does.
+func token(t *testing.T, body string) string {
+	t.Helper()
+	m := regexp.MustCompile(`name="_csrf" value="([^"]+)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("no forgery token in the page:\n%s", body)
+	}
+	return m[1]
+}
+
+// post sends a POST to target, carrying the cookies from page.
+func post(t *testing.T, h http.Handler, target string, form url.Values, header http.Header, page *httptest.ResponseRecorder) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for name, values := range header {
+		req.Header[name] = values
+	}
+	if page != nil {
+		for _, c := range (&http.Response{Header: page.Header()}).Cookies() {
+			req.AddCookie(c)
+		}
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestPagesRender(t *testing.T) {
+	h := handler(t)
+	for target, want := range map[string]string{
+		"/":         "Explore the features",
+		"/features": "Four live demos",
+		"/hello":    "Hello, stranger!",
+	} {
+		rec, body := get(t, h, target)
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %s = %d, want 200", target, rec.Code)
+			continue
+		}
+		if !strings.Contains(body, want) {
+			t.Errorf("GET %s does not contain %q", target, want)
+		}
+		// Counted, not merely found: a layout writing one and a page hoisting
+		// another is two titles, which is a page that looks fine and is not.
+		if n := strings.Count(body, "<title>"); n != 1 {
+			t.Errorf("GET %s has %d titles, want exactly 1", target, n)
+		}
+	}
+}
+
+func TestStylesheetIsContentAddressed(t *testing.T) {
+	_, body := get(t, handler(t), "/")
+
+	link := regexp.MustCompile(`href="(/static/app\.[0-9a-f]+\.css)"`).FindStringSubmatch(body)
+	if link == nil {
+		t.Fatalf("the page does not link a content-addressed stylesheet:\n%s", body)
+	}
+
+	rec, css := get(t, handler(t), link[1])
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET %s = %d, want 200", link[1], rec.Code)
+	}
+	if css == "" {
+		t.Error("the stylesheet served no bytes")
+	}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Errorf("Cache-Control = %q, want immutable", cc)
+	}
+}
+
+// The counter button's flow: read the page, post with the token in a header, and
+// get the new count back as JSON.
+func TestCountAnswersWithTheNewCount(t *testing.T) {
+	h := handler(t)
+	page, body := get(t, h, "/features")
+
+	rec := post(t, h, "/api/count", nil, http.Header{"X-Csrf-Token": {token(t, body)}}, page)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /api/count = %d, want 200", rec.Code)
+	}
+	var answer struct{ Count int64 }
+	if err := json.Unmarshal(rec.Body.Bytes(), &answer); err != nil {
+		t.Fatalf("body = %q, want JSON: %v", rec.Body.String(), err)
+	}
+	if answer.Count < 1 {
+		t.Errorf("count = %d, want at least 1 after a click", answer.Count)
+	}
+}
+
+// The form flow, with no JavaScript: the page's action reads the name and the
+// server renders the greeting as the response.
+func TestHelloGreetsTheSubmittedName(t *testing.T) {
+	h := handler(t)
+	page, body := get(t, h, "/features")
+
+	rec := post(t, h, "/hello", url.Values{"_csrf": {token(t, body)}, "name": {"Ada"}}, nil, page)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST /hello = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Hello, Ada!") {
+		t.Errorf("the response does not greet the name:\n%s", rec.Body.String())
+	}
+}
+
+// Without a token a submission never reaches its handler. This is the test that
+// fails if the protection is ever turned off by accident.
+func TestASubmissionWithNoTokenIsRefused(t *testing.T) {
+	h := handler(t)
+	for _, target := range []string{"/api/count", "/hello"} {
+		if rec := post(t, h, target, url.Values{"name": {"Ada"}}, nil, nil); rec.Code != http.StatusForbidden {
+			t.Errorf("POST %s with no token = %d, want 403", target, rec.Code)
+		}
+	}
+}
+
+// The clock is a fragment with a URL of its own, answered with only its HTML.
+func TestTheClockFragmentHasItsOwnURL(t *testing.T) {
+	rec, body := get(t, handler(t), "/fragments/clock")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /fragments/clock = %d, want 200", rec.Code)
+	}
+	if !strings.Contains(body, `id="clock"`) || strings.Contains(body, "<html") {
+		t.Errorf("body = %q, want the clock fragment and nothing around it", body)
+	}
+}
+
+// The health check answers without rendering a template, which is the point of it:
+// it cannot start failing because a page did.
+func TestHealthCheck(t *testing.T) {
+	rec, body := get(t, handler(t), "/healthz")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /healthz = %d, want 200", rec.Code)
+	}
+	var health struct{ Status string }
+	if err := json.Unmarshal([]byte(body), &health); err != nil || health.Status != "ok" {
+		t.Errorf("body = %q, want a status of ok", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+}
+
+// An address that is nothing answers 404 with this site's own page. A static
+// export writes the same page as 404.html.
+func TestNotFoundPage(t *testing.T) {
+	rec, body := get(t, handler(t), "/there-is-nothing-here")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if !strings.Contains(body, "There is nothing at this address") {
+		t.Errorf("body = %q, want this site's own not-found page", body)
+	}
+}
+
+// A method no page answers is a 405 naming what the URL does accept.
+func TestUnsupportedMethodIsRefused(t *testing.T) {
+	req := httptest.NewRequest(http.MethodDelete, "/", nil)
+	rec := httptest.NewRecorder()
+	handler(t).ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); !strings.Contains(allow, "GET") {
+		t.Errorf("Allow = %q, want it to name what the URL accepts", allow)
+	}
+}

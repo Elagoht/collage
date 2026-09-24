@@ -1,0 +1,23 @@
+package demo
+
+import (
+	"context"
+
+	"@@MODULE@@/store"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+type counterView struct {
+	Count int64
+}
+
+func Counter() *collage.Fragment {
+	return collage.NewFragment("demo-counter", "fragments/demo/counter.html").
+		WithDataHandler(collage.DataHandler(counterData)).
+		Build()
+}
+
+func counterData(context.Context, *collage.RenderContext) (counterView, []string, error) {
+	return counterView{Count: store.Count()}, []string{store.CountTag}, nil
+}

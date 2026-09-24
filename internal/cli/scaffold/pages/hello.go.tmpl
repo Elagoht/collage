@@ -1,0 +1,54 @@
+package pages
+
+import (
+	"context"
+	"strings"
+	"time"
+
+	"@@MODULE@@/fragments/layouts"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+const nameKey = "hello:name"
+
+type helloView struct {
+	Name       string
+	RenderedAt time.Time
+}
+
+func HelloPage() *collage.Page {
+	content := collage.NewFragment("hello-content", "pages/hello.html").
+		WithDataHandler(collage.DataHandler(helloData)).
+		Build()
+
+	var page *collage.Page
+	page = collage.NewPage("hello").
+		WithLayout(layouts.Layout()).
+		WithContent(content).
+		WithPath("en", "/hello").
+		WithAction("POST", func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+			return greet(rc, page), nil
+		}).
+		Dynamic().
+		Build()
+
+	return page
+}
+
+func greet(rc *collage.RenderContext, page *collage.Page) *collage.ActionResult {
+	if name := strings.TrimSpace(rc.Request.PostFormValue("name")); name != "" {
+		rc.Set(nameKey, name)
+	}
+	return collage.RenderPage(page)
+}
+
+func helloData(_ context.Context, rc *collage.RenderContext) (helloView, []string, error) {
+	name := "stranger"
+	if value, ok := rc.Get(nameKey); ok {
+		if submitted, ok := value.(string); ok {
+			name = submitted
+		}
+	}
+	return helloView{Name: name, RenderedAt: time.Now()}, nil, nil
+}

@@ -105,7 +105,7 @@ around the thing that is easy to miss:
     dist/static/app.41014ebb.css
 
 ▲ 1 page skipped
-    signup  page uses the dynamic render strategy, which cannot be built statically
+    hello  page uses the dynamic render strategy, which cannot be built statically
 
 3 written · 1 skipped · 0 failed · 2.4ms
 ```
@@ -130,7 +130,7 @@ output is a terminal:
 
 ```
 23:06:09 • collage: listening  addr=127.0.0.1:3000
-23:06:09 ▲ collage: no Security.CSRFKey set, so one was generated for this process  action=signup:POST
+23:06:09 ▲ collage: no Security.CSRFKey set, so one was generated for this process  action=hello:POST
 23:06:10 ✗ collage: request failed  path=/about stage=render
 ```
 
@@ -147,32 +147,36 @@ should pass.
 
 ## What `collage new` gives you
 
-Two pages, and the difference between them is the lesson:
+A home page and a page of live demos, split into the directories a real project
+grows into — `pages/`, `fragments/`, `actions/`, `documents/`, `store/` — with a
+test file that drives all of it through `app.Handler()`.
 
-- **`/`** is `Static()`. Its data handler returns values from Go rather than from
-  the template, so the wiring is visible, and nothing about it depends on the
-  request — which is what lets `collage export` render it to a file.
-- **`/signup`** is `Dynamic()`, and carries a form: a `{{csrfToken}}`, a validation
-  failure that re-renders the page with 422, and a success that redirects with 303.
-  A form needs a server to post to, so a static build skips this page and says so.
+- **`/`** is `Static()`: nothing about it depends on the request, which is what
+  lets `collage export` render it to a file.
+- **`/features`** has four demos: a button posting to `/api/count`, an action
+  that answers with JSON and invalidates the cached page by tag; a plain HTML form
+  posting to `/hello`, whose own action renders the greeting; a clock fragment
+  opened at `/fragments/clock` with `WithFragmentPath`; and `/healthz`, a JSON
+  document. It is `Static()` too — cached, and invalidated by the count action —
+  but it carries forms, so a static export skips it and says why.
 
 Templates and static files are embedded, so the binary runs from any working
 directory; development mode still prefers the directory on disk, so editing a
-template is visible on the next request. The stylesheet is linked with `{{asset}}`,
-so it is served content-addressed and `immutable`. `PORT` and `-port` move the
-server off 3000.
+template is visible on the next request. Static files are linked with `{{asset}}`,
+so they are served content-addressed and `immutable`.
 
-Set `COLLAGE_CSRF_KEY` before deploying anything with a form in it. Without one a
-key is generated per process, and the application says so at startup — but only when
-it has an action that could verify a token, because telling an application with no
-forms about a key it has no use for is how a warning becomes noise.
+It ships a `.env.example` with `COLLAGE_CSRF_KEY`, `PORT` and `HOST`; copy it to
+`.env.development` for `collage dev`. Set `COLLAGE_CSRF_KEY` before deploying
+anything with a form in it. Without one a key is generated per process, and the
+application says so at startup — as a warning outside development, and only when
+it has an action that could verify a token.
 
 
 ## `collage new`
 
-Scaffolds a runnable project: a `go.mod`, a `main.go` wiring one page and mounting
-one static directory, a layout and a home template, a starter stylesheet under
-`static/`, a `.gitignore`, and a README.
+Scaffolds the runnable project described above: a `go.mod`, a `main.go` wiring
+the routes and mounting `static/`, the pages, fragments, action, document and
+their templates, the tests, a `.env.example`, a `.gitignore`, and a README.
 
 The scaffolded `main.go` mounts `static/` with `os.OpenRoot`, **not** `os.DirFS`.
 That is not a style preference: `os.DirFS` does not prevent symlink traversal, so
@@ -207,6 +211,24 @@ anything useful in your project.
 
 `collage dev` reloads *templates* from disk on every request. It does not
 hot-reload Go code: a change to a `.go` file still needs a restart.
+
+### Environment files
+
+`collage dev` adds the variables of `.env.development` to the environment, or of
+`.env` when there is no `.env.development`. One file, never both — merging is a
+second rule to explain for little gain.
+
+- A variable already set in the shell wins, so `PORT=4000 collage dev` still works.
+  `COLLAGE_DEV=1` is always set, whatever the file says.
+- `KEY=value` lines, `#` comments and blank lines; an `export ` prefix and single or
+  double quotes around a value are allowed. A `#` after whitespace ends an unquoted
+  value.
+- A malformed line stops the command with the file and line number. A skipped line
+  would be a setting you wrote and the program never saw.
+- No file is not an error. The file that was read is named on stderr.
+
+Only `collage dev` reads these files. `collage build`, `collage export` and the
+built binary never do: production takes its environment from wherever it runs.
 
 ## Plugin commands
 

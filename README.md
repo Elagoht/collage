@@ -23,18 +23,19 @@ go install github.com/Elagoht/collage/cmd/collage@latest
 
 collage new mysite
 cd mysite && go mod tidy
-go run .
+cp .env.example .env.development
+collage dev
 ```
 
-http://localhost:3000 — two pages, a form, a stylesheet, a health check and six
-tests. `PORT=8080 go run .` moves it. Go 1.26 is the only requirement; `go install`
-puts `collage` in `$(go env GOPATH)/bin`, which is on your `PATH` if you have
+http://localhost:3000 — a home page and a page of live demos: an API action, a form,
+a fragment with its own URL and a JSON document, with the tests that drive them.
+`collage dev` reads `.env.development`; `PORT=8080 collage dev` moves it. Go 1.26 is
+the only requirement; `go install` puts `collage` in `$(go env GOPATH)/bin`, which is on your `PATH` if you have
 installed any Go tool before.
 
 Then, in that directory:
 
 ```
-collage dev      # the same, with templates reloading as you edit them
 go test ./...    # the tests it came with
 collage build    # -> bin/mysite, the binary you deploy
 collage export   # -> dist/, static files, for a site that needs no server
@@ -44,8 +45,8 @@ collage serve    # serves dist/ the way a static host would
 Editing `templates/pages/home.html` under `collage dev` and reloading shows the
 change. Editing Go code does not — that still needs a restart.
 
-Where to look next: `home.go` has the two pages, their data handlers and the form's
-action; `main.go` has the configuration and the mount. The rest of this file is what
+Where to look next: `pages/` has one file per page, `fragments/` the layout and the
+demos, `actions/` the API endpoint; `main.go` has the configuration and the routes. The rest of this file is what
 those are made of, and [docs/](docs/) is the detail.
 
 **Adding collage to a project you already have** is `go get

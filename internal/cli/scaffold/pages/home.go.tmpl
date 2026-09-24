@@ -1,0 +1,18 @@
+package pages
+
+import (
+	"@@MODULE@@/fragments/layouts"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+func HomePage() *collage.Page {
+	content := collage.NewFragment("home-content", "pages/home.html").Build()
+
+	return collage.NewPage("home").
+		WithLayout(layouts.Layout()).
+		WithContent(content).
+		WithPath("en", "/").
+		Static().
+		Build()
+}

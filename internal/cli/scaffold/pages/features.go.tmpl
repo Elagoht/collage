@@ -1,0 +1,27 @@
+package pages
+
+import (
+	"@@MODULE@@/fragments/demo"
+	"@@MODULE@@/fragments/layouts"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+func FeaturesPage() *collage.Page {
+	clock := demo.Clock()
+
+	content := collage.NewFragment("features-content", "pages/features.html").
+		WithSlot("counter", true, false).
+		WithSlotFragment("counter", demo.Counter()).
+		WithSlot("clock", true, false).
+		WithSlotFragment("clock", clock).
+		Build()
+
+	return collage.NewPage("features").
+		WithLayout(layouts.Layout()).
+		WithContent(content).
+		WithPath("en", "/features").
+		WithFragmentPath("en", "/fragments/clock", clock).
+		Static().
+		Build()
+}

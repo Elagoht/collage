@@ -3,11 +3,12 @@
 //
 // # The collage CLI contract
 //
-// "collage dev" runs `go run .` here with COLLAGE_DEV=1 set, and "collage
-// export" runs `go run . -collage-build -out <dir>`. This file honours both by
-// reading that variable and those flags below. Development mode reloads
-// templates from disk on every request; it does not hot-reload Go code, so a
-// change to any .go file here still needs a restart.
+// "collage dev" runs `go run .` here with COLLAGE_DEV=1 set, and the variables
+// of .env.development (or .env) added, and "collage export" runs
+// `go run . -collage-build -out <dir>`. This file honours both by reading that
+// variable and those flags below. Development mode reloads templates from disk
+// on every request; it does not hot-reload Go code, so a change to any .go file
+// here still needs a restart.
 //
 // "collage build" needs nothing from this file: it compiles the program, which
 // is something go build does without being told anything.
@@ -28,6 +29,10 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
+
+	"@@MODULE@@/actions"
+	"@@MODULE@@/documents"
+	"@@MODULE@@/pages"
 )
 
 // Templates and static files are embedded, so this binary runs from anywhere:
@@ -65,13 +70,12 @@ func main() {
 		return
 	}
 
-	fmt.Printf("@@NAME@@: serving on http://%s:%d (dev mode: %v)\n", envString("HOST", "localhost"), *portFlag, devMode)
 	if err := app.ListenAndServe(); err != nil {
 		log.Fatalf("@@NAME@@: %v", err)
 	}
 }
 
-// newApp builds the application: its configuration, its pages, and its static
+// newApp builds the application: its configuration, its routes, and its static
 // mount.
 //
 // It is separate from main so that the tests can build the same application
@@ -81,10 +85,6 @@ func main() {
 func newApp(devMode bool, port int) (*collage.App, error) {
 	// Plugin configuration, keyed by plugin name. A missing file is not an
 	// error: every plugin then runs on its defaults.
-	//
-	// Loaded here rather than left for you to wire up, because a configuration
-	// file that is written and never read is the quietest kind of broken — the
-	// plugin runs, on defaults, and the settings you wrote do nothing.
 	pluginConfig, err := collage.LoadPluginConfig("plugins-config.json")
 	if err != nil {
 		return nil, fmt.Errorf("plugin configuration: %w", err)
@@ -102,15 +102,10 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 			Extension: ".html",
 		},
 		Cache: collage.CacheConfig{
-			// On in production and effectively off in development: with
-			// DevMode set, collage never reads from the cache — a cached page
-			// would hide the template you just edited — and substitutes an
-			// in-memory cache for the disk one, so nothing survives a restart
-			// to confuse you.
-			//
-			// The disk cache keeps rendered pages under .cache, so a restart
-			// does not re-render the whole site. It is namespaced by a hash of
-			// this binary, so a new build never serves the last one's pages.
+			// In development collage never reads from the cache — a cached
+			// page would hide the template you just edited — and uses memory
+			// instead of disk. In production rendered pages are kept under
+			// .cache, namespaced by a hash of this binary.
 			Enabled:    true,
 			Type:       "disk",
 			Dir:        ".cache",
@@ -121,20 +116,13 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 		//
 		//	Plugins: []collage.Plugin{minimizer.New(), jsonld.New()},
 		//
-		// A plugin that contributes to the document head — structured data,
-		// preload hints — reaches it through {{hoist "head"}} in the layout.
-		// Without that marker it produces nothing at all.
+		// A plugin that contributes to the document head reaches it through
+		// {{hoist "head"}} in the layout.
 		Security: collage.SecurityConfig{
-			// Signs the forgery tokens this project's forms carry. Leave it
-			// unset and one is generated per process, which is fine while you
-			// are developing and wrong to deploy: every form submitted before
-			// a restart is refused after it, and one instance refuses what
-			// another issued.
-			//
-			// In production set COLLAGE_CSRF_KEY to at least 32 random bytes,
-			// kept with your other secrets:
-			//
-			//	openssl rand -hex 32
+			// Signs the forgery tokens forms carry. Unset, one is generated
+			// per process: fine in development, wrong to deploy, because every
+			// form submitted before a restart is refused after it. Make one
+			// with `openssl rand -hex 32`.
 			CSRFKey: []byte(os.Getenv("COLLAGE_CSRF_KEY")),
 		},
 	})
@@ -142,18 +130,24 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 		return nil, err
 	}
 
-	for _, page := range []*collage.Page{homePage(), signUpPage()} {
+	for _, page := range []*collage.Page{pages.HomePage(), pages.FeaturesPage(), pages.HelloPage()} {
 		if err := app.RegisterPage(page); err != nil {
 			return nil, fmt.Errorf("register page %q: %w", page.Name, err)
 		}
 	}
-	if err := app.RegisterDocument(healthDocument()); err != nil {
-		return nil, fmt.Errorf("register health document: %w", err)
+	for _, document := range []*collage.Document{documents.HealthDocument()} {
+		if err := app.RegisterDocument(document); err != nil {
+			return nil, fmt.Errorf("register document %q: %w", document.Name, err)
+		}
+	}
+	for _, action := range []*collage.Action{actions.CountAction()} {
+		if err := app.RegisterAction(action); err != nil {
+			return nil, fmt.Errorf("register action %q: %w", action.Name, err)
+		}
 	}
 	// Registered rather than given a path: it is reached by failing to match.
-	// "collage export" writes it as 404.html, which is what a static host
-	// answers an unknown URL with.
-	if err := app.RegisterNotFoundPage(notFoundPage()); err != nil {
+	// "collage export" writes it as 404.html.
+	if err := app.RegisterNotFoundPage(pages.NotFoundPage()); err != nil {
 		return nil, fmt.Errorf("register not-found page: %w", err)
 	}
 
@@ -168,27 +162,17 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 	return app, nil
 }
 
-// staticFiles returns the filesystem "/static/" is served from.
+// staticFiles returns the filesystem "/static/" is served from: the embedded
+// copy, except in development, where the directory on disk wins so an edited
+// stylesheet shows up without a rebuild.
 //
-// The embedded copy, except in development, where the directory on disk wins
-// whenever it is there. It is the same rule collage applies to templates, for
-// the same reason: the embedded copy was fixed when the binary was built, so
-// editing a stylesheet would change nothing until the next rebuild — and what
-// you would see is not an error but a page that simply did not change.
-//
-// os.OpenRoot, not os.DirFS, and the difference is a security one. Go's own
-// documentation for os.DirFS says it does not prevent access to files outside
-// the directory: a symlink planted inside "static" — by a build step, a
-// dependency, an upload — resolves through it and the file it points at is
-// served. An os.Root is enforced by the kernel. The *os.Root is deliberately
-// never closed: its fs.FS serves every request for the life of the process.
+// os.OpenRoot rather than os.DirFS: os.DirFS follows a symlink out of the
+// directory, and an os.Root does not.
 func staticFiles(devMode bool) (fs.FS, error) {
 	if devMode {
 		if root, err := os.OpenRoot("static"); err == nil {
 			return root.FS(), nil
 		}
-		// Not there — started from somewhere else, perhaps. The embedded copy
-		// is the safe answer rather than a failure to start.
 	}
 
 	// fs.Sub, because the embedded tree contains the "static" directory
@@ -214,17 +198,9 @@ func envInt(key string, fallback int) int {
 	return value
 }
 
-// staticBuild renders every statically-buildable page to files under outDir,
-// removing outDir's existing contents first when clean is set, and prints what
-// happened.
-//
-// This calls straight through to collage.NewBuilder — collage's own static
-// builder — rather than reimplementing any part of it. That matters beyond
-// convenience: the builder verifies that a resolved output path stays inside
-// outDir even when a symlink is involved, and refuses a dangerous -out such as
-// a filesystem root or a repository root to -clean. Every project scaffolded
-// by "collage new" shares that one implementation rather than a copy of its
-// own.
+// staticBuild renders every statically-buildable page to files under outDir
+// through collage's own builder, and prints what was written, skipped and
+// failed.
 func staticBuild(app *collage.App, outDir string, clean bool) error {
 	builder, err := collage.NewBuilder(app, collage.BuildOptions{
 		OutDir: outDir,
@@ -236,15 +212,6 @@ func staticBuild(app *collage.App, outDir string, clean bool) error {
 
 	report, buildErr := builder.Build(context.Background())
 
-	// report is populated even when buildErr is not nil: Build records every
-	// individual failure in report.Errors and joins them into buildErr, so it
-	// is worth printing either way.
-	//
-	// PrintBuildReport rather than a loop of our own: it summarises the files
-	// written, names every page that was skipped and every one that failed, and
-	// colours the last line by the worst of the three — on a terminal, and in
-	// plain ASCII anywhere else. A flat list of everything written is what
-	// hides the one page that did not build.
 	collage.PrintBuildReport(os.Stdout, report, buildErr)
 
 	return buildErr

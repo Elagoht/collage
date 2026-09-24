@@ -1,0 +1,15 @@
+package store
+
+import "sync/atomic"
+
+const CountTag = "count"
+
+var count atomic.Int64
+
+func Count() int64 {
+	return count.Load()
+}
+
+func Increment() int64 {
+	return count.Add(1)
+}

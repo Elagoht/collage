@@ -1,0 +1,31 @@
+package demo
+
+import (
+	"context"
+	"runtime"
+	"time"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+var startedAt = time.Now()
+
+type clockView struct {
+	Now       time.Time
+	Uptime    string
+	GoVersion string
+}
+
+func Clock() *collage.Fragment {
+	return collage.NewFragment("demo-clock", "fragments/demo/clock.html").
+		WithDataHandler(collage.DataHandler(clockData)).
+		Build()
+}
+
+func clockData(context.Context, *collage.RenderContext) (clockView, []string, error) {
+	return clockView{
+		Now:       time.Now(),
+		Uptime:    time.Since(startedAt).Round(time.Second).String(),
+		GoVersion: runtime.Version(),
+	}, nil, nil
+}

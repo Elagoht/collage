@@ -1,0 +1,45 @@
+<main class="features">
+  <header class="page-head">
+    <h1>Features</h1>
+    <p class="tagline">Four live demos. Each one is a few lines of Go and a template in this project.</p>
+  </header>
+
+  <section class="demos" aria-label="Live demos">
+    <article class="card">
+      <h2>API</h2>
+      <p>The button posts to <code>/api/count</code>. The server answers with only the number, and JavaScript puts it on the page.</p>
+      {{csrfToken}}
+      <button type="button" class="button" data-count="/api/count">count is {{slot "counter"}}</button>
+      <p class="hint">The count lives on the server and is shared by every visitor. Reload the page: it is rendered with the current number, because each click invalidates the cached page.</p>
+    </article>
+
+    <article class="card">
+      <h2>Forms</h2>
+      <p>No JavaScript here. Pick a name and the server greets you on a page of its own.</p>
+      <form class="inline-form" method="post" action="/hello">
+        {{csrfToken}}
+        <input type="text" name="name" placeholder="your name" autocomplete="off" aria-label="Your name">
+        <button type="submit" class="button">Say hello</button>
+      </form>
+      <p class="hint">This is a plain HTML form. It posts to <code>/hello</code>, the page's action reads the name, and the server renders a new page as the response.</p>
+    </article>
+
+    <article class="card">
+      <h2>Fragment URLs</h2>
+      <p>This clock is a fragment with its own address. Fetch <code>/fragments/clock</code> for new HTML.</p>
+      {{slot "clock"}}
+      <button type="button" class="button" data-fetch="/fragments/clock" data-swap="#clock">Refresh from server</button>
+    </article>
+
+    <article class="card">
+      <h2>Documents</h2>
+      <p>Documents serve anything that isn't HTML. This one is JSON at <code>/healthz</code>.</p>
+      <button type="button" class="button" data-json="/healthz" data-output="#api-output">GET /healthz</button>
+      <pre id="api-output" class="output" aria-live="polite">// the response shows up here</pre>
+    </article>
+  </section>
+
+  <p class="edit">
+    Edit <code>templates/pages/features.html</code> and reload. Run with <code>collage dev</code> and templates are read from disk on every request.
+  </p>
+</main>

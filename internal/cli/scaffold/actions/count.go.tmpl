@@ -1,0 +1,34 @@
+package actions
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+
+	"@@MODULE@@/store"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+func CountAction() *collage.Action {
+	return collage.NewAction("count").
+		WithPath("en", "/api/count").
+		WithMethods(http.MethodPost).
+		WithHandler(increment).
+		Build()
+}
+
+type countResponse struct {
+	Count int64 `json:"count"`
+}
+
+func increment(context.Context, *collage.RenderContext) (*collage.ActionResult, error) {
+	body, err := json.Marshal(countResponse{Count: store.Increment()})
+	if err != nil {
+		return nil, fmt.Errorf("count: marshal: %w", err)
+	}
+	result := collage.JSON(http.StatusOK, body)
+	result.InvalidateTags = []string{store.CountTag}
+	return result, nil
+}

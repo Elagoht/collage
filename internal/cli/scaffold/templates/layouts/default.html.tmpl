@@ -1,25 +1,25 @@
 <!doctype html>
 <html lang="en">
+
 <head>
+  {{hoist "head"}}
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-
-  {{/* Where fragments contribute to the page. A fragment renders inside the
-       <body>, long after this <head> was written, so it cannot put anything
-       here by itself — it declares with rc.Hoist and the engine substitutes
-       it here once the tree has finished. The pages in home.go hoist their
-       own <title>, and a plugin such as collage-jsonld puts its structured
-       data here too. Without this marker, everything hoisted has nowhere to
-       land and nothing appears. */}}
-  {{hoist "head"}}
-
-  {{/* asset resolves this to "/static/app.<hash>.css", which is served with a
-       year-long immutable lifetime: a changed file is a changed URL, so the
-       browser never has to ask whether its copy is still good. Linking
-       "/static/app.css" by hand also works, but can only be cached briefly. */}}
+  <title>@@NAME@@</title>
   <link rel="stylesheet" href="{{asset "/static/app.css"}}">
+  <link rel="icon" href="{{asset "/static/favicon.svg"}}" type="image/svg+xml">
+  <script src="{{asset "/static/app.js"}}" defer></script>
 </head>
+
 <body>
+  <header class="site-header">
+    <a class="brand" href="/"><img src="{{asset "/static/favicon.svg"}}" width="24" height="24" alt="">collage</a>
+    <nav class="site-nav">
+      <a href="/features">Features</a>
+      <a href="https://github.com/Elagoht/collage">GitHub</a>
+    </nav>
+  </header>
   {{slot "content"}}
 </body>
+
 </html>

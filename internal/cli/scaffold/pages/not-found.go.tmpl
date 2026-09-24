@@ -1,0 +1,17 @@
+package pages
+
+import (
+	"@@MODULE@@/fragments/layouts"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+func NotFoundPage() *collage.Page {
+	content := collage.NewFragment("not-found-content", "pages/404.html").Build()
+
+	return collage.NewPage("not-found").
+		WithLayout(layouts.Layout()).
+		WithContent(content).
+		Dynamic().
+		Build()
+}

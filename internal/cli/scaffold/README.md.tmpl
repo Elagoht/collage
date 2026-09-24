@@ -7,68 +7,62 @@ A [collage](https://github.com/Elagoht/collage) project, scaffolded by
 
 ```
 go mod tidy
+cp .env.example .env.development
 collage dev
 ```
+
+The site is at http://localhost:3000. `collage dev` reads `.env.development`
+(or `.env` when there is none) and runs `go run .` in development mode:
+templates and static files are read from disk on every request, so editing one
+and reloading is enough. Changing Go code still needs a restart.
+
+A variable set in your shell wins over the file, so `PORT=4000 collage dev`
+still works. Only `collage dev` reads these files; the built binary takes its
+environment from wherever it runs.
 
 ```
 go test ./...
 ```
 
-The site is at http://localhost:3000; set `PORT` (or pass `-port`) to move it.
-
-`collage dev` is `go run .` in development mode. Plain `go run .` also works, but
-runs the project as production would — so until `COLLAGE_CSRF_KEY` is set it warns
-that the key was generated, and that the disk cache will start empty after every
-restart. Both are true, and both are why the key is worth setting before you
-deploy; see below.
-
-Editing a template and refreshing is enough to see the change — collage reloads
-templates from disk in development, even though they are embedded. Changing Go
-code still needs a restart.
-
 ## What is here
 
-- `main.go` — configuration, the static mount, and the `collage` CLI contract.
-- `home.go` — the two pages, their data handlers, and the sign-up form's
-  action.
-- `home_test.go` — the tests, which need no server and no port: `app.Handler()`
-  is an ordinary `http.Handler`, so `net/http/httptest` drives it directly.
-  They go through the same `newApp` that `main` uses, so what they exercise is
-  the site that actually runs.
-- `templates/layouts/default.html` — the shell. `{{slot "content"}}` marks
-  where a page's content goes.
-- `templates/pages/home.html` — served at `/`. Declared `Static()`, so
-  `collage export` renders it to a file.
-- `templates/pages/signup.html` — served at `/signup`, with a form. Declared
-  `Dynamic()`, because **a form needs a server to post to**: a static build
-  skips this page and says so.
-- `static/app.css` — served at `/static/`, and copied into a static build.
-
-## Three things worth knowing early
-
-**Templates and static files are embedded.** `//go:embed` in `main.go` means
-this binary runs from any working directory — a container, a systemd unit, a
-copy on a server. It costs nothing while developing: with development mode on,
-collage prefers the directory on disk whenever it is there.
-
-**The stylesheet is linked with `{{asset}}`.** That renders
-`/static/app.<hash>.css`, served with a year-long `immutable` lifetime: a
-changed file is a changed URL, so the browser never has to ask whether its copy
-is still good. Writing `/static/app.css` by hand also works, but can only be
-cached briefly.
-
-**Set `COLLAGE_CSRF_KEY` before deploying.** It signs the tokens
-`{{csrfToken}}` puts in forms. Without one, collage generates a key per process
-and says so — fine while developing, wrong in production, because every form
-submitted before a restart is refused after it and one instance refuses what
-another issued.
-
 ```
-COLLAGE_CSRF_KEY=$(openssl rand -hex 32) go run .
+main.go       configuration and route registration, and the collage CLI contract
+main_test.go  the tests, driving app.Handler() with no server and no port
+pages/        one file per page: layout, content, route
+fragments/    reusable pieces: the layout and the demos
+actions/      handlers for POST and friends
+documents/    routes that are not HTML, like /healthz
+store/        the demo's in-memory state
+templates/    the HTML, one file per fragment
+static/       CSS, JavaScript and images, at /static/
 ```
 
-In development mode the generated key is mentioned at info level rather than as
-a warning: there it is the expected state, not a mistake.
+`/` is the home page, declared `Static()`, so `collage export` writes it to a
+file. `/features` has four live demos:
+
+- **API** — a button posts to `/api/count`, an action that answers with JSON
+  and invalidates the cached page by tag.
+- **Forms** — a plain HTML form posts to `/hello`, and the page's own action
+  renders the greeting.
+- **Fragment URLs** — the clock is a fragment opened at `/fragments/clock` with
+  `WithFragmentPath`, fetched and swapped in without a client framework.
+- **Documents** — `/healthz` is JSON, routed like a page but never passed
+  through HTML.
+
+## Set `COLLAGE_CSRF_KEY` before deploying
+
+It signs the tokens `{{csrfToken}}` puts in forms. Without one, collage
+generates a key per process — fine while developing, where it is only
+mentioned, and wrong in production, where it warns: every form submitted before
+a restart is refused after it, and one instance refuses what another issued.
+
+```
+openssl rand -hex 32
+```
+
+Put the result in `.env.development` for development, and in your production
+environment's secrets for the deployed binary.
 
 ## Deploying
 
@@ -80,41 +74,22 @@ collage build -i           # also offers a Dockerfile and a systemd unit in bin/
 HOST=0.0.0.0 PORT=8080 COLLAGE_CSRF_KEY=... ./bin/@@NAME@@
 ```
 
-`.gitignore` ignores `bin/@@NAME@@`, the binary itself, rather than `bin/` — so a
-`bin/Dockerfile` you edit is committed like any other file.
+Templates and static files are embedded, so the binary is the whole site —
+nothing to copy next to it. It drains in-flight requests on `SIGTERM`, answers
+`/healthz` for a liveness check, and caches rendered pages under `.cache` so a
+restart does not re-render everything.
 
-Templates and static files are embedded, so the binary is the whole site — nothing
-to copy next to it, and a container image can be that binary and nothing else.
-It traps `SIGTERM` and drains in-flight requests before exiting, answers `/healthz`
-for a liveness check, and caches rendered pages under `.cache` so a restart does not
-re-render everything.
-
-It serves plain HTTP; put it behind whatever terminates TLS for you, or wrap
-`app.Handler()` in an `http.Server` of your own. The full story is in the framework's
-`docs/deployment.md`.
+`collage export` writes the static pages to `dist/` for any static host. Pages
+that need a server — a form, or a `Dynamic()` page — are skipped and named, and
+still work when the binary serves them.
 
 ## The collage CLI contract
 
 - **`collage dev`** runs `go run .` here with `COLLAGE_DEV=1` set. `main.go`
   reads that and turns on development mode.
-- **`collage export`** runs `go run . -collage-build -out <dir>` (adding
-  `-clean` when you used `collage export -clean`). `main.go` parses those flags
-  and renders every statically-buildable page through `collage.NewBuilder` —
-  collage's own builder, so this project gets its containment checks and its
-  refusal to write into a dangerous `-out`, rather than a weaker copy.
+- **`collage export`** runs `go run . -collage-build -out <dir>`. `main.go`
+  parses those flags and renders through `collage.NewBuilder`, collage's own
+  builder.
 
 If you rewrite `main.go`, keep both halves working, or `collage dev` and
 `collage export` stop doing anything useful here.
-
-## Next steps
-
-- Add pages with `collage.NewPage` and fragments with `collage.NewFragment`.
-- Give a page more fragments, each with its own data handler: sibling handlers
-  run concurrently, so a page of independent parts fetches them at once.
-- Open a fragment at its own URL with `WithFragmentPath`, and answer a form
-  with `collage.RenderFragment` — that is how part of a page refreshes without
-  a client framework.
-- Add a `robots.txt`, a sitemap or a feed with `collage.NewDocument`: a routed,
-  cached response whose handler returns bytes rather than rendering templates.
-- Turn on caching with `Cache.Enabled`, and declare pages `Incremental(ttl)`.
-- Read the documentation at https://github.com/Elagoht/collage.

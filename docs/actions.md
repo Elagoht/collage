@@ -107,8 +107,8 @@ twice. Send the reader somewhere that can say so:
 return collage.SeeOther("/contact/thanks"), nil
 ```
 
-A scaffolded project does both — its sign-up form answers 303 on success and 422
-with the page on failure — so each shape is visible next to the other.
+A scaffolded project's `/hello` form is the second kind: its action sets what was
+submitted and renders the page as the response.
 
 The exception is a submission that changed nothing and can be repeated harmlessly: a
 search, a filter, a preview. Those are usually a `GET` anyway, and a `Fragment` is a
