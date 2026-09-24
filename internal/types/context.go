@@ -55,6 +55,15 @@ type renderShared struct {
 	// assets resolves a mounted file's content-addressed URL, bound by the
 	// render engine; see BindAssets.
 	assets func(urlPath string) (string, error)
+	// data is the application's cross-render data cache, bound by the render
+	// engine; nil when there is none. See Cached.
+	data DataCache
+	// uncached is set for a request that skips the caches — a preview — so
+	// Cached fetches fresh rather than serving or storing a value.
+	uncached bool
+	// tags are the dependency tags declared through Cached, merged into the
+	// render's own when it finishes.
+	tags []string
 }
 
 // NewRenderContext builds a RenderContext for one render. It copies params into a

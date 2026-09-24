@@ -108,6 +108,10 @@ article, err := collage.Once(rc, "article:"+slug, func(ctx context.Context) (Art
 })
 ```
 
+`Once` lives as long as one render. When the same data appears on many pages — an
+author card on every post — use `collage.Cached`, which keeps it across pages and
+requests; see [caching](caching.md#caching-data-not-only-pages).
+
 *Two siblings hoisting one key is settled by declaration order.* Not by which handler
 finished first — that would make a page's `<head>` depend on the weather. Innermost
 still wins over depth, exactly as before; at equal depth the later-declared fragment

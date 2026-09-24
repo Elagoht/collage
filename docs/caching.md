@@ -165,6 +165,47 @@ different caches.
 Plugins observe invalidation through `OnCacheInvalidate`, and a plugin triggers
 one through `Host.InvalidateTags`.
 
+## Caching data, not only pages
+
+The page cache stores what a render produced. It does nothing for thirty different
+pages that each fetch the same author: each is its own render, so each asks. An
+export of those pages, which renders every one of them, asks thirty times.
+
+`collage.Cached` stores what renders are made from:
+
+```go
+func authorCard(ctx context.Context, rc *collage.RenderContext) (Author, []string, error) {
+	id := rc.Param("author")
+	author, err := collage.Cached(rc, "author:"+id, time.Hour, []string{"author:" + id},
+		func(ctx context.Context) (Author, error) { return api.Author(ctx, id) })
+	return author, nil, err
+}
+```
+
+Thirty pages by two authors now fetch twice, served or exported.
+
+- **One set of tags for both caches.** The tags are added to the page's own, so
+  `InvalidateTags("author:" + id)` drops the stored author *and* every cached page
+  that showed them, together. There is no second cache to keep in step by hand — the
+  thing that goes wrong when an application memoises in its own API client and then
+  invalidates only the pages.
+- **One fetch per key at a time.** Requests that need the same key while it is being
+  fetched wait for that fetch rather than starting their own.
+- **Errors are not stored**, and a fetch that was still running when its tags were
+  invalidated hands its result to whoever was waiting but does not store it: what it
+  brought back is what the invalidation was meant to replace.
+- **Bounded and in-process.** Values are kept in memory, up to `Cache.MaxEntries`,
+  least recently used first to go. Each instance of a multi-instance deployment keeps
+  its own, so N instances ask N times — still once each rather than once per page.
+- **Where it keeps nothing.** With `Cache.Enabled` false, in development, for a
+  request that called `SkipCache`, and in an action's own handler, `Cached` behaves
+  as `Once`: shared within the render, fetched fresh by the next. A preview therefore
+  sees fresh data as well as a fresh page.
+
+`ttl` bounds how long a value is kept when nothing invalidates it; zero keeps it
+until something does. It is independent of the page's TTL — a page that renders
+every minute can still reuse an author fetched an hour ago, which is the point.
+
 ## Concurrent misses render once
 
 When a cached page expires, every request that arrives before the first re-render

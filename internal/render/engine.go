@@ -140,6 +140,9 @@ type Options struct {
 	// DefaultLocale is the locale {{pageURL}} falls back to for a route with no
 	// path in the render's own.
 	DefaultLocale string
+	// DataCache keeps what collage.Cached fetches across renders. Nil leaves
+	// Cached sharing within one render only.
+	DataCache types.DataCache
 }
 
 // SlotEngine is the Engine implementation that resolves {{slot "name"}} against the
@@ -156,6 +159,7 @@ type SlotEngine struct {
 	csrfMarker     func() (string, error)
 	url            func(name, locale string, params map[string]string) (string, error)
 	defaultLocale  string
+	dataCache      types.DataCache
 }
 
 var _ Engine = (*SlotEngine)(nil)
@@ -180,6 +184,7 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 		csrfMarker:     opts.CSRFMarker,
 		url:            opts.URL,
 		defaultLocale:  opts.DefaultLocale,
+		dataCache:      opts.DataCache,
 	}
 }
 
@@ -255,6 +260,9 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	}
 	metadata.Fragments = state.fragments
 
+	// What Cached declared belongs to the page too: a page built from a cached
+	// value is invalidated with it.
+	state.addTags(types.DeclaredTags(rc))
 	result := &Result{
 		HTML:           html,
 		DependencyTags: state.sortedTags(rc.Page.DependencyTags),

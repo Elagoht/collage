@@ -32,6 +32,7 @@ import (
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/csrf"
+	"github.com/Elagoht/collage/internal/datacache"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/observability"
@@ -339,6 +340,9 @@ type App struct {
 	// every wrapper registered with Use, both in registration order. See
 	// handle.go.
 	handlers []httpx.HandlerMount
+	// data keeps what collage.Cached fetches across renders. Nil when the cache
+	// is off or in development, where Cached shares within one render only.
+	data *datacache.Store
 	// devTemplateDir is the directory templates are read from in development,
 	// empty when they are not read from disk.
 	devTemplateDir string
@@ -511,6 +515,13 @@ func New(cfg Config) (*App, error) {
 	tracker.MaxKeysPerTag = cfg.Cache.MaxKeysPerTag
 
 	app.tmpl = tmpl
+	// On when the page cache is, and never in development: there the page cache
+	// is not read either, because what a developer is changing must show on the
+	// next request.
+	if cfg.Cache.Enabled && !devMode {
+		app.data = datacache.New(cfg.Cache.MaxEntries)
+	}
+
 	app.renderer = render.New(tmpl, render.Options{
 		DefaultTimeout: cfg.Template.Timeout,
 		Metrics:        metrics,
@@ -520,6 +531,7 @@ func New(cfg Config) (*App, error) {
 		CSRFMarker:     app.csrfMarker,
 		URL:            app.URL,
 		DefaultLocale:  cfg.Locale.Default,
+		DataCache:      app.dataCacheFor(),
 	})
 	app.store = store
 	app.tracker = tracker
@@ -711,6 +723,15 @@ func (a *App) buildHandler() (http.Handler, error) {
 
 	a.handler = handler
 	return handler, nil
+}
+
+// dataCacheFor returns the store behind collage.Cached as the render engine takes
+// it: nil — an untyped nil, not a nil *Store in an interface — when there is none.
+func (a *App) dataCacheFor() types.DataCache {
+	if a.data == nil {
+		return nil
+	}
+	return a.data
 }
 
 // pageReady reports whether p can render: a page with a layout renders only once
@@ -930,6 +951,12 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 	keys, err := a.tracker.Resolve(ctx, tags)
 	if err != nil {
 		return 0, fmt.Errorf("collage: resolve tags: %w", err)
+	}
+
+	// The data first, so a page re-rendered the moment its entry is dropped
+	// below cannot be built from the value being replaced.
+	if a.data != nil {
+		a.data.Invalidate(tags)
 	}
 
 	var failures error

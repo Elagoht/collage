@@ -1,0 +1,178 @@
+package collage_test
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"testing/fstest"
+	"time"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+type author struct{ Name string }
+
+// authorSite is thirty posts, twenty by A and ten by B, each showing an author
+// card whose data handler fetches through Cached and counts what it fetched.
+type authorSite struct {
+	app   *collage.App
+	mu    sync.Mutex
+	calls map[string]int
+	names map[string]string
+}
+
+func newAuthorSite(t *testing.T, devMode bool) *authorSite {
+	t.Helper()
+	site := &authorSite{calls: map[string]int{}, names: map[string]string{"A": "Ada", "B": "Bo"}}
+	app, err := collage.New(&collage.Config{
+		DevMode: devMode,
+		Server:  collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{
+			"t/post.html":   {Data: []byte(`<article>{{slot "author"}}</article>`)},
+			"t/author.html": {Data: []byte(`<p>{{.Name}}</p>`)},
+		}, Root: "t"},
+		Cache: collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	card := collage.NewFragment("author", "author.html").
+		WithDataHandler(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (author, []string, error) {
+			id, _ := collage.Get[string](rc, "author")
+			a, err := collage.Cached(rc, "author:"+id, time.Hour, []string{"author:" + id},
+				func(context.Context) (author, error) {
+					site.mu.Lock()
+					defer site.mu.Unlock()
+					site.calls[id]++
+					return author{Name: site.names[id]}, nil
+				})
+			return a, nil, err
+		})).Build()
+	for i := range 30 {
+		id := "A"
+		if i >= 20 {
+			id = "B"
+		}
+		post := collage.NewFragment(fmt.Sprintf("post-%d", i), "post.html").
+			WithDataHandler(collage.Effect(func(_ context.Context, rc *collage.RenderContext) error { rc.Set("author", id); return nil })).
+			WithSlot("author", true, false).WithSlotFragment("author", card).Build()
+		page := collage.NewPage(fmt.Sprintf("p%d", i)).WithContent(post).
+			WithPath("en", fmt.Sprintf("/p/%d", i)).Incremental(time.Hour).Build()
+		if err := app.RegisterPage(page); err != nil {
+			t.Fatalf("RegisterPage: %v", err)
+		}
+	}
+	site.app = app
+	return site
+}
+
+func (s *authorSite) fetched() map[string]int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]int{}
+	for k, v := range s.calls {
+		out[k] = v
+	}
+	return out
+}
+
+func (s *authorSite) get(t *testing.T, i int, preview bool) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/p/%d", i), nil)
+	if preview {
+		req.Header.Set("X-Preview", "1")
+	}
+	rec := httptest.NewRecorder()
+	s.app.Handler().ServeHTTP(rec, req)
+	return rec.Body.String()
+}
+
+// Thirty pages by two authors ask for each author once — exported or served.
+func TestCached_SharesAcrossPages(t *testing.T) {
+	site := newAuthorSite(t, false)
+	builder, err := collage.NewBuilder(site.app, collage.BuildOptions{OutDir: t.TempDir(), Concurrency: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := builder.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := site.fetched(); got["A"] != 1 || got["B"] != 1 {
+		t.Errorf("export fetched %v, want each author once", got)
+	}
+
+	served := newAuthorSite(t, false)
+	for i := range 30 {
+		served.get(t, i, false)
+	}
+	if got := served.fetched(); got["A"] != 1 || got["B"] != 1 {
+		t.Errorf("serving fetched %v, want each author once", got)
+	}
+}
+
+// One InvalidateTags replaces the author and every page showing them — the pages
+// carry the tag without the handler returning it.
+func TestCached_InvalidatesWithThePages(t *testing.T) {
+	site := newAuthorSite(t, false)
+	for i := range 30 {
+		site.get(t, i, false)
+	}
+	site.mu.Lock()
+	site.names["A"] = "Ada Lovelace"
+	site.mu.Unlock()
+
+	dropped, err := site.app.InvalidateTagsN(context.Background(), "author:A")
+	if err != nil || dropped != 20 {
+		t.Fatalf("InvalidateTagsN = %d, %v; want A's twenty pages dropped", dropped, err)
+	}
+	if body := site.get(t, 3, false); body != "<article><p>Ada Lovelace</p></article>" {
+		t.Errorf("A's page after the invalidation = %q, want the new name", body)
+	}
+	if body := site.get(t, 25, false); body != "<article><p>Bo</p></article>" {
+		t.Errorf("B's page = %q", body)
+	}
+	if got := site.fetched(); got["A"] != 2 || got["B"] != 1 {
+		t.Errorf("fetched %v, want A twice and B once", got)
+	}
+}
+
+// A preview fetches fresh and stores nothing, so an editor sees the change and
+// nobody else is served it.
+func TestCached_APreviewSkipsIt(t *testing.T) {
+	site := newAuthorSite(t, false)
+	if err := site.app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-Preview") != "" {
+				collage.SkipCache(r)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	site.get(t, 0, false)
+	site.mu.Lock()
+	site.names["A"] = "Draft name"
+	site.mu.Unlock()
+
+	if body := site.get(t, 1, true); body != "<article><p>Draft name</p></article>" {
+		t.Errorf("preview = %q, want the fresh value", body)
+	}
+	if body := site.get(t, 1, false); body != "<article><p>Ada</p></article>" {
+		t.Errorf("reader after the preview = %q, want the stored value: a preview must not store what it fetched", body)
+	}
+}
+
+// In development nothing outlives a render, as with the page cache.
+func TestCached_DevelopmentKeepsNothing(t *testing.T) {
+	site := newAuthorSite(t, true)
+	for range 3 {
+		site.get(t, 0, false)
+	}
+	if got := site.fetched(); got["A"] != 3 {
+		t.Errorf("development fetched %v, want A once per render", got)
+	}
+}

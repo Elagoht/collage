@@ -744,6 +744,12 @@ func (h *Handler) renderPage(
 	// Built before the hook, not after: a plugin contributing to the page hoists
 	// through this, and hoisting only works before the tree renders.
 	rc := types.NewRenderContext(ctx, r, page, match.Locale, match.PathParams)
+	if skipsCache(r) {
+		// A preview skips the data cache as well as the page cache: an editor
+		// shown the draft page around a cached copy of the published data has
+		// not been shown the draft.
+		types.SkipDataCache(rc)
+	}
 
 	if err := h.plugins.BeforeRender(ctx, &plugin.BeforeRenderEvent{
 		Context: rc,

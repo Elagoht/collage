@@ -82,6 +82,9 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// flow work: the handler puts what went wrong into SharedData and returns the
 	// form's own page, which reads it while rendering.
 	rc := types.NewRenderContext(ctx, r, nil, match.Locale, match.PathParams)
+	if skipsCache(r) {
+		types.SkipDataCache(rc)
+	}
 
 	result, err := action.Handler(ctx, rc)
 	if err != nil {
