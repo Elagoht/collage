@@ -35,3 +35,21 @@ func Once[T any](rc *RenderContext, key string, fetch func(context.Context) (T, 
 // ErrOnceTypeMismatch reports that one Once key was asked for as two different types
 // within a single render.
 var ErrOnceTypeMismatch = types.ErrOnceTypeMismatch
+
+// Get reads the value a fragment stored under key with rc.Set, as the type it was
+// stored as:
+//
+//	post, ok := collage.Get[Post](rc, "post")
+//
+// ok is false when nothing is stored under key, and when what is stored is not a T
+// — the same answer, because to the caller both mean the value it wanted is not
+// there. It replaces the type assertion every read of shared data otherwise needs.
+func Get[T any](rc *RenderContext, key string) (T, bool) {
+	stored, ok := rc.Get(key)
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	value, ok := stored.(T)
+	return value, ok
+}

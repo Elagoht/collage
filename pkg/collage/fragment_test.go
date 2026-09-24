@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/Elagoht/collage/internal/types"
 	"testing"
 	"time"
 )
@@ -272,5 +273,20 @@ func TestEffect(t *testing.T) {
 	var fn func(context.Context, *RenderContext) error
 	if Effect(fn) != nil {
 		t.Error("Effect(nil) != nil, want a nil handler")
+	}
+}
+
+func TestGet(t *testing.T) {
+	rc := types.NewRenderContext(context.Background(), nil, nil, "en", nil)
+	rc.Set("count", 3)
+
+	if got, ok := Get[int](rc, "count"); !ok || got != 3 {
+		t.Errorf("Get[int] = %d, %v; want 3, true", got, ok)
+	}
+	if got, ok := Get[string](rc, "count"); ok || got != "" {
+		t.Errorf("Get[string] of an int = %q, %v; want the zero value and false", got, ok)
+	}
+	if _, ok := Get[int](rc, "missing"); ok {
+		t.Error("Get of a missing key reported ok")
 	}
 }

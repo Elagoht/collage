@@ -45,10 +45,9 @@ func greet(rc *collage.RenderContext, page *collage.Page) *collage.ActionResult 
 
 func helloData(_ context.Context, rc *collage.RenderContext) (helloView, []string, error) {
 	name := "stranger"
-	if value, ok := rc.Get(nameKey); ok {
-		if submitted, ok := value.(string); ok {
-			name = submitted
-		}
+	// Set by greet, the page's action, when this render is its answer.
+	if submitted, ok := collage.Get[string](rc, nameKey); ok {
+		name = submitted
 	}
 	return helloView{Name: name, RenderedAt: time.Now()}, nil, nil
 }

@@ -67,6 +67,11 @@ return result, nil
 No session, no flash storage, no state smuggled through a query string: the handler
 and the render are one request.
 
+`formPage` has to be **the value you registered**. Registration is what puts a page's
+content into its layout, so a page built inside the handler renders as a layout
+around nothing; collage refuses it with `ErrUnregisteredPage`, naming the page, rather
+than serve a blank one.
+
 **`Body`** with a `ContentType` is written verbatim, which is what a webhook or a
 JSON endpoint answers with. An empty `ContentType` is `application/octet-stream`,
 never sniffed: guessing a type from bytes is how a text response becomes a download.

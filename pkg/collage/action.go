@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -118,3 +119,7 @@ func JSONOf[T any](status int, v T) (*ActionResult, error) {
 func NoContent(status int) *ActionResult {
 	return &ActionResult{Status: status}
 }
+
+// ErrUnregisteredPage is reported when an action answers with a page that was never
+// registered: register the page with RegisterPage, and answer with that same value.
+var ErrUnregisteredPage = httpx.ErrUnregisteredPage

@@ -32,6 +32,12 @@ var ErrNoActionHandler = errors.New("collage: action has no handler")
 // a failure the root fragment absorbs, leaving nothing.
 var ErrEmptyRender = errors.New("collage: page rendered no markup")
 
+// ErrUnregisteredPage reports an action answering with a page that was never
+// registered. Registration is what puts a page's content into its layout, so such a
+// page renders as a layout around nothing — which is ErrEmptyRender's usual cause,
+// caught before the render and named for what it is.
+var ErrUnregisteredPage = errors.New("collage: action answered with a page that was never registered")
+
 // defaultMaxBodyBytes bounds a request body when neither the action nor the
 // application says otherwise.
 //
@@ -209,6 +215,12 @@ func (h *Handler) writeActionPage(
 	result *types.ActionResult,
 	route *routeRef,
 ) int {
+	if h.pageReady != nil && !h.pageReady(result.Page) {
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender,
+			fmt.Errorf("%w: page %q — register it with RegisterPage and answer with the same value, "+
+				"rather than building a page in the handler", ErrUnregisteredPage, result.Page.Name)))
+	}
+
 	// The same context the handler used, now pointed at the page it chose, so
 	// everything it shared is there to be read.
 	rc.Page = result.Page

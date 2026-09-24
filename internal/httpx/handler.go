@@ -165,6 +165,11 @@ type Deps struct {
 	// they change — the templates as read from disk — in addition to every
 	// mount's. Ignored outside development.
 	DevSources []fs.FS
+	// PageReady reports whether a page can render: one with a layout only once
+	// registration has bound its content into it. It is how an action answering
+	// with a page built on the spot is told so, rather than served a blank one.
+	// Nil skips the check.
+	PageReady func(*types.Page) bool
 	// Middleware wraps the handling of every request, first element outermost.
 	// It runs inside the span, the metrics and the panic guard, and before a
 	// mount, a handler or the router sees the request.
@@ -199,6 +204,7 @@ type Handler struct {
 	handlers     []HandlerMount
 	chain        http.Handler
 	reload       *reloadHub
+	pageReady    func(*types.Page) bool
 	maxBodyBytes int64
 	invalidator  Invalidator
 	csrf         *csrf.Guard
@@ -241,6 +247,7 @@ func New(d Deps) (*Handler, error) {
 		// what this Handler serves.
 		mounts:       slices.Clone(d.Mounts),
 		handlers:     slices.Clone(d.Handlers),
+		pageReady:    d.PageReady,
 		maxBodyBytes: d.MaxBodyBytes,
 		invalidator:  d.Invalidator,
 		csrf:         d.CSRF,

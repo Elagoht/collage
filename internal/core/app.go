@@ -693,6 +693,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		Mounts:       a.Mounts(),
 		Handlers:     a.handlers,
 		DevSources:   a.devSources(),
+		PageReady:    a.pageReady,
 		Middleware:   a.middleware,
 		MaxBodyBytes: a.cfg.Server.MaxBodyBytes,
 		// An action asks for invalidation declaratively, and this is what
@@ -710,6 +711,17 @@ func (a *App) buildHandler() (http.Handler, error) {
 
 	a.handler = handler
 	return handler, nil
+}
+
+// pageReady reports whether p can render: a page with a layout renders only once
+// registration has bound its content into it.
+func (a *App) pageReady(p *types.Page) bool {
+	if p == nil || p.LayoutFragment == nil {
+		return true
+	}
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.bound[p]
 }
 
 // devSources are the file systems, besides the mounts, whose changes reload a
