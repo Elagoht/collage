@@ -235,8 +235,10 @@ func TestApp_ServesRendersCachesAndInvalidates(t *testing.T) {
 	if !strings.Contains(body, "<main>") {
 		t.Fatalf("first request body = %q, want it wrapped in the layout", body)
 	}
-	if got := first.Header().Get("Vary"); got != "Accept-Language, Cookie" {
-		t.Fatalf("Vary = %q, want the enabled locale sources", got)
+	// No Vary: the locale is in the URL, so a shared cache already tells the
+	// representations apart without being told to.
+	if got := first.Header().Get("Vary"); got != "" {
+		t.Fatalf("Vary = %q, want none", got)
 	}
 
 	if fresh, hits := renderCounts(metrics); fresh != 1 || hits != 0 {
@@ -801,45 +803,35 @@ func TestApp_DevMode(t *testing.T) {
 	}
 }
 
-// TestApp_VaryFollowsLocaleSources: Vary is populated from the negative locale
-// flags, so the zero value — every source enabled — varies on both headers. A
-// disabled source must drop out, and a page with nothing left to vary on must
-// carry no Vary header at all.
-func TestApp_VaryFollowsLocaleSources(t *testing.T) {
-	for _, testCase := range []struct {
-		name     string
-		mutate   func(*Config)
-		expected string
-	}{
-		{name: "both enabled", mutate: nil, expected: "Accept-Language, Cookie"},
-		{
-			name:     "header disabled",
-			mutate:   func(cfg *Config) { cfg.Locale.DisableHeaderLocale = true },
-			expected: "Cookie",
-		},
-		{
-			name:     "cookie disabled",
-			mutate:   func(cfg *Config) { cfg.Locale.DisableCookieLocale = true },
-			expected: "Accept-Language",
-		},
-		{
-			name: "both disabled",
-			mutate: func(cfg *Config) {
-				cfg.Locale.DisableHeaderLocale = true
-				cfg.Locale.DisableCookieLocale = true
-			},
-			expected: "",
-		},
+// TestApp_RenderPathReachesANonDefaultLocaleThroughItsPrefix: a static build asks
+// for a page by its pattern and a locale, and the locale is reached the way a
+// reader reaches it — through the URL — now that nothing else selects one.
+func TestApp_RenderPathReachesANonDefaultLocaleThroughItsPrefix(t *testing.T) {
+	app := newTestApp(t, func(cfg *Config) { cfg.Locale.Supported = []string{"en", "tr"} })
+	about := &types.Page{
+		Name:            "about",
+		LayoutFragment:  newLayout("layout"),
+		ContentFragment: &types.Fragment{Name: "about-content", TemplatePath: "pages/about.html"},
+		Paths:           map[string]string{"en": "/about", "tr": "/hakkinda"},
+		Strategy:        types.StrategyStatic,
+	}
+	if err := app.RegisterPage(about); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+
+	for _, c := range []struct{ path, locale string }{
+		{"/about", "en"},
+		{"/hakkinda", "tr"},
+		{"/tr/hakkinda", "tr"},
 	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			app := newTestApp(t, testCase.mutate)
-			if err := app.RegisterPage(newHomePage()); err != nil {
-				t.Fatalf("RegisterPage: %v", err)
-			}
-			if got := get(app.Handler(), "/").Header().Get("Vary"); got != testCase.expected {
-				t.Fatalf("Vary = %q, want %q", got, testCase.expected)
-			}
-		})
+		result, err := app.RenderPath(context.Background(), c.path, c.locale, nil)
+		if err != nil {
+			t.Errorf("RenderPath(%q, %q) = %v, want the about page", c.path, c.locale, err)
+			continue
+		}
+		if !strings.Contains(string(result.HTML), "About Us") {
+			t.Errorf("RenderPath(%q, %q) rendered %q", c.path, c.locale, result.HTML)
+		}
 	}
 }
 

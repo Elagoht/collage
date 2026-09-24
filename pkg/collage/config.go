@@ -288,33 +288,24 @@ type CacheConfig struct {
 	MaxKeysPerTag int
 }
 
-// LocaleConfig configures locale resolution. Each locale source is enabled by
-// default (the zero value keeps it on); set the matching Disable* field to turn a
-// source off. The fields are inverted this way deliberately: a bool documented as
-// "default true" can never be turned off through ApplyDefaults, because the zero
-// value (false) is indistinguishable from "caller left it unset" — ApplyDefaults
-// would flip it back to true every time. Making the zero value the enabled state
-// avoids that trap.
+// LocaleConfig configures which locales the application's URLs carry.
+//
+// The URL is the only thing that selects a locale: /about is in Default, and
+// /tr/hakkinda is in "tr". Collage never assigns one from Accept-Language or a
+// cookie, because a URL that means different things to different readers is one
+// that caches, crawlers and shared links all get wrong. An application that wants
+// to negotiate — redirect a Turkish browser to /tr/, or render one URL in the
+// reader's language — does it in middleware registered with App.Use, and tells
+// the cache what it decided with Vary.
 type LocaleConfig struct {
-	// Default is the locale used when none can be resolved from the request.
-	// Defaults to "en".
+	// Default is the locale of a URL with no locale prefix. Defaults to "en".
 	Default string
 	// Supported lists the locales the application serves. Defaults to a slice
 	// containing only Default.
 	Supported []string
-	// DisablePathLocale turns off resolving the locale from the request path, e.g.
-	// /tr/blog/post. The zero value keeps this source enabled.
+	// DisablePathLocale turns off resolving the locale from the request path,
+	// e.g. /tr/blog/post, which leaves every request in Default.
 	DisablePathLocale bool
-	// DisableHeaderLocale turns off resolving the locale from the Accept-Language
-	// header. The zero value keeps this source enabled.
-	DisableHeaderLocale bool
-	// CookieName is the name of the cookie the locale is read from. Empty means
-	// "locale" (ApplyDefaults fills this in); set DisableCookieLocale to turn this
-	// source off entirely regardless of CookieName.
-	CookieName string
-	// DisableCookieLocale turns off resolving the locale from a cookie. The zero
-	// value keeps this source enabled.
-	DisableCookieLocale bool
 }
 
 // ObservabilityConfig configures metrics and tracing. Both fields are optional: a
@@ -382,9 +373,6 @@ func (c *Config) ApplyDefaults() {
 	}
 	if len(c.Locale.Supported) == 0 {
 		c.Locale.Supported = []string{c.Locale.Default}
-	}
-	if c.Locale.CookieName == "" {
-		c.Locale.CookieName = "locale"
 	}
 }
 

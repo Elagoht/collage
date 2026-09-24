@@ -24,6 +24,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -98,10 +99,6 @@ var ErrUnsupportedCache = errors.New("collage: unsupported cache type")
 
 // ErrEmptyTemplateRoot is returned by New when Config.Template.Root is empty.
 var ErrEmptyTemplateRoot = errors.New("collage: empty template root")
-
-// defaultLocaleCookie is the cookie name locale resolution falls back to when
-// Config.Locale.CookieName is empty, matching internal/router's own fallback.
-const defaultLocaleCookie = "locale"
 
 // defaultMaxKeysPerTag is the per-tag cache-key cap the dependency tracker is given
 // when Config.Cache.MaxKeysPerTag is left at zero. It matches the cache's own
@@ -233,22 +230,15 @@ type CacheConfig struct {
 	MaxKeysPerTag int
 }
 
-// LocaleConfig is internal/core's mirror of pkg/collage.LocaleConfig. Every
-// Disable* field keeps the same negative polarity: the zero value leaves that
-// locale source enabled.
+// LocaleConfig is internal/core's mirror of pkg/collage.LocaleConfig.
 type LocaleConfig struct {
-	// Default is the locale used when none can be resolved from the request.
+	// Default is the locale of a URL with no locale prefix.
 	Default string
 	// Supported lists the locales the application serves.
 	Supported []string
-	// DisablePathLocale turns off resolving the locale from the request path.
+	// DisablePathLocale turns off resolving the locale from the request path,
+	// which leaves every request in Default.
 	DisablePathLocale bool
-	// DisableHeaderLocale turns off resolving the locale from Accept-Language.
-	DisableHeaderLocale bool
-	// CookieName is the cookie the locale is read from. Empty means "locale".
-	CookieName string
-	// DisableCookieLocale turns off resolving the locale from a cookie.
-	DisableCookieLocale bool
 }
 
 // ObservabilityConfig is internal/core's mirror of pkg/collage.ObservabilityConfig.
@@ -309,10 +299,6 @@ type App struct {
 	metrics observability.Metrics
 	// tracer starts one span per request and per render.
 	tracer observability.Tracer
-	// vary lists the request headers a rendered page's content depends on, derived
-	// from the enabled locale sources and sent as the Vary header on publicly
-	// cacheable responses.
-	vary []string
 
 	// mu guards everything below it: the page registry, the document registry,
 	// the mount registry, the commands, the started and closing flags, and the
@@ -349,6 +335,11 @@ type App struct {
 	// that keeps a mount from silently swallowing a page's or a document's route
 	// regardless of which was registered first.
 	mounts []*asset.Mount
+	// handlers holds every http.Handler mounted with Handle, and middleware
+	// every wrapper registered with Use, both in registration order. See
+	// handle.go.
+	handlers   []httpx.HandlerMount
+	middleware []httpx.Middleware
 	// commands holds the CLI subcommands plugins contributed through
 	// RegisterCommand.
 	commands []plugin.Command
@@ -399,8 +390,8 @@ type App struct {
 // New builds an App from a validated configuration. cfg is expected to have been
 // defaulted and validated already — pkg/collage.New does both before converting —
 // so New applies only the fallbacks it needs to construct working subsystems: an
-// empty Template.Extension becomes ".html", an empty Locale.Default becomes "en",
-// and an empty Locale.CookieName becomes "locale". It returns ErrEmptyTemplateRoot
+// empty Template.Extension becomes ".html" and an empty Locale.Default becomes
+// "en". It returns ErrEmptyTemplateRoot
 // for an empty Template.Root, ErrUnsupportedCache for an enabled cache of an
 // unknown type, and a wrapped template error when the template root cannot be
 // loaded.
@@ -416,9 +407,6 @@ func New(cfg Config) (*App, error) {
 	}
 	if cfg.Locale.Default == "" {
 		cfg.Locale.Default = "en"
-	}
-	if cfg.Locale.CookieName == "" {
-		cfg.Locale.CookieName = defaultLocaleCookie
 	}
 	if cfg.Cache.MaxKeysPerTag == 0 {
 		cfg.Cache.MaxKeysPerTag = defaultMaxKeysPerTag
@@ -525,16 +513,12 @@ func New(cfg Config) (*App, error) {
 	app.store = store
 	app.tracker = tracker
 	app.routes = router.New(router.LocaleOptions{
-		Default:             cfg.Locale.Default,
-		Supported:           cfg.Locale.Supported,
-		DisablePathLocale:   cfg.Locale.DisablePathLocale,
-		DisableHeaderLocale: cfg.Locale.DisableHeaderLocale,
-		CookieName:          cfg.Locale.CookieName,
-		DisableCookieLocale: cfg.Locale.DisableCookieLocale,
+		Default:           cfg.Locale.Default,
+		Supported:         cfg.Locale.Supported,
+		DisablePathLocale: cfg.Locale.DisablePathLocale,
 	})
 	app.metrics = metrics
 	app.tracer = tracer
-	app.vary = varyHeaders(cfg.Locale)
 	app.pages = make(map[string]*types.Page)
 	app.bound = make(map[*types.Page]bool)
 	app.documents = make(map[string]*types.Document)
@@ -542,27 +526,6 @@ func New(cfg Config) (*App, error) {
 	app.listening = make(chan struct{})
 
 	return app, nil
-}
-
-// varyHeaders returns the request headers a rendered page's content depends on,
-// derived from the enabled locale sources: Accept-Language when header-locale
-// resolution is on, Cookie when cookie-locale resolution is. This framework's own
-// cache key already carries the resolved locale, so its cache was never at risk —
-// but a shared cache between the handler and the client keys on the URL alone, and
-// a locale negotiated from a header or a cookie is not in the URL. Without this, a
-// CDN hands one visitor's language to the next.
-//
-// Path-locale resolution contributes nothing: it is in the URL already, so a shared
-// cache distinguishes those representations without being told to.
-func varyHeaders(cfg LocaleConfig) []string {
-	var vary []string
-	if !cfg.DisableHeaderLocale {
-		vary = append(vary, "Accept-Language")
-	}
-	if !cfg.DisableCookieLocale {
-		vary = append(vary, "Cookie")
-	}
-	return vary
 }
 
 // DevMode reports whether the application is running in development mode: the
@@ -716,8 +679,9 @@ func (a *App) buildHandler() (http.Handler, error) {
 		Logger:       a.logger,
 		DevMode:      a.devMode,
 		DefaultTTL:   a.cfg.Cache.DefaultTTL,
-		Vary:         a.vary,
 		Mounts:       a.Mounts(),
+		Handlers:     a.handlers,
+		Middleware:   a.middleware,
 		MaxBodyBytes: a.cfg.Server.MaxBodyBytes,
 		// An action asks for invalidation declaratively, and this is what
 		// carries it out. Handing every handler the whole application so it
@@ -972,12 +936,8 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 //
 // The page is resolved through the router, from a synthetic GET request for path,
 // so a path reaches exactly the page it would reach over HTTP. A non-empty locale is
-// a *request* for that locale, offered to the router through the Accept-Language
-// header and the locale cookie — whichever of those sources the configuration leaves
-// enabled — so a path carrying no locale prefix still resolves to it. With both of
-// those sources disabled, a path must carry its own locale prefix to reach a page
-// registered only under that locale, which is the only URL that reaches it over HTTP
-// either way.
+// a *request* for that locale: a path carrying no locale prefix is given the
+// locale's own prefix, which is the URL that reaches it over HTTP.
 //
 // The locale the page actually renders for is whatever the router resolved, not the
 // argument, and the two are the same thing whenever the argument had any effect. It
@@ -1094,10 +1054,12 @@ func (a *App) renderResolved(
 // path, there is no host to invent, and a hand-built request has no error path to
 // swallow. Fragments receive this request in their RenderContext, so it carries a
 // realistic protocol and a usable header map.
+//
+// locale is reached the way a reader reaches it: through the URL. A path with no
+// locale prefix is given the one it needs — see localePath — because the URL is
+// the only thing that selects a locale.
 func (a *App) syntheticRequest(ctx context.Context, path, locale string) *http.Request {
-	if path == "" || path[0] != '/' {
-		path = "/" + path
-	}
+	path = a.localePath(path, locale)
 
 	req := (&http.Request{
 		Method:     http.MethodGet,
@@ -1109,25 +1071,31 @@ func (a *App) syntheticRequest(ctx context.Context, path, locale string) *http.R
 		Host:       a.cfg.Server.Host,
 	}).WithContext(ctx)
 
-	if locale == "" {
-		return req
-	}
-	if !a.cfg.Locale.DisableHeaderLocale {
-		req.Header.Set("Accept-Language", locale)
-	}
-	if !a.cfg.Locale.DisableCookieLocale {
-		req.AddCookie(&http.Cookie{Name: a.localeCookieName(), Value: locale})
-	}
 	return req
 }
 
-// localeCookieName returns the configured locale cookie name, falling back to the
-// same default internal/router uses for an empty one.
-func (a *App) localeCookieName() string {
-	if a.cfg.Locale.CookieName == "" {
-		return defaultLocaleCookie
+// localePath returns the URL path that reaches path in locale over HTTP: path
+// itself for the default locale, and path under the locale's prefix for any
+// other. A path already carrying a supported locale prefix is left alone, and so
+// is every path when path locales are off — the default locale is then the only
+// one a request can reach.
+func (a *App) localePath(path, locale string) string {
+	if path == "" || path[0] != '/' {
+		path = "/" + path
 	}
-	return a.cfg.Locale.CookieName
+	if locale == "" || locale == a.cfg.Locale.Default || a.cfg.Locale.DisablePathLocale {
+		return path
+	}
+	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	for _, supported := range a.cfg.Locale.Supported {
+		if strings.EqualFold(first, supported) {
+			return path
+		}
+	}
+	if path == "/" {
+		return "/" + locale
+	}
+	return "/" + locale + path
 }
 
 // RenderNotFound renders the registered not-found page for locale, or reports that

@@ -1,7 +1,7 @@
 // Package router resolves incoming HTTP requests to pages, documents,
 // redirects, or a not-found result: a radix tree per locale shared by page and
 // document paths, a shared radix tree for redirects, and locale resolution
-// from the request path, Accept-Language header, and a cookie.
+// from the request path — the only source of a locale there is.
 package router
 
 import (
@@ -237,7 +237,7 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 		path = "/"
 	}
 
-	locale, remaining := resolveLocale(req, path, rt.localeOptions)
+	locale, remaining := resolveLocale(path, rt.localeOptions)
 
 	segments, ok := decodeSegments(splitPath(remaining))
 	if !ok {
@@ -438,8 +438,7 @@ func (rt *router) ClaimedPaths() []ClaimedPath {
 		claimed = append(claimed, ClaimedPath{Pattern: c.pattern, Owner: c.owner})
 
 		if c.locale != "" {
-			// A route: reachable at its own pattern under a locale resolved
-			// from a header, a cookie or the default, and at the one
+			// A route: reachable at its own pattern, and at the one
 			// locale-prefixed form that resolves to its own locale.
 			if slices.Contains(pathLocales, c.locale) {
 				for _, prefixed := range localePrefixed(c.locale, c.pattern) {

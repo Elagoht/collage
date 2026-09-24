@@ -138,6 +138,29 @@ func (a *App) checkMountsDoNotShadow() error {
 			}
 		}
 	}
+
+	// Handlers claim URL space exactly as mounts do, and are held to the same
+	// rule: against every route, against every mount, and against each other.
+	for i, handler := range a.handlers {
+		prefix := handler.Prefix
+
+		for _, path := range claimed {
+			if strings.HasPrefix(path.Pattern, prefix) {
+				return fmt.Errorf("%w: handler %q would swallow %s at %q",
+					ErrMountShadowsRoute, prefix, path.Owner, path.Pattern)
+			}
+		}
+		for _, m := range a.mounts {
+			if strings.HasPrefix(m.Prefix(), prefix) || strings.HasPrefix(prefix, m.Prefix()) {
+				return fmt.Errorf("%w: handler %q and mount %q", ErrMountConflict, prefix, m.Prefix())
+			}
+		}
+		for _, other := range a.handlers[i+1:] {
+			if strings.HasPrefix(other.Prefix, prefix) || strings.HasPrefix(prefix, other.Prefix) {
+				return fmt.Errorf("%w: handlers %q and %q", ErrMountConflict, prefix, other.Prefix)
+			}
+		}
+	}
 	return nil
 }
 

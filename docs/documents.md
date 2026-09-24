@@ -221,9 +221,8 @@ by `/tr/tr/feed.xml`, and `/tr/feed.xml` answers 404. This is the same rule
 [routing.md](routing.md) states for pages; documents share the page tree and are
 not an exception to it.
 
-The two URLs that reach the document above are therefore `/feed.xml` — whose
-locale comes from the `Accept-Language` header, the locale cookie, or the default
-— and `/tr/feed.xml`. A locale that wants a genuinely different URL gets one by
+The two URLs that reach the document above are therefore `/feed.xml`, in the
+default locale, and `/tr/feed.xml`. A locale that wants a genuinely different URL gets one by
 writing a different pattern (`WithPath("tr", "/akis.xml")`), not by prefixing.
 
 The handler reads the resolved locale from `rc.Locale`. The locale is part of the

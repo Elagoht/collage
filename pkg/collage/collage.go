@@ -396,12 +396,9 @@ func toCoreConfig(cfg *Config) core.Config {
 			MaxKeysPerTag: cfg.Cache.MaxKeysPerTag,
 		},
 		Locale: core.LocaleConfig{
-			Default:             cfg.Locale.Default,
-			Supported:           cfg.Locale.Supported,
-			DisablePathLocale:   cfg.Locale.DisablePathLocale,
-			DisableHeaderLocale: cfg.Locale.DisableHeaderLocale,
-			CookieName:          cfg.Locale.CookieName,
-			DisableCookieLocale: cfg.Locale.DisableCookieLocale,
+			Default:           cfg.Locale.Default,
+			Supported:         cfg.Locale.Supported,
+			DisablePathLocale: cfg.Locale.DisablePathLocale,
 		},
 		Observability: core.ObservabilityConfig{
 			Metrics: cfg.Observability.Metrics,

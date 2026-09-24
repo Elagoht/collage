@@ -93,6 +93,7 @@ const (
 	stageErrorPage    = "error_page"
 	stagePanic        = "panic"
 	stageAsset        = "asset"
+	stageHandler      = "handler"
 )
 
 // contentTypeHTML is the Content-Type every rendered page and built-in error page
@@ -150,22 +151,19 @@ type Deps struct {
 	// DefaultTTL is the cache TTL used for a page that sets no CacheTTL of its
 	// own. Zero or less defers to the cache's own default TTL.
 	DefaultTTL time.Duration
-	// Vary lists the request headers a rendered page's content depends on. They
-	// are joined into a Vary header on every publicly cacheable response.
-	//
-	// The application layer populates it from the router's enabled locale
-	// sources: "Accept-Language" when header-locale resolution is on, "Cookie"
-	// when cookie-locale resolution is. This framework's own cache key already
-	// carries the resolved locale, so its cache was never at risk — but a shared
-	// cache between the handler and the client, a CDN or a corporate proxy, keys
-	// on the URL alone, and a locale negotiated from a header or a cookie is not
-	// in the URL. Without this, such a cache hands one visitor's language to the
-	// next.
-	Vary []string
 	// Mounts serves asset file systems under their own URL prefixes, checked
 	// before every request is routed. A nil or empty Mounts serves no assets. See
 	// Handler.serve for why checking them first is safe.
 	Mounts []*asset.Mount
+	// Handlers are the application's own http.Handlers, each answering every
+	// request under its prefix. They are checked after Mounts and before the
+	// router, and like Mounts they are guaranteed by internal/core not to
+	// overlap any route.
+	Handlers []HandlerMount
+	// Middleware wraps the handling of every request, first element outermost.
+	// It runs inside the span, the metrics and the panic guard, and before a
+	// mount, a handler or the router sees the request.
+	Middleware []Middleware
 	// MaxBodyBytes bounds an action's request body when the action declares no
 	// bound of its own. Zero selects the framework's default; negative means
 	// unbounded, which is a decision worth making deliberately.
@@ -192,8 +190,9 @@ type Handler struct {
 	logger       *slog.Logger
 	devMode      bool
 	defaultTTL   time.Duration
-	vary         string
 	mounts       []*asset.Mount
+	handlers     []HandlerMount
+	chain        http.Handler
 	maxBodyBytes int64
 	invalidator  Invalidator
 	csrf         *csrf.Guard
@@ -221,7 +220,7 @@ func New(d Deps) (*Handler, error) {
 	if d.Logger == nil {
 		return nil, fmt.Errorf("%w: Logger", ErrMissingDependency)
 	}
-	return &Handler{
+	h := &Handler{
 		router:     d.Router,
 		renderer:   d.Renderer,
 		cache:      d.Cache,
@@ -232,18 +231,22 @@ func New(d Deps) (*Handler, error) {
 		logger:     d.Logger,
 		devMode:    d.DevMode,
 		defaultTTL: d.DefaultTTL,
-		// Joined once at construction: it is the same string on every response,
-		// and it is copied out of d rather than aliased so a caller mutating its
-		// slice afterwards cannot change what is served.
-		vary: strings.Join(d.Vary, ", "),
-		// Cloned for the same reason: a caller mutating d.Mounts after New returns
-		// must not change what this Handler serves.
+		// Cloned so a caller mutating d.Mounts after New returns cannot change
+		// what this Handler serves.
 		mounts:       slices.Clone(d.Mounts),
+		handlers:     slices.Clone(d.Handlers),
 		maxBodyBytes: d.MaxBodyBytes,
 		invalidator:  d.Invalidator,
 		csrf:         d.CSRF,
 		flight:       newFlight(),
-	}, nil
+	}
+	// Composed once rather than per request: a middleware constructor is
+	// allowed to do setup work, and doing it on every request would be a cost
+	// nobody asked for.
+	if len(d.Middleware) > 0 {
+		h.chain = compose(slices.Clone(d.Middleware), http.HandlerFunc(h.serveChained))
+	}
+	return h, nil
 }
 
 // ServeHTTP implements http.Handler: it runs the request lifecycle inside one span
@@ -258,7 +261,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx, span := h.startRequestSpan(r)
 	defer span.End()
-	r = r.WithContext(ctx)
+	r = withVarySet(r.WithContext(ctx))
 
 	status := h.serveGuarded(w, r)
 
@@ -381,7 +384,20 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request) (status i
 			fmt.Errorf("%w: %v\n%s", ErrPanic, recovered, debug.Stack()),
 		))
 	}()
-	return h.serve(w, r, &route)
+	if h.chain == nil {
+		return h.serve(w, r, &route)
+	}
+
+	// Through the middleware, which may answer the request itself — a 401, a
+	// redirect — without serve ever running. The status is then whatever it
+	// wrote.
+	state := &chainState{route: &route}
+	capture := &statusCapturingWriter{ResponseWriter: w}
+	h.chain.ServeHTTP(capture, r.WithContext(context.WithValue(r.Context(), chainStateKey{}, state)))
+	if state.status != 0 {
+		return state.status
+	}
+	return capture.Status()
 }
 
 // serve runs the request lifecycle and returns the status code it wrote.
@@ -416,6 +432,12 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		if mount.Handles(r.URL.Path) {
 			route.resolved(routeKindMount, mount.Prefix())
 			return h.serveMount(w, r, mount, route)
+		}
+	}
+	for _, mount := range h.handlers {
+		if strings.HasPrefix(r.URL.Path, mount.Prefix) {
+			route.resolved(routeKindHandler, mount.Prefix)
+			return h.serveHandler(w, r, mount, route)
 		}
 	}
 
@@ -538,10 +560,11 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// representations. Which parts of it discriminate is the page's own
 		// declaration — see queryVary and Page.CacheParams.
 		key = cache.Key(cache.KeyInput{
-			Path:   r.URL.Path,
-			Locale: match.Locale,
-			Params: match.PathParams,
-			Vary:   queryVary(r.URL, page.CacheParams),
+			Path:    r.URL.Path,
+			Locale:  match.Locale,
+			Params:  match.PathParams,
+			Vary:    queryVary(r.URL, page.CacheParams),
+			Request: requestVary(r),
 		})
 		lookupStart := time.Now()
 		// Never read from the cache in development.
@@ -600,7 +623,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	header := w.Header()
 	header.Set("Content-Type", contentTypeHTML)
 	header.Set("ETag", etag)
-	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
+	h.setCacheHeaders(header, r, page.Strategy, page.CacheTTL)
 	// After setCacheHeaders, so it overrides whatever the page's strategy declared.
 	// The body that goes on the wire carries this reader's token, whatever the
 	// shared one behind it may be cached as.
@@ -780,7 +803,7 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 
 	header := w.Header()
 	header.Set("ETag", etag)
-	h.setCacheHeaders(header, page.Strategy, page.CacheTTL)
+	h.setCacheHeaders(header, r, page.Strategy, page.CacheTTL)
 	if personal {
 		header.Set("Cache-Control", "private, no-store")
 	}
@@ -878,18 +901,20 @@ func (h *Handler) ttlFor(strategy types.RenderStrategy, cacheTTL time.Duration) 
 
 // setCacheHeaders writes the Cache-Control for a route with the given strategy and
 // cacheTTL, and, whenever that response is publicly cacheable, the Vary header
-// built from Deps.Vary. Vary belongs only on a public response: it tells a shared
+// naming the headers the request declared through Vary. Vary belongs only on a public response: it tells a shared
 // cache which request headers select between representations, and a no-store
 // response has no representation to select. Shared by the page and document paths;
 // see ttlFor for why it is parameterized rather than typed on either route kind.
-func (h *Handler) setCacheHeaders(header http.Header, strategy types.RenderStrategy, cacheTTL time.Duration) {
+func (h *Handler) setCacheHeaders(header http.Header, r *http.Request, strategy types.RenderStrategy, cacheTTL time.Duration) {
 	control := h.cacheControl(strategy, cacheTTL)
 	header.Set("Cache-Control", control)
 
-	if h.vary == "" || !strings.HasPrefix(control, "public") {
+	if !strings.HasPrefix(control, "public") {
 		return
 	}
-	header.Set("Vary", h.vary)
+	if names := requestVaryHeaders(r); len(names) > 0 {
+		header.Set("Vary", strings.Join(names, ", "))
+	}
 }
 
 // cacheControl returns the Cache-Control value for a route with the given render

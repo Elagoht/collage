@@ -179,9 +179,10 @@ contribute pages, documents, mounts and template functions of its own. See
   else produces a 500 and its error page.
 - **Production error pages leak nothing.** Fragment names, error chains, and
   stacks appear only in development mode.
-- **Caches downstream are told the truth.** `Vary` on every publicly cacheable
-  response, derived from the locale sources actually enabled, so a CDN cannot hand
-  one visitor's language to the next.
+- **A URL means one thing.** The locale comes from the path and nothing else, so
+  a link, a crawler and a CDN all see what the reader sees. Content that depends on
+  a header is declared with `collage.Vary`, which keys the cache on what the
+  application resolved and sends the `Vary` header downstream caches need.
 - **Invalidation reports what it did.** `InvalidateTagsN` returns the number of
   keys it reached, and a partial failure is an error rather than a silent success.
 - **A non-HTML route fails as a non-HTML route.** A document's failure, and a
@@ -190,13 +191,28 @@ contribute pages, documents, mounts and template functions of its own. See
 - **Assets are files, not cache entries.** A mount is served with
   `http.ServeContent`, so `Range` and `206` work and audio seeks; it never enters
   the page cache, so a 50 MB download cannot evict thousands of pages.
-- **A mount cannot silently shadow a route.** A mount prefix that would swallow a
-  registered page or document path is refused at startup, naming both, in either
+- **A mount cannot silently shadow a route.** A mount or handler prefix that would
+  swallow a registered route is refused at startup, naming both, in either
   registration order.
 
 ## Extending the framework
 
-Three seams, all reachable from `pkg/collage` alone.
+Four seams, all reachable from `pkg/collage` alone.
+
+**Your own HTTP.** Collage renders pages; an API, auth or language negotiation is
+written the way you already would. `app.Use` takes standard `net/http` middleware,
+which runs before routing and inside the framework's panic guard and metrics, and
+whatever it puts in the request context is what data handlers read. `app.Handle`
+mounts any `http.Handler` under a prefix — collage applies no forgery check, body
+limit or cache to it.
+
+```go
+app.Use(requireAuth)
+app.Handle("/api/", apiRouter) // chi, echo, http.ServeMux, a gRPC gateway
+```
+
+[docs/http.md](docs/http.md) has both, and `collage.Vary` for a cached page whose
+content depends on a header.
 
 **A cache of your own.** Implement `collage.Cache` and set it on
 `CacheConfig.Store`; `Cache.Type` is then ignored. Implement
@@ -299,6 +315,7 @@ Details in [docs/caching.md](docs/caching.md),
 | [docs/caching.md](docs/caching.md) | Render strategies, the cache key, ETags, `Vary`, dependency tags, invalidation, custom caches |
 | [docs/plugins.md](docs/plugins.md) | The `Plugin` contract, the `Host`, every hook, dispatch and error semantics, lifecycle |
 | [docs/routing.md](docs/routing.md) | Path patterns, locales, redirects, error-page resolution, registration errors |
+| [docs/http.md](docs/http.md) | `app.Use` middleware, `app.Handle` for your own handlers, `collage.Vary` |
 | [docs/actions.md](docs/actions.md) | `Action`: methods, forms, `ActionResult`, request-forgery tokens, fragments at their own URLs |
 | [docs/deployment.md](docs/deployment.md) | Building a binary, containers, signals, TLS, the cache in production, health checks |
 | [docs/cli.md](docs/cli.md) | `collage new`/`dev`/`build`, plugin subcommands, and the static site builder |

@@ -178,12 +178,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 			MaxEntries: 42,
 		},
 		Locale: LocaleConfig{
-			Default:             "tr",
-			Supported:           []string{"tr", "en"},
-			DisablePathLocale:   true,
-			DisableHeaderLocale: true,
-			CookieName:          "lang",
-			DisableCookieLocale: true,
+			Default:           "tr",
+			Supported:         []string{"tr", "en"},
+			DisablePathLocale: true,
 		},
 		Observability: ObservabilityConfig{Metrics: metrics, Tracer: tracer},
 	}
@@ -226,14 +223,14 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	if core.Cache.DefaultTTL != 7*time.Second || core.Cache.MaxEntries != 42 {
 		t.Errorf("Cache = %+v, want a 7s TTL and 42 entries", core.Cache)
 	}
-	if core.Locale.Default != "tr" || core.Locale.CookieName != "lang" {
-		t.Errorf("Locale = %+v, want tr and the lang cookie", core.Locale)
+	if core.Locale.Default != "tr" {
+		t.Errorf("Locale = %+v, want tr", core.Locale)
 	}
 	if len(core.Locale.Supported) != 2 || core.Locale.Supported[0] != "tr" {
 		t.Errorf("Locale.Supported = %v, want [tr en]", core.Locale.Supported)
 	}
-	if !core.Locale.DisablePathLocale || !core.Locale.DisableHeaderLocale || !core.Locale.DisableCookieLocale {
-		t.Errorf("Locale = %+v, want every source disabled", core.Locale)
+	if !core.Locale.DisablePathLocale {
+		t.Errorf("Locale = %+v, want path locales disabled", core.Locale)
 	}
 	if core.Observability.Metrics != metrics {
 		t.Error("Observability.Metrics did not carry over")

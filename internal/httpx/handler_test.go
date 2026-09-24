@@ -507,9 +507,19 @@ func withRouter(rt router.Router) envOption {
 	return func(d *Deps) { d.Router = rt }
 }
 
-// withVary sets the request headers the handler advertises in Vary.
+// withVary adds middleware declaring, through Vary, that every response depends
+// on headers.
 func withVary(headers ...string) envOption {
-	return func(d *Deps) { d.Vary = headers }
+	return func(d *Deps) {
+		d.Middleware = append(d.Middleware, func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for _, header := range headers {
+					_ = Vary(r, header, r.Header.Get(header))
+				}
+				next.ServeHTTP(w, r)
+			})
+		})
+	}
 }
 
 // withDefaultTTL sets the handler's fallback cache TTL.
@@ -1301,7 +1311,7 @@ func TestVaryOnPubliclyCacheableResponses(t *testing.T) {
 			res := env.do(req)
 
 			if got := res.Header().Get("Vary"); got != tc.want {
-				t.Errorf("Vary = %q, want %q: a shared cache keys on the URL alone, and a negotiated locale is not in the URL", got, tc.want)
+				t.Errorf("Vary = %q, want %q: a shared cache keys on the URL alone, and a negotiated value is not in the URL", got, tc.want)
 			}
 		})
 	}

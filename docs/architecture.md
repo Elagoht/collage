@@ -77,11 +77,12 @@ See [documents.md](documents.md) and [assets.md](assets.md).
 
 ## The request lifecycle
 
-For one GET on a page, in order — a mount claims the request before step 1 if its
-prefix matches, and a document runs the same steps minus 4, 5 and 6:
+For one GET on a page, in order — middleware registered with `app.Use` runs
+first, a mount or a handler registered with `app.Handle` claims the request before
+step 1 if its prefix matches, and a document runs the same steps minus 4, 5 and 6:
 
-1. **Route.** The router resolves the locale (path prefix, then `Accept-Language`,
-   then cookie, then the default) and matches the remaining path in that locale's
+1. **Route.** The router resolves the locale from the path prefix — or the
+   default, when there is none — and matches the remaining path in that locale's
    radix tree. A redirect match wins over a page or document match at the same
    path.
 2. **`OnPageResolved`.** Plugins observe the resolved page.

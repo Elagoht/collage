@@ -32,9 +32,8 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 			MaxKeysPerTag: 10000,
 		},
 		Locale: LocaleConfig{
-			Default:    "en",
-			Supported:  []string{"en"},
-			CookieName: "locale",
+			Default:   "en",
+			Supported: []string{"en"},
 		},
 	}
 
@@ -102,11 +101,9 @@ func TestConfig_ApplyDefaults_PreservesExplicitValues(t *testing.T) {
 func TestConfig_ApplyDefaults_PreservesOptOuts(t *testing.T) {
 	cfg := Config{
 		Locale: LocaleConfig{
-			Default:             "en",
-			Supported:           []string{"en"},
-			DisablePathLocale:   true,
-			DisableHeaderLocale: true,
-			DisableCookieLocale: true,
+			Default:           "en",
+			Supported:         []string{"en"},
+			DisablePathLocale: true,
 		},
 		Cache: CacheConfig{MaxEntries: -1},
 	}
@@ -115,12 +112,6 @@ func TestConfig_ApplyDefaults_PreservesOptOuts(t *testing.T) {
 
 	if !cfg.Locale.DisablePathLocale {
 		t.Error("ApplyDefaults cleared DisablePathLocale")
-	}
-	if !cfg.Locale.DisableHeaderLocale {
-		t.Error("ApplyDefaults cleared DisableHeaderLocale")
-	}
-	if !cfg.Locale.DisableCookieLocale {
-		t.Error("ApplyDefaults cleared DisableCookieLocale")
 	}
 	if cfg.Cache.MaxEntries != -1 {
 		t.Errorf("Cache.MaxEntries = %d, want -1 (unlimited, unchanged)", cfg.Cache.MaxEntries)

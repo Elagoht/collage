@@ -75,35 +75,37 @@ Locale: collage.LocaleConfig{
 },
 ```
 
-Sources are consulted in priority order, and an unsupported or malformed value at
-any stage falls through to the next:
+**The URL is the only thing that selects a locale.** A path with no locale prefix
+is in `Default`; a path whose first segment names a supported locale is in that
+one, with the prefix stripped before matching:
 
-1. **Path prefix** — `/tr/blog/hello` resolves `tr` and matches `/blog/hello` in
-   the `tr` tree.
-2. **`Accept-Language`** — standard quality-value parsing.
-3. **Cookie** — named by `Locale.CookieName`, `"locale"` by default.
-4. **`Locale.Default`**, which is always treated as supported.
+| URL | Locale | Matched against |
+| --- | --- | --- |
+| `/about` | `en` | `/about` in the `en` tree |
+| `/tr/hakkinda` | `tr` | `/hakkinda` in the `tr` tree |
+| `/fr/about` | `en` | `/fr/about` — `fr` is not supported, so it is an ordinary segment |
 
-Each source is on by default; turn one off with the matching `Disable*` field:
+`DisablePathLocale: true` turns prefixes off, which leaves every request in
+`Default`.
 
-```go
-Locale: collage.LocaleConfig{
-	Default:             "en",
-	Supported:           []string{"en", "tr"},
-	DisableHeaderLocale: true,
-	DisableCookieLocale: true,
-},
-```
+A path registered for one locale only is reachable only in that locale.
 
-The fields are negative on purpose. A bool documented "default true" can never be
-turned off, because its zero value is indistinguishable from "the caller left it
-unset" and defaulting flips it back on every time.
+Collage never assigns a locale from `Accept-Language` or a cookie. It used to, and
+the result was one URL with different content per reader — which is what caches,
+crawlers and shared links all get wrong — and a Turkish browser following a link to
+an English page was handed a 404, because the header moved the lookup into a tree
+where that path did not exist.
 
-Enabling the header or cookie source adds `Vary: Accept-Language, Cookie` to
-publicly cacheable responses — see [caching](caching.md).
+**Negotiating is yours to do**, in middleware, and there are two honest shapes for
+it:
 
-A path registered for one locale only is reachable only in that locale. A request
-resolving to a locale with no tree simply does not match.
+- **Redirect** a reader who arrives at `/` with a Turkish browser, or a language
+  cookie of your own, to `/tr/`. Every URL still means one thing.
+- **Render one URL in the reader's language**, reading the header in middleware
+  and passing the decision to data handlers through the request context. Then call
+  `collage.Vary(r, "Accept-Language", lang)` so the cache keeps the versions apart.
+
+Both are in [http.md](http.md).
 
 ### Translation is not the framework's job
 

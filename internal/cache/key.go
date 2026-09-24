@@ -24,6 +24,12 @@ type KeyInput struct {
 	// e.g. a plugin's own cache dimension. Order does not matter: Key sorts before
 	// hashing.
 	Vary []string
+	// Request lists the dimensions the application declared for this request,
+	// through collage.Vary: a language its middleware resolved, a tier its auth
+	// layer read. It is a section of its own rather than more Vary entries,
+	// because Vary carries the raw query — and a query is chosen by whoever sent
+	// the request, so sharing a section would let one spell another's key.
+	Request []string
 }
 
 // Key returns the canonical cache key for in: the hex-encoded SHA-256 of a
@@ -62,6 +68,13 @@ func Key(in KeyInput) string {
 	sort.Strings(vary)
 	fmt.Fprintf(h, "%d:", len(vary))
 	for _, v := range vary {
+		writeField(h, v)
+	}
+
+	request := append([]string(nil), in.Request...)
+	sort.Strings(request)
+	fmt.Fprintf(h, "%d:", len(request))
+	for _, v := range request {
 		writeField(h, v)
 	}
 

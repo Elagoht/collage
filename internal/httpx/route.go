@@ -39,6 +39,11 @@ const (
 	// page for the cases it expects returns one — that is what ActionResult.Page
 	// is for.
 	routeKindAction
+	// routeKindHandler is a request answered by an http.Handler the
+	// application mounted. Its failures are plain text: collage knows nothing
+	// about what it serves, and an HTML page is the one answer it can be sure is
+	// wrong for an API.
+	routeKindHandler
 )
 
 // plainText reports whether a failure on a route of this kind must be written as

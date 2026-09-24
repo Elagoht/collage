@@ -58,10 +58,11 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	key := ""
 	if cacheable {
 		key = cache.Key(cache.KeyInput{
-			Path:   r.URL.Path,
-			Locale: match.Locale,
-			Params: match.PathParams,
-			Vary:   queryVary(r.URL, doc.CacheParams),
+			Path:    r.URL.Path,
+			Locale:  match.Locale,
+			Params:  match.PathParams,
+			Vary:    queryVary(r.URL, doc.CacheParams),
+			Request: requestVary(r),
 		})
 		lookupStart := time.Now()
 		if content, etag, found := h.cache.Get(ctx, key); found {
@@ -129,7 +130,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	header := w.Header()
 	header.Set("Content-Type", doc.ContentType)
 	header.Set("ETag", etag)
-	h.setCacheHeaders(header, doc.Strategy, doc.CacheTTL)
+	h.setCacheHeaders(header, r, doc.Strategy, doc.CacheTTL)
 	if h.devMode {
 		header.Set(renderTimeHeader, result.Timing.Total.String())
 	}
@@ -145,7 +146,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, doc *types.Document, content []byte, etag string) int {
 	header := w.Header()
 	header.Set("ETag", etag)
-	h.setCacheHeaders(header, doc.Strategy, doc.CacheTTL)
+	h.setCacheHeaders(header, r, doc.Strategy, doc.CacheTTL)
 
 	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		// No Content-Type and no body: a 304 tells the client its copy is still

@@ -85,15 +85,14 @@ no body and no `Content-Type`.
 
 ## `Vary`
 
-On a publicly cacheable response the framework sends `Vary` built from the enabled
-locale sources: `Accept-Language` when header-locale resolution is on, `Cookie`
-when cookie-locale resolution is. collage's own key already carries the resolved
-locale, but a shared cache between your server and the client — a CDN, a corporate
-proxy — keys on the URL alone, and a locale negotiated from a header or a cookie
-is not in the URL. Without `Vary`, such a cache hands one visitor's language to
-the next.
+The locale is in the URL, so a page needs no `Vary` for it: a shared cache already
+tells `/about` from `/tr/hakkinda`.
 
-Path-locale resolution contributes nothing to `Vary`: it is already in the URL.
+A page whose content depends on a request header does need one, and the
+application says so from middleware with `collage.Vary(r, header, value)`. The value
+it resolved enters collage's own cache key, and the header name goes into the
+response's `Vary` header, so a CDN or proxy between your server and the reader
+keeps the versions apart too. See [http.md](http.md#collagevary-content-that-depends-on-the-request).
 
 ## Dependency tags
 
