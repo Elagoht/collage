@@ -257,3 +257,20 @@ func TestDataHandler_NilIsNil(t *testing.T) {
 		t.Error("DataHandler(nil) != nil, want a nil handler")
 	}
 }
+
+func TestEffect(t *testing.T) {
+	ran := false
+	handler := Effect(func(context.Context, *RenderContext) error { ran = true; return nil })
+	data, tags, err := handler(context.Background(), &RenderContext{})
+	if err != nil || data != nil || tags != nil || !ran {
+		t.Errorf("Effect handler = %v, %v, %v (ran %v); want it run with nothing returned", data, tags, err, ran)
+	}
+	failure := errors.New("emit failed")
+	if _, _, err := Effect(func(context.Context, *RenderContext) error { return failure })(context.Background(), &RenderContext{}); !errors.Is(err, failure) {
+		t.Errorf("error = %v, want the function's own", err)
+	}
+	var fn func(context.Context, *RenderContext) error
+	if Effect(fn) != nil {
+		t.Error("Effect(nil) != nil, want a nil handler")
+	}
+}

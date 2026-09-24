@@ -216,3 +216,18 @@ func TestUse_OrderAndShortCircuit(t *testing.T) {
 		t.Errorf("order = %v, want the second middleware to have run once", order)
 	}
 }
+
+func TestJSONOf(t *testing.T) {
+	result, err := collage.JSONOf(http.StatusCreated, struct {
+		Count int `json:"count"`
+	}{3})
+	if err != nil {
+		t.Fatalf("JSONOf() = %v", err)
+	}
+	if result.Status != http.StatusCreated || result.ContentType != "application/json" || string(result.Body) != `{"count":3}` {
+		t.Errorf("JSONOf() = %+v", result)
+	}
+	if _, err := collage.JSONOf(http.StatusOK, func() {}); err == nil {
+		t.Error("JSONOf(func) = nil error, want the marshal error")
+	}
+}

@@ -1,6 +1,8 @@
 package collage
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -96,6 +98,20 @@ func RenderPage(p *Page) *ActionResult {
 // JSON answers with body as application/json.
 func JSON(status int, body []byte) *ActionResult {
 	return &ActionResult{Status: status, Body: body, ContentType: "application/json"}
+}
+
+// JSONOf answers with v marshalled as application/json:
+//
+//	return collage.JSONOf(http.StatusOK, countResponse{Count: n})
+//
+// It is JSON with the json.Marshal and its error handled, which is every JSON
+// action's first three lines otherwise.
+func JSONOf[T any](status int, v T) (*ActionResult, error) {
+	body, err := json.Marshal(v)
+	if err != nil {
+		return nil, fmt.Errorf("collage: marshal JSON response: %w", err)
+	}
+	return JSON(status, body), nil
 }
 
 // NoContent answers with a bare status and no body.

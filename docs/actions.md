@@ -70,6 +70,12 @@ and the render are one request.
 **`Body`** with a `ContentType` is written verbatim, which is what a webhook or a
 JSON endpoint answers with. An empty `ContentType` is `application/octet-stream`,
 never sniffed: guessing a type from bytes is how a text response becomes a download.
+`collage.JSONOf(status, v)` marshals `v` and returns the result, so a JSON endpoint
+is one line:
+
+```go
+return collage.JSONOf(http.StatusOK, countResponse{Count: n})
+```
 
 A result that sets none of them is a bare status, and a `nil` result is a 204.
 

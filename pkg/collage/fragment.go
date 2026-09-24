@@ -66,6 +66,29 @@ func DataHandler[T any](fn func(context.Context, *RenderContext) (T, []string, e
 	}
 }
 
+// Effect adapts a data handler that renders nothing to DataHandlerFunc: one that
+// only declares things for the page, through rc.HoistTitle or a plugin's Emit.
+//
+//	collage.NewFragment("seo", "fragments/seo.html").
+//		WithDataHandler(collage.Effect(func(ctx context.Context, rc *collage.RenderContext) error {
+//			rc.HoistTitle(post.Title)
+//			return nil
+//		}))
+//
+// The fragment's template receives no data, and it reports no dependency tags: a
+// handler whose declarations come from data that changes — a post's title — and
+// whose page is cached should return that data's tags, which is DataHandler's
+// shape, or the page should declare them with WithDependency. A nil fn is a nil
+// handler.
+func Effect(fn func(context.Context, *RenderContext) error) DataHandlerFunc {
+	if fn == nil {
+		return nil
+	}
+	return func(ctx context.Context, rc *RenderContext) (any, []string, error) { // any: restates DataHandlerFunc's own declaration
+		return nil, nil, fn(ctx, rc)
+	}
+}
+
 // WithSlot declares a slot named name on the fragment being built. Declaring a slot
 // under a name already declared on this fragment records ErrDuplicateSlot, retrievable
 // via BuildErr, and leaves the existing slot untouched.

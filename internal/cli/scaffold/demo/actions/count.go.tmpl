@@ -2,8 +2,6 @@ package actions
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"@@MODULE@@/store"
@@ -24,11 +22,12 @@ type countResponse struct {
 }
 
 func increment(context.Context, *collage.RenderContext) (*collage.ActionResult, error) {
-	body, err := json.Marshal(countResponse{Count: store.Increment()})
+	result, err := collage.JSONOf(http.StatusOK, countResponse{Count: store.Increment()})
 	if err != nil {
-		return nil, fmt.Errorf("count: marshal: %w", err)
+		return nil, err
 	}
-	result := collage.JSON(http.StatusOK, body)
+	// The features page is cached and shows the count, so this is what keeps it
+	// true: its entry is dropped, and the next reader gets a fresh render.
 	result.InvalidateTags = []string{store.CountTag}
 	return result, nil
 }
