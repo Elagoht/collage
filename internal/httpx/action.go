@@ -172,7 +172,7 @@ func (h *Handler) writeActionResult(
 		if err != nil {
 			return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
 		}
-		return writeHTML(w, statusOr(result.Status, http.StatusOK), html)
+		return h.writeActionHTML(w, r, statusOr(result.Status, http.StatusOK), html)
 
 	case result.Page != nil:
 		return h.writeActionPage(w, r, rc, match, result, route)
@@ -230,12 +230,18 @@ func (h *Handler) writeActionPage(
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender,
 			fmt.Errorf("%w: page %q", ErrEmptyRender, result.Page.Name)))
 	}
-	return writeHTML(w, statusOr(result.Status, http.StatusOK), rendered.HTML)
+	return h.writeActionHTML(w, r, statusOr(result.Status, http.StatusOK), rendered.HTML)
 }
 
-// writeHTML writes an HTML body with status. Cache-Control is already set by the
-// caller: an action's body is one submission's, and must not be stored anywhere.
-func writeHTML(w http.ResponseWriter, status int, html []byte) int {
+// writeActionHTML writes an HTML body with status. Cache-Control is already set by
+// the caller: an action's body is one submission's, and must not be stored anywhere.
+//
+// Personalised like a page is, because it was rendered like one: a form in it
+// carries the marker, and a marker that reaches the reader is a form whose next
+// submission is refused. That includes every fragment path, which is served as
+// an action.
+func (h *Handler) writeActionHTML(w http.ResponseWriter, r *http.Request, status int, html []byte) int {
+	html, _, _ = h.personalise(w, r, html, "")
 	w.Header().Set("Content-Type", contentTypeHTML)
 	w.WriteHeader(status)
 	writeBody(w, html)

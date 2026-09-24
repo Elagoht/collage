@@ -495,3 +495,56 @@ func TestClientRefusalsAreNotLoggedAsErrors(t *testing.T) {
 			len(env.logs.recordsFor("collage: request failed")))
 	}
 }
+
+// An action's response is rendered like any other, so a form inside it carries the
+// marker — and it has to leave carrying a token, or the next submission from it is
+// refused. Both the fragment and the page an action answers with.
+func TestCSRF_AnActionsResponseCarriesAToken(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result func(page *types.Page) *types.ActionResult
+	}{
+		{"fragment", func(*types.Page) *types.ActionResult {
+			return &types.ActionResult{Fragment: &types.Fragment{Name: "counter", TemplatePath: "counter.html"}}
+		}},
+		{"page", func(page *types.Page) *types.ActionResult {
+			return &types.ActionResult{Page: page}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			option, guard := withCSRF(t)
+			marker := guard.Marker()
+			form := `<form><input type="hidden" name="_csrf" value="` + marker + `"></form>`
+			page := testPage("counter", "/count", types.StrategyDynamic)
+			count := action("count", "/count", []string{http.MethodPost},
+				func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+					return tc.result(page), nil
+				})
+
+			engine := newFakeEngine(fakeRender{html: form})
+			engine.set("fragment:counter", fakeRender{html: form})
+			env := actionEnv(t, []*types.Page{page}, []*types.Action{count}, option, func(d *Deps) {
+				d.Renderer = engine
+			})
+
+			token, _, err := guard.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+			if err != nil {
+				t.Fatalf("TokenFor() = %v, want nil", err)
+			}
+			req := post("/count", csrf.DefaultFieldName+"="+token)
+			req.AddCookie(&http.Cookie{Name: csrf.DefaultCookieName, Value: token})
+			res := env.do(req)
+
+			if res.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200", res.Code)
+			}
+			body := res.Body.String()
+			if strings.Contains(body, marker) {
+				t.Errorf("body = %q, still carries the marker", body)
+			}
+			if !strings.Contains(body, token) {
+				t.Errorf("body = %q, want the reader's token %q", body, token)
+			}
+		})
+	}
+}
