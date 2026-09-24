@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.5.0
+
+### Breaking
+
+**The URL is the only thing that selects a locale.** `Accept-Language` and the
+locale cookie no longer choose one, and `LocaleConfig.DisableHeaderLocale`,
+`DisableCookieLocale` and `CookieName` are gone. They produced one URL with
+different content per reader, and a Turkish browser following a link to `/about`
+got a 404: the header moved the lookup into the `tr` tree, where that path did not
+exist. A URL with no locale prefix is in `Default`; `/tr/...` is in `tr`.
+Negotiate in middleware — redirect to `/tr/`, or render one URL per language and
+declare it with `collage.Vary`. See [docs/routing.md](docs/routing.md#locales).
+
+A static build reaches a non-default locale through its prefix, the URL that
+reaches it over HTTP, instead of through a synthetic header.
+
+### Added
+
+- **`app.Use`** takes standard `func(http.Handler) http.Handler` middleware. It
+  runs before routing, inside the span, metrics and panic guard, and what it puts
+  in the request context is what data handlers read.
+- **`app.Handle(prefix, handler)`** mounts any `http.Handler` — an API router, a
+  gRPC gateway. Collage applies no forgery check, body limit or cache to it; an
+  overlap with a route or a mount is refused at startup.
+- **`collage.Vary(r, header, value)`** declares, from middleware, that a response
+  depends on a header. The resolved value enters the cache key, in a section a
+  query string cannot reach, and the header name goes into `Vary`.
+
+See [docs/http.md](docs/http.md).
+
 ## v0.4.6
 
 - **`collage dev` loads `.env.development`, or `.env`** when there is none — one
