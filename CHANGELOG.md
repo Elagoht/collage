@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.9.0
+
+- **`collage.Cached` keeps data across pages and requests.** The page cache stores
+  what a render produced, so thirty pages showing two authors fetched the authors
+  thirty times — and an export always did. `Cached(rc, key, ttl, tags, fetch)` stores
+  the value itself: those pages now fetch twice, served or exported. Its tags join
+  the page's, so one `InvalidateTags` replaces the value and every page built from
+  it. Concurrent requests for a key share one fetch; errors are not stored; values
+  are in-process and bounded by `Cache.MaxEntries`. In development, a preview, or
+  with the cache off, it is `Once`. See
+  [docs/caching.md](docs/caching.md#caching-data-not-only-pages).
+
 ## v0.8.0
 
 - **A development page with a broken part says so.** A fragment that failed — even
