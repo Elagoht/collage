@@ -17,6 +17,7 @@ import (
 
 func handler(t *testing.T) http.Handler {
 	t.Helper()
+	cacheDir = t.TempDir()
 	app, err := newApp(false, 0)
 	if err != nil {
 		t.Fatalf("newApp() = %v, want nil", err)

@@ -45,6 +45,12 @@ var templatesFS embed.FS
 //go:embed all:static
 var staticFS embed.FS
 
+// cacheDir is where rendered pages are kept between restarts. A variable so the
+// tests can point it at a directory of their own: a disk cache is shared by
+// everything that uses the same directory, build and key, so a test would
+// otherwise read what the previous test, or the previous run, rendered.
+var cacheDir = ".cache"
+
 func main() {
 	buildFlag := flag.Bool("collage-build", false, "render the app to static files instead of serving it")
 	outFlag := flag.String("out", "dist", "output directory for -collage-build")
@@ -104,7 +110,7 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 			// .cache, namespaced by a hash of this binary.
 			Enabled:    true,
 			Type:       "disk",
-			Dir:        ".cache",
+			Dir:        cacheDir,
 			DefaultTTL: 5 * time.Minute,
 		},
 		PluginConfig: pluginConfig,

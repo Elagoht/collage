@@ -461,6 +461,25 @@ Not the VCS revision from `debug.ReadBuildInfo`, for what it is worth: `go run`
 usually omits it, and it says nothing about uncommitted edits — which are exactly
 the edits a developer is looking at when a page comes back stale.
 
+**The forgery key is part of the namespace too.** A stored page carries a marker
+where each reader's token goes, and the marker is derived from `Security.CSRFKey`,
+so a page stored under one key cannot be served under another: changing the key
+starts the cache empty, and so does leaving it unset, because a generated key is
+different every run. The full namespace is the build, then the key's marker.
+
+Two consequences worth knowing before they surprise you:
+
+- **Everything that shares a `Dir`, a build and a key shares entries** — two
+  `App`s in one process included. A test that builds a fresh application per test
+  reads what the previous test, or the previous `go test` run, rendered. Give each
+  its own `Dir` (a test's `t.TempDir()`) or its own `Version`; the scaffolded
+  project's tests do the first.
+- **A cached page outlives every process-local decision that shaped it.** A plugin
+  that rewrites HTML to point at something only its own process remembers — a name
+  it made up, a file it has not written yet — must keep that state as durably as the
+  cache keeps the HTML, or a restart serves pages that refer to what no longer
+  exists. `collage-opti-image` writes its recipes to disk for this reason.
+
 **A cached page is never served in development.** `Config.DevMode` or
 `Template.DevMode` turns off cache *lookups*: every request renders again. Templates
 reload from disk in development, and a cached page hides that reload for as long as

@@ -12,6 +12,7 @@ import (
 // the same newApp main uses, so what it exercises is the site that actually runs.
 func get(t *testing.T, target string) *httptest.ResponseRecorder {
 	t.Helper()
+	cacheDir = t.TempDir()
 	app, err := newApp(false, 0)
 	if err != nil {
 		t.Fatalf("newApp() = %v, want nil", err)
