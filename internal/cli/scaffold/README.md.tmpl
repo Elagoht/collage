@@ -7,15 +7,20 @@ A [collage](https://github.com/Elagoht/collage) project, scaffolded by
 
 ```
 go mod tidy
-go run .
+collage dev
 ```
 
 ```
 go test ./...
 ```
 
-Or `collage dev` from inside this directory. Either way the site is at
-http://localhost:3000; set `PORT` (or pass `-port`) to move it.
+The site is at http://localhost:3000; set `PORT` (or pass `-port`) to move it.
+
+`collage dev` is `go run .` in development mode. Plain `go run .` also works, but
+runs the project as production would — so until `COLLAGE_CSRF_KEY` is set it warns
+that the key was generated, and that the disk cache will start empty after every
+restart. Both are true, and both are why the key is worth setting before you
+deploy; see below.
 
 Editing a template and refreshing is enough to see the change — collage reloads
 templates from disk in development, even though they are embedded. Changing Go
@@ -59,8 +64,11 @@ submitted before a restart is refused after it and one instance refuses what
 another issued.
 
 ```
-COLLAGE_CSRF_KEY=$(head -c 32 /dev/urandom | base64) go run .
+COLLAGE_CSRF_KEY=$(openssl rand -hex 32) go run .
 ```
+
+In development mode the generated key is mentioned at info level rather than as
+a warning: there it is the expected state, not a mistake.
 
 ## Deploying
 

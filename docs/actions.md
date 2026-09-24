@@ -150,16 +150,28 @@ Every unsafe request to an action is checked. Put the token in the form:
 `{{csrfToken}}` renders the whole hidden input, field name and all — a bare value has
 to go in a field with exactly the right name, and a form that names it wrong fails in
 a way that looks like the token is broken. A `fetch()` with no form to put a field in
-sends the same value in `X-CSRF-Token`.
+sends the same value in `X-CSRF-Token`. One that posts a form —
+`fetch(url, {method: "POST", body: new FormData(form)})` — sends it as
+`multipart/form-data`, which is read like a URL-encoded body, so the hidden input is
+enough.
+
+A fragment or page an action answers with is rendered like any other, so a form in
+it carries its token too: a form that replaces itself keeps working on the next
+submission.
 
 The scheme is a signed double-submit cookie: a token is a random nonce and its HMAC
 under `Security.CSRFKey`, and the same value goes in a cookie and in the form.
 Verifying needs the key and nothing else — no session table, no store to configure,
 nothing shared between instances.
 
-**Set `Security.CSRFKey`.** An empty one is generated and logged, which is right for
-a first run and wrong to deploy: a generated key differs in every process, so a token
-issued before a restart is refused after it.
+**Set `Security.CSRFKey`.** An empty one is generated and logged — as a warning,
+except in development — which is right for a first run and wrong to deploy: a
+generated key differs in every process, so a token issued before a restart is refused
+after it.
+
+**A page with a form is not exported.** A built site has no server to put a token in
+it or to submit it to, so `collage export` skips such a page and says why. Declare it
+`Dynamic()` to say so up front.
 
 **A page with a form is still cached.** What is stored is the body with a *marker*
 where the token goes; what goes on the wire is that body with the reader's own token

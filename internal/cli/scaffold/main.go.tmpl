@@ -134,7 +134,7 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 			// In production set COLLAGE_CSRF_KEY to at least 32 random bytes,
 			// kept with your other secrets:
 			//
-			//	head -c 32 /dev/urandom | base64
+			//	openssl rand -hex 32
 			CSRFKey: []byte(os.Getenv("COLLAGE_CSRF_KEY")),
 		},
 	})

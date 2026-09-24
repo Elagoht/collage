@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
 	"log/slog"
@@ -94,17 +95,26 @@ var ErrCSRFDisabled = errors.New("collage: csrfToken used but request-forgery pr
 // noise. One that does check will refuse every submission made before its last
 // restart, which is worth interrupting for.
 //
+// In development it is said at Info rather than Warn. A generated key is the
+// expected state there — nobody sets a production secret to try a form on their
+// own machine — and a warning printed on every start of a correct project is one
+// that teaches people to stop reading warnings.
+//
 // It must be called with a.mu held, or from a path that has closed registration.
 func (a *App) warnAboutGeneratedKey() {
 	if a.csrf == nil || len(a.cfg.Security.CSRFKey) != 0 {
 		return
+	}
+	level := slog.LevelWarn
+	if a.devMode {
+		level = slog.LevelInfo
 	}
 	for _, action := range a.actionOrder {
 		for _, method := range action.Methods {
 			if types.SafeMethod(method) {
 				continue
 			}
-			a.logger.Warn("collage: no Security.CSRFKey set, so one was generated for this process; "+
+			a.logger.Log(context.Background(), level, "collage: no Security.CSRFKey set, so one was generated for this process; "+
 				"form submissions will be refused after a restart and across instances",
 				"action", action.Name)
 			return
