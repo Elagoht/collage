@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -190,5 +192,23 @@ func TestSlotResolver_AResolvedFragmentsBuilderMistakeFailsTheRender(t *testing.
 	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "[[") {
 		t.Errorf("the broken fragment rendered: %q", rec.Body.String())
+	}
+}
+
+// A disk cache directory that cannot be created is a slower site, not one that
+// does not start: the application falls back to memory.
+func TestNew_AnUnwritableCacheDirectoryFallsBackToMemory(t *testing.T) {
+	locked := t.TempDir()
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o700) })
+	_, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/x.html": {Data: []byte(`x`)}}, Root: "t"},
+		Cache:    collage.CacheConfig{Enabled: true, Type: "disk", Dir: filepath.Join(locked, "cache")},
+	})
+	if err != nil {
+		t.Errorf("New = %v, want the application built on a memory cache", err)
 	}
 }

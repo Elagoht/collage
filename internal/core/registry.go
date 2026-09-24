@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -269,7 +270,17 @@ func (a *App) checkTemplates(p *types.Page) error {
 	if err := walkFragments(p.LayoutFragment, visited, visit); err != nil {
 		return err
 	}
-	return walkFragments(p.ContentFragment, visited, visit)
+	if err := walkFragments(p.ContentFragment, visited, visit); err != nil {
+		return err
+	}
+	// A fragment opened at its own URL may be reachable from nowhere else, and
+	// unchecked it answered with an empty 200 for a template that did not exist.
+	for _, fragment := range p.PathFragments() {
+		if err := walkFragments(fragment, visited, visit); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // walkFragments calls visit on f and on every fragment reachable from it, through
@@ -361,7 +372,16 @@ func (a *App) RegisterPlugin(p plugin.Plugin) error {
 	if _, ok := p.(plugin.Configurer); ok {
 		return fmt.Errorf("%w: plugin %q", ErrConfigurerRegisteredLate, p.Name())
 	}
-	return a.plugins.Register(p)
+	// A start that failed in a plugin's Init leaves the application unstarted
+	// but its plugin registry closed. It is the same refusal, so it is the same
+	// sentinel the caller already matches.
+	if err := a.plugins.Register(p); err != nil {
+		if errors.Is(err, plugin.ErrRegistryStarted) {
+			return fmt.Errorf("%w: cannot register plugin %q", ErrAppStarted, p.Name())
+		}
+		return err
+	}
+	return nil
 }
 
 // RegisterCommand registers cmd as a CLI subcommand, rejecting an empty name

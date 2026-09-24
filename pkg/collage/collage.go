@@ -278,7 +278,9 @@ var ErrDuplicatePlugin = plugin.ErrDuplicatePlugin
 // plugin already registered that name.
 var ErrDuplicateTemplateFunc = plugin.ErrDuplicateTemplateFunc
 
-// ErrUnknownPluginConfig is returned by New when Config.PluginConfig holds a key
+// ErrUnknownPluginConfig is returned when the application starts — by Start,
+// Handler, ListenAndServe or a render, not by New, because a plugin can still be
+// registered in between — if Config.PluginConfig holds a key
 // matching no registered plugin — the typo case, which would otherwise leave a
 // plugin running on defaults and an operator certain it was configured.
 var ErrUnknownPluginConfig = plugin.ErrUnknownPluginConfig

@@ -289,6 +289,9 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 					PathParams:       params,
 					MethodNotAllowed: true,
 					Allowed:          allowed,
+					// Named so the 405 is answered in the document's own
+					// kind — plain text — rather than as an HTML page.
+					Document: matched.document,
 				}, nil
 			}
 			return &MatchResult{

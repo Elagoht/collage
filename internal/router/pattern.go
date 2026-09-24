@@ -112,6 +112,14 @@ func parsePattern(pattern string) ([]patternSegment, error) {
 			segments = append(segments, patternSegment{kind: segmentDynamic, text: inner})
 			continue
 		}
+		// A placeholder is a whole segment. One written inside a segment —
+		// "{category}.xml", "post-{id}" — used to be taken as literal text: the
+		// route matched only the braces themselves, and a reader following the
+		// pattern got a 404 with nothing to say why.
+		if strings.ContainsAny(part, "{}") {
+			return nil, fmt.Errorf("%w: %q: segment %q has a placeholder inside it; a placeholder is a whole segment, such as \"/feeds/{category}/rss.xml\"",
+				ErrInvalidPattern, pattern, part)
+		}
 		segments = append(segments, patternSegment{kind: segmentStatic, text: part})
 	}
 	return segments, nil

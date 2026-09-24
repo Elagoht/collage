@@ -65,3 +65,13 @@ func TestBuildPath_RoundTripsThroughMatch(t *testing.T) {
 		}
 	}
 }
+
+// A placeholder is a whole segment; one inside a segment is refused rather than
+// registered as literal text nobody can reach.
+func TestParsePattern_APlaceholderInsideASegmentIsRefused(t *testing.T) {
+	for _, pattern := range []string{"/feeds/{category}.xml", "/post-{id}", "/a/{b", "/a/b}"} {
+		if _, err := parsePattern(pattern); !errors.Is(err, ErrInvalidPattern) {
+			t.Errorf("parsePattern(%q) = %v, want ErrInvalidPattern", pattern, err)
+		}
+	}
+}

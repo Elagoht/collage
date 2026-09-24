@@ -39,9 +39,10 @@ import (
 // is actually there.
 var Version = buildVersion()
 
-// buildVersion returns the module version this binary was built from, or "devel"
-// for one built from a working copy — which is the honest answer for a binary whose
-// source may be anything at all.
+// buildVersion returns the module version this binary was built from: a tag for
+// `go install ...@v1.2.3`, a pseudo-version for a build from a git checkout, and
+// "devel" when the build carries no version at all (-buildvcs=false, or not in a
+// repository) — the honest answer for a binary whose source may be anything.
 func buildVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
@@ -140,6 +141,10 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 	name, rest := args[0], args[1:]
 
 	switch name {
+	case "-h", "-help", "--help":
+		// Asked for, so not a usage error: the usage on stdout and success.
+		c.printUsage(c.stdout())
+		return 0
 	case "help":
 		return c.runHelp(rest)
 	case "version":
@@ -180,7 +185,8 @@ func (c *CLI) runHelp(args []string) int {
 		return 0
 	}
 	if err := c.printCommandHelp(c.stdout(), args[0]); err != nil {
-		fmt.Fprintf(c.stderr(), "collage: %v\n", err)
+		// The error already names the tool.
+		fmt.Fprintln(c.stderr(), err)
 		return 2
 	}
 	return 0

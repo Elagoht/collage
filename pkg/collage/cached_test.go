@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -204,5 +205,21 @@ func TestCached_InADocument(t *testing.T) {
 	}
 	if got := site.fetched(); got["A"] != 1 {
 		t.Errorf("fetched %v, want A once across the page and three document requests", got)
+	}
+}
+
+// A method a document does not answer is a 405 in the document's own kind: plain
+// text, not the site's HTML error page.
+func TestDocument_A405IsPlainText(t *testing.T) {
+	site := newAuthorSite(t, false)
+	doc := collage.NewDocument("robots", "text/plain").WithPath("en", "/robots.txt").Dynamic().
+		WithHandler(func(context.Context, *collage.RenderContext) ([]byte, []string, error) { return []byte("User-agent: *"), nil, nil }).Build()
+	if err := site.app.RegisterDocument(doc); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	site.app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/robots.txt", nil))
+	if rec.Code != http.StatusMethodNotAllowed || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
+		t.Errorf("POST /robots.txt = %d %q, want a plain-text 405", rec.Code, rec.Header().Get("Content-Type"))
 	}
 }

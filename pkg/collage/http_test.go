@@ -304,3 +304,30 @@ func TestSkipCache_Preview(t *testing.T) {
 		t.Errorf("reader after the preview = %q, want the cached published page: the draft must not enter the cache", body)
 	}
 }
+
+// A late Vary or SkipCache is an error on every route, cached or not: it used to
+// be refused only where a cache key had been computed, and silently ignored
+// everywhere else.
+func TestVary_TooLateEvenOnADynamicPage(t *testing.T) {
+	var varyErr, skipErr error
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`p`)}}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := collage.NewFragment("p", "p.html").
+		WithDataHandler(collage.Effect(func(_ context.Context, rc *collage.RenderContext) error {
+			varyErr = collage.Vary(rc.Request, "Accept-Language", "tr")
+			skipErr = collage.SkipCache(rc.Request)
+			return nil
+		})).Build()
+	if err := app.RegisterPage(collage.NewPage("p").WithContent(content).WithPath("en", "/").Dynamic().Build()); err != nil {
+		t.Fatal(err)
+	}
+	getWith(app.Handler(), "/", "")
+	if !errors.Is(varyErr, collage.ErrVaryTooLate) || !errors.Is(skipErr, collage.ErrVaryTooLate) {
+		t.Errorf("Vary = %v, SkipCache = %v; want ErrVaryTooLate from both", varyErr, skipErr)
+	}
+}

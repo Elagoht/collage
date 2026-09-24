@@ -3,6 +3,7 @@ package core
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -73,8 +74,17 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 			Version:    version,
 			DefaultTTL: cfg.Cache.DefaultTTL,
 		})
-		if err != nil {
+		if errors.Is(err, cache.ErrEmptyCacheDir) || errors.Is(err, cache.ErrEmptyCacheVersion) {
 			return nil, err
+		}
+		if err != nil {
+			// A directory that cannot be created — a read-only filesystem, a
+			// container with no writable working directory — is a slower site,
+			// not a reason not to start one. Memory, and said so, as for a build
+			// that cannot be identified.
+			logger.Warn("collage: cannot use the disk cache directory, using an in-memory cache instead",
+				"dir", cfg.Cache.Dir, "err", err)
+			return memory(), nil
 		}
 		logger.Info("collage: caching to disk", "dir", disk.Dir(), "version", version)
 		return disk, nil

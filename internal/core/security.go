@@ -109,6 +109,11 @@ func (a *App) warnAboutGeneratedKey() {
 		level = slog.LevelInfo
 	}
 	for _, action := range a.actionOrder {
+		// An action exempted with WithoutCSRF never verifies a token, so a
+		// generated key costs it nothing.
+		if action.SkipCSRF {
+			continue
+		}
 		for _, method := range action.Methods {
 			if types.SafeMethod(method) {
 				continue

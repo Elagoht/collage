@@ -300,11 +300,14 @@ type CacheConfig struct {
 	// itself stays at MaxEntries. This is that cap.
 	//
 	// When a tag is at the cap, recording a new key under it drops the oldest key
-	// recorded under that tag. Dropping removes the key from the index only, not
-	// from the cache: the entry keeps being served until it expires, but
-	// InvalidateTags no longer reaches it. Set this above the number of live cache
-	// entries any one tag can plausibly cover, or negative to accept unbounded
-	// tracker growth in exchange for never dropping.
+	// recorded under that tag, from the tracker only. The built-in memory and disk
+	// caches index tags themselves (they implement TaggedCache), so InvalidateTags
+	// still reaches every entry they hold; the count InvalidateTagsN reports is
+	// then what the tracker resolved, which can be fewer. A custom Store that does
+	// not implement TaggedCache relies on the tracker alone, and for it a dropped
+	// key is one InvalidateTags no longer reaches until the entry expires. Set this
+	// above the number of live entries any one tag can plausibly cover, or negative
+	// for an unbounded tracker.
 	MaxKeysPerTag int
 }
 

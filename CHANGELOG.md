@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.11.0
+
+Found auditing the documentation site against the source.
+
+### Changed
+
+- **A placeholder inside a path segment is refused at registration.**
+  `/feeds/{category}.xml` used to register as literal text: the route matched only
+  the braces themselves, and every real URL was a 404. A placeholder is a whole
+  segment — `/feeds/{category}/rss.xml`.
+- **`Vary` and `SkipCache` close when routing begins, on every route.** Called from
+  a data handler they returned `ErrVaryTooLate` on a cached page and silently did
+  nothing on any other; they are now an error everywhere.
+- **A disk cache directory that cannot be created falls back to memory**, with a
+  warning, rather than stopping the application from starting.
+
+### Fixed
+
+- **A fragment opened with `WithFragmentPath` is checked at registration** like the
+  rest of its page — its template, its builder's mistakes, its validation. One with
+  a missing template answered with an empty 200.
+- **A 405 on a document's URL is plain text**, as every other document failure is.
+- **`RegisterPlugin` after a start that failed in a plugin's `Init` returns
+  `ErrAppStarted`**, not an unexported error.
+- **One `ErrNoActionHandler`** for registration and for a request.
+- **An action exempted with `WithoutCSRF`** no longer triggers the missing-key
+  warning.
+- `collage -h` exits 0; `collage help nope` no longer doubles its prefix.
+
 ## v0.10.0
 
 Found writing the documentation site against the source.

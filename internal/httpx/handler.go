@@ -458,6 +458,12 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request) (status i
 // HTTPResponse metric. A mount request goes through serveMount so it gets all of
 // that instead of bypassing it.
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef) int {
+	// Middleware is done, so what the request declared through Vary and
+	// SkipCache is settled here, for every route alike. Freezing only where a
+	// cache key was computed made a late call an error on a cached page and a
+	// silent no-op on any other.
+	freezeDeclarations(r)
+
 	for _, mount := range h.mounts {
 		if mount.Handles(r.URL.Path) {
 			route.resolved(routeKindMount, mount.Prefix())
@@ -526,13 +532,16 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// and the distinction is the whole point: the reader is told the URL is real
 	// and what it does accept, rather than that it is not a URL.
 	if match.MethodNotAllowed {
+		if match.Document != nil {
+			// A document fails as a document, 405 included: a client that
+			// asked for /robots.txt is not handed an HTML page.
+			route.resolved(routeKindDocument, match.Document.Name)
+		}
 		w.Header().Set("Allow", strings.Join(match.Allowed, ", "))
-		return h.serveFailure(w, r, failure{
-			status: http.StatusMethodNotAllowed,
-			err:    fmt.Errorf("%w: %s %s", ErrMethodNotAllowed, r.Method, r.URL.Path),
-			locale: match.Locale,
-			stage:  stageRoute,
-		})
+		refused := route.failure(http.StatusMethodNotAllowed, stageRoute,
+			fmt.Errorf("%w: %s %s", ErrMethodNotAllowed, r.Method, r.URL.Path))
+		refused.locale = match.Locale
+		return h.serveFailure(w, r, refused)
 	}
 
 	// An OPTIONS request that no action claimed. The router already worked out

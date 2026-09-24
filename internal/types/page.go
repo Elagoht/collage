@@ -181,8 +181,40 @@ func (p *Page) Validate() error {
 	if p.ErrorPage != nil && p.ErrorPage == p {
 		return fmt.Errorf("%w: %q is its own ErrorPage", ErrSelfErrorPage, p.Name)
 	}
+	for _, fragment := range p.PathFragments() {
+		if err := fragment.Validate(); err != nil {
+			return err
+		}
+	}
 	if err := p.Root().Validate(); err != nil {
 		return err
 	}
 	return nil
+}
+
+// PathFragments returns every fragment the page opened at a URL of its own with
+// WithFragmentPath, each once, in a stable order.
+func (p *Page) PathFragments() []*Fragment {
+	var out []*Fragment
+	seen := make(map[*Fragment]bool)
+	locales := make([]string, 0, len(p.FragmentPaths))
+	for locale := range p.FragmentPaths {
+		locales = append(locales, locale)
+	}
+	sort.Strings(locales)
+	for _, locale := range locales {
+		byPattern := p.FragmentPaths[locale]
+		patterns := make([]string, 0, len(byPattern))
+		for pattern := range byPattern {
+			patterns = append(patterns, pattern)
+		}
+		sort.Strings(patterns)
+		for _, pattern := range patterns {
+			if fragment := byPattern[pattern]; fragment != nil && !seen[fragment] {
+				seen[fragment] = true
+				out = append(out, fragment)
+			}
+		}
+	}
+	return out
 }

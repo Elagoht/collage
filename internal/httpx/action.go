@@ -16,7 +16,7 @@ import (
 var ErrMethodNotAllowed = errors.New("collage: method not allowed")
 
 // ErrNoActionHandler reports an action registered without a handler.
-var ErrNoActionHandler = errors.New("collage: action has no handler")
+var ErrNoActionHandler = types.ErrNoActionHandler
 
 // ErrEmptyRender reports a page that rendered no markup at all.
 //

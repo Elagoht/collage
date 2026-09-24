@@ -120,3 +120,7 @@ var ErrRouteParams = errors.New("collage: route parameters do not match the patt
 // for serving and for a static build, so an error hook matches it wherever it
 // came from.
 var ErrEmptyRender = errors.New("collage: page rendered no markup")
+
+// ErrNoActionHandler reports an action with nothing to run. One sentinel for
+// registration and for a request, so an error hook matches it either way.
+var ErrNoActionHandler = errors.New("collage: action has no handler")

@@ -23,7 +23,7 @@ var ErrEmptyActionName = errors.New("collage: action has no name")
 var ErrNoActionPaths = errors.New("collage: action has no paths")
 
 // ErrNoActionHandler reports an action with nothing to run.
-var ErrNoActionHandler = errors.New("collage: action has no handler")
+var ErrNoActionHandler = types.ErrNoActionHandler
 
 // RegisterAction validates action and adds it to the router.
 //

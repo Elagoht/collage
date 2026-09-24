@@ -90,13 +90,13 @@ var ErrVaryOutsideRequest = errors.New("collage: Vary called on a request collag
 // computed. A dimension declared after the lookup would be one the lookup
 // ignored, so the framework says so rather than caching a page under a key that
 // does not describe it.
-var ErrVaryTooLate = errors.New("collage: Vary called after the cache key was computed; call it from middleware")
+var ErrVaryTooLate = errors.New("collage: Vary or SkipCache called after routing; call it from middleware")
 
 // varySet is one request's declared cache dimensions.
 //
 // It lives in the request context from the moment the framework receives the
 // request, so a middleware can add to it without having to hand a new request
-// on, and it is frozen when the cache key is computed.
+// on, and it is frozen when middleware is done and routing begins.
 type varySet struct {
 	mu      sync.Mutex
 	values  map[string]string
@@ -124,7 +124,7 @@ func withVarySet(r *http.Request) *http.Request {
 // reader keeps them apart too. Declaring the same header twice keeps the last
 // value.
 //
-// It must be called before the cache key is computed, which in practice means
+// It must be called before routing, which in practice means
 // from middleware registered with App.Use.
 func Vary(r *http.Request, header, value string) error {
 	set, ok := r.Context().Value(varySetKey{}).(*varySet)
@@ -159,7 +159,7 @@ func Vary(r *http.Request, header, value string) error {
 // every other reader is served. Who may skip the cache is the application's to
 // decide, in its own middleware — a signed cookie, a session, a secret in the URL.
 //
-// Like Vary it must be called before the cache key is computed, which in practice
+// Like Vary it must be called before routing, which in practice
 // means from middleware registered with App.Use.
 func SkipCache(r *http.Request) error {
 	set, ok := r.Context().Value(varySetKey{}).(*varySet)
@@ -173,6 +173,16 @@ func SkipCache(r *http.Request) error {
 	}
 	set.skip = true
 	return nil
+}
+
+// freezeDeclarations closes r's Vary and SkipCache declarations: from here on,
+// either returns ErrVaryTooLate.
+func freezeDeclarations(r *http.Request) {
+	if set, ok := r.Context().Value(varySetKey{}).(*varySet); ok {
+		set.mu.Lock()
+		set.frozen = true
+		set.mu.Unlock()
+	}
 }
 
 // requestSkipsCache reports whether r declared SkipCache, and freezes its
