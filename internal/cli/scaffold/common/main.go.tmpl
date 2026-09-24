@@ -65,6 +65,19 @@ func main() {
 		log.Fatalf("@@NAME@@: %v", err)
 	}
 
+	// A word after the flags is a plugin's command: `go run . <command>`. The
+	// collage binary cannot run them itself — it never loads this program's
+	// plugins — so this program does. With no plugins there is nothing to
+	// dispatch, and a word nobody claims is a usage error rather than a server
+	// started by accident.
+	if args := flag.Args(); len(args) > 0 {
+		code, err := collage.DispatchCommands(context.Background(), app, args)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "@@NAME@@: %v\n", err)
+		}
+		os.Exit(code)
+	}
+
 	if *buildFlag {
 		if err := staticBuild(app, *outFlag, *cleanFlag); err != nil {
 			log.Fatalf("@@NAME@@: static build: %v", err)
