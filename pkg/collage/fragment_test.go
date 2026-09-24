@@ -211,3 +211,51 @@ type fetchedPost struct {
 	// Slug is the post's URL slug, which is all these fixtures read.
 	Slug string
 }
+
+type clockView struct{ Hour int }
+
+// A typed handler adapted by DataHandler hands its value through unchanged, tags
+// and all.
+func TestDataHandler_PassesTheTypedValueThrough(t *testing.T) {
+	handler := DataHandler(func(context.Context, *RenderContext) (clockView, []string, error) {
+		return clockView{Hour: 9}, []string{"clock"}, nil
+	})
+
+	data, tags, err := handler(context.Background(), &RenderContext{})
+	if err != nil {
+		t.Fatalf("handler() error = %v, want nil", err)
+	}
+	if view, ok := data.(clockView); !ok || view.Hour != 9 {
+		t.Errorf("data = %#v, want clockView{Hour: 9}", data)
+	}
+	if len(tags) != 1 || tags[0] != "clock" {
+		t.Errorf("tags = %v, want [clock]", tags)
+	}
+}
+
+// On an error the data is dropped, so a nil pointer does not become a typed nil
+// that a template reads as present.
+func TestDataHandler_DropsDataOnError(t *testing.T) {
+	failure := errors.New("upstream down")
+	handler := DataHandler(func(context.Context, *RenderContext) (*clockView, []string, error) {
+		return nil, []string{"clock"}, failure
+	})
+
+	data, tags, err := handler(context.Background(), &RenderContext{})
+	if !errors.Is(err, failure) {
+		t.Fatalf("handler() error = %v, want %v", err, failure)
+	}
+	if data != nil {
+		t.Errorf("data = %#v, want an untyped nil", data)
+	}
+	if len(tags) != 1 {
+		t.Errorf("tags = %v, want the handler's tags kept", tags)
+	}
+}
+
+func TestDataHandler_NilIsNil(t *testing.T) {
+	var fn func(context.Context, *RenderContext) (clockView, []string, error)
+	if DataHandler(fn) != nil {
+		t.Error("DataHandler(nil) != nil, want a nil handler")
+	}
+}

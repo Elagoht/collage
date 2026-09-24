@@ -95,9 +95,9 @@ func main() {
 		Build()
 
 	homeContent := collage.NewFragment("home-content", "pages/home.html").
-		WithDataHandler(func(_ context.Context, _ *collage.RenderContext) (any, []string, error) { // any: collage.DataHandlerFunc renders arbitrary template data
+		WithDataHandler(collage.DataHandler(func(_ context.Context, _ *collage.RenderContext) (homeData, []string, error) {
 			return homeData{Title: "Welcome home"}, []string{"homepage"}, nil
-		}).
+		})).
 		Build()
 
 	homePage := collage.NewPage("home").

@@ -51,7 +51,7 @@ plugin cannot invent what a page is about. The page says so from its data handle
 which is where it already has the article it fetched:
 
 ```go
-func articleData(ctx context.Context, rc *collage.RenderContext) (any, []string, error) {
+func articleData(ctx context.Context, rc *collage.RenderContext) (view, []string, error) {
 	article, err := client.Article(ctx, rc.Param("slug"))
 	// ...
 	jsonld.Emit(rc, jsonld.Article{

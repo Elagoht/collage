@@ -221,7 +221,8 @@ type DataHandlerFunc func(ctx context.Context, rc *RenderContext) (data any, tag
 
 The `any` is the framework's: `html/template` renders arbitrary data and the
 framework cannot know an application's shape. Your own code does not have to
-spread it around — write handlers against a concrete type and adapt once:
+spread it around — write handlers against a concrete type and adapt them with
+`collage.DataHandler`:
 
 ```go
 // pageData is everything this application's templates render with.
@@ -231,20 +232,19 @@ type pageData struct {
 	Post  *Post
 }
 
-// bind adapts a typed data function to collage.DataHandlerFunc.
-func bind(fn func(context.Context, *collage.RenderContext) (*pageData, []string, error)) collage.DataHandlerFunc {
-	return func(ctx context.Context, rc *collage.RenderContext) (any, []string, error) { // any: restates DataHandlerFunc's own declaration
-		data, tags, err := fn(ctx, rc)
-		if err != nil {
-			return nil, tags, err
-		}
-		return data, tags, nil
-	}
+func loadPost(ctx context.Context, rc *collage.RenderContext) (*pageData, []string, error) {
+	// ...
 }
+
+collage.NewFragment("blog-post", "pages/blog-post.html").
+	WithDataHandler(collage.DataHandler(loadPost)).
+	Build()
 ```
 
-That is the pattern `examples/blog` uses, and why the whole example contains
-exactly one `any`.
+It is generic over the handler's return type, so there is one adapter for every
+view type and no `any` in the application at all. On an error it drops the data
+rather than boxing it: a nil `*pageData` returned alongside an error would
+otherwise become a non-nil interface value, a typed nil that reads as present.
 
 The handler returns three things:
 
@@ -308,12 +308,12 @@ ancestor rendered earlier in the same walk.
 
 ```go
 postContent := collage.NewFragment("blog-post", "pages/blog-post.html").
-	WithDataHandler(bind(loadPost)).
+	WithDataHandler(collage.DataHandler(loadPost)).
 	Required().
 	Build()
 
 sidebar := collage.NewFragment("sidebar", "partials/sidebar.html").
-	WithDataHandler(bind(loadSidebar)).
+	WithDataHandler(collage.DataHandler(loadSidebar)).
 	WithFallback(collage.NewFragment("sidebar-empty", "partials/sidebar-empty.html").Build()).
 	Build()
 ```

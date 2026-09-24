@@ -1,6 +1,7 @@
 package collage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -36,6 +37,33 @@ func NewFragment(name, templatePath string) *FragmentBuilder {
 func (b *FragmentBuilder) WithDataHandler(h DataHandlerFunc) *FragmentBuilder {
 	b.fragment.DataHandler = h
 	return b
+}
+
+// DataHandler adapts a data handler that returns a concrete type to
+// DataHandlerFunc, so an application's handlers can be written against its own
+// view types rather than against any:
+//
+//	collage.NewFragment("clock", "fragments/clock.html").
+//		WithDataHandler(collage.DataHandler(clockData)).
+//		Build()
+//
+// where clockData returns (clockView, []string, error).
+//
+// It is a function rather than a method because Go methods cannot take type
+// parameters. On an error the data is dropped rather than boxed: a nil *view
+// returned alongside an error would otherwise become a non-nil interface value, a
+// typed nil that reads as present. A nil fn is a nil handler.
+func DataHandler[T any](fn func(context.Context, *RenderContext) (T, []string, error)) DataHandlerFunc {
+	if fn == nil {
+		return nil
+	}
+	return func(ctx context.Context, rc *RenderContext) (any, []string, error) { // any: restates DataHandlerFunc's own declaration
+		data, tags, err := fn(ctx, rc)
+		if err != nil {
+			return nil, tags, err
+		}
+		return data, tags, nil
+	}
 }
 
 // WithSlot declares a slot named name on the fragment being built. Declaring a slot

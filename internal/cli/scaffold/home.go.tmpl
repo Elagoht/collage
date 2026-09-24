@@ -61,7 +61,7 @@ type link struct {
 // on the request, and a page that says so is a page that can be a file.
 func homePage() *collage.Page {
 	content := collage.NewFragment("home-content", "pages/home.html").
-		WithDataHandler(homeData).
+		WithDataHandler(collage.DataHandler(homeData)).
 		Build()
 
 	return collage.NewPage("home").
@@ -78,10 +78,13 @@ func homePage() *collage.Page {
 // depends on, and an error. Returning an error fails the fragment; what
 // happens then is the fragment's own policy — see Required and WithFallback.
 //
+// It returns its own type rather than any: collage.DataHandler adapts it to
+// what the framework takes, so nothing in this project has to box its views.
+//
 // Sibling fragments' handlers run concurrently, so a handler that fetches
 // something another one also needs should use collage.Once rather than reading
 // and writing shared data itself.
-func homeData(ctx context.Context, rc *collage.RenderContext) (any, []string, error) { // any: html/template renders arbitrary data
+func homeData(ctx context.Context, rc *collage.RenderContext) (homeView, []string, error) {
 	title(rc, "@@NAME@@")
 
 	return homeView{Links: []link{
@@ -127,7 +130,7 @@ var signUpForm *collage.Page
 // default — so the POST is declared here rather than given a URL of its own.
 func signUpPage() *collage.Page {
 	content := collage.NewFragment("signup-content", "pages/signup.html").
-		WithDataHandler(signUpData).
+		WithDataHandler(collage.DataHandler(signUpData)).
 		Build()
 
 	signUpForm = collage.NewPage("signup").
@@ -143,7 +146,7 @@ func signUpPage() *collage.Page {
 
 // signUpData fetches what the form page renders with, including whatever the
 // action left behind after a refused submission.
-func signUpData(ctx context.Context, rc *collage.RenderContext) (any, []string, error) { // any: html/template renders arbitrary data
+func signUpData(ctx context.Context, rc *collage.RenderContext) (signUpView, []string, error) {
 	title(rc, "Sign up — @@NAME@@")
 
 	var view signUpView
@@ -244,10 +247,10 @@ func (s *store) add(address string) {
 // different questions.
 func notFoundPage() *collage.Page {
 	content := collage.NewFragment("not-found-content", "pages/404.html").
-		WithDataHandler(func(_ context.Context, rc *collage.RenderContext) (any, []string, error) { // any: html/template renders arbitrary data
+		WithDataHandler(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (struct{}, []string, error) {
 			title(rc, "Not found — @@NAME@@")
-			return nil, nil, nil
-		}).
+			return struct{}{}, nil, nil
+		})).
 		Build()
 
 	return collage.NewPage("not-found").
