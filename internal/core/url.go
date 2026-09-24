@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/types"
@@ -61,7 +62,12 @@ func (a *App) URL(name, locale string, params map[string]string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("collage: URL for %q: %w", name, err)
 	}
-	return a.prefixLocale(path, locale), nil
+	path = a.prefixLocale(path, locale)
+	// A page's, not a document's: "/sitemap.xml/" is not a file anyone serves.
+	if page != nil && a.cfg.TrailingSlash && !strings.HasSuffix(path, "/") {
+		path += "/"
+	}
+	return path, nil
 }
 
 // localeReachable reports whether some URL can carry locale.

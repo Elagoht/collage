@@ -404,6 +404,7 @@ func toCoreConfig(cfg *Config) core.Config {
 			Supported:         cfg.Locale.Supported,
 			DisablePathLocale: cfg.Locale.DisablePathLocale,
 		},
+		TrailingSlash: cfg.TrailingSlash,
 		Observability: core.ObservabilityConfig{
 			Metrics: cfg.Observability.Metrics,
 			Tracer:  cfg.Observability.Tracer,

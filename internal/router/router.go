@@ -203,6 +203,8 @@ type router struct {
 
 	notFoundPage *types.Page
 	errorPage    *types.Page
+
+	slash Slash
 }
 
 // claim is one recorded registration: the locale it was registered under (empty
@@ -214,15 +216,42 @@ type claim struct {
 	owner   string
 }
 
+// Slash is how a router treats the trailing slash of a page's URL.
+type Slash int
+
+const (
+	// SlashEither matches a page with or without a trailing slash, and redirects
+	// neither. It is what a router does unless told otherwise.
+	SlashEither Slash = iota
+	// SlashNever answers a page's URL without a trailing slash, and redirects
+	// the spelling with one to it.
+	SlashNever
+	// SlashAlways answers a page's URL with a trailing slash, and redirects the
+	// spelling without one to it.
+	SlashAlways
+)
+
+// Option configures a Router beyond its locales.
+type Option func(*router)
+
+// WithSlash sets how the router treats a trailing slash on a page's URL.
+func WithSlash(slash Slash) Option {
+	return func(rt *router) { rt.slash = slash }
+}
+
 // New returns a Router that resolves locales according to opts.
-func New(opts LocaleOptions) Router {
-	return &router{
+func New(opts LocaleOptions, options ...Option) Router {
+	rt := &router{
 		localeOptions:       opts,
 		routeTrees:          make(map[string]*node),
 		redirectTree:        &node{},
 		routedPathsByLocale: make(map[string]map[string]string),
 		redirectFroms:       make(map[string]*types.Redirect),
 	}
+	for _, option := range options {
+		option(rt)
+	}
+	return rt
 }
 
 // Match implements Router.
@@ -283,6 +312,17 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 			}
 
 			page, doc, action, ok := resolve(matched, req.Method)
+			if ok && page != nil && action == nil {
+				if target, redirect := rt.canonicalSlash(path); redirect {
+					if req.URL.RawQuery != "" {
+						target += "?" + req.URL.RawQuery
+					}
+					// A page is read, so 301: resolve hands a page only GET and
+					// HEAD, and an action posted to either spelling is answered
+					// where it was posted.
+					return &MatchResult{Locale: locale, RedirectTo: target, RedirectStatus: http.StatusMovedPermanently}, nil
+				}
+			}
 			if !ok {
 				return &MatchResult{
 					Locale:           locale,
@@ -306,6 +346,36 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 	}
 
 	return &MatchResult{Locale: locale, IsNotFound: true}, nil
+}
+
+// canonicalSlash returns where a request for a page at path should be sent when
+// its trailing slash is the spelling the router does not answer. The root, "/",
+// is one spelling in every mode.
+//
+// path is the whole of the request's path, locale prefix included, so a locale's
+// root follows the rule like any page: "/tr/" under SlashAlways, "/tr" under
+// SlashNever.
+func (rt *router) canonicalSlash(path string) (string, bool) {
+	if rt.slash == SlashEither || path == "/" {
+		return "", false
+	}
+	// One leading slash, whatever arrived: "//evil.example/" matched against
+	// "/{slug}" must not come back as a Location a browser reads as another host.
+	target := "/" + strings.TrimLeft(path, "/")
+	if rt.slash == SlashAlways {
+		if !strings.HasSuffix(target, "/") {
+			target += "/"
+		}
+	} else if target = strings.TrimRight(target, "/"); target == "" {
+		target = "/"
+	}
+	if target == path {
+		return "", false
+	}
+	if _, unsafe := unsafeRedirectReason(target); unsafe {
+		return "", false
+	}
+	return target, true
 }
 
 // Register implements Router.

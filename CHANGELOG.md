@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.13.0
+
+Found by the documentation site going bilingual and checking its canonical links
+against the live host.
+
+### Added
+
+- **`Config.TrailingSlash`.** On, every page's URL ends in `/` — `/blog/hello/`,
+  and a locale's home `/tr/` — in every link built by name (`pageURL`, `pageURLIn`,
+  `localeURL`, `App.URL`), and a request without the slash is redirected to it. An
+  export writes a page as `<path>/index.html`, which a static host serves at the
+  slashed address and reaches from the other only through a redirect; without this,
+  a static site's every canonical link, sitemap entry and internal link pointed at a
+  redirect, and collage had no way to build any other URL. Documents keep their
+  paths as written; an action is answered at either spelling.
+
+### Changed
+
+- **Each page has one spelling of its trailing slash.** A page used to answer both
+  `/about` and `/about/` with a `200`, two addresses for one page in every cache and
+  every search index. The spelling the site does not use now redirects, `301`, with
+  its query string: `/about/` to `/about` by default, the reverse with
+  `TrailingSlash`. The root is `/` in both.
+- A static build renders a page at the address it is answered at, so a
+  `PathProvider` returning `/blog/hello` builds the page a `TrailingSlash` site
+  serves at `/blog/hello/` rather than failing on the redirect.
+
 ## v0.12.0
 
 ### Changed

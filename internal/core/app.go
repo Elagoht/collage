@@ -157,6 +157,8 @@ type Config struct {
 	Cache CacheConfig
 	// Locale configures locale resolution.
 	Locale LocaleConfig
+	// TrailingSlash makes a page's URL end in "/"; see pkg/collage.Config.
+	TrailingSlash bool
 	// Observability configures metrics and tracing.
 	Observability ObservabilityConfig
 }
@@ -541,11 +543,16 @@ func New(cfg Config) (*App, error) {
 	})
 	app.store = store
 	app.tracker = tracker
+	// One spelling per page, as with the locale prefix: the other one redirects.
+	slash := router.SlashNever
+	if cfg.TrailingSlash {
+		slash = router.SlashAlways
+	}
 	app.routes = router.New(router.LocaleOptions{
 		Default:           cfg.Locale.Default,
 		Supported:         cfg.Locale.Supported,
 		DisablePathLocale: cfg.Locale.DisablePathLocale,
-	})
+	}, router.WithSlash(slash))
 	app.metrics = metrics
 	app.tracer = tracer
 	app.pages = make(map[string]*types.Page)
@@ -1061,6 +1068,14 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 	req := a.syntheticRequest(ctx, path, locale)
 
 	match, err := a.routes.Match(req)
+	if err == nil && match != nil && match.RedirectTo != "" && onlySlashDiffers(req.URL.Path, match.RedirectTo) {
+		// A path a static build hands over is a route's, not a URL a reader typed:
+		// "/about" for a page a TrailingSlash site answers at "/about/". The page
+		// is rendered at the address it is answered at, which is also what its
+		// fragments see as the request's path.
+		req = a.syntheticRequest(ctx, match.RedirectTo, locale)
+		match, err = a.routes.Match(req)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("collage: match %q: %w", path, err)
 	}
@@ -1164,6 +1179,12 @@ func (a *App) syntheticRequest(ctx context.Context, path, locale string) *http.R
 	}).WithContext(ctx)
 
 	return req
+}
+
+// onlySlashDiffers reports whether a and b are one path spelled with and without
+// a trailing slash.
+func onlySlashDiffers(a, b string) bool {
+	return a != b && strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
 }
 
 // localePath returns the URL path that reaches path in locale over HTTP: path

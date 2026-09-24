@@ -116,6 +116,21 @@ type Config struct {
 	Cache CacheConfig
 	// Locale configures locale resolution.
 	Locale LocaleConfig
+	// TrailingSlash makes every page's URL end in "/": "/blog/hello/", and a
+	// locale's home "/tr/". Links built by name — pageURL, pageURLIn, localeURL,
+	// App.URL — come out that way, and a request for a page without the slash is
+	// redirected, 301, to the address with it.
+	//
+	// Turn it on for a site exported to a static host. The export writes a page as
+	// <path>/index.html, and a static host serves that file at "/blog/hello/" and
+	// redirects "/blog/hello" to it — so without the slash every canonical link,
+	// sitemap entry and internal link points at a redirect.
+	//
+	// Off, which is the default, a page's URL has no trailing slash and a request
+	// with one is redirected to the address without it. Either way each page has
+	// one address. Documents are files and keep their paths as written:
+	// "/sitemap.xml" in both modes.
+	TrailingSlash bool
 	// Observability configures metrics and tracing.
 	Observability ObservabilityConfig
 }
