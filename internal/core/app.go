@@ -244,6 +244,8 @@ type LocaleConfig struct {
 	// DisablePathLocale turns off resolving the locale from the request path,
 	// which leaves every request in Default.
 	DisablePathLocale bool
+	// PrefixDefault gives Default's pages a prefix; see pkg/collage.LocaleConfig.
+	PrefixDefault bool
 }
 
 // ObservabilityConfig is internal/core's mirror of pkg/collage.ObservabilityConfig.
@@ -552,6 +554,7 @@ func New(cfg Config) (*App, error) {
 		Default:           cfg.Locale.Default,
 		Supported:         cfg.Locale.Supported,
 		DisablePathLocale: cfg.Locale.DisablePathLocale,
+		PrefixDefault:     cfg.Locale.PrefixDefault,
 	}, router.WithSlash(slash))
 	app.metrics = metrics
 	app.tracer = tracer
@@ -575,6 +578,12 @@ func (a *App) DevMode() bool {
 // directory of their own; see internal/build.
 func (a *App) DefaultLocale() string {
 	return a.cfg.Locale.Default
+}
+
+// PrefixDefault reports whether the default locale's pages carry its prefix, as
+// every other locale's do: "/en/about" rather than "/about".
+func (a *App) PrefixDefault() bool {
+	return a.cfg.Locale.PrefixDefault && !a.cfg.Locale.DisablePathLocale
 }
 
 // Logger returns the application's structured logger.
@@ -1067,15 +1076,7 @@ func (a *App) RenderPath(ctx context.Context, path, locale string, params map[st
 
 	req := a.syntheticRequest(ctx, path, locale)
 
-	match, err := a.routes.Match(req)
-	if err == nil && match != nil && match.RedirectTo != "" && onlySlashDiffers(req.URL.Path, match.RedirectTo) {
-		// A path a static build hands over is a route's, not a URL a reader typed:
-		// "/about" for a page a TrailingSlash site answers at "/about/". The page
-		// is rendered at the address it is answered at, which is also what its
-		// fragments see as the request's path.
-		req = a.syntheticRequest(ctx, match.RedirectTo, locale)
-		match, err = a.routes.Match(req)
-	}
+	req, match, err := a.matchCanonical(ctx, req, locale)
 	if err != nil {
 		return nil, fmt.Errorf("collage: match %q: %w", path, err)
 	}
@@ -1181,10 +1182,22 @@ func (a *App) syntheticRequest(ctx context.Context, path, locale string) *http.R
 	return req
 }
 
-// onlySlashDiffers reports whether a and b are one path spelled with and without
-// a trailing slash.
-func onlySlashDiffers(a, b string) bool {
-	return a != b && strings.TrimRight(a, "/") == strings.TrimRight(b, "/")
+// matchCanonical matches req, following the router's own redirects to a route's
+// one spelling.
+//
+// A path a static build hands over is a route's, not a URL a reader typed:
+// "/about" for a page answered at "/en/about/". The route is rendered at the
+// address it is answered at, which is also what its fragments see as the
+// request's path. A Redirect the application registered is not followed: that
+// is a different page, and rendering it here would write it under the wrong name.
+func (a *App) matchCanonical(ctx context.Context, req *http.Request, locale string) (*http.Request, *router.MatchResult, error) {
+	match, err := a.routes.Match(req)
+	// Two at most: the locale's spelling, then the slash.
+	for hops := 0; err == nil && match != nil && match.Canonical && hops < 3; hops++ {
+		req = a.syntheticRequest(ctx, match.RedirectTo, locale)
+		match, err = a.routes.Match(req)
+	}
+	return req, match, err
 }
 
 // localePath returns the URL path that reaches path in locale over HTTP: path

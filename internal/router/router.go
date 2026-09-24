@@ -83,6 +83,11 @@ type MatchResult struct {
 	// RedirectStatus is the HTTP status code for RedirectTo, taken from the
 	// matched Redirect's EffectiveStatus. It is zero when no redirect matched.
 	RedirectStatus int
+	// Canonical reports that RedirectTo is the router's own: the same route
+	// under the one spelling it answers — the locale prefix, the trailing slash —
+	// rather than a Redirect the application registered. A caller rendering a
+	// route by path, as a static build does, follows it.
+	Canonical bool
 	// IsNotFound reports whether neither a redirect, a page, nor a document
 	// matched the request. This is not an error: Page, Document, and RedirectTo
 	// are all empty, but Locale is still the request's resolved locale.
@@ -273,14 +278,14 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 		// Permanent, because the other spelling is never right. 308 rather than
 		// 301 for anything but a read, so a form posted to the wrong spelling is
 		// posted again rather than turned into a GET that drops it.
-		status := http.StatusMovedPermanently
-		if req.Method != http.MethodGet && req.Method != http.MethodHead {
-			status = http.StatusPermanentRedirect
-		}
-		return &MatchResult{Locale: rt.localeOptions.Default, RedirectTo: target, RedirectStatus: status}, nil
+		return &MatchResult{Locale: rt.localeOptions.Default, RedirectTo: target, RedirectStatus: permanent(req), Canonical: true}, nil
 	}
 
 	locale, remaining := resolveLocale(path, rt.localeOptions)
+	// bare is a request for the default locale without its prefix, on a router
+	// whose default locale has one: right for a document, a redirect for a page.
+	prefixDefault := rt.localeOptions.PrefixDefault && !rt.localeOptions.DisablePathLocale
+	bare := prefixDefault && remaining == path
 
 	segments, ok := decodeSegments(splitPath(remaining))
 	if !ok {
@@ -312,16 +317,29 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 			}
 
 			page, doc, action, ok := resolve(matched, req.Method)
+			// A page is read, so 301: resolve hands a page only GET and HEAD, and
+			// an action posted to either spelling is answered where it was posted.
 			if ok && page != nil && action == nil {
-				if target, redirect := rt.canonicalSlash(path); redirect {
-					if req.URL.RawQuery != "" {
-						target += "?" + req.URL.RawQuery
+				target, redirect := path, false
+				if bare {
+					target, redirect = "/"+locale+path, true
+					if path == "/" {
+						target = "/" + locale
 					}
-					// A page is read, so 301: resolve hands a page only GET and
-					// HEAD, and an action posted to either spelling is answered
-					// where it was posted.
-					return &MatchResult{Locale: locale, RedirectTo: target, RedirectStatus: http.StatusMovedPermanently}, nil
 				}
+				if slashed, ok := rt.canonicalSlash(target); ok {
+					target, redirect = slashed, true
+				}
+				if redirect {
+					if _, unsafe := unsafeRedirectReason(target); !unsafe {
+						return rt.canonical(req, locale, target, http.StatusMovedPermanently), nil
+					}
+				}
+			}
+			// A document is a file with one address, and in the default locale
+			// that address has no prefix: /sitemap.xml, not /en/sitemap.xml.
+			if ok && doc != nil && prefixDefault && !bare && locale == rt.localeOptions.Default {
+				return rt.canonical(req, locale, remaining, permanent(req)), nil
 			}
 			if !ok {
 				return &MatchResult{
@@ -346,6 +364,25 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 	}
 
 	return &MatchResult{Locale: locale, IsNotFound: true}, nil
+}
+
+// permanent is the status of a redirect to a route's one spelling: 301 for a
+// read, 308 for anything else, so a form posted to the wrong spelling is posted
+// again rather than turned into a GET that drops it.
+func permanent(req *http.Request) int {
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		return http.StatusPermanentRedirect
+	}
+	return http.StatusMovedPermanently
+}
+
+// canonical is a redirect to target, the matched route's own spelling, carrying
+// the request's query string.
+func (rt *router) canonical(req *http.Request, locale, target string, status int) *MatchResult {
+	if req.URL.RawQuery != "" {
+		target += "?" + req.URL.RawQuery
+	}
+	return &MatchResult{Locale: locale, RedirectTo: target, RedirectStatus: status, Canonical: true}
 }
 
 // canonicalSlash returns where a request for a page at path should be sent when

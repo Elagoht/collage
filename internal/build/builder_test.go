@@ -84,6 +84,8 @@ func renderKey(path, locale string) string {
 // DefaultLocale mirrors core.App, which defaults an unset Locale.Default to "en"
 // in New — so a test that does not care about locales sees the same unprefixed
 // output paths the real application produces.
+func (f *fakeRenderer) PrefixDefault() bool { return false }
+
 func (f *fakeRenderer) DefaultLocale() string {
 	if f.defaultLocale == "" {
 		return "en"

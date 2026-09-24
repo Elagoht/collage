@@ -344,6 +344,17 @@ type LocaleConfig struct {
 	// DisablePathLocale turns off resolving the locale from the request path,
 	// e.g. /tr/blog/post, which leaves every request in Default.
 	DisablePathLocale bool
+	// PrefixDefault gives Default's pages a prefix of their own, like every other
+	// locale's: "/en/blog/post" beside "/tr/blog/post", with no language at the
+	// bare address. Links built by name carry it, and a page requested without it
+	// is redirected, 301, to the address with it — "/" to "/en". A static export
+	// writes Default's pages under en/ too, and at its root a page that sends the
+	// reader to Default's home.
+	//
+	// Documents are files, and keep their Default address without a prefix:
+	// "/robots.txt" and "/sitemap.xml" must be at the root, and "/en/sitemap.xml"
+	// redirects there. Ignored when DisablePathLocale is set.
+	PrefixDefault bool
 }
 
 // ObservabilityConfig configures metrics and tracing. Both fields are optional: a

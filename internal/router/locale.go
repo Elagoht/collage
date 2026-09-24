@@ -23,6 +23,12 @@ type LocaleOptions struct {
 	// DisablePathLocale disables resolving the locale from a leading path
 	// segment, such as "/tr/blog/post".
 	DisablePathLocale bool
+	// PrefixDefault gives Default's pages a prefix of their own, as every other
+	// locale's have: "/en/blog/post". A page requested without one is redirected
+	// to the address with it; a document in Default keeps no prefix, and one
+	// requested with it is redirected to the address without. Ignored when
+	// DisablePathLocale is set.
+	PrefixDefault bool
 }
 
 // supportedLocales returns opts.Supported with opts.Default appended if it is not
@@ -65,17 +71,26 @@ func canonicalLocalePath(path string, opts LocaleOptions) (string, bool) {
 		return "", false
 	}
 	resolved, ok := matchSupported(opts.supportedLocales(), candidate)
-	if !ok || (resolved != opts.Default && candidate == resolved) {
+	// A prefix spelled as its locale is the one URL that locale has — except the
+	// default locale's, when its URLs carry none.
+	prefixed := resolved != opts.Default || opts.PrefixDefault
+	if !ok || (prefixed && candidate == resolved) {
 		return "", false
 	}
 	rest := "/" + strings.Join(segments[1:], "/")
-	if resolved == opts.Default {
-		return rest, true
+	target := rest
+	if prefixed {
+		target = "/" + resolved
+		if rest != "/" {
+			target += rest
+		}
 	}
-	if rest == "/" {
-		return "/" + resolved, true
+	// The trailing slash as it arrived: it is the router's other rule, and one
+	// redirect should not undo what the next one would have to put back.
+	if strings.HasSuffix(path, "/") && !strings.HasSuffix(target, "/") {
+		target += "/"
 	}
-	return "/" + resolved + rest, true
+	return target, true
 }
 
 // resolveLocale determines req's locale and the path to route-match after

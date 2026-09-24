@@ -158,7 +158,7 @@ func (a *App) RenderDocumentPath(ctx context.Context, path, locale string, param
 
 	req := a.syntheticRequest(ctx, path, locale)
 
-	match, err := a.routes.Match(req)
+	req, match, err := a.matchCanonical(ctx, req, locale)
 	if err != nil {
 		return nil, fmt.Errorf("collage: match %q: %w", path, err)
 	}

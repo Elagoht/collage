@@ -170,6 +170,10 @@ type Renderer interface {
 	// locale's output is written under a directory named after it, mirroring the
 	// URL the router answers; see localeOutputPath.
 	DefaultLocale() string
+	// PrefixDefault reports whether the default locale's pages carry its prefix
+	// too, so that its output is written under a directory like every other
+	// locale's; see pageOutputPath.
+	PrefixDefault() bool
 	// CSRFMarker is the placeholder a rendered page carries where a
 	// request-forgery token goes, or the empty string when the application has no
 	// forgery protection. A static build refuses to write a page containing it:
@@ -470,6 +474,12 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		}
 	}
 
+	rootWritten, rootErr := b.writeRootRedirect(outDirResolved, tasks, written)
+	report.Written = append(report.Written, rootWritten...)
+	if rootErr != nil {
+		errs = append(errs, rootErr)
+	}
+
 	docWritten, docSkipped, docWarnings, docErrs := b.buildDocuments(ctx, outDirResolved)
 	report.Warnings = append(report.Warnings, docWarnings...)
 	report.Skipped = append(report.Skipped, docSkipped...)
@@ -510,7 +520,7 @@ func (b *Builder) checkNoOutputCollisions(tasks []buildTask) error {
 	claimed := make(map[string]buildTask, len(tasks))
 
 	for _, task := range tasks {
-		key := path.Clean(localeOutputPath(task.locale, defaultLocale, task.path))
+		key := path.Clean(b.pageOutputPath(task.locale, defaultLocale, task.path))
 		if previous, taken := claimed[key]; taken {
 			return fmt.Errorf("%w: %q, claimed by page %q locale %q and page %q locale %q",
 				ErrOutputPathCollision, key,
@@ -625,6 +635,68 @@ func localeOutputPath(locale, defaultLocale, urlPath string) string {
 	return "/" + locale + urlPath
 }
 
+// pageOutputPath is where a page for locale at urlPath is written: under its
+// locale's directory, as localeOutputPath says, and under the default locale's
+// too when that locale's pages carry its prefix.
+func (b *Builder) pageOutputPath(locale, defaultLocale, urlPath string) string {
+	if b.app.PrefixDefault() && (locale == "" || locale == defaultLocale) {
+		if urlPath == "/" {
+			return "/" + defaultLocale
+		}
+		return "/" + defaultLocale + urlPath
+	}
+	return localeOutputPath(locale, defaultLocale, urlPath)
+}
+
+// writeRootRedirect writes, when the default locale's pages carry its prefix and
+// its home page was built, an index.html at the root that sends the reader there.
+// A static host has no redirects to configure, and without it the site's own
+// address is a 404.
+//
+// It is an HTML page that refreshes to the home page at once, names it as the
+// canonical address, asks not to be indexed, and links it for a client that does
+// not refresh. The target ends in "/", the address a static host answers a
+// directory at, whatever the application's own spelling.
+func (b *Builder) writeRootRedirect(outDirResolved string, tasks []buildTask, written []string) ([]string, error) {
+	if !b.app.PrefixDefault() {
+		return nil, nil
+	}
+	defaultLocale := b.app.DefaultLocale()
+	built := false
+	for i, task := range tasks {
+		if written[i] != "" && task.path == "/" && (task.locale == "" || task.locale == defaultLocale) {
+			built = true
+		}
+	}
+	if !built {
+		return nil, nil
+	}
+	home := "/" + defaultLocale + "/"
+	target, err := resolveTarget(outDirResolved, "/")
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyNoSymlinksBeneath(outDirResolved, target); err != nil {
+		return nil, err
+	}
+	page := `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="0; url=` + home + `">
+<meta name="robots" content="noindex">
+<link rel="canonical" href="` + home + `">
+<title>` + home + `</title>
+</head>
+<body><a href="` + home + `">` + home + `</a></body>
+</html>
+`
+	if err := os.WriteFile(target, []byte(page), 0o644); err != nil {
+		return nil, fmt.Errorf("collage: write %q: %w", target, err)
+	}
+	return []string{target}, nil
+}
+
 // isDynamicPattern reports whether pattern contains a "{param}" or "{param...}"
 // placeholder segment. Every such segment is wrapped in braces, so a substring check
 // for "{" is sufficient and does not require depending on internal/router's pattern
@@ -637,7 +709,7 @@ func isDynamicPattern(pattern string) bool {
 // under outDirResolved, which must already be an absolute, symlink-resolved
 // directory (see prepareOutDir). It returns the absolute path written.
 func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, task buildTask) (string, error) {
-	target, err := resolveTarget(outDirResolved, localeOutputPath(task.locale, b.app.DefaultLocale(), task.path))
+	target, err := resolveTarget(outDirResolved, b.pageOutputPath(task.locale, b.app.DefaultLocale(), task.path))
 	if err != nil {
 		return "", fmt.Errorf("collage: page %q locale %q: %w", task.page.Name, task.locale, err)
 	}

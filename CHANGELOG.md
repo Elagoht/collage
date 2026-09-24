@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.14.0
+
+### Added
+
+- **`LocaleConfig.PrefixDefault`.** The default locale's pages get a prefix of
+  their own, like every other locale's: `/en/about` beside `/tr/hakkinda`, with no
+  language at a bare URL. Links built by name carry it; a page requested without
+  it, the root included, is redirected (`301`) to the address with it, in one hop
+  with the site's trailing slash. Documents keep their default-locale address
+  unprefixed — `/robots.txt` and `/sitemap.xml` belong at the root — and
+  `/en/sitemap.xml` redirects there. An export writes the default locale's pages
+  under `en/`, and at its root an `index.html` that refreshes to `/en/`, names it
+  canonical and asks not to be indexed.
+
+### Fixed
+
+- **A redirect to a locale prefix's one spelling keeps the trailing slash.**
+  `/TR/hakkinda/` went to `/tr/hakkinda`, dropping a slash a `TrailingSlash` site
+  then redirected back: two hops for one address.
+- A static build follows only the router's own redirects to a route's spelling —
+  its locale prefix, its slash — when rendering by path, never a `Redirect` the
+  application registered.
+
 ## v0.13.0
 
 Found by the documentation site going bilingual and checking its canonical links

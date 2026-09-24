@@ -403,6 +403,7 @@ func toCoreConfig(cfg *Config) core.Config {
 			Default:           cfg.Locale.Default,
 			Supported:         cfg.Locale.Supported,
 			DisablePathLocale: cfg.Locale.DisablePathLocale,
+			PrefixDefault:     cfg.Locale.PrefixDefault,
 		},
 		TrailingSlash: cfg.TrailingSlash,
 		Observability: core.ObservabilityConfig{
