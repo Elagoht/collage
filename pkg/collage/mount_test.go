@@ -44,8 +44,8 @@ func mountTemplateRoot(t *testing.T) string {
 // asset.Mount actually lives, is unreachable from outside this module, so a
 // caller here could declare no variable, slice, or function parameter of that
 // type. That is the same defect App.RenderPath's Result alias exists to avoid
-// for *render.Result — Global Constraint 7 is what this test is standing in
-// for.
+// for *render.Result — every type the public API hands back must be nameable
+// by the caller, and this test is what stands guard over that for Mounts.
 func TestMounts_ElementTypeIsNameableFromOutsideThePackage(t *testing.T) {
 	app, err := collage.New(&collage.Config{
 		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},

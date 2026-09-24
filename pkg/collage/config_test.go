@@ -118,10 +118,9 @@ func TestConfig_ApplyDefaults_PreservesOptOuts(t *testing.T) {
 	}
 }
 
-// TestConfig_MinimalAppExample mirrors the Config literal from
-// docs/spec/usage-examples.md's "Minimal application" example verbatim, proving it
-// still compiles against this package's field names and passes ApplyDefaults and
-// Validate unchanged.
+// TestConfig_MinimalAppExample checks a Config literal modelled on the README's
+// minimal application, proving it still compiles against this package's field
+// names and passes ApplyDefaults and Validate unchanged.
 func TestConfig_MinimalAppExample(t *testing.T) {
 	cfg := &Config{
 		Server: ServerConfig{

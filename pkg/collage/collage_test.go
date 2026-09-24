@@ -39,8 +39,8 @@ func templateRoot(t *testing.T) string {
 	return root
 }
 
-// TestNew_ServesThroughThePublicAPI builds an application the way the
-// specification's minimal example does — public Config, public builders, public
+// TestNew_ServesThroughThePublicAPI builds an application the way the README's
+// minimal example does — public Config, public builders, public
 // App — and serves a request through it. It is the check that the public surface
 // and the internal one are actually connected, which type aliases alone do not
 // guarantee.

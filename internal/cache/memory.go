@@ -67,7 +67,7 @@ var (
 	_ TaggedCache = (*MemoryCache)(nil)
 )
 
-// Stats reports MemoryCache's cumulative counters, for Task 6 observability.
+// Stats reports MemoryCache's cumulative counters, for observability.
 type Stats struct {
 	// Hits counts Get calls that returned a live entry.
 	Hits uint64

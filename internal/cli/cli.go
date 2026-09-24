@@ -7,11 +7,11 @@
 // process streams or spawning a real process. cmd/collage/main.go is the only
 // place os.Exit is called.
 //
-// dev and build operate on the current directory's own Go project — the
-// project that imports pkg/collage — rather than on anything internal/cli
-// builds itself: internal/cli has no way to import pkg/collage (see the
-// project's global constraints) and so cannot construct that project's App in
-// process. Instead it shells out to "go run ." in that project, the same way a
+// dev, build and export operate on the current directory's own Go project —
+// the project that imports pkg/collage — rather than on anything internal/cli
+// builds itself: the application is that project's code, which the CLI cannot
+// link into itself, so it cannot construct that project's App in process.
+// Instead it shells out to the go tool in that project, the same way a
 // developer would by hand, through an injectable CommandRunner so tests can
 // assert the constructed command without starting a real process.
 package cli
@@ -235,7 +235,7 @@ func (c *CLI) findPluginCommand(name string) (plugin.Command, bool) {
 // it, and every available command, built-in and plugin-contributed alike — to
 // w.
 func (c *CLI) printUsage(w io.Writer) {
-	fmt.Fprintln(w, "collage is the CLI for collage-core, a Go framework for server-side component-based rendering.")
+	fmt.Fprintln(w, "collage is the CLI for collage, a Go framework for server-side component-based rendering.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  collage <command> [flags]")

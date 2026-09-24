@@ -2,7 +2,7 @@
 // capability surface plugins receive at startup, and a Registry that owns
 // registration, lifecycle, and hook dispatch.
 //
-// The specification says a plugin "cannot mutate core state directly." Host
+// The framework's rule is that a plugin cannot mutate core state directly. Host
 // enforces the reachability half of that structurally: Init receives Host, not
 // the whole application, so a plugin has no way to obtain the router, the cache,
 // the render engine, the template set, or any page it was not explicitly handed.
@@ -107,7 +107,7 @@ type Host interface {
 	// Logger returns the application's structured logger.
 	Logger() *slog.Logger
 	// RegisterCommand registers cmd with the application's CLI. It is consumed by
-	// the CLI (Task 13); a Host implementation that has no CLI may simply store
+	// the CLI; a Host implementation that has no CLI may simply store
 	// cmd or reject it, at its own discretion.
 	RegisterCommand(cmd Command) error
 	// Config decodes this plugin's section of the application's plugin

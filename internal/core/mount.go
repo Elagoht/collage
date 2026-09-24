@@ -68,7 +68,7 @@ func (a *App) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error {
 
 // Mounts returns every mounted asset file system, in registration order, as a copy
 // of the slice: appending to or reordering the returned slice does not affect the
-// application. Task 8's static builder is what consumes it.
+// application. The static builder is what consumes it.
 func (a *App) Mounts() []*asset.Mount {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

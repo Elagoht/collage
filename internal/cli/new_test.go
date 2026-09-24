@@ -161,7 +161,7 @@ func TestRun_New_ScaffoldsExpectedFiles(t *testing.T) {
 
 // TestRun_New_Scaffold_Compiles scaffolds a project into t.TempDir() and
 // verifies the result actually builds. Since the scaffolded go.mod has no
-// requirement on collage-core (collage new leaves that to "go mod tidy" for a
+// requirement on collage (collage new leaves that to "go mod tidy" for a
 // real user, once the module is published), this test adds a replace
 // directive pointing at this checkout before running "go mod tidy" and
 // "go build ./...", rather than letting module resolution fail on a module
@@ -212,12 +212,11 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	runIn(goBin, "test", "./...")
 
 	// The scaffold's own -collage-build path is not a hand-rolled writer: it
-	// calls collage.NewBuilder, the same static builder collage-core's own
-	// internal/build implements. Running it for real here, and checking the
-	// file it wrote, is the check that "collage build" reaches that real
-	// builder rather than some weaker stand-in the scaffold carries on its
-	// own — see docs/plans/collage-core.md's "re-export the static builder"
-	// amendment for why this distinction matters.
+	// calls collage.NewBuilder, the framework's own static builder. Running it
+	// for real here, and checking what it wrote, is the check that "collage
+	// export" reaches that builder — with its containment checks — rather than
+	// some weaker stand-in the scaffold carries on its own.
+	//
 	// Eight files: the home page's index.html, the 404 page, and each of the
 	// three mounted static files under its own name and under the
 	// content-addressed name the layout links through {{asset}}. A mount is

@@ -264,7 +264,7 @@ func TestMount_Handles(t *testing.T) {
 func TestMount_BarePrefix_ReturnsPlainText404(t *testing.T) {
 	// A request to the bare prefix is owned by the mount (Handles returns true)
 	// but cannot be served (resolve returns false), producing a plain-text 404
-	// from the mount. This ensures Task 7's router does not fall through to the
+	// from the mount. This ensures the router does not fall through to the
 	// page router and return an HTML error for an asset URL.
 	m := mustMount(t)
 	rec := httptest.NewRecorder()

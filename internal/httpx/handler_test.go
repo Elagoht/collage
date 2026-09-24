@@ -1616,9 +1616,10 @@ func mustMount(t *testing.T, prefix string, fsys fs.FS) *asset.Mount {
 	return m
 }
 
-// TestAssetSuccessProducesHTTPResponseMetric is the base case for Task 9a: an
-// asset request that used to bypass every metric, span, and hook now produces the
-// same HTTPResponse metric a page does, with a real, non-zero duration.
+// TestAssetSuccessProducesHTTPResponseMetric is the base case for asset
+// observability: an asset request, which once bypassed every metric, span, and
+// hook, produces the same HTTPResponse metric a page does, with a real, non-zero
+// duration.
 func TestAssetSuccessProducesHTTPResponseMetric(t *testing.T) {
 	fsys := fstest.MapFS{"app.css": {Data: []byte("body{color:red}")}}
 	mount := mustMount(t, "/static/", slowFS{inner: fsys, delay: time.Millisecond})

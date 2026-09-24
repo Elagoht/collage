@@ -5,9 +5,8 @@ optional data handler — into *pages*, and caching the result by dependency tag
 It also serves two things that are not composed HTML: *documents*, which are
 routed, cacheable, non-HTML responses whose handler returns bytes, and *assets*,
 which are mounted `fs.FS` file systems served with file semantics. This document
-describes how the pieces fit together, why the load-bearing design decisions were
-made, and where the implementation deliberately departs from the original
-specification.
+describes how the pieces fit together and why the load-bearing design decisions
+were made.
 
 ## Package layout
 
@@ -35,11 +34,19 @@ type aliases, so a `*collage.Page` and an `*internal/types.Page` are literally t
 same type — there is no conversion layer, no wrapper, and no `interface{}`
 boundary between the public API and the engine.
 
+The HTTP layer lives in `internal/httpx` rather than `internal/http` because a
+package named `http` would shadow `net/http` at every call site that imports both.
+
 The one place a struct is mirrored rather than aliased is `Config`:
 `pkg/collage.Config` owns the defaults and the validation, then converts field by
 field into `internal/core.Config`. That conversion is written out by hand
 (`toCoreConfig`) precisely so that adding a field to one and forgetting the other
 is visible in a diff.
+
+Boolean options that default to on are spelled in `Disable*` form, such as
+`DisablePathLocale`. A bool documented "default true" could never be turned off:
+its zero value is indistinguishable from "caller left it unset", so applying the
+default would flip it back on every time.
 
 ## The three kinds of route
 
@@ -176,8 +183,8 @@ error instead, so a program that starts a server never loses it.
 
 ## Why plugins get a `Host`, not the `App`
 
-The specification says a plugin "cannot mutate core state directly". `Plugin.Init`
-therefore receives a `collage.Host` — `DevMode`, `Pages`, `Page`,
+A plugin cannot mutate core state directly: that is the framework's rule. So
+`Plugin.Init` receives a `collage.Host` — `DevMode`, `Pages`, `Page`,
 `InvalidateTags`, `Logger`, `RegisterCommand` — and not the `*App`. A plugin has
 no way to reach the router, the cache, the render engine, the template set, or any
 page it was not explicitly handed.
@@ -210,51 +217,6 @@ deliberate mutation obvious, not to make mutation impossible — which Go's type
 system cannot give us without copying everything. Where mutation *is* intended it
 is explicit: `AfterRenderEvent.HTML`, and `CacheWriteEvent`'s `Skip`, `TTL`, and
 `Tags`.
-
-## Deviations from the original specification
-
-Each of these is a deliberate departure, with the reason it was made.
-
-- **`interface{}` at internal boundaries replaced by concrete types, and
-  `Plugin.Init(ctx, app interface{})` by a narrow `Host` interface.** An untyped
-  parameter is not a capability boundary and gives the compiler nothing to check;
-  `Host` states exactly what a plugin may reach.
-- **`internal/http` renamed `internal/httpx`.** A package named `http` shadows
-  `net/http` at every call site that imports both.
-- **`TaggedCache` added as an optional extension interface.** `Cache.Set` carries
-  no tags, so a cache that *can* index tags at write time needs a way to say so
-  without forcing every implementation to.
-- **`MatchResult.RedirectStatus` added.** The router knew which status a matched
-  redirect wanted; without carrying it, the handler could not write it.
-- **`Result.Degraded()` added.** "A fragment failed but the page still rendered"
-  has to be answerable, because that is exactly the render that must not be
-  cached.
-- **`render.Execute` runs in-line, not in a goroutine.** A spawned goroutine
-  cannot be killed on timeout, so every blocked handler would leak one
-  permanently.
-- **`types.ErrNotFound` added.** Without a sentinel meaning "this content does not
-  exist", every missing record is a 500 and a page-specific 404 page is
-  unreachable.
-- **`LocaleConfig` booleans inverted to `Disable*` form.** A bool documented
-  "default true" can never be turned off: its zero value is indistinguishable from
-  "caller left it unset", so defaulting would flip it back on every time.
-- **`Vary` on public responses, and the query string in the cache key.** A locale
-  negotiated from a header or a cookie is not in the URL, so a shared cache would
-  hand one visitor's language to the next; and a data handler may render from
-  `r.URL.Query()`, so two queries against one path are two representations.
-- **`Document` and asset mounts added; the specification described only HTML
-  pages.** The spec had one response shape — composed HTML with a constant
-  content type — so `robots.txt`, `sitemap.xml`, a feed, a JWKS document and any
-  static file were not merely unimplemented but unexpressible. `Document` adds a
-  routed, cacheable non-HTML response that reuses every piece of a page's
-  machinery except rendering; `App.Mount` adds an `fs.FS` served with
-  `http.ServeContent`. They are two mechanisms rather than one because a
-  generated payload and a served file want opposite things — see "The three kinds
-  of route".
-- **Registration binds into a per-page copy of the layout.** `Bind` appends to a
-  slot's fill, and a shared layout is one object — binding three pages into it
-  would render all three pages' content on every one of them. Copying the slot
-  table per page is what makes a layout shareable at all.
 
 ## Further reading
 

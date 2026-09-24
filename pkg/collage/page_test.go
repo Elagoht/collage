@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-// TestPageBuilder_MinimalApp mirrors the page-building portion of
-// docs/spec/usage-examples.md's "Minimal application" example verbatim: a
-// layout-wrapped home page with one localized path and incremental caching.
+// TestPageBuilder_MinimalApp builds the page of an application modelled on the
+// README's minimal one: a layout-wrapped home page with one localized path and
+// incremental caching.
 func TestPageBuilder_MinimalApp(t *testing.T) {
 	layout := NewFragment("layout", "layouts/default.html").
 		WithSlot("content", true, false).
@@ -49,8 +49,8 @@ func TestPageBuilder_MinimalApp(t *testing.T) {
 	}
 }
 
-// TestPageBuilder_BlogExample mirrors docs/spec/usage-examples.md's "Advanced
-// example: redirects and custom error pages" verbatim: a blog post page wrapped in
+// TestPageBuilder_BlogExample builds a typical blog with redirects and custom
+// error pages: a blog post page wrapped in
 // the shared layout, two localized paths, a permanent (301) and a temporary (302)
 // redirect, page-specific 404/500 pages, incremental caching, and a dependency tag —
 // plus the two global error pages the example builds alongside it.

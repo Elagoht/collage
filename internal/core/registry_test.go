@@ -87,7 +87,7 @@ func TestRegisterPage_BindsOnceIntoAMultiFillSlot(t *testing.T) {
 		t.Fatalf("RegisterPage: %v", err)
 	}
 	// Designating the same page again re-runs the binding step, which is exactly
-	// what the specification's own example does with a page it already registered.
+	// what an application does when it designates a page it already registered.
 	if err := app.RegisterErrorPage(page); err != nil {
 		t.Fatalf("RegisterErrorPage: %v", err)
 	}
@@ -135,8 +135,8 @@ func TestRegisterPage_WithoutLayout(t *testing.T) {
 	}
 }
 
-// TestRegisterPage_SharedLayoutRendersEachPagesOwnContent is the specification's
-// advanced example: one layout fragment reused by three pages. A layout is the most
+// TestRegisterPage_SharedLayoutRendersEachPagesOwnContent is a typical blog layout:
+// one layout fragment reused by three pages. A layout is the most
 // reusable object a component framework has, so sharing one must work — and it only
 // works because registration binds each page's content into a private copy of the
 // layout's slot table. Bound into the shared SlotDefinition instead, all three
@@ -453,8 +453,8 @@ func TestRegisterPage_AcceptsSoundErrorPages(t *testing.T) {
 	}
 }
 
-// blogFixture is the specification's advanced example: a blog post page and its own
-// 404 and 500 pages, all three built on one shared layout fragment.
+// blogFixture is a typical blog layout: a blog post page and its own 404 and 500
+// pages, all three built on one shared layout fragment.
 type blogFixture struct {
 	// layout is the one layout fragment all three pages are built on.
 	layout *types.Fragment
@@ -500,8 +500,8 @@ func newBlogFixture() blogFixture {
 // instead of the author's — a custom error page that silently never appears, at the
 // one moment it was needed.
 //
-// The fixture is the specification's advanced example: three pages on one shared
-// layout, which is exactly the shape that has a layout to render empty.
+// The fixture is a typical blog layout: three pages on one shared layout, which is
+// exactly the shape that has a layout to render empty.
 func TestApp_RejectsUnregisteredErrorPage(t *testing.T) {
 	t.Run("unregistered", func(t *testing.T) {
 		for _, testCase := range []struct {
@@ -815,8 +815,8 @@ func TestRegisterNotFoundPage_ValidatesLikeAnyOtherPage(t *testing.T) {
 	}
 }
 
-// TestRegisterErrorPage_AcceptsAnAlreadyRegisteredPage: the specification's own
-// example registers a page with RegisterPage and then designates it, so naming
+// TestRegisterErrorPage_AcceptsAnAlreadyRegisteredPage: an application commonly
+// registers a page with RegisterPage and then designates it, so naming
 // the same page twice must not read as a duplicate of itself — nor bind its
 // content into its layout a second time.
 func TestRegisterErrorPage_AcceptsAnAlreadyRegisteredPage(t *testing.T) {

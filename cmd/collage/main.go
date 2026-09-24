@@ -1,4 +1,4 @@
-// Command collage is the collage-core CLI: it scaffolds new projects
+// Command collage is the collage CLI: it scaffolds new projects
 // (collage new) and drives an existing project's dev and static-build
 // workflows (collage dev, collage build).
 //

@@ -8,12 +8,10 @@ import (
 	"time"
 )
 
-// TestFragmentBuilder_MinimalApp mirrors the fragment-building portion of
-// docs/spec/usage-examples.md's "Minimal application" example verbatim: a layout
-// fragment declaring a required content slot, and a home-content fragment with a
-// DataHandler returning a data map and a tag slice. The spec writes the handler's
-// return type as interface{}; any and interface{} are the same type (see that file's
-// closing note), so it compiles unchanged against DataHandlerFunc's any.
+// TestFragmentBuilder_MinimalApp builds the fragments of an application modelled
+// on the README's minimal one: a layout fragment declaring a required content
+// slot, and a home-content fragment with a DataHandler returning a data map and a
+// tag slice.
 func TestFragmentBuilder_MinimalApp(t *testing.T) {
 	layout := NewFragment("layout", "layouts/default.html").
 		WithSlot("content", true, false).
@@ -71,11 +69,11 @@ func TestFragmentBuilder_MinimalApp(t *testing.T) {
 	}
 }
 
-// TestFragmentBuilder_BlogPostContent mirrors the content fragment from
-// docs/spec/usage-examples.md's "Advanced example: redirects and custom error pages":
-// a Required() fragment whose DataHandler reads a path parameter, fetches a post, and
-// either returns the post tagged "post:<slug>" or an error that would trigger the
-// page's custom 500. fetchPost is a local stand-in for the spec's external function.
+// TestFragmentBuilder_BlogPostContent builds the content fragment of a typical
+// blog post page: a Required() fragment whose DataHandler reads a path parameter,
+// fetches a post, and either returns the post tagged "post:<slug>" or an error that
+// would trigger the page's custom 500. fetchPost is a local stand-in for an
+// application's data access.
 func TestFragmentBuilder_BlogPostContent(t *testing.T) {
 	fetchPost := func(slug string) (*fetchedPost, error) {
 		if slug == "" {

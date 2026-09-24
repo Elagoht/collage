@@ -149,7 +149,7 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 
 A plugin therefore has no way to reach the router, the cache, the render engine,
 the template set, or any page it was not explicitly handed. That is the structural
-half of the specification's "plugins cannot mutate core state".
+half of the framework's rule that plugins cannot mutate core state.
 
 `Host` has no `Documents` method, and that is deliberate rather than an
 oversight: nothing outside the framework's own build step reads the document

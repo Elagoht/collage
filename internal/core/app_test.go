@@ -152,7 +152,7 @@ func newTestAppWith(t *testing.T, files map[string]string, mutate func(*Config))
 }
 
 // newLayout returns a layout fragment declaring the required content slot, the
-// shape the specification's own example uses.
+// shape a typical site layout has.
 func newLayout(name string) *types.Fragment {
 	return &types.Fragment{
 		Name:         name,

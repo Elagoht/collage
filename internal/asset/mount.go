@@ -112,7 +112,7 @@ func (m *Mount) BuildCopy() bool { return m.buildCopy }
 // not imply a servable file exists. The resolve method makes that second
 // decision: a request to the bare prefix (e.g., "/static/") returns true here
 // but false from resolve, causing a plain-text 404 from the mount, not the
-// page router. This semantic distinction is critical for Task 7's routing: the
+// page router. This semantic distinction is critical for routing: the
 // mount must claim the URL to prevent it falling through to the page router and
 // returning an HTML error instead.
 func (m *Mount) Handles(urlPath string) bool {

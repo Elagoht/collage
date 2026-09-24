@@ -62,7 +62,7 @@ type Page struct {
 	Name string
 	// LayoutFragment, when set, wraps ContentFragment and is the fragment tree's
 	// root. The content fragment is bound to the layout's DefaultContentSlot slot by
-	// the registration path (Task 11); Page itself never mutates its fragments.
+	// the registration path; Page itself never mutates its fragments.
 	LayoutFragment *Fragment
 	// ContentFragment is the page's primary content fragment. It is required.
 	ContentFragment *Fragment

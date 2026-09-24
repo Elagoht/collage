@@ -109,8 +109,8 @@ func (a *App) rememberDocument(doc *types.Document) {
 // Unlike Pages, the documents themselves are handed back by the same pointer they
 // were registered with rather than defensively copied. Pages defends against a
 // plugin writing through Page's mutable maps and slices because Pages is part of
-// plugin.Host; Documents is not — nothing outside this package reaches it before
-// Task 8's static builder, which only reads it — and types.Document carries no
+// plugin.Host; Documents is not — nothing outside this package reaches it except
+// the static builder, which only reads it — and types.Document carries no
 // framework-owned state analogous to a page's bound layout for a copy to protect.
 func (a *App) Documents() []*types.Document {
 	a.mu.RLock()

@@ -132,7 +132,7 @@ func (b *PageBuilder) WithDependency(tags ...string) *PageBuilder {
 
 // WithSEO sets the SEO metadata value under key. value is opaque to the framework —
 // it is stored as-is on Page.SEO and interpreted by whatever renders SEO metadata.
-func (b *PageBuilder) WithSEO(key string, value any) *PageBuilder { // any: Page.SEO is opaque framework metadata (Task 1), mirrored here for the builder parameter
+func (b *PageBuilder) WithSEO(key string, value any) *PageBuilder { // any: Page.SEO is opaque framework metadata, mirrored here for the builder parameter
 	if b.page.SEO == nil {
 		b.page.SEO = make(map[string]any)
 	}

@@ -160,8 +160,8 @@ func (a *App) remember(p *types.Page) {
 // binding: its content fragment is already the root.
 //
 // The copy is what makes a layout shareable, and a layout is the most reusable
-// object a component framework has — the specification's own advanced example uses
-// one layout for a blog post page and its 404 and 500 pages. types.Fragment.Bind
+// object a component framework has — a typical blog uses one layout for a post page
+// and its 404 and 500 pages. types.Fragment.Bind
 // appends to the SlotDefinition's Fill, and a SlotDefinition reached through a
 // shared layout is one object: binding three pages' content into it would leave
 // three fills in one slot and render all three pages' content on every one of them.
