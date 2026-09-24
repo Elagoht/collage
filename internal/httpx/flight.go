@@ -24,6 +24,9 @@ type outcome struct {
 	// fail is non-nil when no content could be produced, and carries everything
 	// serveFailure needs.
 	fail *failure
+	// problems are the fragments that failed in a render that produced a page
+	// anyway, collected in development only, for the overlay.
+	problems []devProblem
 }
 
 // flight coalesces concurrent renders of the same cache key.

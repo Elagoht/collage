@@ -65,6 +65,13 @@ func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure
 
 	if page := h.errorPageFor(f); page != nil {
 		if content, ok := h.renderErrorPage(r, page, f); ok {
+			// The application's own error page says nothing about why it is
+			// showing, which is right for a reader and useless for the person
+			// who caused it. In development the reason goes on top.
+			if h.devMode && f.status >= http.StatusInternalServerError {
+				content = withDevOverlay(content, statusTitle(f.status)+", and your error page is showing",
+					[]devProblem{{fragment: f.fragment, detail: errorDetail(f.err)}})
+			}
 			h.writeErrorResponse(w, r, f.status, content)
 			return f.status
 		}

@@ -191,12 +191,18 @@ func (hub *reloadHub) fingerprint() uint64 {
 // withReloadScript returns html carrying the development reload script, before
 // its closing body tag when it has one and at the end when it does not.
 func withReloadScript(html []byte) []byte {
+	return insertBeforeBodyEnd(html, devReloadScript)
+}
+
+// insertBeforeBodyEnd returns html with insert placed before its closing body tag,
+// or at the end when it has none.
+func insertBeforeBodyEnd(html []byte, insert string) []byte {
 	i := bytes.LastIndex(bytes.ToLower(html), []byte("</body>"))
 	if i < 0 {
 		i = len(html)
 	}
-	out := make([]byte, 0, len(html)+len(devReloadScript))
+	out := make([]byte, 0, len(html)+len(insert))
 	out = append(out, html[:i]...)
-	out = append(out, devReloadScript...)
+	out = append(out, insert...)
 	return append(out, html[i:]...)
 }
