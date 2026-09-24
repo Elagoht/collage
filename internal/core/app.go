@@ -338,8 +338,11 @@ type App struct {
 	// handlers holds every http.Handler mounted with Handle, and middleware
 	// every wrapper registered with Use, both in registration order. See
 	// handle.go.
-	handlers   []httpx.HandlerMount
-	middleware []httpx.Middleware
+	handlers []httpx.HandlerMount
+	// devTemplateDir is the directory templates are read from in development,
+	// empty when they are not read from disk.
+	devTemplateDir string
+	middleware     []httpx.Middleware
 	// commands holds the CLI subcommands plugins contributed through
 	// RegisterCommand.
 	commands []plugin.Command
@@ -448,11 +451,17 @@ func New(cfg Config) (*App, error) {
 	maps.Copy(funcs, app.pluginFuncs)
 	maps.Copy(funcs, cfg.Template.Funcs)
 
+	// Not cfg.Template.FS directly: in development an embedded template set
+	// cannot reload, so the copy on disk is preferred when there is one. See
+	// templateSource.
+	templates := templateSource(cfg.Template.FS, cfg.Template.Root, devMode, logger)
+	if devMode && templates == nil {
+		// Read from disk, so a development page reloads itself when it changes.
+		app.devTemplateDir = cfg.Template.Root
+	}
+
 	tmpl, err := template.NewHTML(template.HTMLConfig{
-		// Not cfg.Template.FS directly: in development an embedded template set
-		// cannot reload, so the copy on disk is preferred when there is one. See
-		// templateSource.
-		FS:        templateSource(cfg.Template.FS, cfg.Template.Root, devMode, logger),
+		FS:        templates,
 		Root:      cfg.Template.Root,
 		Extension: cfg.Template.Extension,
 		DevMode:   devMode,
@@ -683,6 +692,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		DefaultTTL:   a.cfg.Cache.DefaultTTL,
 		Mounts:       a.Mounts(),
 		Handlers:     a.handlers,
+		DevSources:   a.devSources(),
 		Middleware:   a.middleware,
 		MaxBodyBytes: a.cfg.Server.MaxBodyBytes,
 		// An action asks for invalidation declaratively, and this is what
@@ -700,6 +710,15 @@ func (a *App) buildHandler() (http.Handler, error) {
 
 	a.handler = handler
 	return handler, nil
+}
+
+// devSources are the file systems, besides the mounts, whose changes reload a
+// development page: the templates, when they are read from disk.
+func (a *App) devSources() []fs.FS {
+	if a.devTemplateDir == "" {
+		return nil
+	}
+	return []fs.FS{os.DirFS(a.devTemplateDir)}
 }
 
 // buildFailed memoises a failed handler build: it logs err once, installs the
@@ -827,6 +846,17 @@ func (a *App) shutdown(ctx context.Context) error {
 	a.closing = true
 	server := a.server
 	a.mu.Unlock()
+
+	// buildMu, not mu, is what guards the handler.
+	a.buildMu.Lock()
+	current := a.handler
+	a.buildMu.Unlock()
+
+	// Before the server, which waits for open requests: a development page's
+	// reload stream is one that never ends by itself.
+	if handler, ok := current.(*httpx.Handler); ok {
+		handler.CloseDevStreams()
+	}
 
 	var err error
 	if server != nil {

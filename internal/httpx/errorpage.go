@@ -231,6 +231,9 @@ func (h *Handler) writeErrorResponse(w http.ResponseWriter, r *http.Request, sta
 	header := w.Header()
 	header.Set("Content-Type", contentTypeHTML)
 	header.Set("Cache-Control", "no-store")
+	// An error page reloads too: the page that failed on a broken template is
+	// the one most worth seeing again once the template is fixed.
+	content = h.withDevReload(r, content)
 	w.WriteHeader(status)
 	writeBody(w, content)
 }

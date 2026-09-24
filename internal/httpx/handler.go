@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -160,6 +161,10 @@ type Deps struct {
 	// router, and like Mounts they are guaranteed by internal/core not to
 	// overlap any route.
 	Handlers []HandlerMount
+	// DevSources are the file systems a development page reloads itself when
+	// they change — the templates as read from disk — in addition to every
+	// mount's. Ignored outside development.
+	DevSources []fs.FS
 	// Middleware wraps the handling of every request, first element outermost.
 	// It runs inside the span, the metrics and the panic guard, and before a
 	// mount, a handler or the router sees the request.
@@ -193,6 +198,7 @@ type Handler struct {
 	mounts       []*asset.Mount
 	handlers     []HandlerMount
 	chain        http.Handler
+	reload       *reloadHub
 	maxBodyBytes int64
 	invalidator  Invalidator
 	csrf         *csrf.Guard
@@ -246,6 +252,13 @@ func New(d Deps) (*Handler, error) {
 	if len(d.Middleware) > 0 {
 		h.chain = compose(slices.Clone(d.Middleware), http.HandlerFunc(h.serveChained))
 	}
+	if d.DevMode {
+		sources := slices.Clone(d.DevSources)
+		for _, mount := range d.Mounts {
+			sources = append(sources, mount.FS())
+		}
+		h.reload = newReloadHub(sources)
+	}
 	return h, nil
 }
 
@@ -257,6 +270,15 @@ func New(d Deps) (*Handler, error) {
 // for why a mount now runs through the same timing, span, panic guard, and metric
 // every page and document request gets.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// Ahead of everything, middleware included: it is the development tool's
+	// own channel, and an auth middleware refusing it would turn live reload off
+	// with nothing to say why. Outside the metrics too — a stream that stays
+	// open for an hour is not a slow request.
+	if h.reload != nil && r.URL.Path == devReloadPath {
+		h.reload.ServeHTTP(w, r)
+		return
+	}
+
 	start := time.Now()
 
 	ctx, span := h.startRequestSpan(r)
@@ -633,10 +655,30 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	if h.devMode {
 		header.Set(renderTimeHeader, out.renderTime.String())
 	}
+	content = h.withDevReload(r, content)
 	w.WriteHeader(http.StatusOK)
 	writeBody(w, content)
 
 	return http.StatusOK
+}
+
+// withDevReload adds the live-reload script to a page in development.
+//
+// Only to the answer to a GET. Reloading the answer to a POST asks the browser to
+// submit the form again, which is the last thing a page should do on its own.
+func (h *Handler) withDevReload(r *http.Request, html []byte) []byte {
+	if h.reload == nil || r.Method != http.MethodGet {
+		return html
+	}
+	return withReloadScript(html)
+}
+
+// CloseDevStreams ends every development reload stream. A graceful shutdown waits
+// for open requests, and these never finish by themselves.
+func (h *Handler) CloseDevStreams() {
+	if h.reload != nil {
+		h.reload.Close()
+	}
 }
 
 // personalise replaces the forgery-token marker in content with this reader's own
