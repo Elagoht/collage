@@ -39,6 +39,8 @@ func TestHead_HelpersAndStylesheets(t *testing.T) {
 			rc.HoistMeta("description", `a "quoted" summary`)
 			rc.HoistProperty("og:title", "Tom & Jerry")
 			rc.HoistLink("canonical", "/articles/tom?x=1&y=2")
+			rc.HoistAlternate("tr", "/tr/makaleler/tom")
+			rc.HoistAlternate("en", "/articles/tom")
 			// Declared again from Go: one link, not two.
 			if err := rc.HoistStylesheet("/static/article.css"); err != nil {
 				return "", nil, err
@@ -65,6 +67,8 @@ func TestHead_HelpersAndStylesheets(t *testing.T) {
 		`<meta name="description" content="a &#34;quoted&#34; summary">`,
 		`<meta property="og:title" content="Tom &amp; Jerry">`,
 		`<link rel="canonical" href="/articles/tom?x=1&amp;y=2">`,
+		`<link rel="alternate" hreflang="tr" href="/tr/makaleler/tom">`,
+		`<link rel="alternate" hreflang="en" href="/articles/tom">`,
 	} {
 		if !strings.Contains(head, want) {
 			t.Errorf("head does not contain %s:\n%s", want, head)

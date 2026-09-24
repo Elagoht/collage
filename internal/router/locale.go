@@ -47,6 +47,37 @@ func matchSupported(supported []string, tag string) (string, bool) {
 	return "", false
 }
 
+// canonicalLocalePath returns where a request should be sent when its locale prefix
+// is not the one URL that locale has: the default locale's own prefix, which the
+// default locale's URLs do not carry, or a supported locale spelled in another case.
+// Served as they are, /en/about and /TR/hakkinda would each be a second URL for a
+// page — a duplicate for a search engine and a second entry in the cache.
+func canonicalLocalePath(path string, opts LocaleOptions) (string, bool) {
+	if opts.DisablePathLocale {
+		return "", false
+	}
+	segments := splitPath(path)
+	if len(segments) == 0 {
+		return "", false
+	}
+	candidate, err := url.PathUnescape(segments[0])
+	if err != nil {
+		return "", false
+	}
+	resolved, ok := matchSupported(opts.supportedLocales(), candidate)
+	if !ok || (resolved != opts.Default && candidate == resolved) {
+		return "", false
+	}
+	rest := "/" + strings.Join(segments[1:], "/")
+	if resolved == opts.Default {
+		return rest, true
+	}
+	if rest == "/" {
+		return "/" + resolved, true
+	}
+	return "/" + resolved + rest, true
+}
+
 // resolveLocale determines req's locale and the path to route-match after
 // stripping any locale prefix: the leading path segment when it names a supported
 // locale, and Default otherwise. It always returns a supported locale.

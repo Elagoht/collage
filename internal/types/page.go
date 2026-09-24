@@ -109,6 +109,9 @@ type Page struct {
 	// part of every page on the public web, and turning that off again is not a
 	// thing anyone remembers to do.
 	FragmentPaths map[string]map[string]*Fragment
+	// buildErr is what the builder that made this value recorded; see
+	// RecordBuildErr. Registration refuses a value that carries one.
+	buildErr error
 }
 
 // Root returns p.LayoutFragment when it is set, otherwise p.ContentFragment. It is

@@ -71,6 +71,7 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 			skipped = append(skipped, SkipRecord{
 				Page:   doc.Name,
 				Reason: fmt.Sprintf("document uses the %s render strategy, which cannot be built statically", doc.Strategy),
+				Err:    ErrNotStatic,
 			})
 			continue
 		}
@@ -97,6 +98,7 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 					Page:   doc.Name,
 					Locale: locale,
 					Reason: ErrDynamicPathUnresolved.Error(),
+					Err:    ErrDynamicPathUnresolved,
 				})
 				continue
 			}
@@ -120,17 +122,23 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 	return tasks, skipped, errs
 }
 
+// documentURL is the URL a document task is served at, which is where it is
+// written: its path under its locale's prefix, as a page's is. Writing a "tr"
+// document to its bare path put it where the server answers the default locale,
+// and left the URL that serves it a 404 on a static host.
+func (b *Builder) documentURL(task documentTask) string {
+	return localeOutputPath(task.locale, b.app.DefaultLocale(), task.path)
+}
+
 // dedupeDocumentTargets drops every task whose output file another task has
 // already claimed, returning the surviving tasks and a SkipRecord for each drop.
 //
-// It exists because a document writes to its literal path, so two tasks can
-// resolve to one file where two pages never could. The documented, working way to
-// serve one document in two locales is to register the same pattern under both —
-// {"en": "/sitemap.xml", "tr": "/sitemap.xml"} — because path-locale resolution
-// strips the "/tr" prefix before matching. That is two build tasks with the same
-// output path. Left alone, and with Options.Concurrency above 1, both goroutines
-// called os.WriteFile on that path: one locale's body won nondeterministically,
-// Report.Written listed the file twice, and nothing anywhere reported a problem.
+// Each locale's document is written under that locale's URL — /tr/feed.xml for a
+// "tr" document at "/feed.xml" — so one pattern in two locales is two files. Two
+// tasks can still resolve to one file when a PathProvider hands back the same path
+// twice. Left alone, and with Options.Concurrency above 1, both goroutines would
+// call os.WriteFile on that path: one body would win nondeterministically, and
+// nothing would report a problem.
 //
 // The first task to claim a path keeps it. Task order is deterministic —
 // App.Documents is registration order and Document.Locales is sorted — so which
@@ -142,13 +150,13 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 //
 // Comparison is on the resolved target path, not on the URL pattern: two patterns
 // can differ and still resolve to one file, and the file is what collides.
-func dedupeDocumentTargets(outDirResolved string, tasks []documentTask) ([]documentTask, []SkipRecord) {
+func (b *Builder) dedupeDocumentTargets(outDirResolved string, tasks []documentTask) ([]documentTask, []SkipRecord) {
 	claimed := make(map[string]documentTask, len(tasks))
 	kept := make([]documentTask, 0, len(tasks))
 	var skipped []SkipRecord
 
 	for _, task := range tasks {
-		target, err := documentTarget(outDirResolved, task.path)
+		target, err := documentTarget(outDirResolved, b.documentURL(task))
 		if err != nil {
 			// Not this function's failure to report: renderAndWriteDocument
 			// resolves the same target and turns the error into a build error
@@ -164,6 +172,7 @@ func dedupeDocumentTargets(outDirResolved string, tasks []documentTask) ([]docum
 				Locale: task.locale,
 				Reason: fmt.Sprintf("%v: path %q resolves to the same output file as locale %q's path %q",
 					ErrDuplicateOutputPath, task.path, owner.locale, owner.path),
+				Err: ErrDuplicateOutputPath,
 			})
 			continue
 		}
@@ -182,12 +191,12 @@ func dedupeDocumentTargets(outDirResolved string, tasks []documentTask) ([]docum
 // recovery, the same "one failure does not stop the rest" behaviour — with the one
 // difference documentTarget documents: a document writes to its literal path, not
 // "<path>/index.html".
-func (b *Builder) buildDocuments(ctx context.Context, outDirResolved string) ([]string, []SkipRecord, []error) {
+func (b *Builder) buildDocuments(ctx context.Context, outDirResolved string) ([]string, []SkipRecord, []WarningRecord, []error) {
 	tasks, skipped, errs := b.enumerateDocuments(ctx)
 
 	// Before anything is rendered or written: two tasks that resolve to one file
 	// must not both run, whatever Concurrency is set to.
-	tasks, collisions := dedupeDocumentTargets(outDirResolved, tasks)
+	tasks, collisions := b.dedupeDocumentTargets(outDirResolved, tasks)
 	skipped = append(skipped, collisions...)
 
 	written := make([]string, len(tasks))
@@ -222,14 +231,22 @@ func (b *Builder) buildDocuments(ctx context.Context, outDirResolved string) ([]
 	wg.Wait()
 
 	var out []string
+	var warnings []WarningRecord
+	warned := make(map[*types.Document]bool)
 	for i := range tasks {
 		if taskErrs[i] != nil {
 			errs = append(errs, taskErrs[i])
 			continue
 		}
 		out = append(out, written[i])
+		// The same warning a page gets: a document that reads the query — a
+		// paginated feed — has no query string as a file.
+		if doc := tasks[i].doc; len(doc.CacheParams) > 0 && !warned[doc] {
+			warned[doc] = true
+			warnings = append(warnings, queryWarning(doc.Name, doc.CacheParams))
+		}
 	}
-	return out, skipped, errs
+	return out, skipped, warnings, errs
 }
 
 // renderAndWriteDocument renders one document task through the application and
@@ -238,7 +255,7 @@ func (b *Builder) buildDocuments(ctx context.Context, outDirResolved string) ([]
 // written. It mirrors renderAndWrite, using documentTarget in place of
 // resolveTarget for the one behavioural difference between a page and a document.
 func (b *Builder) renderAndWriteDocument(ctx context.Context, outDirResolved string, task documentTask) (string, error) {
-	target, err := documentTarget(outDirResolved, task.path)
+	target, err := documentTarget(outDirResolved, b.documentURL(task))
 	if err != nil {
 		return "", fmt.Errorf("collage: document %q locale %q: %w", task.doc.Name, task.locale, err)
 	}

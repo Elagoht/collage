@@ -66,7 +66,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			Request: requestVary(r),
 		})
 		lookupStart := time.Now()
-		if content, etag, found := h.cache.Get(ctx, key); found {
+		if content, etag, found := h.cacheGet(ctx, key); found {
 			h.metrics.CacheEvent(ctx, observability.CacheHit, key)
 			h.metrics.RenderDuration(ctx, doc.Name, time.Since(lookupStart), true)
 			return h.serveCachedDocument(w, r, doc, content, etag)
@@ -81,6 +81,9 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	}
 
 	rc := types.NewRenderContext(ctx, r, nil, match.Locale, match.PathParams)
+	if skipsCache(r) {
+		types.SkipDataCache(rc)
+	}
 	result, err := docRenderer.ExecuteDocument(ctx, doc, rc)
 	if err != nil {
 		// result is non-nil on every ExecuteDocument path, including a failure,

@@ -115,3 +115,8 @@ var ErrNoPathInLocale = errors.New("collage: no path in that locale")
 // ErrRouteParams is returned when the parameters given for a URL do not fill
 // its pattern exactly: one is missing or empty, or one names no placeholder.
 var ErrRouteParams = errors.New("collage: route parameters do not match the pattern")
+
+// ErrEmptyRender reports a page that rendered no markup at all. It is one sentinel
+// for serving and for a static build, so an error hook matches it wherever it
+// came from.
+var ErrEmptyRender = errors.New("collage: page rendered no markup")

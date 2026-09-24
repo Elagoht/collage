@@ -19,3 +19,7 @@ var ErrRouteParams = types.ErrRouteParams
 
 // ErrLocaleUnreachable is returned by App.URL for a locale no URL can carry.
 var ErrLocaleUnreachable = core.ErrLocaleUnreachable
+
+// ErrUnknownAsset is returned by rc.Asset, rc.HoistStylesheet, {{asset}} and
+// {{stylesheet}} for a path no mount serves.
+var ErrUnknownAsset = types.ErrUnknownAsset

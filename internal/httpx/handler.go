@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -845,7 +846,37 @@ func (h *Handler) cacheGet(ctx context.Context, key string) ([]byte, string, boo
 	if h.devMode {
 		return nil, "", false
 	}
-	return h.cache.Get(ctx, key)
+	content, etag, found := h.cache.Get(ctx, key)
+	if found && h.staleMarker(content) {
+		// Stored under another forgery key — before a key change, or by a process
+		// that generated its own. Served, its form would carry a marker nothing
+		// replaces and be refused on submission, so it is a miss, and dropped.
+		_ = h.cache.InvalidateKey(ctx, key)
+		return nil, "", false
+	}
+	return content, etag, found
+}
+
+// foreignMarker matches the forgery-token marker of any key.
+var foreignMarker = regexp.MustCompile(`collage-csrf-[A-Za-z0-9_-]{32}`)
+
+// staleMarker reports whether content carries a forgery-token marker this
+// application would not replace: another key's, or any at all when forgery
+// protection is off.
+func (h *Handler) staleMarker(content []byte) bool {
+	if !bytes.Contains(content, []byte("collage-csrf-")) {
+		return false
+	}
+	current := ""
+	if h.csrf != nil {
+		current = h.csrf.Marker()
+	}
+	for _, found := range foreignMarker.FindAll(content, -1) {
+		if string(found) != current {
+			return true
+		}
+	}
+	return false
 }
 
 // serveCached writes a cache hit: a 304 when the request's If-None-Match matches

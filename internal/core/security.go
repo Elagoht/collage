@@ -23,9 +23,8 @@ type SecurityConfig struct {
 	CSRFKey []byte
 	// CSRFCookieName overrides the cookie a token is carried in.
 	CSRFCookieName string
-	// CSRFFieldName overrides the form field a token is submitted in. Changing it
-	// means {{csrfToken}} and the verifier disagree, so it exists for an
-	// application that renders its own field rather than using that function.
+	// CSRFFieldName overrides the form field a token is submitted in, both in
+	// what {{csrfToken}} renders and in what the verifier reads.
 	CSRFFieldName string
 	// CSRFHeaderName overrides the header a token may be submitted in.
 	CSRFHeaderName string

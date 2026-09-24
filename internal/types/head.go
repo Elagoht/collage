@@ -68,6 +68,14 @@ func (rc *RenderContext) HoistLink(rel, href string) {
 		`" href="`+html.EscapeString(href)+`">`))
 }
 
+// HoistAlternate declares <link rel="alternate" hreflang="hreflang" href="href">,
+// one per language — what tells a search engine the page's translations. Pair it
+// with {{localeURL}} or App.URL for each locale the page exists in.
+func (rc *RenderContext) HoistAlternate(hreflang, href string) {
+	rc.Hoist(HeadArea, "alternate:"+hreflang, template.HTML(`<link rel="alternate" hreflang="`+
+		html.EscapeString(hreflang)+`" href="`+html.EscapeString(href)+`">`))
+}
+
 // HoistStylesheet declares a stylesheet for the page's head, by its mounted path,
 // linked through its content-addressed URL. A stylesheet declared by several
 // fragments appears once.

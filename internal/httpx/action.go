@@ -30,7 +30,7 @@ var ErrNoActionHandler = errors.New("collage: action has no handler")
 // rather than registered. Registration is what binds a page's content into its
 // layout, so an unregistered page renders its layout around an empty required slot —
 // a failure the root fragment absorbs, leaving nothing.
-var ErrEmptyRender = errors.New("collage: page rendered no markup")
+var ErrEmptyRender = types.ErrEmptyRender
 
 // ErrUnregisteredPage reports an action answering with a page that was never
 // registered. Registration is what puts a page's content into its layout, so such a
@@ -69,8 +69,15 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// Referer header.
 	if h.csrf != nil && !action.SkipCSRF && !types.SafeMethod(r.Method) {
 		if err := h.csrf.Verify(r); err != nil {
-			// 403, not 400. The request was well formed; it was not authorised.
-			return h.serveFailure(w, r, route.failure(http.StatusForbidden, stageRoute,
+			// 403, not 400. The request was well formed; it was not authorised —
+			// unless reading the token hit the body limit, which is a request too
+			// large to be read at all, and says so.
+			status := http.StatusForbidden
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				status = http.StatusRequestEntityTooLarge
+			}
+			return h.serveFailure(w, r, route.failure(status, stageRoute,
 				fmt.Errorf("collage: action %q: %w", action.Name, err)))
 		}
 	}
@@ -241,11 +248,23 @@ func (h *Handler) writeActionPage(
 	if err != nil {
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
 	}
-	if len(rendered.HTML) == 0 {
+	// AfterRender as for any page: a validation failure's page is a page, and the
+	// minifier, the image rewriter and whatever else shapes pages shape it too.
+	afterRender := &plugin.AfterRenderEvent{
+		Page:     result.Page,
+		Locale:   match.Locale,
+		Degraded: rendered.Degraded(),
+		Data:     rc.SharedData,
+		HTML:     rendered.HTML,
+	}
+	if err := h.plugins.AfterRender(r.Context(), afterRender); err != nil {
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageAfterRender, err))
+	}
+	if len(afterRender.HTML) == 0 {
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender,
 			fmt.Errorf("%w: page %q", ErrEmptyRender, result.Page.Name)))
 	}
-	return h.writeActionHTML(w, r, statusOr(result.Status, http.StatusOK), rendered.HTML)
+	return h.writeActionHTML(w, r, statusOr(result.Status, http.StatusOK), afterRender.HTML)
 }
 
 // writeActionHTML writes an HTML body with status. Cache-Control is already set by

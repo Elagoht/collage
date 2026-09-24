@@ -120,6 +120,12 @@ func (a *App) prepare(p *types.Page) error {
 	if existing, ok := a.pages[p.Name]; ok && existing != p {
 		return fmt.Errorf("%w: %q", ErrDuplicatePage, p.Name)
 	}
+	// What a builder recorded is refused here whether or not anyone asked the
+	// builder: a slot declared twice or a fragment bound to a slot that does not
+	// exist is a page that does not say what its author wrote.
+	if err := types.PageBuildErr(p); err != nil {
+		return fmt.Errorf("collage: page %q was built with errors: %w", p.Name, err)
+	}
 
 	if err := a.bindContent(p); err != nil {
 		return err

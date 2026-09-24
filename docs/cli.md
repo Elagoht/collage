@@ -104,7 +104,7 @@ around the thing that is easy to miss:
     dist/static/app.css
     dist/static/app.41014ebb.css
 
-▲ 1 page skipped
+▲ 1 skipped
     hello  page uses the dynamic render strategy, which cannot be built statically
 
 3 written · 1 skipped · 0 failed · 2.4ms

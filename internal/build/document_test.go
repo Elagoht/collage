@@ -329,18 +329,10 @@ func TestBuild_EmptyDocumentBodyIsNotWritten(t *testing.T) {
 	}
 }
 
-// TestBuild_TwoLocalesOneLiteralPathIsSkippedNotRaced is the regression for M1.
-// A document registered at the same pattern under two locales is the form that
-// actually serves — path-locale resolution strips "/tr" before matching, so
-// {"en": "/sitemap.xml", "tr": "/sitemap.xml"} is what makes both "/sitemap.xml"
-// and "/tr/sitemap.xml" work — and a document writes to its literal path, so both
-// tasks resolved to one file. With Concurrency above 1 both goroutines called
-// os.WriteFile on it: one locale's body won nondeterministically, Report.Written
-// listed the file twice, and nothing reported anything.
-//
-// Now the first task in deterministic order keeps the path, the other is named in
-// Report.Skipped, and the file is written exactly once.
-func TestBuild_TwoLocalesOneLiteralPathIsSkippedNotRaced(t *testing.T) {
+// One pattern in two locales is two URLs — /sitemap.xml and /tr/sitemap.xml — and
+// so two files, each under its locale's URL, as a page's are. Writing both to the
+// bare path used to collide, and the "tr" one could only be skipped.
+func TestBuild_TwoLocalesOnePatternAreTwoFiles(t *testing.T) {
 	out := resolvedTempDir(t)
 	doc := newTestDocument("sitemap", types.StrategyStatic, map[string]string{
 		"en": "/sitemap.xml",
@@ -362,44 +354,14 @@ func TestBuild_TwoLocalesOneLiteralPathIsSkippedNotRaced(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-
-	target := filepath.Join(out, "sitemap.xml")
-
-	// Written exactly once, and by the first locale in deterministic order —
-	// Document.Locales sorts, so "en" precedes "tr" on every run.
-	written := 0
-	for _, path := range report.Written {
-		if path == target {
-			written++
-		}
+	if len(report.Skipped) != 0 {
+		t.Fatalf("Report.Skipped = %+v, want none", report.Skipped)
 	}
-	if written != 1 {
-		t.Fatalf("Report.Written lists %q %d times, want exactly 1: %v", target, written, report.Written)
+	if got := readFile(t, filepath.Join(out, "sitemap.xml")); got != "<urlset>en</urlset>" {
+		t.Errorf("sitemap.xml = %q, want the en body", got)
 	}
-	if got := readFile(t, target); got != "<urlset>en</urlset>" {
-		t.Fatalf("content = %q, want the first locale's body deterministically", got)
-	}
-
-	// And the losing locale is reported rather than silently dropped.
-	var skipped *SkipRecord
-	for i := range report.Skipped {
-		if report.Skipped[i].Locale == "tr" {
-			skipped = &report.Skipped[i]
-		}
-	}
-	if skipped == nil {
-		t.Fatalf("Report.Skipped does not mention locale tr: %+v", report.Skipped)
-	}
-	if skipped.Page != "sitemap" {
-		t.Errorf("SkipRecord.Page = %q, want %q", skipped.Page, "sitemap")
-	}
-	if !strings.Contains(skipped.Reason, ErrDuplicateOutputPath.Error()) {
-		t.Errorf("SkipRecord.Reason = %q, want it to name ErrDuplicateOutputPath", skipped.Reason)
-	}
-	for _, want := range []string{"/sitemap.xml", `"en"`} {
-		if !strings.Contains(skipped.Reason, want) {
-			t.Errorf("SkipRecord.Reason = %q, want it to mention %q", skipped.Reason, want)
-		}
+	if got := readFile(t, filepath.Join(out, "tr", "sitemap.xml")); got != "<urlset>tr</urlset>" {
+		t.Errorf("tr/sitemap.xml = %q, want the tr body", got)
 	}
 }
 
@@ -435,7 +397,8 @@ func TestBuild_DistinctPathsPerLocaleAreBothWritten(t *testing.T) {
 	if got := readFile(t, filepath.Join(out, "feed.xml")); got != "<rss>en</rss>" {
 		t.Errorf("feed.xml = %q, want the en body", got)
 	}
-	if got := readFile(t, filepath.Join(out, "akis.xml")); got != "<rss>tr</rss>" {
-		t.Errorf("akis.xml = %q, want the tr body", got)
+	// Under the tr prefix, the URL the server answers it at.
+	if got := readFile(t, filepath.Join(out, "tr", "akis.xml")); got != "<rss>tr</rss>" {
+		t.Errorf("tr/akis.xml = %q, want the tr body", got)
 	}
 }

@@ -183,6 +183,7 @@ func (b *FragmentBuilder) WithTimeout(d time.Duration) *FragmentBuilder {
 // nil for a non-nil builder, even if WithX calls recorded errors along the way; call
 // BuildErr to check whether any were recorded.
 func (b *FragmentBuilder) Build() *Fragment {
+	types.RecordBuildErr(b.fragment, b.BuildErr())
 	return b.fragment
 }
 

@@ -586,8 +586,12 @@ func (e *SlotEngine) csrfFunc(rc *types.RenderContext) func() (htmltemplate.HTML
 		if err != nil {
 			return "", err
 		}
+		field := e.csrfField
+		if field == "" {
+			field = CSRFFieldName
+		}
 		return htmltemplate.HTML(`<input type="hidden" name="` +
-			htmltemplate.HTMLEscapeString(CSRFFieldName) +
+			htmltemplate.HTMLEscapeString(field) +
 			`" value="` + marker + `">`), nil
 	}
 }

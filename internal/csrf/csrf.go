@@ -195,7 +195,15 @@ const multipartMemory = 32 << 20
 // ParseForm alone ignores multipart/form-data, and multipart is what
 // fetch(url, {method: "POST", body: new FormData(form)}) sends. Reading only
 // URL-encoded bodies would refuse that submission with a valid token in it.
+//
+// ParseForm runs first and on its own, because ParseMultipartForm calls it and then
+// discards its error whenever the body is not multipart — so a URL-encoded body
+// over the size limit would come back as "not multipart" and be refused as a
+// missing token rather than as a body too large to read.
 func parseForm(r *http.Request) error {
+	if err := r.ParseForm(); err != nil {
+		return err
+	}
 	if err := r.ParseMultipartForm(multipartMemory); err != nil && !errors.Is(err, http.ErrNotMultipart) {
 		return err
 	}

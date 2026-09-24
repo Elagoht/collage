@@ -237,6 +237,20 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 		path = "/"
 	}
 
+	if target, redirect := canonicalLocalePath(path, rt.localeOptions); redirect {
+		if req.URL.RawQuery != "" {
+			target += "?" + req.URL.RawQuery
+		}
+		// Permanent, because the other spelling is never right. 308 rather than
+		// 301 for anything but a read, so a form posted to the wrong spelling is
+		// posted again rather than turned into a GET that drops it.
+		status := http.StatusMovedPermanently
+		if req.Method != http.MethodGet && req.Method != http.MethodHead {
+			status = http.StatusPermanentRedirect
+		}
+		return &MatchResult{Locale: rt.localeOptions.Default, RedirectTo: target, RedirectStatus: status}, nil
+	}
+
 	locale, remaining := resolveLocale(path, rt.localeOptions)
 
 	segments, ok := decodeSegments(splitPath(remaining))

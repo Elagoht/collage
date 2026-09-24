@@ -85,6 +85,9 @@ func (a *App) prepareDocument(doc *types.Document) error {
 	if existing, ok := a.documents[doc.Name]; ok && existing != doc {
 		return fmt.Errorf("%w: %q", ErrDuplicateDocument, doc.Name)
 	}
+	if err := types.DocumentBuildErr(doc); err != nil {
+		return fmt.Errorf("collage: document %q was built with errors: %w", doc.Name, err)
+	}
 	if err := doc.Validate(); err != nil {
 		return fmt.Errorf("collage: document %q: %w", doc.Name, err)
 	}

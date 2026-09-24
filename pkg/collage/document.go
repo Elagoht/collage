@@ -144,6 +144,7 @@ func (b *DocumentBuilder) Build() *Document {
 	if b.document.Handler == nil {
 		b.errs = append(b.errs, ErrNoDocumentHandler)
 	}
+	types.RecordBuildErr(b.document, b.BuildErr())
 	return b.document
 }
 

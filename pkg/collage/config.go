@@ -151,7 +151,8 @@ type SecurityConfig struct {
 	CSRFKey []byte
 	// CSRFCookieName overrides the cookie a token is carried in.
 	CSRFCookieName string
-	// CSRFFieldName overrides the form field a token is submitted in.
+	// CSRFFieldName overrides the form field a token is submitted in — the name
+	// {{csrfToken}} renders and the verifier reads. Defaults to "_csrf".
 	CSRFFieldName string
 	// CSRFHeaderName overrides the header a token may be submitted in, which is
 	// how a fetch() sends one when there is no form to put a field in.

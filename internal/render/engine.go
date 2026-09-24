@@ -133,6 +133,9 @@ type Options struct {
 	// token, which the response layer replaces per reader. Nil leaves the template
 	// function reporting that forgery protection is off.
 	CSRFMarker func() (string, error)
+	// CSRFField is the form field {{csrfToken}} names, which must be the one the
+	// verifier reads. Empty means CSRFFieldName.
+	CSRFField string
 	// URL builds the path of the page or document registered as name, in
 	// locale, and is what backs {{pageURL}}, {{pageURLIn}} and {{localeURL}}.
 	// Nil leaves those functions reporting that no routes are known.
@@ -157,6 +160,7 @@ type SlotEngine struct {
 	devMode        bool
 	assetURL       func(string) (string, error)
 	csrfMarker     func() (string, error)
+	csrfField      string
 	url            func(name, locale string, params map[string]string) (string, error)
 	defaultLocale  string
 	dataCache      types.DataCache
@@ -182,6 +186,7 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 		devMode:        opts.DevMode,
 		assetURL:       opts.AssetURL,
 		csrfMarker:     opts.CSRFMarker,
+		csrfField:      opts.CSRFField,
 		url:            opts.URL,
 		defaultLocale:  opts.DefaultLocale,
 		dataCache:      opts.DataCache,

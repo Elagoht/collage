@@ -48,6 +48,9 @@ type Document struct {
 	DependencyTags []string
 	// Redirects are source patterns that redirect to this document.
 	Redirects []*Redirect
+	// buildErr is what the builder that made this value recorded; see
+	// RecordBuildErr. Registration refuses a value that carries one.
+	buildErr error
 }
 
 // Locales returns the locales this document declares a path for, sorted.

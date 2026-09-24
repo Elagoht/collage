@@ -3,11 +3,13 @@ package httpx
 import (
 	"context"
 	"errors"
+	"github.com/Elagoht/collage/internal/cache"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Elagoht/collage/internal/csrf"
 
@@ -546,5 +548,75 @@ func TestCSRF_AnActionsResponseCarriesAToken(t *testing.T) {
 				t.Errorf("body = %q, want the reader's token %q", body, token)
 			}
 		})
+	}
+}
+
+// A form too large to read, token and all, is a 413 — not a 403 that blames the
+// token for a limit it never reached.
+func TestCSRF_AnOversizedFormIsTooLargeNotForbidden(t *testing.T) {
+	option, guard := withCSRF(t)
+	create := action("create", "/posts", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) { return nil, nil })
+	create.MaxBodyBytes = 16
+
+	env := actionEnv(t, nil, []*types.Action{create}, option)
+	token, _, _ := guard.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+	req := post("/posts", "title="+strings.Repeat("x", 64)+"&"+csrf.DefaultFieldName+"="+token)
+	req.AddCookie(&http.Cookie{Name: csrf.DefaultCookieName, Value: token})
+
+	if res := env.do(req); res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", res.Code)
+	}
+}
+
+// A page cached under one forgery key is not served under another: its form would
+// carry a marker nothing replaces. It is rendered again instead — which is what
+// lets the key stay out of the cache's namespace, so a site keeps its cache across
+// restarts whether or not it has forms.
+func TestCSRF_APageStoredUnderAnotherKeyIsRenderedAgain(t *testing.T) {
+	shared := cache.NewMemory(cache.MemoryConfig{})
+	serve := func(key string) (*fakeEngine, *httptest.ResponseRecorder) {
+		guard, err := csrf.New(csrf.Config{Key: []byte(key)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		page := testPage("form", "/form", types.StrategyIncremental)
+		page.CacheTTL = time.Hour
+		engine := newFakeEngine(fakeRender{html: `<input name="_csrf" value="` + guard.Marker() + `">`})
+		env := newEnv(t, []*types.Page{page}, func(d *Deps) {
+			d.CSRF = guard
+			d.Cache = shared
+			d.Renderer = engine
+		})
+		return engine, env.get("/form")
+	}
+
+	first, _ := serve("the key before the restart")
+	if first.pageCalls("form") != 1 {
+		t.Fatalf("first render count = %d", first.pageCalls("form"))
+	}
+	second, res := serve("the key after the restart")
+	if second.pageCalls("form") != 1 {
+		t.Errorf("renders under the new key = %d, want 1: the stored page carried the old key's marker", second.pageCalls("form"))
+	}
+	if strings.Contains(res.Body.String(), "collage-csrf-") {
+		t.Errorf("body = %q, still carries a marker", res.Body.String())
+	}
+}
+
+// The page an action answers with is shaped by AfterRender like any other: a
+// validation failure's page is minified and has its images rewritten too.
+func TestAction_APageRunsAfterRender(t *testing.T) {
+	page := testPage("form", "/form", types.StrategyDynamic)
+	recorder := &recordingPlugin{replaceHTML: []byte("<p>shaped</p>")}
+	submit := action("submit", "/form", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+			return &types.ActionResult{Status: http.StatusUnprocessableEntity, Page: page}, nil
+		})
+	env := actionEnv(t, []*types.Page{page}, []*types.Action{submit}, withPlugins(t, recorder))
+
+	res := env.do(post("/form", ""))
+	if res.Code != http.StatusUnprocessableEntity || res.Body.String() != "<p>shaped</p>" {
+		t.Errorf("status %d body %q, want 422 and the hook's HTML", res.Code, res.Body.String())
 	}
 }

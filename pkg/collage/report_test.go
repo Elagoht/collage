@@ -48,7 +48,7 @@ func TestPrintBuildReport_EverySkipIsNamed(t *testing.T) {
 			t.Errorf("output does not mention %q:\n%s", want, out)
 		}
 	}
-	if !strings.Contains(out, "2 pages skipped") {
+	if !strings.Contains(out, "2 skipped\n") {
 		t.Errorf("output does not count the skips:\n%s", out)
 	}
 }

@@ -99,7 +99,11 @@ var ErrDegradedRender = errors.New("collage: refusing to write a degraded render
 // fallback produces, and what used to reach disk as a zero-byte index.html and an
 // exit status of zero. Unlike a degraded render it is never written:
 // Options.AllowDegraded is about serving a partial page, not an absent one.
-var ErrEmptyRender = errors.New("collage: refusing to write an empty render")
+var ErrEmptyRender = types.ErrEmptyRender
+
+// ErrNotStatic is a SkipRecord's Err for a page or document whose render strategy
+// is Dynamic(), which says it must not be stored — and a file is stored.
+var ErrNotStatic = errors.New("collage: a Dynamic() route cannot be built statically")
 
 // ErrUnresolvedToken is recorded in Report.Errors when a page rendered for a static
 // build contains a request-forgery token placeholder.
@@ -242,6 +246,16 @@ type Options struct {
 	AllowDegraded bool
 }
 
+// queryWarning is the warning for a route that reads query parameters, which a file
+// cannot carry.
+func queryWarning(name string, params []string) WarningRecord {
+	return WarningRecord{
+		Page: name,
+		Reason: fmt.Sprintf("reads the query parameters %s, and a static file has no query string: only the version without them was written",
+			strings.Join(params, ", ")),
+	}
+}
+
 // WarningRecord describes a page the build wrote, but not all of.
 type WarningRecord struct {
 	// Page is the page's Name.
@@ -264,6 +278,10 @@ type SkipRecord struct {
 	Locale string
 	// Reason explains why the page or document, or its locale, was skipped.
 	Reason string
+	// Err is the sentinel for the reason — ErrNotStatic, ErrDynamicPathUnresolved,
+	// ErrUnresolvedToken, ErrDuplicateOutputPath — for a caller that acts on the
+	// kind of skip rather than reading the sentence.
+	Err error
 }
 
 // Report summarizes the outcome of a Build call.
@@ -413,6 +431,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 					Page:   task.page.Name,
 					Locale: task.locale,
 					Reason: unresolvedTokenReason,
+					Err:    ErrUnresolvedToken,
 				}
 				return
 			}
@@ -445,15 +464,12 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		// without a query is a real page — but said.
 		if page := tasks[i].page; len(page.CacheParams) > 0 && !warned[page] {
 			warned[page] = true
-			report.Warnings = append(report.Warnings, WarningRecord{
-				Page: page.Name,
-				Reason: fmt.Sprintf("reads the query parameters %s, and a static file has no query string: only the page without them was written",
-					strings.Join(page.CacheParams, ", ")),
-			})
+			report.Warnings = append(report.Warnings, queryWarning(page.Name, page.CacheParams))
 		}
 	}
 
-	docWritten, docSkipped, docErrs := b.buildDocuments(ctx, outDirResolved)
+	docWritten, docSkipped, docWarnings, docErrs := b.buildDocuments(ctx, outDirResolved)
+	report.Warnings = append(report.Warnings, docWarnings...)
 	report.Skipped = append(report.Skipped, docSkipped...)
 	report.Written = append(report.Written, docWritten...)
 	errs = append(errs, docErrs...)
@@ -533,6 +549,7 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 			skipped = append(skipped, SkipRecord{
 				Page:   page.Name,
 				Reason: fmt.Sprintf("page uses the %s render strategy, which cannot be built statically", page.Strategy),
+				Err:    ErrNotStatic,
 			})
 			continue
 		}
@@ -559,6 +576,7 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 					Page:   page.Name,
 					Locale: locale,
 					Reason: ErrDynamicPathUnresolved.Error(),
+					Err:    ErrDynamicPathUnresolved,
 				})
 				continue
 			}

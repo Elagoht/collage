@@ -176,3 +176,33 @@ func TestCached_DevelopmentKeepsNothing(t *testing.T) {
 		t.Errorf("development fetched %v, want A once per render", got)
 	}
 }
+
+// A document's handler shares Cached with the pages: a feed and the posts it lists
+// fetch an author once between them.
+func TestCached_InADocument(t *testing.T) {
+	site := newAuthorSite(t, false)
+	doc := collage.NewDocument("authors", "text/plain").WithPath("en", "/authors.txt").Dynamic().
+		WithHandler(func(ctx context.Context, rc *collage.RenderContext) ([]byte, []string, error) {
+			a, err := collage.Cached(rc, "author:A", time.Hour, []string{"author:A"}, func(context.Context) (author, error) {
+				site.mu.Lock()
+				defer site.mu.Unlock()
+				site.calls["A"]++
+				return author{Name: site.names["A"]}, nil
+			})
+			return []byte(a.Name), nil, err
+		}).Build()
+	if err := site.app.RegisterDocument(doc); err != nil {
+		t.Fatal(err)
+	}
+	site.get(t, 0, false)
+	for range 3 {
+		rec := httptest.NewRecorder()
+		site.app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/authors.txt", nil))
+		if rec.Body.String() != "Ada" {
+			t.Fatalf("document = %q", rec.Body.String())
+		}
+	}
+	if got := site.fetched(); got["A"] != 1 {
+		t.Errorf("fetched %v, want A once across the page and three document requests", got)
+	}
+}

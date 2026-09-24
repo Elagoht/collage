@@ -72,7 +72,8 @@ func printSkipped(w io.Writer, s term.Style, skipped []SkipRecord) {
 
 	// Never truncated. A skip is the build telling you a page is not in its
 	// output, which is the thing most worth noticing and the easiest to miss.
-	fmt.Fprintf(w, "\n%s %s\n", s.Warn(s.Mark("▲", "!")), s.Bold(plural(len(skipped), "page", "pages")+" skipped"))
+	// Counted as routes, not pages: documents are skipped for the same reasons.
+	fmt.Fprintf(w, "\n%s %s\n", s.Warn(s.Mark("▲", "!")), s.Bold(fmt.Sprintf("%d skipped", len(skipped))))
 	for _, skip := range skipped {
 		name := skip.Page
 		if skip.Locale != "" {

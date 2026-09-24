@@ -2,8 +2,10 @@ package collage_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -54,5 +56,98 @@ func TestAction_AnUnregisteredPageIsNamed(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, "never registered") || !strings.Contains(body, "RegisterPage") {
 		t.Errorf("body = %q, want it to say the page was never registered and what to do", body)
+	}
+}
+
+// A renamed forgery field is renamed on both sides: the form carries it, and the
+// verifier reads it.
+func TestCSRF_ARenamedFieldIsRenamedInTheForm(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/f.html": {Data: []byte(`<form method="post">{{csrfToken}}</form>`)}}, Root: "t"},
+		Security: collage.SecurityConfig{CSRFKey: []byte("a key for this test only"), CSRFFieldName: "authenticity"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	page := collage.NewPage("f").WithContent(collage.NewFragment("f", "f.html").Build()).WithPath("en", "/f").Dynamic().
+		WithAction(http.MethodPost, func(context.Context, *collage.RenderContext) (*collage.ActionResult, error) {
+			return collage.SeeOther("/f"), nil
+		}).Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatal(err)
+	}
+	h := app.Handler()
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/f", nil))
+	match := regexp.MustCompile(`name="authenticity" value="([^"]+)"`).FindStringSubmatch(rec.Body.String())
+	if match == nil {
+		t.Fatalf("the form does not carry the renamed field:\n%s", rec.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodPost, "/f", strings.NewReader("authenticity="+match[1]))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	for _, c := range (&http.Response{Header: rec.Header()}).Cookies() {
+		req.AddCookie(c)
+	}
+	submit := httptest.NewRecorder()
+	h.ServeHTTP(submit, req)
+	if submit.Code != http.StatusSeeOther {
+		t.Errorf("submission = %d, want 303: the verifier did not read the field the form sent", submit.Code)
+	}
+}
+
+// A builder's mistake reaches registration even when nobody asked the builder —
+// here a slot declared twice, deep in the content, and a document with no handler.
+func TestRegister_RefusesWhatABuilderRecorded(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/x.html": {Data: []byte(`x`)}}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inner := collage.NewFragment("inner", "x.html").WithSlot("s", false, false).WithSlot("s", false, false).Build()
+	outer := collage.NewFragment("outer", "x.html").WithSlot("child", false, false).WithSlotFragment("child", inner).Build()
+	page := collage.NewPage("p").WithContent(outer).WithPath("en", "/").Dynamic().Build()
+	if err := app.RegisterPage(page); !errors.Is(err, collage.ErrDuplicateSlot) {
+		t.Errorf("RegisterPage = %v, want ErrDuplicateSlot from the inner fragment's builder", err)
+	}
+
+	doc := collage.NewDocument("d", "text/plain").WithPath("en", "/d.txt").Build()
+	if err := app.RegisterDocument(doc); !errors.Is(err, collage.ErrNoDocumentHandler) {
+		t.Errorf("RegisterDocument = %v, want ErrNoDocumentHandler", err)
+	}
+}
+
+// The development 500 page names the fragment whose template broke, not the layout
+// the failure passed through.
+func TestDev500_NamesTheBrokenFragment(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		DevMode: true,
+		Server:  collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{
+			"t/layout.html": {Data: []byte(`<main>{{slot "content"}}</main>`)},
+			"t/recipe.html": {Data: []byte(`{{.Missing}}`)},
+		}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
+	content := collage.NewFragment("recipe-content", "recipe.html").
+		WithDataHandler(collage.DataHandler(func(context.Context, *collage.RenderContext) (struct{ Name string }, []string, error) {
+			return struct{ Name string }{"soup"}, nil, nil
+		})).Required().Build()
+	if err := app.RegisterPage(collage.NewPage("recipe").WithLayout(layout).WithContent(content).WithPath("en", "/").Dynamic().Build()); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Fragment: <code>recipe-content</code>") {
+		t.Errorf("the 500 page does not name recipe-content:\n%s", rec.Body.String())
 	}
 }

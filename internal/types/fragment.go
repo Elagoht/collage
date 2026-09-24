@@ -58,6 +58,9 @@ type Fragment struct {
 	// Timeout bounds how long this fragment's DataHandler may run. Zero means no
 	// fragment-specific timeout; see EffectiveTimeout.
 	Timeout time.Duration
+	// buildErr is what the builder that made this value recorded; see
+	// RecordBuildErr. Registration refuses a value that carries one.
+	buildErr error
 }
 
 // Slot looks up the slot named name on f. It is nil-safe: a nil receiver or a

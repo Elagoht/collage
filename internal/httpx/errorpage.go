@@ -287,12 +287,32 @@ func failedFragment(result *render.Result) string {
 	if result == nil || result.Metadata == nil {
 		return ""
 	}
-	for i := range result.Metadata.Fragments {
-		if result.Metadata.Fragments[i].Failed {
-			return result.Metadata.Fragments[i].Name
+	fragments := result.Metadata.Fragments
+	// A fatal failure is recorded against every fragment it passes through on its
+	// way up, outermost first, so the first failed fragment is usually the layout
+	// that merely carried it. The one to name is where it started: a failed
+	// fragment whose error does not wrap another failed fragment's.
+	first := ""
+	for i := range fragments {
+		if !fragments[i].Failed {
+			continue
+		}
+		if first == "" {
+			first = fragments[i].Name
+		}
+		carried := false
+		for j := range fragments {
+			if j != i && fragments[j].Failed && fragments[j].Err != nil && fragments[i].Err != fragments[j].Err &&
+				errors.Is(fragments[i].Err, fragments[j].Err) {
+				carried = true
+				break
+			}
+		}
+		if !carried {
+			return fragments[i].Name
 		}
 	}
-	return ""
+	return first
 }
 
 // builtinPage returns the framework's own error page for f: one self-contained HTML

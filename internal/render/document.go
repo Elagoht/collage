@@ -39,6 +39,11 @@ func (e *SlotEngine) ExecuteDocument(ctx context.Context, doc *types.Document, r
 	started := time.Now()
 	result := &DocumentResult{ContentType: doc.ContentType}
 
+	// The same asset resolver and data cache a page's handlers have: a sitemap or
+	// a feed reads the same records the pages do, and Cached in its handler was
+	// otherwise Once.
+	e.bindAssets(rc)
+
 	var (
 		body []byte
 		tags []string
@@ -56,7 +61,7 @@ func (e *SlotEngine) ExecuteDocument(ctx context.Context, doc *types.Document, r
 	// Tags first, error second: a handler that resolved what it depends on and
 	// then failed has still told us what would invalidate this response — the same
 	// rationale attempt() in fragment.go applies to a data handler's tags.
-	result.Tags = sortedTags(append(append([]string(nil), tags...), doc.DependencyTags...))
+	result.Tags = sortedTags(append(append(append([]string(nil), tags...), doc.DependencyTags...), types.DeclaredTags(rc)...))
 
 	if err != nil {
 		result.NotFound = errors.Is(err, types.ErrNotFound)

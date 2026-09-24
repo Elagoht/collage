@@ -497,11 +497,7 @@ func New(cfg Config) (*App, error) {
 	// cache is not silently turned on, because "caching is off" must mean off.
 	var store cache.Cache
 	if cfg.Cache.Enabled {
-		marker := ""
-		if guard != nil {
-			marker = guard.Marker()
-		}
-		built, err := buildCache(cfg, devMode, marker, logger)
+		built, err := buildCache(cfg, devMode, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -531,9 +527,12 @@ func New(cfg Config) (*App, error) {
 		DevMode:        devMode,
 		AssetURL:       app.assetURL,
 		CSRFMarker:     app.csrfMarker,
-		URL:            app.URL,
-		DefaultLocale:  cfg.Locale.Default,
-		DataCache:      app.dataCacheFor(),
+		// The field the verifier reads, so a renamed field is renamed in the
+		// forms too — it used to be configurable on one side only.
+		CSRFField:     cfg.Security.CSRFFieldName,
+		URL:           app.URL,
+		DefaultLocale: cfg.Locale.Default,
+		DataCache:     app.dataCacheFor(),
 	})
 	app.store = store
 	app.tracker = tracker

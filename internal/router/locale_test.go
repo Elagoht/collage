@@ -100,3 +100,37 @@ func TestMatch_HeadersAndCookiesDoNotChooseTheLocale(t *testing.T) {
 		}
 	}
 }
+
+// The default locale's URLs carry no prefix, and a locale has one spelling: any
+// other form of a URL is a permanent redirect to the one that is right, query and
+// all, rather than a second URL for the same page.
+func TestMatch_NonCanonicalLocalePrefixesRedirect(t *testing.T) {
+	rt := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr"}})
+	if err := rt.Register(&types.Page{Name: "about", Paths: map[string]string{"en": "/about", "tr": "/hakkinda"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		method, target, want string
+		status               int
+	}{
+		{http.MethodGet, "/en/about", "/about", http.StatusMovedPermanently},
+		{http.MethodGet, "/EN/about?x=1", "/about?x=1", http.StatusMovedPermanently},
+		{http.MethodGet, "/en", "/", http.StatusMovedPermanently},
+		{http.MethodGet, "/TR/hakkinda", "/tr/hakkinda", http.StatusMovedPermanently},
+		{http.MethodGet, "/TR", "/tr", http.StatusMovedPermanently},
+		{http.MethodPost, "/en/about", "/about", http.StatusPermanentRedirect},
+	} {
+		match, err := rt.Match(httptest.NewRequest(c.method, c.target, nil))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if match.RedirectTo != c.want || match.RedirectStatus != c.status {
+			t.Errorf("%s %s = %q %d, want %q %d", c.method, c.target, match.RedirectTo, match.RedirectStatus, c.want, c.status)
+		}
+	}
+	for _, target := range []string{"/about", "/tr/hakkinda", "/tr"} {
+		if match, _ := rt.Match(httptest.NewRequest(http.MethodGet, target, nil)); match.RedirectTo != "" {
+			t.Errorf("%s redirected to %q, want it served", target, match.RedirectTo)
+		}
+	}
+}

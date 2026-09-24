@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -69,5 +70,21 @@ func TestDevOverlay_OnTheApplicationsErrorPage(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("development error page does not contain %q:\n%s", want, body)
 		}
+	}
+}
+
+// A fatal failure is recorded against every fragment it passes through; the one
+// named is where it started, not the layout that carried it up.
+func TestFailedFragment_NamesWhereItStarted(t *testing.T) {
+	cause := errors.New("template: recipe.html:3: can't evaluate field Missing")
+	inContent := fmt.Errorf("fragment %q: %w", "recipe-content", cause)
+	inLayout := fmt.Errorf("fragment %q: %w", "layout", inContent)
+	result := &render.Result{Metadata: &render.Metadata{Fragments: []render.FragmentMetadata{
+		{Name: "layout", Failed: true, Err: inLayout},
+		{Name: "header"},
+		{Name: "recipe-content", Failed: true, Err: inContent},
+	}}}
+	if got := failedFragment(result); got != "recipe-content" {
+		t.Errorf("failedFragment = %q, want recipe-content", got)
 	}
 }

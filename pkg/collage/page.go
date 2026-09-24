@@ -197,6 +197,7 @@ func (b *PageBuilder) Build() *Page {
 	if b.page.ContentFragment == nil {
 		b.errs = append(b.errs, types.ErrMissingContent)
 	}
+	types.RecordBuildErr(b.page, b.BuildErr())
 	return b.page
 }
 

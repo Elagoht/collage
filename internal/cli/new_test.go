@@ -230,7 +230,7 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	// forms need a server to submit to; the hello page, because it is Dynamic();
 	// and the health check, because what it reports is this process being up
 	// rather than something cached from when it was.
-	if !strings.Contains(buildOut, "3 pages skipped") {
+	if !strings.Contains(buildOut, "3 skipped\n") {
 		t.Errorf("build output = %q, want it to count the skips", buildOut)
 	}
 	// The not-found page is in the output as 404.html, so reporting it as
