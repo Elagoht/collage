@@ -34,7 +34,7 @@ type KeyInput struct {
 
 // Key returns the canonical cache key for in: the hex-encoded SHA-256 of a
 // length-prefixed, unambiguous serialisation of Path, Locale, Params (sorted by
-// key), and Vary (sorted), prefixed "v1:" so the scheme can be changed later
+// key), Vary (sorted) and Request (sorted), prefixed "v1:" so the scheme can be changed later
 // without colliding with keys produced by this one.
 //
 // Every string field is written as its own decimal byte length followed by ':' and

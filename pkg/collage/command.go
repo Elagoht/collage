@@ -24,10 +24,11 @@ var ErrUnknownCommand = errors.New("collage: unknown command")
 //
 // It exists because a plugin's commands are otherwise unreachable. A plugin registers
 // one from inside Init, through Host.RegisterCommand; Init runs when the application
-// starts; and the `collage` binary never loads the application at all — its dev and
-// build commands shell out to "go run ." in the project directory. Nothing was ever
-// going to dispatch those commands but the application's own main, and until this
-// function there was no way for it to.
+// starts; and the `collage` binary never loads the application at all — dev builds
+// the project with go build and runs the result, build compiles it, and export runs
+// "go run . -collage-build". None of them links the project's plugins into itself.
+// Nothing was ever going to dispatch those commands but the application's own main,
+// and until this function there was no way for it to.
 //
 // DispatchCommands starts the application first (see App.Start), because Init is what
 // registers the commands: there is nothing to dispatch against before it has run. A
@@ -36,14 +37,21 @@ var ErrUnknownCommand = errors.New("collage: unknown command")
 // same rule Handler and ListenAndServe already impose, and a later ListenAndServe on
 // the same App reuses this start rather than repeating it.
 //
-// It dispatches only plugin commands. It has no built-ins of its own: "dev" and
-// "build" belong to the `collage` binary, which invokes this program rather than the
-// other way round, and a program that wants a usage listing has App.Commands.
+// It dispatches only plugin commands. It has no built-ins of its own: "dev",
+// "build", "export" and the rest belong to the `collage` binary, which invokes this
+// program rather than the other way round, and a program that wants a usage listing
+// has App.Commands.
 //
 // The exit codes follow the `collage` binary's: 0 for success, 2 for a usage problem
 // (a nil App, or a name nothing claims), and 1 for a command that ran and failed.
 //
-//	code, err := collage.DispatchCommands(ctx, app, os.Args[1:])
+// Pass what is left once the program's own flags are parsed — flag.Args(), not
+// os.Args[1:], which would hand a flag such as -port to DispatchCommands as a
+// command name; the scaffolded main.go passes flag.Args() the same way.
+//
+//	flag.Parse()
+//	// ...
+//	code, err := collage.DispatchCommands(ctx, app, flag.Args())
 //	if !errors.Is(err, collage.ErrUnknownCommand) {
 //		if err != nil {
 //			fmt.Fprintln(os.Stderr, err)

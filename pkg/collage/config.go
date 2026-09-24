@@ -22,15 +22,19 @@ var ErrInvalidPort = errors.New("collage: invalid port")
 // Root is empty and FS is nil.
 var ErrEmptyTemplateRoot = errors.New("collage: empty template root")
 
-// ErrInvalidCacheType is returned when Config.Cache.Enabled is true and
-// Config.Cache.Type is not a supported cache type.
 // ErrEmptyCacheDir is returned when Cache.Type is "disk" and Cache.Dir is empty.
 var ErrEmptyCacheDir = cache.ErrEmptyCacheDir
 
-// ErrEmptyCacheVersion is returned when Cache.Type is "disk" and Cache.Version is
-// empty. See CacheConfig.Version for why it is required rather than defaulted.
+// ErrEmptyCacheVersion is the disk cache's refusal to open without a version. New
+// never returns it: an empty Cache.Version is derived from the running executable,
+// and when that cannot be read the application falls back to an in-memory cache
+// and logs why, rather than failing. It is exported so the sentinel has a name
+// should that change, and it is not a check a caller needs to make today.
 var ErrEmptyCacheVersion = cache.ErrEmptyCacheVersion
 
+// ErrInvalidCacheType is returned when Config.Cache.Enabled is true, no
+// Config.Cache.Store is supplied, and Config.Cache.Type is neither "memory" nor
+// "disk".
 var ErrInvalidCacheType = errors.New("collage: invalid cache type")
 
 // ErrEmptyLocaleDefault is returned when Config.Locale.Default is empty.
@@ -176,8 +180,12 @@ type TemplateConfig struct {
 	//		Root: "templates",
 	//	}})
 	//
-	// DevMode has no useful effect on an embedded filesystem, whose contents are
-	// fixed at build time: reloading reparses identical bytes on every request.
+	// An embedded filesystem is fixed at build time, so in development — where
+	// templates reload on every render — the copy on disk is preferred: when Root
+	// also names a directory on disk (relative to the working directory), that
+	// directory is read instead of FS, and edits appear without a rebuild. Run from anywhere else and
+	// the embedded copy renders, unchanged until the binary is rebuilt. Outside
+	// development FS is always what renders.
 	FS fs.FS
 	// Root is the directory templates are loaded from, and is stripped from every
 	// template name. It is a path on disk when FS is nil, defaulting to
@@ -185,8 +193,9 @@ type TemplateConfig struct {
 	// value means the root of FS itself.
 	Root string
 	// Funcs adds template functions to, and may override entries of, the
-	// framework's built-in function map (slot, safeHTML, safeURL, dict, default,
-	// upper, lower, title, join, formatTime). It is merged over the built-ins at
+	// framework's built-in function map (safeHTML, safeURL, dict, default, upper,
+	// lower, title, join, formatTime, and the per-render functions below). It is
+	// merged over the built-ins, and over any functions plugins contributed, at
 	// construction, so an entry here under a built-in name replaces that built-in.
 	//
 	// It must be set before New: html/template resolves a function name at
@@ -195,11 +204,16 @@ type TemplateConfig struct {
 	// afterwards is not possible, and a template calling an unknown name fails to
 	// parse in New rather than at the first request.
 	//
-	// Overriding "slot" is possible but pointless: the render engine rebinds it per
-	// render, so whatever is registered here is never the implementation that runs.
+	// Overriding a per-render function — slot, hoist, asset, stylesheet,
+	// csrfToken, pageURL, pageURLIn, localeURL — is possible but pointless: each
+	// needs the render it runs in, so the render engine rebinds all of them on
+	// every render, and whatever is registered here is never the implementation
+	// that runs.
 	Funcs template.FuncMap
-	// Extension is the file extension appended to template names. Defaults to
-	// ".html".
+	// Extension selects which files under Root are templates: only a file ending in
+	// it is parsed. It is not added to or stripped from names — a template's name is
+	// its path under Root, extension included, as in "pages/home.html". Includes the
+	// leading dot; defaults to ".html".
 	Extension string
 	// DevMode reloads templates from disk on every request instead of caching parsed
 	// templates. Its disjunction with Config.DevMode is IsDevMode's effective value.
@@ -236,9 +250,10 @@ type CacheConfig struct {
 	// implementation without reflection, and which will panic on the first lookup.
 	// Leave the field unset instead.
 	Store Cache
-	// Type selects a built-in cache implementation when Store is nil. The only
-	// built-in is "memory", which is also what an empty Type defaults to when
-	// Enabled is true and Store is nil.
+	// Type selects a built-in cache implementation when Store is nil: "memory",
+	// which is also what an empty Type defaults to when Enabled is true and Store
+	// is nil, or "disk", which keeps entries under Dir across restarts (see Dir and
+	// Version).
 	Type string
 	// DefaultTTL is the cache entry lifetime used when a page does not set its own.
 	// Defaults to 5m.
@@ -382,9 +397,11 @@ func (c *Config) ApplyDefaults() {
 }
 
 // Validate reports whether c is well-formed: Server.Port is in 1..65535
-// (ErrInvalidPort), Template.Root is non-empty (ErrEmptyTemplateRoot), Cache.Type is
-// "memory" when Cache.Enabled and Cache.Store is nil (ErrInvalidCacheType; a
-// caller-supplied Store makes Type irrelevant), Locale.Default is non-empty
+// (ErrInvalidPort), Template.Root is non-empty or Template.FS is set
+// (ErrEmptyTemplateRoot), Cache.Type is "memory" or "disk" when Cache.Enabled and
+// Cache.Store is nil (ErrInvalidCacheType; a caller-supplied Store makes Type
+// irrelevant) and a "disk" cache has a Cache.Dir (ErrEmptyCacheDir),
+// Locale.Default is non-empty
 // (ErrEmptyLocaleDefault) and present in Locale.Supported
 // (ErrLocaleDefaultNotSupported), and every duration field is not negative
 // (ErrNegativeDuration). It returns nil when c is well-formed.

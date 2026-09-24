@@ -5,8 +5,9 @@ import (
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// Builder renders an application's static-eligible pages to files under
-// BuildOptions.OutDir. Construct one with NewBuilder.
+// Builder renders an application's static-eligible pages and documents to files
+// under BuildOptions.OutDir, and copies its mounted files beside them. Construct
+// one with NewBuilder.
 type Builder = build.Builder
 
 // BuildOptions configures a static build. See NewBuilder.
@@ -32,12 +33,12 @@ type DocumentPathProvider = build.DocumentPathProvider
 // parameter values that reached it.
 type PathInstance = build.PathInstance
 
-// SkipRecord describes one page, or one page's locale, that a static build
-// could not produce, and why.
+// SkipRecord describes one page or document, or one locale of one, that a static
+// build could not produce, and why.
 type SkipRecord = build.SkipRecord
 
-// WarningRecord describes a page a static build wrote, but not all of: one whose
-// content depends on a query string. See BuildReport.Warnings.
+// WarningRecord describes a page or document a static build wrote, but not all
+// of: one whose content depends on a query string. See BuildReport.Warnings.
 type WarningRecord = build.WarningRecord
 
 // ErrOutputPathCollision is returned by Build when two pages would be written to
@@ -64,16 +65,18 @@ var ErrDangerousOutDir = build.ErrDangerousOutDir
 // that would otherwise carry the write outside it.
 var ErrPathEscapesOutDir = build.ErrPathEscapesOutDir
 
-// ErrDynamicPathUnresolved is recorded, as a SkipRecord.Reason, when a page's
-// path pattern for a locale contains a "{param}" segment and
-// BuildOptions.PathProvider is nil.
+// ErrDynamicPathUnresolved is recorded, as SkipRecord.Err and in
+// SkipRecord.Reason, when a page's path pattern for a locale contains a "{param}"
+// segment and BuildOptions.PathProvider is nil — or a document's, and
+// BuildOptions.DocumentPathProvider is nil.
 var ErrDynamicPathUnresolved = build.ErrDynamicPathUnresolved
 
-// ErrDuplicateOutputPath is recorded, as a SkipRecord.Reason, when two document
-// build tasks resolve to the same output file — one document registered at the
-// same pattern under two locales, which is the form that serves both
-// "/sitemap.xml" and "/tr/sitemap.xml". One task is built and the rest are
-// skipped by name, rather than racing to overwrite one file.
+// ErrDuplicateOutputPath is recorded, as SkipRecord.Err and in SkipRecord.Reason,
+// when two document build tasks resolve to the same output file — a
+// DocumentPathProvider returning one path twice. One pattern in two locales is not
+// a collision: a non-default locale's document is written under its prefix,
+// "/tr/sitemap.xml". One task is built and the rest are skipped by name, rather
+// than racing to overwrite one file.
 var ErrDuplicateOutputPath = build.ErrDuplicateOutputPath
 
 // ErrDegradedRender is recorded in BuildReport.Errors, and no file is written,

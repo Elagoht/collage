@@ -70,6 +70,7 @@ func buildSitemap(posts []Post) ([]byte, error) {
 | `Dynamic()` | Execute on every request, never serve from cache. The default |
 | `Static()` | Execute once, serve from cache until explicitly invalidated |
 | `Incremental(ttl)` | Serve from cache until `ttl` elapses since the last execution |
+| `WithCacheParams(names...)` | The query parameters that take part in the cache key, as for a page |
 | `WithDependency(tags...)` | Tags every response from this document carries |
 | `WithRedirect(from, to, status)` | A source pattern that redirects here |
 | `WithPermanentRedirect(from, to)` | The same, as a 301 |
@@ -93,8 +94,10 @@ type DocumentHandlerFunc func(ctx context.Context, rc *RenderContext) (body []by
 
 `rc` is the same `*collage.RenderContext` a fragment's data handler receives:
 `rc.Param("slug")` for a captured path parameter, `rc.Request` for the request,
-`rc.Locale` for the resolved locale. One field differs: `rc.Page` is `nil`, since
-no page is being rendered.
+`rc.Locale` for the resolved locale, `rc.Asset(path)` for a mounted file's
+content-addressed URL, and `collage.Cached` for data kept across requests — a
+sitemap reads the same records the pages do, and shares their cache. One field
+differs: `rc.Page` is `nil`, since no page is being rendered.
 
 The returned `tags` are unioned with the document's own `WithDependency` tags,
 de-duplicated and sorted, exactly as a page's are — and, exactly as with a page,
@@ -184,16 +187,20 @@ if err := app.InvalidateTags(ctx, "blog:posts"); err != nil {
 }
 ```
 
-## Plugins see three hooks, not six
+## Plugins see four hooks, not seven
 
-A document dispatches `OnCacheWrite`, `OnCacheInvalidate` and `OnError`. It does
-**not** dispatch `OnPageResolved`, `OnBeforeRender` or `OnAfterRender`.
+A document dispatches `OnDocumentRendered`, `OnCacheWrite`, `OnCacheInvalidate`
+and `OnError`. It does **not** dispatch `OnPageResolved`, `OnBeforeRender` or
+`OnAfterRender`.
 
-The reason is that those three events are about a render, and no render happens.
-`AfterRenderEvent.HTML` would be a lie for a zip file or a JPEG, and
-`PageResolvedEvent.Page` has no value to carry. The accepted consequence is
-explicit: **a plugin cannot post-process a document body.** A plugin that stamps
-every page from `OnAfterRender` stamps nothing on a sitemap.
+The reason is that those three events are about a page render, and no page is
+rendered. `AfterRenderEvent.HTML` would be a lie for a zip file or a JPEG, and
+`PageResolvedEvent.Page` has no value to carry. A plugin that post-processes a
+document body does it in `OnDocumentRendered`, which carries the bytes, the
+content type and the locale, and runs before the body is cached, ETagged or
+served — so what is stored is what the plugin produced. A plugin that stamps every
+page from `OnAfterRender` alone stamps nothing on a sitemap; see
+[plugins](plugins.md#documents).
 
 `ErrorEvent.Page` is `nil` for a document failure — the event's `Path` already
 identifies the route, and the framework's own log line names the document.
@@ -228,11 +235,12 @@ writing a different pattern (`WithPath("tr", "/akis.xml")`), not by prefixing.
 The handler reads the resolved locale from `rc.Locale`. The locale is part of the
 cache key, so the two feeds are two entries.
 
-One consequence for the static build: two locales pointing at the *same* literal
-pattern resolve to one output file, since a document writes to its literal path.
-The builder detects that collision and records the later locale in
-`Report.Skipped` rather than letting two goroutines race to write one file. Give
-each locale its own pattern when the build needs to emit both.
+The static build writes each locale where it is served: the feed above becomes
+`<OutDir>/feed.xml` and `<OutDir>/tr/feed.xml`, so one pattern in two locales is
+two files. (Two tasks that still resolve to one file — a `DocumentPathProvider`
+returning the same path twice — are detected, and the later one is recorded in
+`Report.Skipped` as `collage.ErrDuplicateOutputPath` rather than letting two
+goroutines race to write one file.)
 
 ## Registration
 
@@ -262,7 +270,8 @@ nothing.
 
 A document is written to its **literal path**: `/sitemap.xml` becomes
 `<OutDir>/sitemap.xml`, not `<OutDir>/sitemap.xml/index.html`, because a crawler
-asking for `/sitemap.xml` must not receive a directory.
+asking for `/sitemap.xml` must not receive a directory. A locale other than the
+default is written under its prefix, as it is served: `<OutDir>/tr/sitemap.xml`.
 
 - A `Static()` or `Incremental(ttl)` document is built. A `Dynamic()` one is
   recorded in `Report.Skipped` — it exists to execute per request.
@@ -302,18 +311,21 @@ func (p documentPaths) Paths(ctx context.Context, doc *collage.Document, locale 
 }
 ```
 
-**A static build renders documents without plugins**, exactly as it renders pages
-without them. The builder goes through `App.RenderDocumentPath`, not through
-`App.Handler()`, so plugin `Init` never runs and no hook fires — including the
-three a live document request does dispatch. What reaches the file is what the
-handler returned, and nothing the plugin layer would have added on top.
+**A static build runs plugins on documents**, as it does on pages. The builder goes
+through `App.RenderDocumentPath`, not through `App.Handler()`, but that starts the
+application first — plugin `Init` included — and dispatches `OnDocumentRendered`,
+so a minified feed on the server is a minified feed in the export. `OnCacheWrite`
+does not fire, since a build writes files rather than cache entries. Like a page, a
+document that declared query parameters it reads is written without a query and
+listed in `Report.Warnings`.
 
 ## Non-goals
 
 Stated so you do not go looking for them:
 
 - **No templating, no fragments, no slots.** By design — see "Why not a page".
-- **No render hooks.** See "Plugins see three hooks, not six".
+- **No page render hooks.** `OnDocumentRendered` is the one a document gets; see
+  "Plugins see four hooks, not seven".
 - **No `Range` requests.** A document's body is produced in full, in memory, and
   served in full. Files that want seeking — audio, video, large downloads — are
   [assets](assets.md), which are served with `http.ServeContent` and do support

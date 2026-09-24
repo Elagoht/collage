@@ -85,8 +85,17 @@ one, with the prefix stripped before matching:
 | `/tr/hakkinda` | `tr` | `/hakkinda` in the `tr` tree |
 | `/fr/about` | `en` | `/fr/about` — `fr` is not supported, so it is an ordinary segment |
 
+**Each page has one URL per locale, and other spellings redirect to it.** The
+default locale's URLs carry no prefix, so `/en/about` is answered with a permanent
+redirect to `/about`; a supported locale written in another case, `/TR/hakkinda`, is
+redirected to `/tr/hakkinda`. Served as they were, each would be a second URL for
+one page — a duplicate to a search engine and a second entry in the cache. The
+status is `301` for `GET` and `HEAD` and `308` for anything else, so a form posted
+to the wrong spelling is posted again rather than turned into a `GET`, and the
+query string is carried over.
+
 `DisablePathLocale: true` turns prefixes off, which leaves every request in
-`Default`.
+`Default`, and redirects nothing.
 
 A path registered for one locale only is reachable only in that locale.
 

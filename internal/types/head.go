@@ -61,8 +61,9 @@ func (rc *RenderContext) HoistProperty(property, content string) {
 }
 
 // HoistLink declares <link rel="rel" href="href">, one per rel — canonical,
-// icon, manifest. For a rel a page carries several of, such as alternate, use
-// Hoist with a key of your own.
+// icon, manifest. For a page's translations use HoistAlternate, which keys by
+// language; for any other rel a page carries several of, use Hoist with a key of
+// your own.
 func (rc *RenderContext) HoistLink(rel, href string) {
 	rc.Hoist(HeadArea, "link:"+rel, template.HTML(`<link rel="`+html.EscapeString(rel)+
 		`" href="`+html.EscapeString(href)+`">`))

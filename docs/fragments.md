@@ -146,9 +146,12 @@ if err := builder.BuildErr(); err != nil {
 }
 ```
 
-Ignoring `BuildErr` does not lose a mistake silently: `RegisterPage` validates the
-page and refuses a malformed one by name before it serves a request. Check it when
-the builder's inputs are not known to be well-formed ahead of time.
+Ignoring `BuildErr` does not lose a mistake silently. `Build` keeps what the builder
+recorded on the value it returns, and `RegisterPage` refuses a page whose builder —
+or the builder of any fragment in its tree, through its slots and fallbacks —
+recorded one, naming the page, before it serves a request; `RegisterDocument` does
+the same for a document. Check it anyway when the builder's inputs are not known to
+be well-formed ahead of time, to report the mistake where it was made.
 
 ## Slots
 
@@ -332,8 +335,11 @@ render that created it.
 | `SharedData`, `Get`, `Set` | Values exchanged between fragments in one render |
 | `Context()` | The underlying `context.Context` |
 
-`SharedData` works because the render is sequential: a fragment can read what an
-ancestor rendered earlier in the same walk.
+`SharedData` works because a parent's data handler returns before its children's
+start: a fragment can read what an ancestor's handler stored. Siblings' handlers
+run concurrently, so read and write it through `Get` and `Set` (or `collage.Get`
+and `collage.Once`), never as a bare map — see
+[how a page's fragments run](#how-a-pages-fragments-run).
 
 > **`rc.Page` is not yours to write to.** Every other member of the render context
 > is request-scoped; `Page` is a pointer to the one `*collage.Page` the framework
@@ -413,6 +419,7 @@ Available in every template:
 | `pageURLIn "tr" "name" ...` | The same, in exactly the locale given |
 | `localeURL "tr"` | The page being rendered, in another locale; empty when it has no path there |
 | `asset "/static/app.css"` | A mounted file's content-addressed URL |
+| `stylesheet "/static/app.css"` | Hoist a `<link rel="stylesheet">` for a mounted file into the head, by its content-addressed URL — see [Hoisting](#hoisting) |
 | `csrfToken` | The hidden input a form's forgery token travels in |
 | `hoist "area"` | Where hoisted content lands — see [Hoisting](#hoisting) |
 
@@ -474,8 +481,10 @@ It must be set before `New`. `html/template` resolves a function name at executi
 time but can only call a name that was already in the map when the template was
 parsed, and `New` is where parsing happens — so a template calling a name nobody
 registered fails in `New`, not at the first request, and a name added afterwards is
-never consulted. Overriding `"slot"` is possible but pointless: the render engine
-rebinds it per render.
+never consulted. Overriding a per-render function — `slot`, `hoist`, `asset`,
+`stylesheet`, `csrfToken`, `pageURL`, `pageURLIn`, `localeURL` — is possible but
+pointless: each needs the render it runs in, so the render engine rebinds them all
+on every render and yours never runs.
 
 Anything that needs request state belongs in the data handler rather than in a
 function: that is where the data comes from anyway.
@@ -490,9 +499,10 @@ diagnostics routinely carry hostnames, filesystem paths, and credentials from an
 error message.
 
 **A page with a broken part says so.** In development a fragment that failed —
-even one whose fallback covered for it — puts a panel on top of the page naming the
-fragment and the error, and for a template the file and line. Your own error page
-gets the same panel above it, with the failure it is standing in for. Neither ever
+even one whose fallback covered for it — puts a panel over the page, fixed to the
+bottom of the viewport, naming the fragment where the failure started and the error,
+and for a template the file and line. It can be dismissed. Your own error page gets
+the same panel, with the failure it is standing in for. Neither ever
 reaches the cache, and neither exists outside development.
 
 Content your application reads from disk in development — Markdown pages, JSON data
@@ -522,6 +532,7 @@ rc.HoistTitle(post.Title)
 rc.HoistMeta("description", post.Summary)
 rc.HoistProperty("og:image", post.CoverURL)
 rc.HoistLink("canonical", canonicalURL)
+rc.HoistAlternate("tr", trURL)             // <link rel="alternate" hreflang="tr">
 rc.HoistStylesheet("/static/gallery.css") // its content-addressed URL
 ```
 
@@ -538,8 +549,8 @@ rc.HoistStylesheet("/static/gallery.css") // its content-addressed URL
 ```
 
 The helpers write to the `"head"` area, escape what they are given, and choose the
-key — `title`, `meta:description`, `link:canonical`, `stylesheet:/static/gallery.css`
-— so a more specific fragment's declaration replaces a less specific one's, and a
+key — `title`, `meta:description`, `link:canonical`, `alternate:tr`,
+`stylesheet:/static/gallery.css` — so a more specific fragment's declaration replaces a less specific one's, and a
 stylesheet several fragments ask for appears once. `rc.Asset(path)` is the
 content-addressed URL `{{asset}}` renders, for when Go needs it.
 
@@ -548,8 +559,8 @@ written — the right tool for anything the helpers do not cover, and the one wh
 escaping is yours:
 
 ```go
-rc.Hoist("head", "alternate:tr", template.HTML(
-	`<link rel="alternate" hreflang="tr" href="`+html.EscapeString(trURL)+`">`))
+rc.Hoist("head", "preload:hero", template.HTML(
+	`<link rel="preload" as="image" href="`+html.EscapeString(heroURL)+`">`))
 ```
 
 `{{hoist}}` writes a marker rather than content, because nothing below it has
@@ -590,6 +601,7 @@ Two details worth knowing rather than discovering:
 mechanism and the responsibility that comes with it: build the markup from values
 you control, or escape them yourself.
 
-Call it from a data handler, synchronously. The collector relies on the same
-single-walker guarantee the rest of the render does, and a handler hoisting from a
-goroutine of its own is outside it.
+Call it from a data handler, before the handler returns. The collector takes a
+lock, so sibling handlers hoisting at the same moment are safe; what is not is a
+goroutine of the handler's own that hoists after the handler returned — by then the
+page may already have been assembled, and the declaration lands nowhere.

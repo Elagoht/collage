@@ -209,9 +209,9 @@ at mount time was rejected for the opposite reason — it would make startup
 proportional to how many bytes you serve.
 
 A consequence worth knowing: a file whose content changes on disk keeps its
-memoised ETag for the life of the process. Mounts are meant for content that is
-deployed, not edited under a running server; restart, or fingerprint the
-filenames.
+memoised ETag for the life of the process — outside development, where nothing is
+remembered (see above). Mounts are meant for content that is deployed, not edited
+under a running server: restart after replacing a file.
 
 ## Assets never enter the page cache
 
@@ -231,8 +231,9 @@ disappear when files are served as files.
 business, not the framework's.** There is no server-side expiry to tune and no
 invalidation call to make. If a file's content changes and its URL does not,
 every client that cached it keeps the old one until its `max-age` elapses. That
-is the trade fingerprinted filenames exist to solve, and this framework does not
-fingerprint for you.
+is the trade content-addressed URLs exist to solve — link the file with
+`{{asset}}` and a changed file is a new URL (see above). A file linked by its plain
+name gets only the mount's `Cache-Control`.
 
 ## Prefixes, shadowing and ordering
 
@@ -315,9 +316,10 @@ Stated plainly, because each one is a real constraint rather than an oversight:
   The escape hatch is to compose your own handler around `app.Handler()` at the
   mux level, which has always worked — it simply integrates with nothing: not the
   startup shadow check, not the static build.
-- **No asset fingerprinting.** The framework does not rewrite filenames to
-  include a content hash, and does not rewrite references to them in your
-  templates. Cache busting is yours to arrange.
+- **Content-addressed URLs are opt-in, per reference.** `{{asset}}`,
+  `{{stylesheet}}` and `rc.Asset` mint them; a plain `/static/app.css` written into
+  a template, or a URL inside a stylesheet (`url(...)` in CSS), is served as it is
+  and is not rewritten.
 - **No compression.** No gzip or Brotli negotiation, and no pre-compressed
   `.gz`/`.br` sidecar lookup. Put a reverse proxy or a CDN in front, or wrap
   `app.Handler()`.
@@ -335,5 +337,5 @@ Stated plainly, because each one is a real constraint rather than an oversight:
   What genuinely does not fire for a mount is the render-hook trio,
   `OnPageResolved`, `OnBeforeRender`, and `OnAfterRender`: an asset is not a
   render, so there is nothing for those three to observe. See
-  `docs/plugins.md`'s "Documents dispatch three hooks, not six" section, which
+  `docs/plugins.md`'s "Documents dispatch four hooks, not seven" section, which
   covers the asset case alongside the document one.

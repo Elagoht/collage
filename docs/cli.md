@@ -5,9 +5,11 @@ go install github.com/Elagoht/collage/cmd/collage@latest
 ```
 
 ```
-collage new <name> [-dir path] [-module path] [-force]
+collage new <name> [-minimal] [-dir path] [-module path] [-force]
 collage dev
-collage build [-out dir] [-clean]
+collage build [-o path] [-os name] [-arch name] [-i]
+collage export [-out dir] [-clean]
+collage serve [-dir dir] [-host name] [-port n]
 collage version
 collage help [command]
 ```
@@ -269,13 +271,17 @@ built binary never do: production takes its environment from wherever it runs.
 
 A plugin registers a subcommand from its `Init`, through `Host.RegisterCommand`.
 
-**The `collage` binary does not run them.** It never loads your application — its
-`dev` and `build` commands shell out to `go run .` in your project directory — so
-it has no way to reach a command that only exists once your plugins have been
-initialised. Your own `main` dispatches them, with `collage.DispatchCommands`:
+**The `collage` binary does not run them.** It never loads your application —
+`dev` builds your project with `go build` and runs the result, `build` compiles
+it, `export` runs `go run . -collage-build` — so it has no way to reach a command
+that only exists once your plugins have been initialised. Your own `main`
+dispatches them, with `collage.DispatchCommands`, and you run them as
+`go run . <command>`. A scaffolded `main.go` already does:
 
 ```go
 func main() {
+	flag.Parse() // the program's own flags, whatever they are
+
 	app, err := collage.New(cfg)
 	if err != nil {
 		log.Fatal(err)
@@ -284,8 +290,10 @@ func main() {
 	app.RegisterPlugin(sitemap.New())
 
 	// Starts the application (running every plugin's Init, which is what
-	// registers their commands) and dispatches args[0] against them.
-	code, err := collage.DispatchCommands(context.Background(), app, os.Args[1:])
+	// registers their commands) and dispatches the first word after the flags
+	// against them. flag.Args(), not os.Args[1:]: the program's own flags are
+	// not command names.
+	code, err := collage.DispatchCommands(context.Background(), app, flag.Args())
 	if !errors.Is(err, collage.ErrUnknownCommand) {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -302,8 +310,8 @@ func main() {
 claimed — so the program carries on with whatever it does by default. A command
 that ran and failed returns exit code `1` with its own error wrapped; a nil `*App`
 or an unclaimed name returns `2`. `DispatchCommands` has no built-ins of its own:
-`dev` and `build` belong to the `collage` binary, which invokes your program rather
-than the other way round, and `App.Commands()` gives you the list if you want to
+`new`, `dev`, `build`, `export`, `serve`, `version` and `help` belong to the
+`collage` binary, which invokes your program rather than the other way round, and `App.Commands()` gives you the list if you want to
 print one.
 
 Dispatching starts the application, which closes registration — so call it after
@@ -323,13 +331,14 @@ renders pages through `App.RenderPath` and documents through
 template set, the same fragment tree, the same data handlers, the same document
 handlers.
 
-**A static build renders without plugins — pages and documents alike.** It does
-not go through `App.Handler()`, so plugin `Init` never runs and no hook fires:
-nothing an `OnPageResolved`, `OnBeforeRender`, `OnAfterRender`, or `OnCacheWrite`
-would have contributed appears in the files it writes. A plugin that stamps every
-page from `OnAfterRender` stamps nothing here. What you get is the fragment output
-a live request would produce, and the bytes a document handler returned, without
-whatever the plugin layer adds on top of them.
+**A static build runs your plugins, as the server does.** It does not go through
+`App.Handler()`, but `RenderPath` and `RenderDocumentPath` start the application
+first — memoised, exactly as `Handler` does — so plugin `Init` has run before the
+first page renders. Every page gets `OnBeforeRender` and `OnAfterRender`, and every
+document `OnDocumentRendered`, so a minifier that shapes the served site shapes the
+built one too. Two hooks do not fire, because they are about something a build is
+not: `OnPageResolved` (a build is not a request) and `OnCacheWrite` (a build writes
+files, not cache entries). See [plugins](plugins.md#static-builds).
 
 A page that renders with a failed fragment is **not written**: the failure is
 recorded in `report.Errors` as `collage.ErrDegradedRender`, because a static file
@@ -399,10 +408,13 @@ back into enumeration order.
   CDN in production or one too large to duplicate. Which mounts are copied comes
   from the application's own `Mounts()` — there is no `BuildOptions` field for it,
   so a caller cannot pair one application's pages with another's assets.
-- The output path comes from the page's pattern for that locale, with no locale
-  prefix added. Two locales sharing one pattern therefore write to the same file —
-  give each locale its own path (`"/blog/{slug}"` and `"/tr/blog/{slug}"`) if you
-  build more than one.
+- **A locale other than the default is written under its prefix**, the URL the
+  router serves it at: a page with `WithPath("en", "/about")` and
+  `WithPath("tr", "/hakkinda")` writes `<OutDir>/about/index.html` and `<OutDir>/tr/hakkinda/index.html`. Pages
+  and documents alike, so one pattern in two locales is two files — a `"tr"`
+  document at `/feed.xml` is `<OutDir>/tr/feed.xml`. Do not write the prefix into
+  the pattern yourself: the router strips it before matching, and `"/tr/blog"`
+  would be served, and written, at `/tr/tr/blog`.
 
 ### Supplying paths for dynamic pages
 

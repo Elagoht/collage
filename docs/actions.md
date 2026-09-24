@@ -65,7 +65,9 @@ return result, nil
 ```
 
 No session, no flash storage, no state smuggled through a query string: the handler
-and the render are one request.
+and the render are one request. The page is rendered as a page — `OnBeforeRender` and
+`OnAfterRender` run for it, so whatever plugins do to a page, a minifier or a
+structured-data plugin, they do to the one a validation failure answers with.
 
 `formPage` has to be **the value you registered**. Registration is what puts a page's
 content into its layout, so a page built inside the handler renders as a layout
@@ -141,7 +143,9 @@ the change already made wrong.
 ## Request bodies are bounded
 
 Four megabytes by default, `Server.MaxBodyBytes` for the application, `MaxBodyBytes`
-for one action, and a negative value for unbounded. A body past the limit is a 413.
+for one action, and a negative value for unbounded. A body past the limit is a 413 —
+with forgery protection on as well, where reading the token means reading the body:
+an oversized form is refused for its size, not reported as a forged one.
 
 A limit every handler has to remember is a limit the one handler that forgot does not
 have, and that handler is the one an anonymous caller will find.
@@ -160,7 +164,9 @@ Every unsafe request to an action is checked. Put the token in the form:
 
 `{{csrfToken}}` renders the whole hidden input, field name and all — a bare value has
 to go in a field with exactly the right name, and a form that names it wrong fails in
-a way that looks like the token is broken. A `fetch()` with no form to put a field in
+a way that looks like the token is broken. `Security.CSRFFieldName` renames the field
+in both places at once — the input `{{csrfToken}}` renders and the one the verifier
+reads. A `fetch()` with no form to put a field in
 sends the same value in `X-CSRF-Token`. One that posts a form —
 `fetch(url, {method: "POST", body: new FormData(form)})` — sends it as
 `multipart/form-data`, which is read like a URL-encoded body, so the hidden input is
@@ -195,7 +201,8 @@ The marker is derived from the key, which is what makes both halves work: it is 
 same in every process that shares the key, so a body cached by one is still
 substitutable by the next, and it cannot be computed by anyone who does not have the
 key, so it cannot be planted in content the application did not write. Changing the
-key changes the cache namespace.
+key does not empty the cache: a stored body carrying the old key's marker is treated
+as a miss and rendered again, and a page without a form is served as it was.
 
 `WithoutCSRF()` is for requests that cannot carry a token — a payment provider's
 webhook, an API called with a bearer token by something that is not a browser. On

@@ -58,8 +58,8 @@ var ErrNoCommand = errors.New("collage: no command given")
 var ErrUnknownCommand = errors.New("collage: unknown command")
 
 // ErrReservedCommandName is returned when a CLI.Commands entry's Name matches
-// a built-in command ("new", "dev", "build", "version", or "help"). A plugin
-// is not permitted to shadow a built-in command.
+// a built-in command ("new", "dev", "build", "export", "serve", "version", or
+// "help"). A plugin is not permitted to shadow a built-in command.
 var ErrReservedCommandName = errors.New("collage: command name collides with a built-in command")
 
 // ErrDuplicateCommand is returned when two entries in CLI.Commands share the
@@ -209,8 +209,8 @@ func (c *CLI) validateCommands() error {
 	return nil
 }
 
-// isBuiltin reports whether name is one of the five commands Run handles
-// itself.
+// isBuiltin reports whether name is one of the commands Run handles itself —
+// those listed in builtins.
 func isBuiltin(name string) bool {
 	for _, b := range builtins {
 		if b.name == name {

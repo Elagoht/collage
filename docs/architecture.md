@@ -16,8 +16,10 @@ cmd/collage        the CLI binary
 internal/types     the domain types: Fragment, Page, Document, Redirect, RenderContext
 internal/template  html/template loading, the function map, per-render funcs
 internal/render    the fragment tree walk, the failure policy, timeouts, panics
-internal/cache     the Cache interface, the cache key, the in-memory cache
+internal/cache     the Cache interface, the cache key, the memory and disk caches
+internal/datacache the store behind collage.Cached: values kept across renders
 internal/dependency  tag -> cache key index
+internal/csrf      forgery tokens: signing, the cached-page marker, verification
 internal/router    radix routing per locale, redirects, locale resolution
 internal/asset     mounted fs.FS assets: ServeContent, per-mount Cache-Control, ETags
 internal/httpx     the HTTP request lifecycle
@@ -26,6 +28,7 @@ internal/observability  the Metrics and Tracer interfaces
 internal/build     the static site builder
 internal/core      the App: owns one of everything above, plus the server lifecycle
 internal/cli       the CLI's commands and project scaffold
+internal/term      terminal detection and styling for logs and build reports
 ```
 
 The dependency arrow points one way: `pkg/collage` depends on `internal/*`, and no
@@ -60,7 +63,7 @@ different mechanisms rather than one generalised one.
 | Templates | Fragments and slots | None | None |
 | Page cache | Yes | Yes — same key, same ETag, same tags | Never |
 | `Range` requests | No | No | Yes, via `http.ServeContent` |
-| Plugin hooks | All six | `OnCacheWrite`, `OnCacheInvalidate`, `OnError` | `OnError` only |
+| Plugin hooks | Every hook but `OnDocumentRendered` | `OnDocumentRendered`, `OnCacheWrite`, `OnCacheInvalidate`, `OnError` | `OnError` only |
 | A failure renders | The page's error page, in HTML | `text/plain` | `text/plain` |
 
 A generated payload (sitemap, feed, JWKS) is small, computed from application
@@ -86,20 +89,25 @@ See [documents.md](documents.md) and [assets.md](assets.md).
 
 For one GET on a page, in order — middleware registered with `app.Use` runs
 first, a mount or a handler registered with `app.Handle` claims the request before
-step 1 if its prefix matches, and a document runs the same steps minus 4, 5 and 6:
+step 1 if its prefix matches, and a document runs the same steps with its handler
+and `OnDocumentRendered` in place of 4, 5 and 6:
 
 1. **Route.** The router resolves the locale from the path prefix — or the
    default, when there is none — and matches the remaining path in that locale's
    radix tree. A redirect match wins over a page or document match at the same
-   path.
+   path. A locale prefix that is not its locale's one URL — the default locale's
+   own `/en/`, or `/TR/` for `tr` — is answered with a permanent redirect to the
+   canonical URL before anything is matched.
 2. **`OnPageResolved`.** Plugins observe the resolved page.
 3. **Cache lookup.** Only for a `GET`/`HEAD` on a page whose strategy is
    cacheable. On a hit, an `If-None-Match` that matches the stored ETag answers
-   `304`; otherwise the stored bytes are served. Nothing below runs.
+   `304`; otherwise the stored bytes are served. Nothing below runs. A stored body
+   carrying another forgery key's marker counts as a miss.
 4. **`OnBeforeRender`.** Plugins observe a render that is actually about to
    happen — this is what distinguishes the hook from `OnPageResolved`.
 5. **Render.** The engine walks the page's fragment tree depth-first, running each
-   fragment's data handler under its timeout, executing its template, and
+   fragment's data handler under its timeout — its children's handlers are
+   started together, before its template runs — executing templates in order, and
    expanding `{{slot "name"}}` into the rendered children.
 6. **`OnAfterRender`.** Plugins may replace the HTML. The replacement is what is
    served *and* what is cached.
@@ -110,8 +118,9 @@ step 1 if its prefix matches, and a document runs the same steps minus 4, 5 and 
    cacheable response — `Vary`.
 
 A failure anywhere in 1–6 goes to the error path: log, dispatch `OnError`, then
-render the page's own `NotFoundPage`/`ErrorPage`, falling back to the site-wide
-one and then to the framework's built-in page. An error response is always
+render the page's own `NotFoundPage`/`ErrorPage` — through `OnBeforeRender` and
+`OnAfterRender`, like any page — falling back to the site-wide one and then to the
+framework's built-in page. An error response is always
 `no-store` and is never cached. A failure in step 7 is the exception — it is
 logged and reported to plugins, but the page has already rendered, so it is
 served uncached rather than turned into a 500.
@@ -213,9 +222,11 @@ error instead, so a program that starts a server never loses it.
 
 A plugin cannot mutate core state directly: that is the framework's rule. So
 `Plugin.Init` receives a `collage.Host` — `DevMode`, `Pages`, `Page`,
-`InvalidateTags`, `Logger`, `RegisterCommand` — and not the `*App`. A plugin has
-no way to reach the router, the cache, the render engine, the template set, or any
-page it was not explicitly handed.
+`InvalidateTags`, `Logger`, `RegisterCommand`, `Config`, `RegisterPage`,
+`RegisterDocument`, `Mount` — and not the `*App`. A plugin has no way to reach the
+router, the cache, the render engine, the template set, or any page it was not
+explicitly handed; it can add to the application through those methods, but not
+reach the structures behind them.
 
 That is enforced by *what is passed*, not by the parameter's type. A method set
 travels with a value through an interface, so handing `Init` the `*App` under a
@@ -223,7 +234,7 @@ travels with a value through an interface, so handing `Init` the `*App` under a
 `RenderPath` one type assertion away — an assertion that needs no name for the
 concrete type and no import of `pkg/collage`, so narrowing what the public package
 exports would not have closed it either. `Init` receives a narrow forwarding value
-that has Host's six methods and nothing else, so there is nothing for the
+that has Host's methods and nothing else, so there is nothing for the
 assertion to find.
 
 **`Host` limits reachability, not mutability, and the framework does not pretend

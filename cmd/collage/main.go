@@ -1,6 +1,8 @@
 // Command collage is the collage CLI: it scaffolds new projects
-// (collage new) and drives an existing project's dev and static-build
-// workflows (collage dev, collage build).
+// (collage new), drives an existing project's development loop (collage dev),
+// compiles it into the binary you deploy (collage build), renders it to static
+// files (collage export), and serves such an export the way a static host would
+// (collage serve).
 //
 // main is deliberately thin: it constructs a cli.CLI, runs it, and exits with
 // the code it returns. This is the only place os.Exit appears anywhere in

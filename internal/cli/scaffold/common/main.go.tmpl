@@ -47,8 +47,8 @@ var staticFS embed.FS
 
 // cacheDir is where rendered pages are kept between restarts. A variable so the
 // tests can point it at a directory of their own: a disk cache is shared by
-// everything that uses the same directory, build and key, so a test would
-// otherwise read what the previous test, or the previous run, rendered.
+// everything that uses the same directory and build, so a test would otherwise
+// read what the previous test, or the previous run, rendered.
 var cacheDir = ".cache"
 
 func main() {

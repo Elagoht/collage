@@ -87,11 +87,16 @@ still work when the binary serves them.
 
 ## The collage CLI contract
 
-- **`collage dev`** runs `go run .` here with `COLLAGE_DEV=1` set. `main.go`
-  reads that and turns on development mode.
+- **`collage dev`** builds this program with `go build`, runs the binary with
+  `COLLAGE_DEV=1` set, and rebuilds and restarts it when its Go code changes.
+  `main.go` reads that variable and turns on development mode.
 - **`collage export`** runs `go run . -collage-build -out <dir>`. `main.go`
   parses those flags and renders through `collage.NewBuilder`, collage's own
   builder.
 
 If you rewrite `main.go`, keep both halves working, or `collage dev` and
 `collage export` stop doing anything useful here.
+
+A plugin's own commands are run through this program rather than the `collage`
+binary, which never loads your plugins: `go run . <command>`. `main.go` hands
+the first word after its flags to `collage.DispatchCommands`.

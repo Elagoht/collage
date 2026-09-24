@@ -16,10 +16,11 @@
 //
 // A WithX method that can fail records the error on the builder and keeps returning
 // the builder unchanged in every other respect; call BuildErr to retrieve whatever was
-// accumulated. Ignoring BuildErr does not lose a builder mistake silently: registering
-// a page calls Page.Validate and rejects a malformed page with a named error before it
-// ever serves a request, so a builder mistake surfaces loudly at startup rather than on
-// the first request. Prefer checking BuildErr when a builder's inputs are not known to
+// accumulated. Ignoring BuildErr does not lose a builder mistake silently: Build keeps
+// what was recorded on the value it returns, and RegisterPage refuses a page whose
+// builder, or the builder of any fragment reachable from it, recorded an error — as
+// RegisterDocument does for a document — before Page.Validate even runs. A builder
+// mistake therefore surfaces loudly at startup rather than on the first request. Prefer checking BuildErr when a builder's inputs are not known to
 // be well-formed ahead of time.
 package collage
 

@@ -61,7 +61,10 @@ The key is the SHA-256 of an unambiguous, length-prefixed serialisation of:
 - the request path,
 - the resolved locale,
 - the captured path parameters,
-- the raw query string.
+- the raw query string — or only the parameters the page named with
+  `WithCacheParams`, when it named any (see
+  [below](#which-query-parameters-are-part-of-the-key)),
+- any values middleware declared with `collage.Vary` (see [`Vary`](#vary)).
 
 Every field is self-delimiting, so no two distinct inputs can collide by
 concatenation, and the whole key is prefixed `v1:` so the scheme can change later
@@ -71,9 +74,10 @@ Including the raw query string is a correctness decision with a cost: a data
 handler receives the whole `*http.Request` and may legitimately render from
 `r.URL.Query()`, so two queries against one path are two representations — but it
 also fragments the cache across `utm_*` and other tracking variants, and it varies
-on parameter order, since the query is not canonicalised. A per-page allowlist of
-significant parameters would recover both; guessing which parameters matter is the
-application's call, so it is deliberately not built in.
+on parameter order, since the query is not canonicalised. Guessing which parameters
+matter is the application's call, so the framework does not guess: a page that
+names its parameters with `WithCacheParams` recovers both, and one that names none
+keeps the whole query in its key.
 
 ## ETags and conditional requests
 
@@ -165,6 +169,15 @@ different caches.
 Plugins observe invalidation through `OnCacheInvalidate`, and a plugin triggers
 one through `Host.InvalidateTags`.
 
+An action that asks for invalidation declaratively, through
+`ActionResult.InvalidateTags`, has it run before its response is written — so a
+redirect to a page built from what it changed is not answered from the old entry.
+A failure there does not fail the action: the change the action made has already
+happened, so the error is logged (`collage: action invalidation failed`, with the
+action and the tags) and the response goes out as the handler asked. Call
+`app.InvalidateTags` yourself from the handler when a failed invalidation should
+change the answer.
+
 ## Caching data, not only pages
 
 The page cache stores what a render produced. It does nothing for thirty different
@@ -195,7 +208,8 @@ Thirty pages by two authors now fetch twice, served or exported.
   invalidated hands its result to whoever was waiting but does not store it: what it
   brought back is what the invalidation was meant to replace.
 - **Bounded and in-process.** Values are kept in memory, up to `Cache.MaxEntries`,
-  least recently used first to go. Each instance of a multi-instance deployment keeps
+  least recently used first to go — unlike the page memory cache, which evicts in
+  insertion order (see [below](#the-built-in-memory-cache)). Each instance of a multi-instance deployment keeps
   its own, so N instances ask N times — still once each rather than once per page.
 - **Where it keeps nothing.** With `Cache.Enabled` false, in development, for a
   request that called `SkipCache`, and in an action's own handler, `Cached` behaves
@@ -266,9 +280,11 @@ memory cost is bounded by file count.
 **The freshness of a mounted file is the mount's `Cache-Control` and the client's
 business, not the framework's.** There is no server-side entry to expire and no
 invalidation call that reaches one. If a file changes and its URL does not, every
-client that cached it keeps the old copy until its `max-age` elapses — which is
-what fingerprinted filenames exist to solve, and which this framework does not do
-for you.
+client that cached it keeps the old copy until its `max-age` elapses. That is what
+content-addressed URLs solve, and the framework does give you those: link a file
+with `{{asset "/static/app.css"}}` (or `rc.Asset`) and the URL carries a hash of
+the file's contents, served `immutable`, so a changed file is a new URL — see
+[assets](assets.md). A file linked by its plain path gets no such help.
 
 ## Adjusting a write from a plugin
 
@@ -297,6 +313,12 @@ hook adjusted, so the value a client sees does not change from request to reques
   used. Reading an entry does not make it younger.
 - **Lazy expiry** — an expired entry is dropped when it is next looked up.
 - `MaxEntries: 0` means the default (10000); a negative value means unlimited.
+
+The same `MaxEntries` bounds the `collage.Cached` data store, which evicts the
+other way: least recently used, so a value read on every page stays. Two caches,
+one number — an application that sizes it sizes both, each counted separately. A
+`"disk"` cache is not bounded by it; its entries leave by expiry and
+invalidation.
 
 ## Supplying your own cache
 
@@ -502,15 +524,18 @@ Not the VCS revision from `debug.ReadBuildInfo`, for what it is worth: `go run`
 usually omits it, and it says nothing about uncommitted edits — which are exactly
 the edits a developer is looking at when a page comes back stale.
 
-**The forgery key is part of the namespace too.** A stored page carries a marker
-where each reader's token goes, and the marker is derived from `Security.CSRFKey`,
-so a page stored under one key cannot be served under another: changing the key
-starts the cache empty, and so does leaving it unset, because a generated key is
-different every run. The full namespace is the build, then the key's marker.
+**The namespace is the build, and only the build.** A stored page carries a marker
+where each reader's token goes, derived from `Security.CSRFKey`, so a page stored
+under one key cannot be served under another — its form would carry a marker
+nothing replaces and be refused on submission. That is checked on every hit
+instead: a stored body carrying another key's marker (or any marker, with forgery
+protection off) is a miss, dropped and rendered again. Pages without a form carry
+no marker and survive a key change, and a restart of a site with no key — which
+generates a new one every run — no longer starts the cache empty.
 
 Two consequences worth knowing before they surprise you:
 
-- **Everything that shares a `Dir`, a build and a key shares entries** — two
+- **Everything that shares a `Dir` and a build shares entries** — two
   `App`s in one process included. A test that builds a fresh application per test
   reads what the previous test, or the previous `go test` run, rendered. Give each
   its own `Dir` (a test's `t.TempDir()`) or its own `Version`; the scaffolded

@@ -60,6 +60,10 @@ Templates and static files are embedded, so the binary is the whole site.
 
 ## The collage CLI contract
 
-`collage dev` runs this program with `COLLAGE_DEV=1` set, and `collage export`
-runs `go run . -collage-build -out <dir>`. `main.go` honours both; if you rewrite
-it, keep both halves working.
+`collage dev` builds this program with `go build` and runs the binary with
+`COLLAGE_DEV=1` set, rebuilding and restarting it when its Go code changes;
+`collage export` runs `go run . -collage-build -out <dir>`. `main.go` honours
+both; if you rewrite it, keep both halves working.
+
+A plugin's own commands are run through this program, since the `collage`
+binary never loads your plugins: `go run . <command>`.

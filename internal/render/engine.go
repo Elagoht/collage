@@ -1,9 +1,11 @@
 // Package render composes a page's fragment tree into HTML. It walks the tree
-// depth-first and strictly sequentially, expanding each {{slot "name"}} into the
-// rendered output of the fragments bound to that slot, isolating fragment failures
-// according to the framework's failure policy, and collecting the dependency tags the
-// render relied on. Sequential execution is a design choice, not an oversight: the
-// same page rendered twice from the same inputs must produce byte-identical output.
+// depth-first, executing templates one at a time and in order, expanding each
+// {{slot "name"}} into the rendered output of the fragments bound to that slot,
+// isolating fragment failures according to the framework's failure policy, and
+// collecting the dependency tags the render relied on. Ordered template execution is
+// a design choice, not an oversight: the same page rendered twice from the same
+// inputs must produce byte-identical output. What overlaps is the waiting — sibling
+// fragments' data handlers are started together; see prefetch.go.
 package render
 
 import (

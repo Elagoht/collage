@@ -35,12 +35,13 @@ func (h *Handler) devProblems(result *render.Result) []devProblem {
 	return problems
 }
 
-// withDevOverlay puts a panel naming problems at the top of a development page.
+// withDevOverlay puts a panel naming problems over a development page, fixed to
+// the bottom of the viewport so it stays in sight while the page scrolls.
 //
 // It exists because a page that renders with a broken part looks, in development,
 // exactly like a page with nothing there: the failure went into an HTML comment, or
 // a fallback covered it, and the one person who could fix it has to open the source
-// to find out. So the page says so, on top of itself, with the fragment, the error
+// to find out. So the page says so, over itself, with the fragment, the error
 // and — for a template — the file and line html/template put in the message.
 //
 // Only ever at write time, never into what is cached, and only in development:

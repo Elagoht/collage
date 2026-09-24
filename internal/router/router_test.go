@@ -737,8 +737,8 @@ func TestClaimedPathsReportsEveryRegistry(t *testing.T) {
 	}
 
 	for pattern, wantOwner := range map[string]string{
-		// The bare patterns, reachable when the locale resolves from a header,
-		// a cookie, or the default.
+		// The bare patterns, as registered: the default locale's URLs, and what
+		// any other locale's URL is matched as once its prefix is stripped.
 		"/about":       `page "about"`,
 		"/hakkinda":    `page "about"`,
 		"/sitemap.xml": `document "sitemap"`,

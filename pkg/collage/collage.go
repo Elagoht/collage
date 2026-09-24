@@ -33,9 +33,10 @@ type App = core.App
 type Plugin = plugin.Plugin
 
 // Host is the capability surface a plugin receives in Init: DevMode, Pages, Page,
-// InvalidateTags, Logger, and RegisterCommand, and nothing else.
+// InvalidateTags, Logger, RegisterCommand, Config, RegisterPage, RegisterDocument,
+// and Mount, and nothing else.
 //
-// The value handed to Init is deliberately not the *App. *App has every one of these
+// The value handed to Init is deliberately not the *App. *App has most of these
 // methods, but it also has Shutdown, ListenAndServe, Handler, and RenderPath, and a
 // method set travels with a value through an interface — a plugin given the *App
 // could assert its Host parameter to an interface naming those and recover them

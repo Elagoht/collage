@@ -146,9 +146,14 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `InvalidateTags(ctx, tags...) error` | Invalidate cache entries by tag |
 | `Logger() *slog.Logger` | The application's structured logger |
 | `RegisterCommand(Command) error` | Contribute a CLI subcommand |
+| `Config(v) error` | Decode this plugin's section of `Config.PluginConfig` into `v` |
+| `RegisterPage(*Page) error` | Contribute a page, on the same terms as the application's own |
+| `RegisterDocument(*Document) error` | Contribute a document |
+| `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
 
 A plugin therefore has no way to reach the router, the cache, the render engine,
-the template set, or any page it was not explicitly handed. That is the structural
+the template set, or any page it was not explicitly handed — it can add routes and
+invalidate tags through these methods, but not reach the structures behind them. That is the structural
 half of the framework's rule that plugins cannot mutate core state.
 
 `Host` has no `Documents` method, and that is deliberate rather than an
@@ -182,9 +187,10 @@ mutation obvious. Where mutation *is* intended it is explicit —
 
 | Interface | Method | Fires | May change |
 | --- | --- | --- | --- |
-| `PageResolvedHook` | `OnPageResolved` | After routing, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch three hooks, not six" below) | nothing |
-| `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** | nothing |
-| `AfterRenderHook` | `OnAfterRender` | After a successful render. **Pages only** | `ev.HTML` |
+| `PageResolvedHook` | `OnPageResolved` | After routing, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch four hooks, not seven" below) | nothing |
+| `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** — including an error page, and a page an action answers with | nothing |
+| `AfterRenderHook` | `OnAfterRender` | After a successful render. **Pages only**, on the same terms | `ev.HTML` |
+| `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
 | `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored — for a page or a document alike | `ev.Skip`, `ev.TTL`, `ev.Tags` |
 | `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike | nothing |
 | `ErrorHook` | `OnError` | On any failure while serving a request — a page, a document, or a mounted asset alike | nothing |
@@ -195,25 +201,28 @@ Two consequences of where `OnAfterRender` sits are worth stating plainly:
   cached, so the post-processing is already baked into the stored bytes. A hook
   that needs to run per request — injecting a nonce, a per-visitor token — must
   not be combined with a cacheable strategy on that page.
-- **A rendered error page does not run it at all.** The error path renders the
-  error page directly rather than through the request's render pipeline.
+- **A rendered error page runs it too**, and `OnBeforeRender` before it (since
+  v0.7.0), so the 404 a server answers with is minified and annotated like the
+  `404.html` an export writes. So does a page an action answers with — a form
+  re-rendered with its validation errors is a page. Neither runs `OnPageResolved`:
+  nothing was resolved to them.
 
-### Documents dispatch three hooks, not six
+### Documents dispatch four hooks, not seven
 
-A document (`collage.NewDocument`) dispatches `OnCacheWrite`,
-`OnCacheInvalidate`, and `OnError`. It does **not** dispatch `OnPageResolved`,
-`OnBeforeRender`, or `OnAfterRender` — those three are about a render, and a
-document handler is not one: `AfterRenderEvent.HTML` would be a lie for a zip
-file or a JPEG, and there is no `*Page` for `PageResolvedEvent.Page` to carry.
-The accepted consequence is explicit: **a plugin cannot post-process a document
-body.** A plugin that stamps every page from `OnAfterRender` stamps nothing on a
-sitemap. `ErrorEvent.Page` is `nil` for a document failure — the event's `Path`
-already identifies the route, and the framework's own log line names the
-document. See `docs/documents.md` for the full reasoning; this table and that
-page are kept in agreement on it.
+A document (`collage.NewDocument`) dispatches `OnDocumentRendered`,
+`OnCacheWrite`, `OnCacheInvalidate`, and `OnError`. It does **not** dispatch
+`OnPageResolved`, `OnBeforeRender`, or `OnAfterRender` — those three are about a
+page render, and a document handler is not one: `AfterRenderEvent.HTML` would be a
+lie for a zip file or a JPEG, and there is no `*Page` for `PageResolvedEvent.Page`
+to carry. A plugin that post-processes output implements `OnDocumentRendered` for
+documents (see [Documents](#documents) below); one that stamps every page from
+`OnAfterRender` alone stamps nothing on a sitemap. `ErrorEvent.Page` is `nil` for
+a document failure — the event's `Path` already identifies the route, and the
+framework's own log line names the document. See `docs/documents.md` for the full
+reasoning; this table and that page are kept in agreement on it.
 
 **`CacheWriteEvent.Page` is `nil` for a document too**, and for the same reason:
-nothing rendered it from a page. `OnCacheWrite` is one of the three hooks a
+nothing rendered it from a page. `OnCacheWrite` is one of the four hooks a
 document *does* dispatch, so this is the one nil a plugin written for pages will
 actually meet:
 
@@ -248,7 +257,8 @@ one sentinel for every such status), `collage.ErrMaxDepthExceeded`,
 
 `ErrorEvent.Stage` names where in the pipeline the failure happened (`"route"`,
 `"not_found"`, `"page_resolved"`, `"before_render"`, `"render"`,
-`"after_render"`, `"cache_write"`, `"error_page"`, `"asset"`). It is
+`"after_render"`, `"cache_write"`, `"error_page"`, `"panic"`, `"asset"`, and
+`"handler"` for a handler mounted with `app.Handle` answering 5xx). It is
 caller-defined rather than an enum. `"error_page"` is the one worth alerting on:
 it means the page that reports failures failed, which nobody finds out about
 otherwise, because the client still receives a plausible-looking error page.
@@ -259,8 +269,8 @@ Hooks are dispatched in **registration order**. Every hook call is panic-guarded
 a panicking hook fails like a returning-an-error hook rather than taking the
 process down.
 
-- `OnPageResolved`, `OnBeforeRender`, `OnAfterRender` — the first error stops
-  dispatch and fails the request with a 500.
+- `OnPageResolved`, `OnBeforeRender`, `OnAfterRender`, `OnDocumentRendered` — the
+  first error stops dispatch and fails the request with a 500.
 - `OnCacheWrite` — an error (or `ev.Skip`) suppresses the cache write, and the
   request still succeeds. The page has already rendered; serving it uncached beats
   turning a cache problem into a 500.
@@ -270,8 +280,8 @@ process down.
   remaining plugins. An error handler that itself errors must not recurse into
   another round of error handling.
 
-For `OnAfterRender` and `OnCacheWrite`, later plugins see what earlier ones
-changed.
+For `OnAfterRender`, `OnDocumentRendered` and `OnCacheWrite`, later plugins see
+what earlier ones changed.
 
 ## Lifecycle
 
@@ -280,8 +290,9 @@ changed.
    registered pages. A nil plugin, an empty name, and a duplicate name are
    rejected with `collage.ErrNilPlugin`, `collage.ErrEmptyPluginName`, and
    `collage.ErrDuplicatePlugin`.
-2. `Init` — once, in registration order, when the handler is built (which is what
-   `Handler()` and `ListenAndServe()` both do first). An `Init` that fails aborts
+2. `Init` — once, in registration order, when the application starts: what
+   `Start()`, `Handler()`, `ListenAndServe()`, `RenderPath` and
+   `RenderDocumentPath` — and so a static build — all do first, memoised. An `Init` that fails aborts
    startup and rolls back: every already-initialised plugin gets `Shutdown`, in
    reverse order, and the failing plugin does not (it never finished
    initialising).
@@ -296,10 +307,16 @@ runs as part of starting.
 
 ## Commands
 
-A registered command reaches `app.Commands()`, and the CLI dispatches it by name
-alongside the built-ins. A command must not shadow a built-in (`new`, `dev`,
-`build`, `version`, `help`): the CLI refuses the whole invocation rather than
-silently dropping the offender. See [the CLI](cli.md).
+A registered command reaches `app.Commands()`, and your own `main` dispatches it
+by name with `collage.DispatchCommands` — run as `go run . <command>`, because the
+`collage` binary never loads your plugins, and so never sees their commands. A
+scaffolded `main.go` already does this. A command with an empty name, or a name
+another command already holds, is refused at `RegisterCommand`
+(`collage.ErrEmptyCommandName`, `collage.ErrDuplicateCommand`). Name it something
+other than the binary's built-ins (`new`, `dev`, `build`, `export`, `serve`,
+`version`, `help`) all the same: `go run . build` and `collage build` doing
+different things is a trap for whoever types the wrong one. See
+[the CLI](cli.md#plugin-commands).
 
 ```go
 for _, cmd := range app.Commands() {
@@ -379,8 +396,9 @@ sitemap, feed and JSON endpoint.
 
 ### Static builds
 
-The render hooks fire during a static build too, and plugin `Init` runs before the
-first page is rendered. `RenderPath` goes through startup, memoised, so a build
+The render hooks fire during a static build too — `OnBeforeRender` and
+`OnAfterRender` around every page, `OnDocumentRendered` on every document — and
+plugin `Init` runs before the first page is rendered. `RenderPath` goes through startup, memoised, so a build
 renders in the state a served render renders in.
 
 That is not a nicety. Before it, a built site was not what the server served:

@@ -29,24 +29,46 @@ image can be the binary and nothing else:
 
 `collage build -i` writes this into `bin/`, beside the binary — so the command is
 `docker build -f bin/Dockerfile .`, which the build output prints. It is reproduced
-here so you can read it before you run it.
+here, for a project named `mysite` built with Go 1.26, so you can read it before you
+run it; the file it writes names your project and the Go version that built it.
 
 ```dockerfile
+# Built by "collage build -i".
+#
+# Two stages, and the second one holds the binary and nothing else: a collage
+# project embeds its templates and its static files, so there is nothing beside
+# the binary to copy. CGO is off, which is what makes the binary static enough
+# for a distroless base.
 FROM golang:1.26 AS build
 WORKDIR /src
+# Dependencies first, so editing your own code does not re-download them. If
+# your go.mod has a replace directive pointing at a path in this repository,
+# move "COPY . ." above this line — the replaced module is not here yet, and
+# go mod download will say so.
+COPY go.mod go.sum* ./
+RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /mysite .
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /mysite .
 
 FROM gcr.io/distroless/static-debian12
-COPY --from=build /mysite /mysite
+# WORKDIR matters: the rendered-page cache is a path, so it lands wherever the
+# process was started. Everything else about this project travels in the binary.
 WORKDIR /srv
+COPY --from=build /mysite /usr/local/bin/mysite
 ENV HOST=0.0.0.0 PORT=8080
+# Set this to at least 32 random bytes, kept with your other secrets. Without
+# it a key is generated per process, and every form submitted before a restart
+# is refused after it.
+# ENV COLLAGE_CSRF_KEY=
 EXPOSE 8080
-ENTRYPOINT ["/mysite"]
+ENTRYPOINT ["/usr/local/bin/mysite"]
 ```
 
 `CGO_ENABLED=0` because collage and the standard library need no C, and a static
-binary is what makes the second stage able to be `distroless/static`.
+binary is what makes the second stage able to be `distroless/static`. The
+`COLLAGE_CSRF_KEY` line is left for you; supplying it from your platform's secret
+store rather than writing it into the image keeps it out of every copy of the
+image.
 
 Two things that are only true because the project embeds its files: the image needs
 no `COPY` of templates or assets, and nothing breaks if the container's working
@@ -65,8 +87,10 @@ COLLAGE_CSRF_KEY=$(head -c 32 /dev/urandom | base64)
 ```
 
 Keep it with your other secrets, and keep it the same across every instance and
-across restarts. Changing it invalidates outstanding forms and the page cache, which
-is correct and worth knowing before you rotate it during traffic.
+across restarts. Changing it invalidates outstanding forms, and every cached page
+carrying a form renders again on its next request — pages without one are
+unaffected. That is correct, and worth knowing before you rotate it during
+traffic.
 
 ## Signals and shutdown
 
@@ -121,7 +145,7 @@ A cache it cannot write to is not an error — the write fails, the page is serv
 and the next request renders it again. Quiet and slow rather than broken, which is
 the right failure for a cache and the wrong one to leave in place unnoticed.
 
-Two pages declare how they are cached, and the declaration is the whole mechanism:
+Pages declare how they are cached, and the declaration is the whole mechanism:
 
 ```go
 Static()               // render once, serve until invalidated
@@ -139,9 +163,12 @@ See [caching](caching.md).
 
 ## Health checks
 
-A scaffolded project answers `/healthz` with `{"status":"ok"}`. It is a document
-rather than a page — bytes and a content type, no templates — so a health check
-cannot start failing because a template did.
+A project scaffolded with the demos (`collage new`, not `collage new -minimal`)
+answers `/healthz` with JSON — `{"status": "ok", "date": "..."}`, the current time
+in UTC — from `documents/health.go`. It is a document rather than a page — bytes and
+a content type, no templates — so a health check cannot start failing because a
+template did. A `-minimal` project has no `/healthz`; copy that file, or write the
+few lines it takes, before pointing a platform at it.
 
 Point your platform's liveness check at it. It reports that the process is up and
 serving, which is what a liveness check is for; a readiness check that also wants to
@@ -166,9 +193,10 @@ because it is never worth caching. A site exported without one answers an unknow
 URL with whatever the host decided to show — somebody else's page, in somebody
 else's language, with none of the navigation a reader needs to get back.
 
-Pages declared `Dynamic()` are skipped and named, and a
-page carrying a form is refused outright — a form needs somewhere to post to, and a
-static host is not it. See [actions](actions.md).
+Pages declared `Dynamic()` are skipped and named, and so is a page carrying a form,
+with the reason — a form needs somewhere to post to, and a static host is not it.
+The one exception is the not-found page, which a static host needs as a file: one
+carrying a form fails the export. See [actions](actions.md).
 
 Look at it before you deploy it:
 

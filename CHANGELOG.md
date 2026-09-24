@@ -2,10 +2,74 @@
 
 ## Unreleased
 
+Found writing the documentation site against the source.
+
+### Changed
+
+- **The disk cache's namespace is the build alone.** It included the forgery key,
+  which emptied the cache on every key change — and on every restart of a site with
+  no `Security.CSRFKey`, forms or not, since a generated key differs every run. A
+  stored page carrying another key's marker is now a miss instead, rendered again;
+  a page without a form survives. The startup warning that a missing key starts the
+  disk cache empty is gone with it.
+- **One URL per page per locale.** `/en/about`, the default locale's own prefix, and
+  `/TR/hakkinda`, another spelling of a supported one, redirect permanently to
+  `/about` and `/tr/hakkinda` — `301`, or `308` for anything but `GET` and `HEAD`,
+  with the query kept. They were second URLs for one page.
+- **A document in a non-default locale is exported under its prefix**:
+  `<OutDir>/tr/feed.xml`, as it is served. It was written to the bare path — a 404 on
+  a static host — and one pattern in two locales collided, one of them skipped.
+- **A builder's mistakes are refused at registration** whether or not anyone called
+  `BuildErr`. A slot declared twice or a fragment bound to an undeclared slot,
+  anywhere in the tree, now fails `RegisterPage` by name; `RegisterDocument` does the
+  same for a document.
+
+### Added
+
 - **`Config.DevWatch`** names directories, besides the templates and the mounts,
   whose changes reload a development page — content an application reads from disk,
   such as Markdown. Found building the documentation site, whose pages are Markdown
   and did not reload when edited.
+- **`rc.HoistAlternate(hreflang, href)`**, one `<link rel="alternate">` per
+  language, for a page's translations.
+- **`SkipRecord.Err`** carries the skip's sentinel — `ErrNotStatic`,
+  `ErrDynamicPathUnresolved`, `ErrUnresolvedToken`, `ErrDuplicateOutputPath` — for a
+  caller that acts on the kind of skip rather than reading the sentence.
+- **More sentinels exported** for `errors.Is`: `ErrUnknownAsset`, the action
+  registration errors, `ErrCSRFMissing`, `ErrCSRFMismatch`, `ErrCSRFInvalid`,
+  `ErrCSRFDisabled`, `ErrDictOddArgs`, `ErrDictKeyNotString`, `ErrMethodNotAllowed`,
+  `ErrNoMountForAsset` and `ErrTemplateEscapesRoot`. Serving and building share one
+  `ErrEmptyRender`.
+- **A plugin's commands reach a scaffolded project.** The `collage` binary never
+  loads a project's plugins, and the scaffolded `main.go` never called
+  `DispatchCommands`; it now does, with the first word after its flags —
+  `go run . <command>`.
+
+### Fixed
+
+- **A page an action answers with runs the render hooks**, so a validation page is
+  minified and annotated like any other. A document's handler gets `collage.Cached`
+  and `rc.Asset`, which were `Once` and an error there.
+- **`Security.CSRFFieldName` renames the field `{{csrfToken}}` renders**, not only
+  the one the verifier reads — a form using `{{csrfToken}}` under a renamed field
+  was refused on submission.
+- **A form over the body limit is a 413**, not a 403, with forgery protection on:
+  the body's size error was discarded for a body that is not multipart.
+- **The development 500 page names the fragment where a failure started**, not the
+  layout it passed through on the way up.
+- **A document that reads the query gets the export warning** a page does.
+- **A scaffolded page's own title replaces the site's.** The layouts wrote a literal
+  `<title>` beside `{{hoist "head"}}`, so a page calling `rc.HoistTitle` had two; the
+  layout now declares the site's name with `HoistTitle`, which a page's declaration
+  replaces.
+
+### Docs
+
+- The reference notes and doc comments caught up with the code: the disk cache and
+  `Cache.Type`, template functions rebound per render, `Template.FS` in development,
+  every method of `Host`, the hooks that error pages, actions, documents and static
+  builds run, the CLI's flags and commands, the exported paths of other locales, the
+  Dockerfile `collage build -i` writes, and which scaffold has `/healthz`.
 
 ## v0.9.0
 

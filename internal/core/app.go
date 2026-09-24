@@ -482,9 +482,11 @@ func New(cfg Config) (*App, error) {
 	metrics := observability.MetricsOrNoop(cfg.Observability.Metrics)
 	tracer := observability.TracerOrNoop(cfg.Observability.Tracer)
 
-	// Before the cache, deliberately: a stored body carries the forgery marker,
-	// which is derived from the key, so the key is part of what makes a cached
-	// body still correct. buildCache mixes it into the namespace.
+	// A stored body carries the forgery marker, which is derived from the key, so
+	// the key is part of what makes a cached body still correct. It is not part of
+	// the cache's namespace, though: a body carrying another key's marker is
+	// treated as a miss where it is read (see httpx.Handler.cacheGet and
+	// buildCache).
 	guard, err := buildCSRF(cfg.Security, logger)
 	if err != nil {
 		return nil, fmt.Errorf("collage: csrf: %w", err)

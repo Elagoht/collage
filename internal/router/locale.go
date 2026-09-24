@@ -15,8 +15,8 @@ import (
 // that wants to negotiate does so in its own middleware, and tells the cache
 // with collage.Vary.
 type LocaleOptions struct {
-	// Default is the locale used when no other source resolves a supported one.
-	// It is always treated as supported, even if absent from Supported.
+	// Default is the locale of a path with no supported locale prefix. It is
+	// always treated as supported, even if absent from Supported.
 	Default string
 	// Supported lists the locales, besides Default, a request may resolve to.
 	Supported []string

@@ -173,9 +173,11 @@ contribute pages, documents, mounts and template functions of its own. See
 - **No silent failures.** A fragment naming a template that does not exist, a
   page that does not validate, a page referencing an error page that was never
   registered — all of these fail at startup, by name, not on the first request.
-- **Deterministic output.** Fragments render strictly sequentially, depth-first,
-  so the same page rendered twice from the same inputs is byte-identical. That is
-  what makes caching and ETags sound.
+- **Deterministic output.** Templates execute in order, depth-first; sibling
+  fragments fetch their data concurrently, but what they hoist is placed by
+  declaration order, not by which finished first. So the same page rendered twice
+  from the same inputs is byte-identical. That is what makes caching and ETags
+  sound.
 - **A failure has a defined blast radius.** A `Required()` fragment's failure
   fails the page; an optional one falls back or renders nothing. A panic in a data
   handler or a template fails that fragment, not the process.
@@ -316,9 +318,9 @@ Details in [docs/caching.md](docs/caching.md),
 
 | Document | Covers |
 | --- | --- |
-| [docs/architecture.md](docs/architecture.md) | Package layout, the request lifecycle, why rendering is sequential, why plugins get a `Host` |
+| [docs/architecture.md](docs/architecture.md) | Package layout, the request lifecycle, why data is fetched concurrently but markup written in order, why plugins get a `Host` |
 | [docs/fragments.md](docs/fragments.md) | Fragments, slots, layouts, data handlers, timeouts, the failure policy, template functions |
-| [docs/documents.md](docs/documents.md) | `Document`: non-HTML responses, the handler contract, plain-text errors, the three hooks, static builds |
+| [docs/documents.md](docs/documents.md) | `Document`: non-HTML responses, the handler contract, plain-text errors, the four hooks, static builds |
 | [docs/assets.md](docs/assets.md) | `App.Mount`: `fs.FS` assets, `Range` and ETags, why `os.OpenRoot` rather than `os.DirFS`, and the limitations |
 | [docs/caching.md](docs/caching.md) | Render strategies, the cache key, ETags, `Vary`, dependency tags, invalidation, custom caches |
 | [docs/plugins.md](docs/plugins.md) | The `Plugin` contract, the `Host`, every hook, dispatch and error semantics, lifecycle |

@@ -6,15 +6,15 @@
 //
 // Build renders every static-eligible page through the same render engine the HTTP
 // server uses, by way of Renderer.RenderPath — the same template set, the same
-// fragment tree, the same data handlers, and the same sequential walk.
+// fragment tree, the same data handlers, and the same walk.
 //
-// It does not go through the HTTP handler, and that difference is visible in the
-// output: a static build never runs plugin Init and never fires a render hook, so
-// nothing a PageResolvedHook, BeforeRenderHook, AfterRenderHook, or CacheWriteHook
-// would have contributed appears in the files written here. A plugin that stamps
-// every page from OnAfterRender stamps nothing in a static build. The rendered
-// fragment output is what a live request would produce; whatever the plugin layer
-// adds on top of it is not.
+// It does not go through the HTTP handler, but it does go through startup:
+// RenderPath and RenderDocumentPath run plugin Init first, memoised, and fire
+// BeforeRender and AfterRender around every page and DocumentRendered on every
+// document, so what a plugin contributes to a served page it contributes to a built
+// one. What does not fire is what is about a request or a cache rather than a
+// render: PageResolvedHook (a build is not a request) and CacheWriteHook (a build
+// writes files, not cache entries).
 package build
 
 import (
@@ -60,24 +60,23 @@ var ErrOutputPathCollision = errors.New("collage: two builds target one output p
 // configured output directory.
 var ErrPathEscapesOutDir = errors.New("collage: resolved path escapes the output directory")
 
-// ErrDynamicPathUnresolved is recorded, as a SkipRecord.Reason, when a page's path
-// pattern for a locale contains a "{param}" segment and Options.PathProvider is nil.
-// Such a page has no way to enumerate the concrete paths a static build must write.
+// ErrDynamicPathUnresolved is recorded, as SkipRecord.Err and in SkipRecord.Reason,
+// when a page's path pattern for a locale contains a "{param}" segment and
+// Options.PathProvider is nil — or a document's, and Options.DocumentPathProvider
+// is nil. Such a route has no way to enumerate the concrete paths a static build
+// must write.
 var ErrDynamicPathUnresolved = errors.New("collage: dynamic path pattern requires a path provider")
 
-// ErrDuplicateOutputPath is recorded, as a SkipRecord.Reason, when two document
-// build tasks resolve to the same output file — most often one document whose
-// pattern is registered identically under two locales, which is the form that
-// actually serves both "/sitemap.xml" and "/tr/sitemap.xml". Only one of them is
-// built; the rest are skipped by name rather than racing to overwrite one file.
+// ErrDuplicateOutputPath is recorded, as SkipRecord.Err and in SkipRecord.Reason,
+// when two document build tasks resolve to the same output file — a
+// DocumentPathProvider handing back the same path twice, say. One pattern in two
+// locales is not that: each non-default locale's document is written under its
+// locale's prefix, "/sitemap.xml" and "/tr/sitemap.xml", exactly as they are
+// served. Only one of the colliding tasks is built; the rest are skipped by name
+// rather than racing to overwrite one file.
 //
-// It is a skip and not an error deliberately: the build is correct and complete
-// for every URL the application can distinguish, and the only thing missing is a
-// second copy of one file under a name the application never asked for. Choosing
-// that name would be the builder inventing a URL scheme. It is not
-// ErrDuplicateRoute either — nothing is ambiguous at request time, where the
-// locale is part of the cache key and the two responses differ; the collision
-// exists only on a filesystem, which has no locale.
+// It is a skip and not an error deliberately: the file that is written is the
+// one the URL serves, and the only thing missing is a second copy of it.
 var ErrDuplicateOutputPath = errors.New("collage: two build tasks write the same output path")
 
 // ErrBuildPanic is recorded in Report.Errors when rendering or writing one page
@@ -105,8 +104,9 @@ var ErrEmptyRender = types.ErrEmptyRender
 // is Dynamic(), which says it must not be stored — and a file is stored.
 var ErrNotStatic = errors.New("collage: a Dynamic() route cannot be built statically")
 
-// ErrUnresolvedToken is recorded in Report.Errors when a page rendered for a static
-// build contains a request-forgery token placeholder.
+// ErrUnresolvedToken is the SkipRecord's Err for a page rendered for a static build
+// that contains a request-forgery token placeholder, and is recorded in
+// Report.Errors when that page is the not-found page.
 //
 // A token is per reader, and the thing that replaces the placeholder with one is the
 // running server. A built site has no server: the file would ship with the
@@ -256,9 +256,10 @@ func queryWarning(name string, params []string) WarningRecord {
 	}
 }
 
-// WarningRecord describes a page the build wrote, but not all of.
+// WarningRecord describes a page or document the build wrote, but not all of.
 type WarningRecord struct {
-	// Page is the page's Name.
+	// Page is the page's or document's Name, named Page for the reason
+	// SkipRecord.Page is.
 	Page string
 	// Reason explains what the written file does not contain.
 	Reason string
@@ -292,9 +293,9 @@ type Report struct {
 	// Skipped lists every page or document, or locale of one, the build could not
 	// produce statically.
 	Skipped []SkipRecord
-	// Warnings lists every page that was written but is not the whole of what
-	// the served page is — one whose content depends on a query string, which a
-	// file has no way to carry.
+	// Warnings lists every page or document that was written but is not the
+	// whole of what the served one is — one whose content depends on a query
+	// string, which a file has no way to carry.
 	Warnings []WarningRecord
 	// Errors lists every render, path-resolution, or write failure encountered.
 	// Build's returned error is errors.Join of exactly these, so a caller that
