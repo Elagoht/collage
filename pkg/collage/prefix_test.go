@@ -13,8 +13,8 @@ import (
 )
 
 // prefixApp is an English and Turkish site whose English pages carry "/en" too:
-// a home page, an about page with a form, a robots.txt and a search index in
-// each language.
+// a home page, an about page with a form, a robots.txt at the root and a search
+// index in each language.
 func prefixApp(t *testing.T, trailing bool) *collage.App {
 	t.Helper()
 	app, err := collage.New(&collage.Config{
@@ -56,7 +56,7 @@ func prefixApp(t *testing.T, trailing bool) *collage.App {
 	}
 	text := func(context.Context, *collage.RenderContext) ([]byte, []string, error) { return []byte("ok"), nil, nil }
 	for _, d := range []*collage.Document{
-		collage.NewDocument("robots", "text/plain").WithPath("en", "/robots.txt").WithHandler(text).Static().Build(),
+		collage.NewDocument("robots", "text/plain").AtRoot("/robots.txt").WithHandler(text).Static().Build(),
 		collage.NewDocument("search", "application/json").WithPath("en", "/search.json").WithPath("tr", "/search.json").WithHandler(text).Static().Build(),
 	} {
 		if err := app.RegisterDocument(d); err != nil {
@@ -66,7 +66,8 @@ func prefixApp(t *testing.T, trailing bool) *collage.App {
 	return app
 }
 
-// Links to the default locale's pages carry its prefix; its documents' do not.
+// Links to the default locale's pages and documents carry its prefix; a link to a
+// document at the root does not, from any locale.
 func TestPrefixDefault_Links(t *testing.T) {
 	app := prefixApp(t, true)
 	got := body(t, app.Handler(), "/en/about/")
@@ -75,11 +76,14 @@ func TestPrefixDefault_Links(t *testing.T) {
 		`id="home-en" href="/en/"`,
 		`id="switch" href="/tr/hakkinda/"`,
 		`id="robots" href="/robots.txt"`,
-		`id="search" href="/search.json"`,
+		`id="search" href="/en/search.json"`,
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("page has no %s:\n%s", want, got)
 		}
+	}
+	if tr := body(t, app.Handler(), "/tr/hakkinda/"); !strings.Contains(tr, `id="robots" href="/robots.txt"`) || !strings.Contains(tr, `id="search" href="/tr/search.json"`) {
+		t.Errorf("Turkish page links robots.txt or its search index wrong:\n%s", tr)
 	}
 	if url, _ := app.URL("home", "en", nil); url != "/en/" {
 		t.Errorf(`URL("home", "en") = %q, want "/en/"`, url)
@@ -89,9 +93,8 @@ func TestPrefixDefault_Links(t *testing.T) {
 	}
 }
 
-// A page without the prefix, the root included, redirects to it — in one hop,
-// with the site's slash; a document with the default prefix redirects to its
-// address without.
+// A page or document without the prefix, the root included, redirects to it — in
+// one hop, with a page's slash; a document at the root redirects the other way.
 func TestPrefixDefault_Redirects(t *testing.T) {
 	for _, c := range []struct {
 		trailing bool
@@ -102,6 +105,7 @@ func TestPrefixDefault_Redirects(t *testing.T) {
 		{true, "/about/?ref=x", "/en/about/?ref=x"},
 		{true, "/en", "/en/"},
 		{true, "/en/robots.txt", "/robots.txt"},
+		{true, "/search.json", "/en/search.json"},
 		{true, "/EN/about/", "/en/about/"},
 		{false, "/", "/en"},
 		{false, "/about/", "/en/about"},
@@ -114,18 +118,22 @@ func TestPrefixDefault_Redirects(t *testing.T) {
 		}
 	}
 	app := prefixApp(t, true)
-	for _, target := range []string{"/en/", "/en/about/", "/tr/", "/robots.txt", "/search.json", "/tr/search.json"} {
+	for _, target := range []string{"/en/", "/en/about/", "/tr/", "/robots.txt", "/en/search.json", "/tr/search.json"} {
 		if rec := request(app.Handler(), http.MethodGet, target); rec.Code != http.StatusOK {
 			t.Errorf("GET %s = %d, want 200", target, rec.Code)
 		}
+	}
+	if rec := request(app.Handler(), http.MethodGet, "/tr/robots.txt"); rec.Code != http.StatusNotFound {
+		t.Errorf("GET /tr/robots.txt = %d, want 404: a document at the root is in no locale", rec.Code)
 	}
 	if rec := request(app.Handler(), http.MethodPost, "/about"); rec.Code == http.StatusMovedPermanently || rec.Code == http.StatusPermanentRedirect {
 		t.Errorf("POST /about was redirected to %q; an action answers where it was posted", rec.Header().Get("Location"))
 	}
 }
 
-// The export writes the default locale's pages under its directory, its documents
-// at the root, and a root page that sends the reader to its home.
+// The export writes the default locale's pages and documents under its directory,
+// a document at the root at the root, and a root page that sends the reader to
+// the default locale's home.
 func TestPrefixDefault_Export(t *testing.T) {
 	app := prefixApp(t, true)
 	out := t.TempDir()
@@ -142,7 +150,7 @@ func TestPrefixDefault_Export(t *testing.T) {
 			t.Errorf("%s is not the page: %v\n%s", file, err, data)
 		}
 	}
-	for _, file := range []string{"robots.txt", "search.json", "tr/search.json"} {
+	for _, file := range []string{"robots.txt", "en/search.json", "tr/search.json"} {
 		if _, err := os.Stat(filepath.Join(out, file)); err != nil {
 			t.Errorf("%s was not written: %v", file, err)
 		}

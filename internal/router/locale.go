@@ -23,11 +23,10 @@ type LocaleOptions struct {
 	// DisablePathLocale disables resolving the locale from a leading path
 	// segment, such as "/tr/blog/post".
 	DisablePathLocale bool
-	// PrefixDefault gives Default's pages a prefix of their own, as every other
-	// locale's have: "/en/blog/post". A page requested without one is redirected
-	// to the address with it; a document in Default keeps no prefix, and one
-	// requested with it is redirected to the address without. Ignored when
-	// DisablePathLocale is set.
+	// PrefixDefault gives Default a prefix of its own, as every other locale has:
+	// "/en/blog/post". A page or document requested without one is redirected to
+	// the address with it — except a document at the root (types.RootLocale),
+	// whose one address is the bare one. Ignored when DisablePathLocale is set.
 	PrefixDefault bool
 }
 

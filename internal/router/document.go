@@ -8,8 +8,14 @@ import (
 
 // RegisterDocument implements Router.
 func (rt *router) RegisterDocument(doc *types.Document) error {
-	for _, locale := range doc.Locales() {
-		pattern := doc.Paths[locale]
+	for _, key := range doc.Locales() {
+		pattern := doc.Paths[key]
+		// A document outside every locale is matched where the default locale's
+		// bare paths are; Match keeps a prefix off it.
+		locale := key
+		if key == types.RootLocale {
+			locale = rt.localeOptions.Default
+		}
 
 		segments, err := parsePattern(pattern)
 		if err != nil {

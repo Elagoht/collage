@@ -283,7 +283,8 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 
 	locale, remaining := resolveLocale(path, rt.localeOptions)
 	// bare is a request for the default locale without its prefix, on a router
-	// whose default locale has one: right for a document, a redirect for a page.
+	// whose default locale has one: right for a document at the root, a redirect
+	// for anything else.
 	prefixDefault := rt.localeOptions.PrefixDefault && !rt.localeOptions.DisablePathLocale
 	bare := prefixDefault && remaining == path
 
@@ -336,10 +337,17 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 					}
 				}
 			}
-			// A document is a file with one address, and in the default locale
-			// that address has no prefix: /sitemap.xml, not /en/sitemap.xml.
-			if ok && doc != nil && prefixDefault && !bare && locale == rt.localeOptions.Default {
-				return rt.canonical(req, locale, remaining, permanent(req)), nil
+			// A document under PrefixDefault is a page's equal: /en/sitemap.xml,
+			// and the bare address redirects there — except one at the root,
+			// /robots.txt, whose only address is the bare one.
+			if ok && doc != nil && prefixDefault && locale == rt.localeOptions.Default {
+				_, rooted := doc.RootPath()
+				switch {
+				case rooted && !bare:
+					return rt.canonical(req, locale, remaining, permanent(req)), nil
+				case !rooted && bare:
+					return rt.canonical(req, locale, "/"+locale+path, permanent(req)), nil
+				}
 			}
 			if !ok {
 				return &MatchResult{

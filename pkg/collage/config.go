@@ -351,8 +351,9 @@ type LocaleConfig struct {
 	// writes Default's pages under en/ too, and at its root a page that sends the
 	// reader to Default's home.
 	//
-	// Documents are files, and keep their Default address without a prefix:
-	// "/robots.txt" and "/sitemap.xml" must be at the root, and "/en/sitemap.xml"
+	// Documents are prefixed like pages — "/en/sitemap.xml" beside
+	// "/tr/sitemap.xml" — except one built with DocumentBuilder.AtRoot, like
+	// "/robots.txt", whose one address is the bare one: "/en/robots.txt"
 	// redirects there. Ignored when DisablePathLocale is set.
 	PrefixDefault bool
 }

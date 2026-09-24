@@ -635,11 +635,12 @@ func localeOutputPath(locale, defaultLocale, urlPath string) string {
 	return "/" + locale + urlPath
 }
 
-// pageOutputPath is where a page for locale at urlPath is written: under its
-// locale's directory, as localeOutputPath says, and under the default locale's
-// too when that locale's pages carry its prefix.
+// pageOutputPath is where a page or document for locale at urlPath is written:
+// under its locale's directory, as localeOutputPath says, and under the default
+// locale's too when that locale carries its prefix. A document at the root has
+// the empty locale and is written at its bare path.
 func (b *Builder) pageOutputPath(locale, defaultLocale, urlPath string) string {
-	if b.app.PrefixDefault() && (locale == "" || locale == defaultLocale) {
+	if b.app.PrefixDefault() && locale == defaultLocale {
 		if urlPath == "/" {
 			return "/" + defaultLocale
 		}

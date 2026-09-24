@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.14.1
+
+### Added
+
+- **`DocumentBuilder.AtRoot(pattern)`**: a document outside every locale, at its
+  bare path in every configuration and rendered in the default locale — for the
+  site's own files, `/robots.txt`, `/llms.txt`, `/.well-known/…`. A link built by
+  name reaches it from a page in any language.
+
+### Changed
+
+- **Under `PrefixDefault`, documents are prefixed like pages.** v0.14.0 kept every
+  default-locale document at its bare path, generalising from `robots.txt`, which
+  is the one file that must be at the root; a sitemap or search index per language
+  (`/en/sitemap.xml` beside `/tr/sitemap.xml`) could not be built. A document is
+  now at `/en/…`, its bare path redirects there, and one that belongs at the root
+  says so with `AtRoot`.
+
 ## v0.14.0
 
 ### Added

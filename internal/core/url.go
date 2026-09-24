@@ -51,6 +51,16 @@ func (a *App) URL(name, locale string, params map[string]string) (string, error)
 		pattern, found = page.PathFor(locale)
 	case document != nil:
 		pattern, found = document.PathFor(locale)
+		if !found {
+			// The site's own files are in no locale, so reachable from every one.
+			if pattern, found = document.RootPath(); found {
+				path, err := router.BuildPath(pattern, params)
+				if err != nil {
+					return "", fmt.Errorf("collage: URL for %q: %w", name, err)
+				}
+				return path, nil
+			}
+		}
 	default:
 		return "", fmt.Errorf("%w: %q", types.ErrUnknownRoute, name)
 	}
@@ -62,7 +72,7 @@ func (a *App) URL(name, locale string, params map[string]string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("collage: URL for %q: %w", name, err)
 	}
-	path = a.prefixLocale(path, locale, page != nil)
+	path = a.prefixLocale(path, locale)
 	// A page's, not a document's: "/sitemap.xml/" is not a file anyone serves.
 	if page != nil && a.cfg.TrailingSlash && !strings.HasSuffix(path, "/") {
 		path += "/"
@@ -79,11 +89,10 @@ func (a *App) localeReachable(locale string) bool {
 }
 
 // prefixLocale puts path under locale's prefix, which the default locale does
-// not have — except for a page's path under PrefixDefault; a document has one
-// address in the default locale, without a prefix. The root is "/tr" rather than
+// not have unless PrefixDefault gives it one. The root is "/tr" rather than
 // "/tr/", the form the router strips to "/".
-func (a *App) prefixLocale(path, locale string, isPage bool) string {
-	if locale == a.cfg.Locale.Default && !(isPage && a.PrefixDefault()) {
+func (a *App) prefixLocale(path, locale string) string {
+	if locale == a.cfg.Locale.Default && !a.PrefixDefault() {
 		return path
 	}
 	if path == "/" {

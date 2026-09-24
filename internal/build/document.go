@@ -78,7 +78,9 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 		}
 
 		for _, locale := range doc.Locales() {
-			if restrictLocales {
+			// A document at the root is the site's, so in every build; Locales
+			// restricts languages, and it is in none.
+			if restrictLocales && locale != types.RootLocale {
 				if _, ok := allowedLocales[locale]; !ok {
 					continue
 				}
@@ -128,7 +130,7 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 // document to its bare path put it where the server answers the default locale,
 // and left the URL that serves it a 404 on a static host.
 func (b *Builder) documentURL(task documentTask) string {
-	return localeOutputPath(task.locale, b.app.DefaultLocale(), task.path)
+	return b.pageOutputPath(task.locale, b.app.DefaultLocale(), task.path)
 }
 
 // dedupeDocumentTargets drops every task whose output file another task has

@@ -78,6 +78,18 @@ func (b *DocumentBuilder) WithPath(locale, pattern string) *DocumentBuilder {
 	return b
 }
 
+// AtRoot serves the document at pattern outside every locale: with no prefix,
+// whatever the locale configuration — LocaleConfig.PrefixDefault included — and
+// rendered in the default locale. It is for the files that belong to the site
+// rather than to a language, which clients look for at a fixed address:
+// /robots.txt, /llms.txt, /.well-known/security.txt.
+//
+// A link built by name reaches it from a page in any locale.
+func (b *DocumentBuilder) AtRoot(pattern string) *DocumentBuilder {
+	b.document.Paths[types.RootLocale] = pattern
+	return b
+}
+
 // WithHandler sets the function that produces the document's body.
 func (b *DocumentBuilder) WithHandler(handler DocumentHandlerFunc) *DocumentBuilder {
 	b.document.Handler = handler
