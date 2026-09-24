@@ -410,6 +410,11 @@ func resolveSlots(rc *types.RenderContext, f *types.Fragment) (slotFills, error)
 			if child == nil {
 				return nil, fmt.Errorf("%w: fragment %q slot %q: the resolver returned a nil fragment", types.ErrNilFragment, f.Name, name)
 			}
+			// Registration never saw these fragments, so their builders' mistakes
+			// are checked here, where they are first used.
+			if err := types.FragmentBuildErr(child); err != nil {
+				return nil, fmt.Errorf("fragment %q slot %q: the resolver returned %q, which was built with errors: %w", f.Name, name, child.Name, err)
+			}
 		}
 		if fills == nil {
 			fills = make(slotFills)

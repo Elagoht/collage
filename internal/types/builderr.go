@@ -13,6 +13,14 @@ func (f *Fragment) setBuildErr(err error) { f.buildErr = err }
 func (p *Page) setBuildErr(err error)     { p.buildErr = err }
 func (d *Document) setBuildErr(err error) { d.buildErr = err }
 
+// FragmentBuildErr returns what f's builder recorded, for f alone.
+func FragmentBuildErr(f *Fragment) error {
+	if f == nil {
+		return nil
+	}
+	return f.buildErr
+}
+
 // DocumentBuildErr returns what d's builder recorded.
 func DocumentBuildErr(d *Document) error {
 	if d == nil {

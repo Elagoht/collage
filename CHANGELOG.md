@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.10.0
 
 Found writing the documentation site against the source.
 
@@ -22,7 +22,9 @@ Found writing the documentation site against the source.
 - **A builder's mistakes are refused at registration** whether or not anyone called
   `BuildErr`. A slot declared twice or a fragment bound to an undeclared slot,
   anywhere in the tree, now fails `RegisterPage` by name; `RegisterDocument` does the
-  same for a document.
+  same for a document. A page's own action without a handler, or with a name
+  already taken, is refused there too rather than on its first request; a fragment
+  a slot resolver returns is checked when it first renders.
 
 ### Added
 
@@ -35,7 +37,7 @@ Found writing the documentation site against the source.
 - **`SkipRecord.Err`** carries the skip's sentinel — `ErrNotStatic`,
   `ErrDynamicPathUnresolved`, `ErrUnresolvedToken`, `ErrDuplicateOutputPath` — for a
   caller that acts on the kind of skip rather than reading the sentence.
-- **More sentinels exported** for `errors.Is`: `ErrUnknownAsset`, the action
+- **More sentinels exported** for `errors.Is`: `ErrNotStatic`, `ErrUnknownAsset`, the action
   registration errors, `ErrCSRFMissing`, `ErrCSRFMismatch`, `ErrCSRFInvalid`,
   `ErrCSRFDisabled`, `ErrDictOddArgs`, `ErrDictKeyNotString`, `ErrMethodNotAllowed`,
   `ErrNoMountForAsset` and `ErrTemplateEscapesRoot`. Serving and building share one

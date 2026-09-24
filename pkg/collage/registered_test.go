@@ -151,3 +151,44 @@ func TestDev500_NamesTheBrokenFragment(t *testing.T) {
 		t.Errorf("the 500 page does not name recipe-content:\n%s", rec.Body.String())
 	}
 }
+
+// A page's action is held to RegisterAction's rules: one without a handler is
+// refused at registration, not on its first request.
+func TestRegister_APageActionNeedsAHandler(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/x.html": {Data: []byte(`x`)}}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := collage.NewPage("p").WithContent(collage.NewFragment("p", "x.html").Build()).WithPath("en", "/").
+		Dynamic().WithAction(http.MethodPost, nil).Build()
+	if err := app.RegisterPage(page); !errors.Is(err, collage.ErrNoActionHandler) {
+		t.Errorf("RegisterPage = %v, want ErrNoActionHandler", err)
+	}
+}
+
+// A fragment a slot resolver returns never went through registration, so its
+// builder's mistakes are caught when it is first rendered.
+func TestSlotResolver_AResolvedFragmentsBuilderMistakeFailsTheRender(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/x.html": {Data: []byte(`[{{slot "s"}}]`)}}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := collage.NewFragment("broken", "x.html").WithSlot("s", false, false).WithSlot("s", false, false).Build()
+	host := collage.NewFragment("host", "x.html").WithSlot("s", false, true).
+		WithSlotResolver("s", func(*collage.RenderContext) ([]*collage.Fragment, error) { return []*collage.Fragment{broken}, nil }).
+		Build()
+	if err := app.RegisterPage(collage.NewPage("p").WithContent(host).WithPath("en", "/").Dynamic().Build()); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "[[") {
+		t.Errorf("the broken fragment rendered: %q", rec.Body.String())
+	}
+}

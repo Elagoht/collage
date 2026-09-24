@@ -92,6 +92,15 @@ func (a *App) registerPageActions(page *types.Page) error {
 		if bound.Name == "" {
 			bound.Name = page.Name + ":" + methodList(bound.Methods)
 		}
+		// Held to the rules RegisterAction applies, so a page's action without a
+		// handler is refused here, by the sentinel an application can match,
+		// rather than registered and failing on its first request.
+		if bound.Handler == nil {
+			return fmt.Errorf("%w: %q on page %q", ErrNoActionHandler, bound.Name, page.Name)
+		}
+		if _, taken := a.actions[bound.Name]; taken {
+			return fmt.Errorf("%w: %q on page %q", ErrDuplicateAction, bound.Name, page.Name)
+		}
 		if err := a.routes.RegisterAction(&bound); err != nil {
 			return err
 		}
