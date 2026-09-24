@@ -121,7 +121,10 @@ func (hub *reloadHub) subscribe() (chan struct{}, func()) {
 	if hub.stopWatch == nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		hub.stopWatch = cancel
-		go hub.watch(ctx)
+		// Taken here, before the page is told it is connected, rather than
+		// inside the goroutine: a change made the moment the page connects
+		// would otherwise land before the first look and never be seen as one.
+		go hub.watch(ctx, hub.fingerprint())
 	}
 	hub.mu.Unlock()
 
@@ -138,8 +141,7 @@ func (hub *reloadHub) subscribe() (chan struct{}, func()) {
 
 // watch looks at the sources every devReloadInterval and tells every listener
 // when they change.
-func (hub *reloadHub) watch(ctx context.Context) {
-	last := hub.fingerprint()
+func (hub *reloadHub) watch(ctx context.Context, last uint64) {
 	ticker := time.NewTicker(devReloadInterval)
 	defer ticker.Stop()
 	for {

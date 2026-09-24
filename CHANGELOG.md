@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.7.1
+
+- A development page no longer misses a change made the moment it connects. The
+  watcher took its first look from inside the goroutine it started, so a file
+  saved before that look was part of the starting point rather than a change.
+  Found by CI, which caught the race on its first run.
+
 ## v0.7.0
 
 Found moving a real site onto collage.
