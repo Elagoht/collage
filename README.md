@@ -14,6 +14,11 @@ whose handler returns bytes — and **assets**, a mounted `fs.FS` served with
 
 No dependencies: the standard library, and nothing else. Go 1.26.
 
+**Status: pre-1.0.** The API can still change between minor versions. Every
+change that breaks an application is listed first, under **Breaking**, in
+[CHANGELOG.md](CHANGELOG.md), with what to do instead; patch versions never break
+anything. The aim for 1.0 is an API that then stays put.
+
 ## Getting started
 
 Three commands and a site is running.
@@ -43,7 +48,8 @@ collage serve    # serves dist/ the way a static host would
 ```
 
 Editing `templates/pages/home.html` under `collage dev` and reloading shows the
-change. Editing Go code does not — that still needs a restart.
+change. Editing Go code rebuilds and restarts the program — no external watcher —
+and a change that does not compile leaves the last good build running.
 
 Where to look next: `pages/` has one file per page, `fragments/` the layout and the
 demos, `actions/` the API endpoint; `main.go` has the configuration and the routes. The rest of this file is what
@@ -308,7 +314,7 @@ Details in [docs/caching.md](docs/caching.md),
 
 | Document | Covers |
 | --- | --- |
-| [docs/architecture.md](docs/architecture.md) | Package layout, the request lifecycle, why rendering is sequential, why plugins get a `Host` — and the deviations from the original specification |
+| [docs/architecture.md](docs/architecture.md) | Package layout, the request lifecycle, why rendering is sequential, why plugins get a `Host` |
 | [docs/fragments.md](docs/fragments.md) | Fragments, slots, layouts, data handlers, timeouts, the failure policy, template functions |
 | [docs/documents.md](docs/documents.md) | `Document`: non-HTML responses, the handler contract, plain-text errors, the three hooks, static builds |
 | [docs/assets.md](docs/assets.md) | `App.Mount`: `fs.FS` assets, `Range` and ETags, why `os.OpenRoot` rather than `os.DirFS`, and the limitations |
@@ -320,20 +326,18 @@ Details in [docs/caching.md](docs/caching.md),
 | [docs/deployment.md](docs/deployment.md) | Building a binary, containers, signals, TLS, the cache in production, health checks |
 | [docs/cli.md](docs/cli.md) | `collage new`/`dev`/`build`, plugin subcommands, and the static site builder |
 
-`docs/spec/usage-examples.md` holds the canonical examples the original
-architecture spec's public API was defined against; it predates `Document` and
-`Mount` and is not a reference for either — see the docs table above instead.
-
 ## The CLI
 
 ```
-collage new myblog        # scaffold a runnable project
-collage dev               # go run . with COLLAGE_DEV=1
-collage build -out dist   # render the statically-buildable pages to files
+collage new myblog    # scaffold a runnable project
+collage dev           # run it, rebuilding and restarting on every Go change
+collage build         # compile the binary you deploy
+collage export        # render the statically-buildable pages to dist/
+collage serve         # serve dist/ the way a static host would
 ```
 
-## Tests
+## Contributing and security
 
-```
-go test ./... -race -count=1
-```
+[CONTRIBUTING.md](CONTRIBUTING.md) has what a change needs to be merged. A
+vulnerability is reported privately — see [SECURITY.md](SECURITY.md), not an
+issue.

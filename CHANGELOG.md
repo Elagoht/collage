@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **`collage dev` rebuilds and restarts on a Go change**, with no tool to install.
+  It watches what the program is made of — `.go` files, `go.mod`, `go.sum`, the
+  environment file — and never the cache, `dist`, `bin` or hidden directories, so
+  nothing the running program writes sets it off. The new build is made before the
+  old process is stopped: a change that does not compile leaves the last good
+  build serving. See [docs/cli.md](docs/cli.md#rebuilding-on-change).
+- A cancelled child process is interrupted and given ten seconds to drain before
+  it is killed, rather than killed outright.
+- CI runs `staticcheck` and `govulncheck`.
+- The repository has a `SECURITY.md` with a private reporting channel, a
+  `CONTRIBUTING.md`, and a stability statement in the README. The internal
+  planning documents are gone.
+
 ## v0.5.0
 
 ### Breaking
