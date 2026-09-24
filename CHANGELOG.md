@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.4.5
+
+- A fragment or page an action answers with carries the reader's forgery token.
+  It used to ship the cache marker in its place, so a form that replaced itself —
+  and every fragment reached through `WithFragmentPath` — was refused with a 403 on
+  its next submission.
+- The forgery check reads `multipart/form-data`. That is what
+  `fetch(url, {method: "POST", body: new FormData(form)})` sends, and it was refused
+  with a valid `_csrf` field in it.
+- `collage export` skips a `Static()` page that carries `{{csrfToken}}` and says
+  why, instead of failing the whole export. It still writes no file: a built site
+  has no server to take the form. (The not-found page is still a failure — a
+  static host needs it as a file.)
+- `collage.DataHandler` adapts a handler that returns a concrete type to
+  `DataHandlerFunc`, so an application needs no `any` and no adapter of its own
+  per view type. The scaffold uses it.
+- In development a generated `Security.CSRFKey` is logged at info rather than as
+  a warning, and the scaffold's README runs `collage dev` first and says why plain
+  `go run .` warns.
+
 ## v0.4.4
 
 - A scaffolded project reads `plugins-config.json`. It was written into every new
