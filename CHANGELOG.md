@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.4.6
+
+- **`collage dev` loads `.env.development`, or `.env`** when there is none — one
+  file, never both. A variable set in the shell wins, `COLLAGE_DEV=1` is always
+  set, and a malformed line stops the command naming the file and line. Only
+  `dev` reads these files; `build`, `export` and the built binary never do.
+- **A new scaffold.** `collage new` now writes a home page and a page of live
+  demos — an API action that invalidates a cached page by tag, a plain HTML form,
+  a fragment with its own URL, a JSON document — split into `pages/`,
+  `fragments/`, `actions/`, `documents/` and `store/`, with tests for each. It
+  ships a `.env.example`, and its `.gitignore` ignores `.env` and
+  `.env.development`.
+- The skip reason for a page with a form no longer tells you to make it
+  `Dynamic()`. A page with a form can be `Static()` on purpose; it is simply
+  served rather than exported.
+- The example applications left the repository.
+
 ## v0.4.5
 
 - A fragment or page an action answers with carries the reader's forgery token.
