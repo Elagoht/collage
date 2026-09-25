@@ -24,8 +24,8 @@ import (
 //   - a fragment naming a template the engine has not loaded (ErrTemplateNotFound),
 //     which turns a typo in a template path from a first-request 500 into a startup
 //     error;
-//   - a template calling {{slot "name"}} for a slot its fragment does not declare
-//     (ErrUnknownSlot), the same typo on the other side of the binding;
+//   - a fragment bound into a slot its template never calls (ErrUnknownSlot), a
+//     fill that could never render — usually a typo on one side of the binding;
 //   - a name another page already holds (ErrDuplicatePage);
 //   - registration after the application has started (ErrAppStarted).
 //
@@ -139,6 +139,7 @@ func (a *App) prepare(p *types.Page) error {
 	if err := a.checkTemplates(p); err != nil {
 		return err
 	}
+	resolveStrategy(p)
 	if p.NotFoundPage != nil {
 		if err := a.checkTemplates(p.NotFoundPage); err != nil {
 			return fmt.Errorf("collage: page %q not-found page: %w", p.Name, err)
@@ -252,8 +253,8 @@ func copyLayout(f *types.Fragment) *types.Fragment {
 
 // checkTemplates reports ErrTemplateNotFound for the first fragment of p whose
 // TemplatePath the engine has not loaded, naming the page, the fragment, and the
-// path — and types.ErrUnknownSlot for the first whose template calls, by a literal
-// name, a slot the fragment does not declare.
+// path — and types.ErrUnknownSlot for the first with something bound into a slot
+// its template never calls.
 //
 // It walks the layout tree and the content tree separately rather than just
 // p.Root(): p is not always a page being registered in its own right — it may be
@@ -267,13 +268,20 @@ func (a *App) checkTemplates(p *types.Page) error {
 			return fmt.Errorf("%w: page %q fragment %q references %q",
 				ErrTemplateNotFound, p.Name, f.Name, f.TemplatePath)
 		}
-		// A slot the template calls and the fragment does not declare fails
-		// every render that reaches it; the name is a literal, so it fails here.
-		for _, name := range a.tmpl.SlotCalls(f.TemplatePath) {
-			if _, ok := f.Slot(name); !ok {
-				return fmt.Errorf("%w: page %q fragment %q: template %q calls {{slot %q}}, but the fragment declares only %v",
-					types.ErrUnknownSlot, p.Name, f.Name, f.TemplatePath, name, f.SlotNames())
+		// A slot with something bound into it that the template never calls
+		// renders nothing, every time. A template calling a slot by a name it
+		// works out as it renders may call any of them, so it is not checked.
+		calls, dynamic := a.tmpl.SlotCalls(f.TemplatePath)
+		if dynamic {
+			return nil
+		}
+		for _, name := range f.SlotNames() {
+			slot := f.Slots[name]
+			if slot == nil || (len(slot.Fill) == 0 && slot.Resolve == nil) || slices.Contains(calls, name) {
+				continue
 			}
+			return fmt.Errorf("%w: page %q fragment %q binds into slot %q, but template %q never calls it; it calls %v",
+				types.ErrUnknownSlot, p.Name, f.Name, name, f.TemplatePath, calls)
 		}
 		return nil
 	}
@@ -320,6 +328,45 @@ func walkFragments(f *types.Fragment, visited map[*types.Fragment]bool, visit fu
 		}
 	}
 	return walkFragments(f.Fallback, visited, visit)
+}
+
+// resolveStrategy gives a page that declared no strategy one: StrategyDynamic when
+// any fragment it renders — its layout, its content, whatever is bound into their
+// slots, their fallbacks, the fragments it opens at URLs of their own — has a data
+// handler or a slot resolver, and StrategyStatic when none does. A page that
+// declared a strategy keeps it.
+//
+// It is a guess about code it cannot see into, so it guesses in the direction that
+// costs a render rather than one that serves a reader someone else's page: a handler
+// may read the request, a cookie, the clock, so a handler means dynamic. What a page
+// renders from fixed values — Fragment.Data, Fragment.Title — cannot, which is what
+// lets a site of pages without handlers be static, and exported, without saying so
+// on every one of them.
+func resolveStrategy(p *types.Page) {
+	if p.Strategy != types.StrategyAuto {
+		return
+	}
+	fetches := errors.New("fetches per render")
+	visited := make(map[*types.Fragment]bool)
+	visit := func(f *types.Fragment) error {
+		if f.DataHandler != nil {
+			return fetches
+		}
+		for _, slot := range f.Slots {
+			if slot != nil && slot.Resolve != nil {
+				return fetches
+			}
+		}
+		return nil
+	}
+	roots := append([]*types.Fragment{p.LayoutFragment, p.ContentFragment}, p.PathFragments()...)
+	for _, root := range roots {
+		if walkFragments(root, visited, visit) != nil {
+			p.Strategy = types.StrategyDynamic
+			return
+		}
+	}
+	p.Strategy = types.StrategyStatic
 }
 
 // checkErrorPagesRegistered reports ErrUnregisteredErrorPage for the first

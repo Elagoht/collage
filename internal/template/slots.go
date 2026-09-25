@@ -9,8 +9,9 @@ import (
 // calls with a literal — {{slot "aside"}} — including in the templates it
 // includes with {{template}} and the blocks it defines, since those run as part
 // of the same fragment. A slot named by anything else, {{slot .Name}}, is not
-// known until it renders and is not listed. An unknown path lists nothing.
-func (e *HTMLEngine) SlotCalls(path string) []string {
+// known until it renders: it is not listed, and dynamic reports that there is
+// one. An unknown path lists nothing.
+func (e *HTMLEngine) SlotCalls(path string) (names []string, dynamic bool) {
 	e.mu.RLock()
 	set := e.tmpl
 	e.mu.RUnlock()
@@ -39,8 +40,12 @@ func (e *HTMLEngine) SlotCalls(path string) []string {
 			if len(command.Args) >= 2 {
 				ident, isIdent := command.Args[0].(*parse.IdentifierNode)
 				name, isString := command.Args[1].(*parse.StringNode)
-				if isIdent && isString && ident.Ident == "slot" {
-					found[name.Text] = true
+				if isIdent && ident.Ident == "slot" {
+					if isString {
+						found[name.Text] = true
+					} else {
+						dynamic = true
+					}
 				}
 			}
 			for _, arg := range command.Args {
@@ -81,10 +86,10 @@ func (e *HTMLEngine) SlotCalls(path string) []string {
 
 	walkTemplate(path)
 
-	names := make([]string, 0, len(found))
+	names = make([]string, 0, len(found))
 	for name := range found {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	return names
+	return names, dynamic
 }

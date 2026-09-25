@@ -13,13 +13,13 @@ type homeView struct {
 
 func HomePage() *collage.Page {
 	content := collage.NewFragment("home-content", "pages/home.html").
-		WithDataHandler(collage.Data(homeView{Name: "@@NAME@@"})).
+		WithData(homeView{Name: "@@NAME@@"}).
 		Build()
 
+	// No Static() needed: nothing here fetches per render, so the page is static.
 	return collage.NewPage("home").
 		WithLayout(layouts.Layout()).
 		WithContent(content).
 		WithPath("en", "/").
-		Static().
 		Build()
 }

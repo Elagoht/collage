@@ -198,7 +198,7 @@ func TestPageBuilder_StrategySelection(t *testing.T) {
 		{"static", func(b *PageBuilder) *PageBuilder { return b.Static() }, StrategyStatic},
 		{"dynamic", func(b *PageBuilder) *PageBuilder { return b.Dynamic() }, StrategyDynamic},
 		{"incremental", func(b *PageBuilder) *PageBuilder { return b.Incremental(time.Minute) }, StrategyIncremental},
-		{"unset defaults to dynamic", func(b *PageBuilder) *PageBuilder { return b }, StrategyDynamic},
+		{"unset is auto until registration", func(b *PageBuilder) *PageBuilder { return b }, StrategyAuto},
 	}
 
 	for _, tt := range tests {

@@ -104,14 +104,12 @@ func main() {
 		log.Fatal(err)
 	}
 
-	layout := collage.NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
-		Build()
+	layout := collage.NewFragment("layout", "layouts/default.html").Build()
 
 	homeContent := collage.NewFragment("home-content", "pages/home.html").
-		WithDataHandler(collage.DataHandler(func(_ context.Context, _ *collage.RenderContext) (homeData, []string, error) {
+		WithDataHandler(func(_ context.Context, _ *collage.RenderContext) (any, []string, error) {
 			return homeData{Title: "Welcome home"}, []string{"homepage"}, nil
-		})).
+		}).
 		Build()
 
 	homePage := collage.NewPage("home").
@@ -176,7 +174,7 @@ contribute pages, documents, mounts and template functions of its own. See
 ## What it guarantees
 
 - **No silent failures.** A fragment naming a template that does not exist, a
-  template calling a slot its fragment does not declare, a page that does not
+  fragment bound into a slot its template never calls, a page that does not
   validate, a page referencing an error page that was never registered — all of
   these fail at startup, by name, not on the first request.
 - **Deterministic output.** Templates execute in order, depth-first; sibling

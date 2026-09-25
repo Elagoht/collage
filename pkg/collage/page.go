@@ -16,8 +16,10 @@ type PageBuilder struct {
 	errs []error
 }
 
-// NewPage starts a PageBuilder for a page named name. The page's strategy defaults to
-// StrategyDynamic until Static, Dynamic, or Incremental is called.
+// NewPage starts a PageBuilder for a page named name. Until Static, Dynamic, or
+// Incremental is called its strategy is StrategyAuto, which registration resolves:
+// dynamic when any fragment the page renders has a data handler or a slot
+// resolver, static when everything it renders is fixed.
 func NewPage(name string) *PageBuilder {
 	return &PageBuilder{
 		page: &Page{
@@ -83,8 +85,8 @@ func (b *PageBuilder) Static() *PageBuilder {
 }
 
 // Dynamic sets the page's strategy to StrategyDynamic: render on every request and
-// never serve from cache. This is the default strategy for a page no strategy method
-// is called on.
+// never serve from cache. It is what a page with a data handler or a slot resolver
+// and no strategy method called on it resolves to; see StrategyAuto.
 func (b *PageBuilder) Dynamic() *PageBuilder {
 	b.page.Strategy = StrategyDynamic
 	return b
@@ -95,6 +97,38 @@ func (b *PageBuilder) Dynamic() *PageBuilder {
 func (b *PageBuilder) Incremental(ttl time.Duration) *PageBuilder {
 	b.page.Strategy = StrategyIncremental
 	b.page.CacheTTL = ttl
+	return b
+}
+
+// WithStaticParams lists the path parameter values a static build writes this page
+// for — the pages a pattern like "/blog/{slug}" expands to — one map per file:
+//
+//	collage.NewPage("post").
+//		WithContent(post).
+//		WithPath("en", "/blog/{slug}").
+//		Static().
+//		WithStaticParams(func(ctx context.Context, locale string) ([]map[string]string, error) {
+//			posts, err := store.List(ctx, locale)
+//			if err != nil {
+//				return nil, err
+//			}
+//			params := make([]map[string]string, 0, len(posts))
+//			for _, post := range posts {
+//				params = append(params, map[string]string{"slug": post.Slug})
+//			}
+//			return params, nil
+//		})
+//
+// It is called once per locale the page has a path in, and each map must fill that
+// locale's pattern exactly — a missing or extra name fails that one file, as a link
+// built by name would. The build makes the path, locale prefix included, and hands
+// the values to the page's data handlers as a request to that path would.
+//
+// Only a build calls it. A running server answers every value the pattern
+// matches, listed here or not, and a page a build is to write must still be
+// cacheable: a page with a data handler says Static() or Incremental(ttl).
+func (b *PageBuilder) WithStaticParams(list StaticParamsFunc) *PageBuilder {
+	b.page.StaticParams = list
 	return b
 }
 

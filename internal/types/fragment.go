@@ -43,8 +43,18 @@ type Fragment struct {
 	// TemplatePath is the path to the fragment's template file.
 	TemplatePath string
 	// DataHandler fetches the data this fragment renders with. A nil DataHandler
-	// means the fragment renders with no data.
+	// means the fragment renders with Data.
 	DataHandler DataHandlerFunc
+	// Data is what the fragment's template renders with when it has no
+	// DataHandler: data fixed when the program starts. Unlike a handler, it does
+	// not make a page with no declared strategy dynamic. Setting both is
+	// ErrConflictingData.
+	Data any // any: fragment data is opaque to the framework and flows straight into the template engine
+	// Title, when set, declares the page's <title> as rc.HoistTitle would, before
+	// the fragment's DataHandler runs — so a handler of the same fragment that
+	// hoists a title of its own replaces it. Like Data, it is fixed, and does not
+	// make a page dynamic.
+	Title string
 	// Slots declares the named positions this fragment exposes to child fragments,
 	// keyed by slot name. Each key must equal its SlotDefinition's own Name field.
 	Slots map[string]*SlotDefinition
@@ -87,10 +97,12 @@ func (f *Fragment) SlotNames() []string {
 	return names
 }
 
-// Bind appends child to the slot named slotName's Fill. It returns ErrNilFragment if
-// child is nil, ErrUnknownSlot wrapped with slotName if f declares no such slot, and
-// ErrSlotOccupied wrapped with slotName if the slot already has a fill and does not
-// allow multiple.
+// Bind appends child to the slot named slotName's Fill, declaring the slot first —
+// optional, and open to any number of fragments — when f does not declare it: a
+// slot needs declaring only to be required or to hold one fragment at most. It
+// returns ErrNilFragment if child is nil, ErrInvalidSlotDefinition for an empty
+// slotName, ErrSlotResolved if a resolver fills the slot, and ErrSlotOccupied
+// wrapped with slotName if the slot already has a fill and does not allow multiple.
 func (f *Fragment) Bind(slotName string, child *Fragment) error {
 	if child == nil {
 		return ErrNilFragment
@@ -98,9 +110,16 @@ func (f *Fragment) Bind(slotName string, child *Fragment) error {
 	if f == nil {
 		return ErrNilFragment
 	}
+	if slotName == "" {
+		return fmt.Errorf("%w: empty slot name", ErrInvalidSlotDefinition)
+	}
 	slot, ok := f.Slots[slotName]
 	if !ok {
-		return fmt.Errorf("%w: %q", ErrUnknownSlot, slotName)
+		if f.Slots == nil {
+			f.Slots = make(map[string]*SlotDefinition)
+		}
+		slot = &SlotDefinition{Name: slotName, AllowMultiple: true}
+		f.Slots[slotName] = slot
 	}
 	if slot.Resolve != nil {
 		return fmt.Errorf("%w: %q", ErrSlotResolved, slotName)
@@ -155,6 +174,9 @@ func (f *Fragment) validate(stack map[*Fragment]bool) error {
 	}
 	if f.Timeout < 0 {
 		return fmt.Errorf("%w: fragment %q has negative timeout", ErrInvalidTimeout, f.Name)
+	}
+	if f.DataHandler != nil && f.Data != nil {
+		return fmt.Errorf("%w: fragment %q", ErrConflictingData, f.Name)
 	}
 
 	for _, key := range f.SlotNames() {

@@ -190,7 +190,7 @@ pages, fragments, action, document and their templates, the tests, a
 That is `--template demo`, the default. `--template minimal` is the least a
 project can be: the same `main.go`, `go.mod` and `routes.go`, and a layout around
 one page, `<h1>Hello from {{.Name}}</h1>` — the project's name, handed to the
-template by `collage.Data` — with a stylesheet that sets the background and text
+template by `WithData` — with a stylesheet that sets the background and text
 colour, dark mode included — no tests, no not-found page, nothing to
 delete before starting a real site. Flags take one dash or two.
 
@@ -394,26 +394,26 @@ func staticBuild(app *collage.App, outDir string, clean bool) error {
 | `Locales` | Restrict the build to these locales. Empty builds every locale a page declares |
 | `Clean` | Remove `OutDir`'s contents (not `OutDir` itself) first |
 | `Concurrency` | How many pages render and write at once. `<= 1` is sequential |
-| `PathProvider` | Supplies the concrete paths for a page whose pattern has a `{param}` |
-| `DocumentPathProvider` | The same, for a document whose pattern has a `{param}`. A separate interface, not a widening of `PathProvider`, so an existing implementation keeps compiling |
 
 `Report` contents are deterministic regardless of `Concurrency`: tasks are merged
 back into enumeration order.
 
 ### What gets built
 
-- A page whose strategy is `Static()` or `Incremental(ttl)` is built. A `Dynamic()`
-  page is recorded in `Report.Skipped` — it exists to render per request.
+- A page whose strategy is `Static()` or `Incremental(ttl)` is built, and so is one
+  that declares none and renders no data handler. A dynamic page is recorded in
+  `Report.Skipped` — it exists to render per request.
 - Each page is written to `<OutDir>/<path>/index.html`; the root path `/` writes
   `<OutDir>/index.html`.
-- A page whose pattern for a locale contains `{param}` needs a `PathProvider`, or
-  it is skipped with `ErrDynamicPathUnresolved`. It is a skip, not a failure: a
+- A page whose pattern for a locale contains `{param}` needs `WithStaticParams`,
+  or it is skipped with `ErrDynamicPathUnresolved`; see
+  [below](#pages-with-a-param-in-their-path). It is a skip, not a failure: a
   build is not wrong for containing pages that cannot be prerendered.
 - **A document is written to its literal path.** `/sitemap.xml` becomes
   `<OutDir>/sitemap.xml`, not `<OutDir>/sitemap.xml/index.html`, because a crawler
   asking for `/sitemap.xml` must not receive a directory. The same strategy rule
-  applies — a `Dynamic()` document is skipped — and a dynamic pattern needs a
-  `DocumentPathProvider` rather than a `PathProvider`. A document handler that
+  applies — a `Dynamic()` document is skipped — and so does the `{param}`
+  rule. A document handler that
   returns an empty body is refused with `collage.ErrEmptyDocumentBody` and no file
   is written, the same condition a live request answers with a 500.
 - **Every mounted asset file system is copied**, under the prefix it is mounted
@@ -430,40 +430,54 @@ back into enumeration order.
   the pattern yourself: the router strips it before matching, and `"/tr/blog"`
   would be served, and written, at `/tr/tr/blog`.
 
-### Supplying paths for dynamic pages
+### Pages with a `{param}` in their path
+
+A page at `/blog/{slug}` is one file per post, and the page says which posts with
+`WithStaticParams` — one map of placeholder values per file, per locale:
 
 ```go
-// postPaths expands "/blog/{slug}" into one path per post.
-type postPaths struct {
-	store *PostStore
-}
-
-// Paths implements collage.PathProvider.
-func (p postPaths) Paths(ctx context.Context, page *collage.Page, locale string) ([]collage.PathInstance, error) {
-	pattern, ok := page.PathFor(locale)
-	if !ok || !strings.Contains(pattern, "{slug}") {
-		return nil, nil
-	}
-
-	posts := p.store.List()
-	instances := make([]collage.PathInstance, 0, len(posts))
-	for _, post := range posts {
-		instances = append(instances, collage.PathInstance{
-			Path:   strings.Replace(pattern, "{slug}", post.Slug, 1),
-			Params: map[string]string{"slug": post.Slug},
-		})
-	}
-	return instances, nil
-}
+collage.NewPage("post").
+	WithLayout(layout).
+	WithContent(post).
+	WithPath("en", "/blog/{slug}").
+	WithPath("tr", "/yazi/{slug}").
+	Static().
+	WithStaticParams(func(ctx context.Context, locale string) ([]map[string]string, error) {
+		posts, err := store.List(ctx, locale)
+		if err != nil {
+			return nil, err
+		}
+		params := make([]map[string]string, 0, len(posts))
+		for _, post := range posts {
+			params = append(params, map[string]string{"slug": post.Slug})
+		}
+		return params, nil
+	}).
+	Build()
 ```
 
-`Params` matters: it is overlaid onto whatever the router captured, so a data
-handler sees the same parameters a live request would have.
+- The build makes each path from the pattern, as a link built by name would, and
+  writes it under the locale's prefix: `<OutDir>/blog/hello/index.html`,
+  `<OutDir>/tr/yazi/merhaba/index.html`. A value is written at its decoded path,
+  which is where a static host looks a request for it up.
+- The values reach the page's data handlers through `rc.Param`, exactly as a
+  request to that path would carry them.
+- A map that does not fill the pattern exactly — a name missing, or one the
+  pattern does not have — fails that one file with `collage.ErrRouteParams`, and
+  the rest are built. An error from the function, or a panic in it, fails that
+  page's locale and is named in `Report.Errors`.
+- Only a build calls it. A running server answers every value the pattern matches,
+  listed or not.
+- A page with a data handler is dynamic unless it says otherwise, so a post page
+  that is to be exported says `Static()` or `Incremental(ttl)`.
+
+Documents take the same `WithStaticParams`: a feed at `/feeds/{category}/rss.xml`
+lists its categories.
 
 ### Safety
 
-A `PathProvider`, a `DocumentPathProvider`, and a mount's `fs.FS` are all your
-code, and a path built from an unsanitised parameter — or a file name an
+`WithStaticParams` and a mount's `fs.FS` are both your code, and a path built
+from an unsanitised value — or a file name an
 adversarial `fs.FS` yields from a walk — must not be able to write outside
 `OutDir`. Pages, documents and copied asset files all go through the same checks
 rather than three copies of them. The builder:
@@ -483,7 +497,7 @@ rather than three copies of them. The builder:
 from replacing a component with a symlink between the check and the `MkdirAll` and
 `WriteFile` that follow it; closing that window portably is not possible with the
 standard library alone. What the check does close is the planted-symlink case — a
-symlink left in `OutDir` in advance by a buggy `PathProvider`, a misbehaving
+symlink left in `OutDir` in advance by a buggy `WithStaticParams`, a misbehaving
 plugin, or a stale artifact from an earlier build. A local attacker racing the
 build process is a different threat, and a much less relevant one for a builder a
 developer runs on their own machine.

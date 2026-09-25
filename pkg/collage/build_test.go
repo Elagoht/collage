@@ -115,24 +115,11 @@ func TestBuildOptions_FieldsAlignWithInternalBuild(t *testing.T) {
 		Locales:     []string{"en"},
 		Clean:       false,
 		Concurrency: 2,
-		PathProvider: fakePathProvider{
-			instances: []PathInstance{{Path: "/x", Params: map[string]string{"slug": "x"}}},
-		},
 	}
 	app := buildTestApp(t)
 	if _, err := NewBuilder(app, opts); err != nil {
 		t.Fatalf("NewBuilder: %v", err)
 	}
-}
-
-// fakePathProvider is a minimal PathProvider used only to prove the type
-// alias is structurally satisfiable from this package.
-type fakePathProvider struct {
-	instances []PathInstance
-}
-
-func (f fakePathProvider) Paths(context.Context, *Page, string) ([]PathInstance, error) {
-	return f.instances, nil
 }
 
 // TestBuildReport_FieldsAlignWithInternalBuild is the Report-side counterpart

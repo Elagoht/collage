@@ -147,13 +147,15 @@ func TestFragmentBuilder_BuildErr(t *testing.T) {
 			wantErr: ErrDuplicateSlot,
 		},
 		{
-			name: "unknown slot binding",
+			name: "constraining a slot holding two to one",
 			build: func() *FragmentBuilder {
 				child := NewFragment("child", "child.html").Build()
 				return NewFragment("parent", "parent.html").
-					WithSlotFragment("missing", child)
+					WithSlotFragment("aside", child).
+					WithSlotFragment("aside", child).
+					WithSlot("aside", false, false)
 			},
-			wantErr: ErrUnknownSlot,
+			wantErr: ErrSlotOccupied,
 		},
 		{
 			name: "negative timeout",
@@ -256,16 +258,6 @@ func TestDataHandler_NilIsNil(t *testing.T) {
 	var fn func(context.Context, *RenderContext) (clockView, []string, error)
 	if DataHandler(fn) != nil {
 		t.Error("DataHandler(nil) != nil, want a nil handler")
-	}
-}
-
-func TestData(t *testing.T) {
-	data, tags, err := Data(clockView{Hour: 9})(context.Background(), &RenderContext{})
-	if err != nil || tags != nil {
-		t.Fatalf("Data handler = _, %v, %v; want no tags and no error", tags, err)
-	}
-	if view, ok := data.(clockView); !ok || view.Hour != 9 {
-		t.Errorf("data = %#v, want clockView{Hour: 9}", data)
 	}
 }
 

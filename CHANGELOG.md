@@ -1,5 +1,61 @@
 # Changelog
 
+## v0.16.0
+
+### Added
+
+- **A page that declares no strategy is static unless something in it fetches.**
+  Registration resolves it: dynamic when any fragment it renders — layout,
+  content, slot fills, fallbacks, fragments opened with `WithFragmentPath` — has a
+  data handler or a slot resolver, static otherwise. A site of pages without
+  handlers is cached and exported without `Static()` on every page. A declared
+  strategy is kept as it is. `StrategyAuto` is the value before registration.
+- **`FragmentBuilder.WithData(v)`**: fixed data for the template, without a
+  handler, so it leaves the page static.
+- **`FragmentBuilder.WithTitle(s)`**: the page's `<title>` without a handler. The
+  innermost declaration still wins, and a handler of the same fragment hoisting a
+  title replaces it.
+- **`DocumentBuilder.WithBody(b)`**: a fixed body in place of a handler. A document
+  declaring no strategy is static with a body and dynamic with a handler.
+- **Slots need no declaring.** A template calling `{{slot "aside"}}` is the
+  declaration: `WithSlotFragment` and `WithSlotResolver` bind into a slot nothing
+  declared, as an optional one holding any number of fragments, and a layout needs
+  no `WithSlot("content", ...)`. `WithSlot` remains for a required or single slot,
+  before or after the bindings it constrains.
+- **`WithStaticParams(fn)`** on pages and documents: the placeholder values a
+  static build writes a `{param}` pattern for, one map per file, per locale —
+  every post of a blog at `/blog/{slug}`. The build makes each path as a link
+  built by name would, prefix included, writes it at its decoded path, and hands
+  the values to the handlers through `rc.Param`. A map that does not fill the
+  pattern exactly fails that file with `ErrRouteParams`; an error or a panic in
+  the function fails that locale. Only a build calls it.
+- `collage.ErrConflictingData`: a fragment with both `WithData` and
+  `WithDataHandler`, or a document with both `WithBody` and `WithHandler`, is
+  refused at registration.
+
+### Changed
+
+- **Breaking:** a page with no strategy and no data handler is now static — cached
+  when the cache is on, served with `public, max-age=0, must-revalidate`, and
+  exported. Add `Dynamic()` to keep one rendering per request.
+- **Breaking:** `collage.Data(v)` is removed; `WithData(v)` replaces it.
+- **Breaking:** `BuildOptions.PathProvider` and `BuildOptions.DocumentPathProvider`,
+  and the `PathProvider`, `DocumentPathProvider` and `PathInstance` types, are
+  removed; `WithStaticParams` replaces them, beside the route it expands.
+- **Breaking:** the slot check at registration faces the other way. A fragment
+  bound into a slot its template never calls fails with `ErrUnknownSlot`, naming
+  the slot and the calls the template does make; a template calling a slot
+  nothing declares or fills renders it empty, where it used to fail registration
+  and render with `ErrUnknownSlot`. `Fragment.Bind` declares the slot it binds
+  into rather than returning `ErrUnknownSlot`.
+- The documentation writes a data handler as a function of `WithDataHandler`'s own
+  shape, returning `any`, and keeps `collage.DataHandler` and `collage.Load` for a
+  loader that is also called where its concrete type matters — a test, another
+  handler.
+- The scaffolded layout names the site with `WithTitle` and declares no slots; the
+  home page no longer says `Static()`, and hands its template the project's name
+  with `WithData`.
+
 ## v0.15.0
 
 ### Added

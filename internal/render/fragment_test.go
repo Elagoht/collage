@@ -92,23 +92,21 @@ func TestRender_BindingOrderIsPreserved(t *testing.T) {
 	}
 }
 
-// TestRender_UnknownSlotNameIsAnError pins the decision that {{slot "typo"}} fails
-// loudly. Rendering nothing would turn a template typo into a section that is merely
-// absent, which no test and no reviewer would catch.
-func TestRender_UnknownSlotNameIsAnError(t *testing.T) {
+// TestRender_UndeclaredSlotRendersNothing: calling a slot in a template declares
+// it, and a slot nothing is bound to is empty. The typo this used to catch — a fill
+// on one side, a call on the other — is caught at registration instead.
+func TestRender_UndeclaredSlotRendersNothing(t *testing.T) {
 	engine := newEngine(t, Options{})
 
 	content := declare(fragment("content", "unknownslot.html"), &types.SlotDefinition{Name: "declared"})
 	content.Required = true
 
-	_, err := renderPage(t, engine, pageWith(content))
-	if !errors.Is(err, types.ErrUnknownSlot) {
-		t.Fatalf("Render() error = %v, want types.ErrUnknownSlot", err)
+	result, err := renderPage(t, engine, pageWith(content))
+	if err != nil {
+		t.Fatalf("Render() error = %v, want nil", err)
 	}
-	for _, want := range []string{`"nope"`, "declared"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("Render() error = %q, want it to mention %s", err, want)
-		}
+	if string(result.HTML) != "<div></div>" {
+		t.Errorf("Render() HTML = %q, want the empty slot", result.HTML)
 	}
 }
 

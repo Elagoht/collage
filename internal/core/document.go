@@ -91,6 +91,15 @@ func (a *App) prepareDocument(doc *types.Document) error {
 	if err := doc.Validate(); err != nil {
 		return fmt.Errorf("collage: document %q: %w", doc.Name, err)
 	}
+	// A document that declared no strategy is dynamic if a handler produces it
+	// and static if its body is fixed. Unlike a page there is nothing else to look
+	// at: whatever a handler reads, it reads inside the one function.
+	if doc.Strategy == types.StrategyAuto {
+		doc.Strategy = types.StrategyDynamic
+		if doc.Handler == nil {
+			doc.Strategy = types.StrategyStatic
+		}
+	}
 	return nil
 }
 

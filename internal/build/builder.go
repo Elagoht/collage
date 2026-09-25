@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -32,6 +33,7 @@ import (
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/render"
+	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -55,21 +57,20 @@ var ErrDangerousOutDir = errors.New("collage: refusing to use a dangerous output
 var ErrOutputPathCollision = errors.New("collage: two builds target one output path")
 
 // ErrPathEscapesOutDir is returned when a resolved output path falls outside
-// Options.OutDir. PathProvider is user code: a provider returning "../escape", or a
-// path built from an unsanitised parameter, must not be able to write outside the
-// configured output directory.
+// Options.OutDir. StaticParams is user code: a value of "../escape", or one taken
+// from an unsanitised source, must not be able to write outside the configured
+// output directory.
 var ErrPathEscapesOutDir = errors.New("collage: resolved path escapes the output directory")
 
 // ErrDynamicPathUnresolved is recorded, as SkipRecord.Err and in SkipRecord.Reason,
-// when a page's path pattern for a locale contains a "{param}" segment and
-// Options.PathProvider is nil — or a document's, and Options.DocumentPathProvider
-// is nil. Such a route has no way to enumerate the concrete paths a static build
-// must write.
-var ErrDynamicPathUnresolved = errors.New("collage: dynamic path pattern requires a path provider")
+// when a page's or document's path pattern for a locale contains a "{param}"
+// segment and the route has no StaticParams. Such a route has no way to enumerate
+// the concrete paths a static build must write.
+var ErrDynamicPathUnresolved = errors.New("collage: a path pattern with a {param} needs WithStaticParams to be built")
 
 // ErrDuplicateOutputPath is recorded, as SkipRecord.Err and in SkipRecord.Reason,
-// when two document build tasks resolve to the same output file — a
-// DocumentPathProvider handing back the same path twice, say. One pattern in two
+// when two document build tasks resolve to the same output file — StaticParams
+// listing the same values twice, say. One pattern in two
 // locales is not that: each non-default locale's document is written under its
 // locale's prefix, "/sitemap.xml" and "/tr/sitemap.xml", exactly as they are
 // served. Only one of the colliding tasks is built; the rest are skipped by name
@@ -144,8 +145,8 @@ const unresolvedTokenReason = "page carries {{csrfToken}}; a form needs a server
 // application's Renderer alongside a different application's mounts: putting
 // Mounts on Options would let exactly that happen, silently.
 //
-// Renderer is internal-only — it is not re-exported through pkg/collage, unlike
-// PathProvider and DocumentPathProvider — so widening it to cover documents and
+// Renderer is internal-only — it is not re-exported through pkg/collage — so
+// widening it to cover documents and
 // mounts here breaks no external implementation of it; only *core.App itself has
 // to satisfy the wider surface, and it already does.
 //
@@ -185,29 +186,6 @@ type Renderer interface {
 	RenderNotFound(ctx context.Context, locale string) (*render.Result, error)
 }
 
-// PathProvider supplies the concrete paths a dynamic page's pattern expands to. A
-// page whose path pattern for a locale contains a "{param}" (or "{param...}")
-// segment cannot be built statically without one.
-type PathProvider interface {
-	// Paths returns every concrete path a static build should render page at, for
-	// locale. Path values are user-supplied and are validated against
-	// Options.OutDir before its own file is written — an escaping path fails that
-	// task alone; see ErrPathEscapesOutDir.
-	Paths(ctx context.Context, page *types.Page, locale string) ([]PathInstance, error)
-}
-
-// PathInstance is one concrete URL a dynamic page is built for, plus the path
-// parameter values that reached it — passed through to Renderer.RenderPath so a
-// fragment's data handler sees the same parameters a live request would have
-// captured from the URL.
-type PathInstance struct {
-	// Path is the concrete request path to render, e.g. "/blog/hello-world".
-	Path string
-	// Params overlays the path parameter values a live request would have
-	// captured for Path, keyed by placeholder name.
-	Params map[string]string
-}
-
 // Options configures a static build.
 type Options struct {
 	// OutDir is the directory static output is written under. It must be
@@ -226,17 +204,6 @@ type Options struct {
 	// invariant. Report contents are deterministic regardless of this value: tasks
 	// are always merged back into their original enumeration order.
 	Concurrency int
-	// PathProvider supplies concrete paths for pages whose pattern contains a
-	// "{param}" segment. A dynamic page with no PathProvider is recorded as
-	// skipped rather than failing the build.
-	PathProvider PathProvider
-	// DocumentPathProvider supplies concrete paths for documents whose pattern
-	// contains a "{param}" segment — PathProvider's sibling for documents. A
-	// dynamic document with no DocumentPathProvider is recorded as skipped
-	// rather than failing the build, wrapping the same ErrDynamicPathUnresolved
-	// a dynamic page without a PathProvider records: the failure mode is
-	// identical, only the kind of route differs.
-	DocumentPathProvider DocumentPathProvider
 	// AllowDegraded writes a page whose render had at least one failed fragment
 	// instead of recording ErrDegradedRender against it. It is off by default:
 	// a static file has no TTL, so a degraded page written to disk stays degraded
@@ -349,9 +316,8 @@ type buildTask struct {
 //
 // A page or document using a non-cacheable render strategy is skipped, recorded in
 // the report, rather than built. A path pattern for a locale that contains a
-// "{param}" segment is expanded through Options.PathProvider (pages) or
-// Options.DocumentPathProvider (documents) when one is configured, or skipped with
-// ErrDynamicPathUnresolved otherwise. A page that renders with a failed fragment is
+// "{param}" segment is expanded through the route's StaticParams when it has
+// them, or skipped with ErrDynamicPathUnresolved otherwise. A page that renders with a failed fragment is
 // refused with ErrDegradedRender unless Options.AllowDegraded is set, and a page
 // that renders no markup at all is always refused with ErrEmptyRender: a static
 // file has no TTL to recover through, so writing either one pins it until the next
@@ -369,8 +335,8 @@ type buildTask struct {
 // crawler asking for it must not receive a directory; see documentTarget. A mounted
 // asset file is written to "<OutDir>/<mount prefix><file name>", the same
 // literal-path shape. Every resolved output path is verified to stay within OutDir
-// both lexically and on disk — see ErrPathEscapesOutDir — since PathProvider,
-// DocumentPathProvider, and a mount's fs.FS are all user code, and a path or file
+// both lexically and on disk — see ErrPathEscapesOutDir — since StaticParams
+// and a mount's fs.FS are user code, and a path or file
 // name built from unsanitised input, or a symlink planted anywhere under OutDir,
 // must not be able to redirect a write outside the output directory.
 //
@@ -420,8 +386,8 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 			// Without it a panic in a data handler is process-fatal in the middle
 			// of a build — and worst of all under Options.Clean, which has already
 			// emptied OutDir by the time the first page renders. The render engine
-			// recovers a panic inside Execute, but a PathProvider's data, a
-			// fragment reached outside it, or a caller's own Renderer can still
+			// recovers a panic inside Execute, but a fragment reached outside
+			// it, or a caller's own Renderer can still
 			// panic here, and one page is not the whole site.
 			defer func() {
 				if recovered := recover(); recovered != nil {
@@ -507,8 +473,8 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 }
 
 // checkNoOutputCollisions reports the first pair of tasks that would write to one
-// file. Two pages whose patterns differ only in a trailing slash, or a PathProvider
-// that returns the same path twice, both land here — and without the check the
+// file. Two pages whose patterns differ only in a trailing slash, or StaticParams
+// listing the same values twice, both land here — and without the check the
 // second write silently replaced the first, dropping a page from the build with
 // nothing in the report to show for it.
 //
@@ -583,27 +549,17 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 				continue
 			}
 
-			if b.opts.PathProvider == nil {
-				skipped = append(skipped, SkipRecord{
-					Page:   page.Name,
-					Locale: locale,
-					Reason: ErrDynamicPathUnresolved.Error(),
-					Err:    ErrDynamicPathUnresolved,
-				})
-				continue
+			instances, skip, err := expandPattern(ctx, "page", page.Name, locale, pattern, page.StaticParams)
+			if skip != nil {
+				skipped = append(skipped, *skip)
 			}
-
-			instances, err := b.opts.PathProvider.Paths(ctx, page, locale)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("collage: resolve paths for page %q locale %q: %w", page.Name, locale, err))
-				continue
-			}
+			errs = append(errs, err...)
 			for _, instance := range instances {
 				tasks = append(tasks, buildTask{
 					page:   page,
 					locale: locale,
-					path:   instance.Path,
-					params: instance.Params,
+					path:   instance.path,
+					params: instance.params,
 				})
 			}
 		}
@@ -696,6 +652,65 @@ func (b *Builder) writeRootRedirect(outDirResolved string, tasks []buildTask, wr
 		return nil, fmt.Errorf("collage: write %q: %w", target, err)
 	}
 	return []string{target}, nil
+}
+
+// pathInstance is one concrete URL a route with a "{param}" pattern is built for,
+// and the parameter values that reach it.
+type pathInstance struct {
+	path   string
+	params map[string]string
+}
+
+// expandPattern turns a "{param}" pattern into the paths its route's StaticParams
+// lists for locale. A route without StaticParams is a skip, not a failure: a build
+// is not wrong for containing routes that cannot be prerendered. A set of values
+// that does not fill the pattern exactly is an error against that one file, and
+// the rest are still built.
+//
+// A path is built as a link to the route would be, then unescaped: a static host
+// looks a request up by its decoded path, so "/blog/héllo" is the file that
+// answers "/blog/h%C3%A9llo". A value that would climb out of the directory is
+// still caught before anything is written; see ErrPathEscapesOutDir.
+func expandPattern(ctx context.Context, kind, name, locale, pattern string, list types.StaticParamsFunc) ([]pathInstance, *SkipRecord, []error) {
+	if list == nil {
+		return nil, &SkipRecord{
+			Page:   name,
+			Locale: locale,
+			Reason: ErrDynamicPathUnresolved.Error(),
+			Err:    ErrDynamicPathUnresolved,
+		}, nil
+	}
+
+	sets, err := callStaticParams(ctx, list, locale)
+	if err != nil {
+		return nil, nil, []error{fmt.Errorf("collage: static params for %s %q locale %q: %w", kind, name, locale, err)}
+	}
+	var instances []pathInstance
+	var errs []error
+	for _, params := range sets {
+		built, err := router.BuildPath(pattern, params)
+		if err == nil {
+			built, err = url.PathUnescape(built)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("collage: static params for %s %q locale %q: %w", kind, name, locale, err))
+			continue
+		}
+		instances = append(instances, pathInstance{path: built, params: params})
+	}
+	return instances, nil, errs
+}
+
+// callStaticParams calls list, turning a panic into ErrBuildPanic: it is user code
+// running before any page renders, and one route's broken list is not the whole
+// site.
+func callStaticParams(ctx context.Context, list types.StaticParamsFunc, locale string) (sets []map[string]string, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("%w: %v\n%s", ErrBuildPanic, recovered, debug.Stack())
+		}
+	}()
+	return list(ctx, locale)
 }
 
 // isDynamicPattern reports whether pattern contains a "{param}" or "{param...}"
@@ -834,7 +849,7 @@ func resolveTarget(outDirResolved, urlPath string) (string, error) {
 // window portably (e.g. with O_NOFOLLOW, which is not available in a portable form
 // from the standard library) is out of scope here. The threat model this closes is
 // a symlink planted in advance of the build — by a malicious or buggy
-// PathProvider, a misbehaving plugin, or a stale artifact left on disk from an
+// StaticParams function, a misbehaving plugin, or a stale artifact left on disk from an
 // earlier run — not a live local attacker racing the build process itself, which
 // is a different and far less relevant threat for a builder the developer runs on
 // their own machine.

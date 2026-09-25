@@ -1,22 +1,15 @@
 package layouts
 
-import (
-	"context"
-
-	"github.com/Elagoht/collage/pkg/collage"
-)
+import "github.com/Elagoht/collage/pkg/collage"
 
 // Layout is the shell every page renders inside: templates/layouts/default.html.
 //
 // It declares the site's title rather than writing one in the template, so a page
-// that declares its own with rc.HoistTitle replaces it — the innermost declaration
-// wins — instead of adding a second <title> beside it.
+// that declares its own — WithTitle, or rc.HoistTitle from a data handler —
+// replaces it, the innermost declaration winning, instead of adding a second
+// <title> beside it.
 func Layout() *collage.Fragment {
 	return collage.NewFragment("layout", "layouts/default.html").
-		WithDataHandler(collage.Effect(func(_ context.Context, rc *collage.RenderContext) error {
-			rc.HoistTitle("@@NAME@@")
-			return nil
-		})).
-		WithSlot("content", true, false).
+		WithTitle("@@NAME@@").
 		Build()
 }

@@ -8,6 +8,7 @@ func TestRenderStrategy_String(t *testing.T) {
 		s    RenderStrategy
 		want string
 	}{
+		{"auto", StrategyAuto, "auto"},
 		{"dynamic", StrategyDynamic, "dynamic"},
 		{"static", StrategyStatic, "static"},
 		{"incremental", StrategyIncremental, "incremental"},
@@ -29,6 +30,7 @@ func TestRenderStrategy_Cacheable(t *testing.T) {
 		s    RenderStrategy
 		want bool
 	}{
+		{"unresolved auto is not cacheable", StrategyAuto, false},
 		{"dynamic is not cacheable", StrategyDynamic, false},
 		{"static is cacheable", StrategyStatic, true},
 		{"incremental is cacheable", StrategyIncremental, true},

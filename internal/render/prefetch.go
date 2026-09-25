@@ -101,6 +101,11 @@ func (e *SlotEngine) startPrefetch(rc *types.RenderContext, f *types.Fragment, s
 	// be — there is no longer one place the walk "is".
 	handlerRC := rc.WithContext(ctx).WithFragment(p.depth, p.order)
 
+	// Before the handler starts, for the reason attempt gives.
+	if f.Title != "" {
+		handlerRC.HoistTitle(f.Title)
+	}
+
 	go func() {
 		defer close(p.done)
 		started := time.Now()

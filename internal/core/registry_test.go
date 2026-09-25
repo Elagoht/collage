@@ -217,7 +217,9 @@ func TestRegisterPage_SharedLayoutRendersEachPagesOwnContent(t *testing.T) {
 // handler, the fallback, and every fragment the caller bound into another slot stay
 // shared by pointer, so a shared layout stays one layout in every way that matters.
 func TestRegisterPage_SharedLayoutKeepsEverythingElseShared(t *testing.T) {
-	app := newTestApp(t, nil)
+	files := defaultTemplates()
+	files["layouts/default.html"] = `<main>{{slot "content"}}</main><aside>{{slot "sidebar"}}</aside>`
+	app := newTestAppWith(t, files, nil)
 
 	sidebar := &types.Fragment{Name: "sidebar", TemplatePath: "pages/about.html"}
 	shared := newLayout("shared-layout")
@@ -692,14 +694,30 @@ func TestRegisterPage_RejectsNil(t *testing.T) {
 	}
 }
 
-// TestRegisterPage_RejectsLayoutWithoutContentSlot: a layout that never declares
-// the content slot cannot hold a page's content, and must say so at startup.
-func TestRegisterPage_RejectsLayoutWithoutContentSlot(t *testing.T) {
+// TestRegisterPage_LayoutNeedsNoContentSlotDeclared: a layout whose template calls
+// {{slot "content"}} holds a page's content without declaring the slot.
+func TestRegisterPage_LayoutNeedsNoContentSlotDeclared(t *testing.T) {
 	app := newTestApp(t, nil)
 	page := newHomePage()
 	page.LayoutFragment.Slots = nil
 
-	err := app.RegisterPage(page)
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage = %v, want nil", err)
+	}
+	if slot, ok := page.LayoutFragment.Slot(types.DefaultContentSlot); !ok || len(slot.Fill) != 1 {
+		t.Fatalf("content slot = %+v, want the page's content bound", slot)
+	}
+}
+
+// TestRegisterPage_RejectsLayoutThatNeverRendersContent: a layout whose template
+// never calls {{slot "content"}} would render every page on it without its content,
+// and must say so at startup.
+func TestRegisterPage_RejectsLayoutThatNeverRendersContent(t *testing.T) {
+	files := defaultTemplates()
+	files["layouts/default.html"] = `<main></main>`
+	app := newTestAppWith(t, files, nil)
+
+	err := app.RegisterPage(newHomePage())
 	if !errors.Is(err, types.ErrUnknownSlot) {
 		t.Fatalf("RegisterPage = %v, want ErrUnknownSlot", err)
 	}

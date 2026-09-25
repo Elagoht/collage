@@ -40,8 +40,9 @@ var ErrNilDocument = types.ErrNilDocument
 // response and never guesses it.
 var ErrEmptyContentType = types.ErrEmptyContentType
 
-// ErrNoDocumentHandler is returned when a document declares no handler. Unlike a
-// page, a document has no template to fall back on, so a handler is mandatory.
+// ErrNoDocumentHandler is returned when a document declares neither a handler nor a
+// body. Unlike a page, a document has no template to fall back on, so it must have
+// one or the other.
 var ErrNoDocumentHandler = types.ErrNoDocumentHandler
 
 // ErrDuplicateDocument is returned when a document is registered under a name
@@ -54,8 +55,8 @@ var ErrDocumentNotFound = core.ErrDocumentNotFound
 
 // DocumentBuilder builds a Document through a fluent chain of WithX calls. See the
 // package doc comment for how builder errors are accumulated and why it is safe to
-// ignore them until registration. A document built without WithHandler records
-// ErrNoDocumentHandler at Build time.
+// ignore them until registration. A document built with neither WithHandler nor
+// WithBody records ErrNoDocumentHandler at Build time.
 type DocumentBuilder struct {
 	document *Document
 	errs     []error
@@ -90,9 +91,25 @@ func (b *DocumentBuilder) AtRoot(pattern string) *DocumentBuilder {
 	return b
 }
 
-// WithHandler sets the function that produces the document's body.
+// WithHandler sets the function that produces the document's body. A document
+// with a handler and no declared strategy is dynamic.
 func (b *DocumentBuilder) WithHandler(handler DocumentHandlerFunc) *DocumentBuilder {
 	b.document.Handler = handler
+	return b
+}
+
+// WithBody serves body, fixed when the program starts, in place of a handler:
+//
+//	collage.NewDocument("robots", "text/plain; charset=utf-8").
+//		AtRoot("/robots.txt").
+//		WithBody([]byte("User-agent: *\nAllow: /\n")).
+//		Build()
+//
+// A document with a fixed body and no declared strategy is static, so it is
+// cached and exported without saying so. Setting both a body and a handler is
+// ErrConflictingData at registration.
+func (b *DocumentBuilder) WithBody(body []byte) *DocumentBuilder {
+	b.document.Body = body
 	return b
 }
 
@@ -118,8 +135,8 @@ func (b *DocumentBuilder) Static() *DocumentBuilder {
 }
 
 // Dynamic sets the document's strategy to StrategyDynamic: render on every request
-// and never serve from cache. This is the default strategy for a document no
-// strategy method is called on.
+// and never serve from cache. It is what a document with a handler and no strategy
+// method called on it resolves to; see StrategyAuto.
 func (b *DocumentBuilder) Dynamic() *DocumentBuilder {
 	b.document.Strategy = StrategyDynamic
 	return b
@@ -130,6 +147,13 @@ func (b *DocumentBuilder) Dynamic() *DocumentBuilder {
 func (b *DocumentBuilder) Incremental(ttl time.Duration) *DocumentBuilder {
 	b.document.Strategy = StrategyIncremental
 	b.document.CacheTTL = ttl
+	return b
+}
+
+// WithStaticParams lists the path parameter values a static build writes this
+// document for, one map per file, on the same terms as PageBuilder.WithStaticParams.
+func (b *DocumentBuilder) WithStaticParams(list StaticParamsFunc) *DocumentBuilder {
+	b.document.StaticParams = list
 	return b
 }
 
@@ -150,10 +174,10 @@ func (b *DocumentBuilder) WithDependency(tags ...string) *DocumentBuilder {
 
 // Build returns the Document constructed so far. It never panics and never returns
 // nil for a non-nil builder, even if WithX calls recorded errors along the way, or
-// if no handler was ever set (which records ErrNoDocumentHandler); call BuildErr to
-// check whether any errors were recorded.
+// if neither a handler nor a body was ever set (which records ErrNoDocumentHandler);
+// call BuildErr to check whether any errors were recorded.
 func (b *DocumentBuilder) Build() *Document {
-	if b.document.Handler == nil {
+	if b.document.Handler == nil && len(b.document.Body) == 0 {
 		b.errs = append(b.errs, ErrNoDocumentHandler)
 	}
 	types.RecordBuildErr(b.document, b.BuildErr())

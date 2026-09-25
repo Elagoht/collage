@@ -27,9 +27,8 @@ package collage
 import "github.com/Elagoht/collage/internal/types"
 
 // DefaultContentSlot is the name of the slot a page's content fragment is bound to
-// when the page has a layout fragment. A layout declares it with
-// WithSlot(collage.DefaultContentSlot, true, false) and renders it with
-// {{slot "content"}}; registration fills it.
+// when the page has a layout fragment. A layout renders it with {{slot "content"}},
+// and registration fills it; the layout need not declare it.
 const DefaultContentSlot = types.DefaultContentSlot
 
 // Fragment is the framework's unit of composition: a template, an optional data
@@ -60,6 +59,16 @@ type RenderContext = types.RenderContext
 // RenderStrategy selects how a page's output is cached and regenerated.
 type RenderStrategy = types.RenderStrategy
 
+// StaticParamsFunc returns, for locale, the path parameter values a static build
+// writes a route for: one map per file, keyed by placeholder name. See
+// PageBuilder.WithStaticParams.
+type StaticParamsFunc = types.StaticParamsFunc
+
+// StrategyAuto is the strategy of a page or document that declared none, resolved
+// at registration: dynamic when a data handler, slot resolver, or document handler
+// produces what it serves, static when everything in it is fixed.
+const StrategyAuto = types.StrategyAuto
+
 // StrategyDynamic renders on every request and never serves from cache.
 const StrategyDynamic = types.StrategyDynamic
 
@@ -73,8 +82,8 @@ const StrategyIncremental = types.StrategyIncremental
 // required.
 var ErrNilFragment = types.ErrNilFragment
 
-// ErrUnknownSlot is returned when an operation references a slot name a fragment has
-// not declared.
+// ErrUnknownSlot is returned at registration when a fragment binds into a slot its
+// template never calls — a fill that could never render.
 var ErrUnknownSlot = types.ErrUnknownSlot
 
 // ErrSlotOccupied is returned when binding a fragment to a slot that already has a
@@ -91,6 +100,10 @@ var ErrFragmentCycle = types.ErrFragmentCycle
 
 // ErrMissingContent is returned when a page has no content fragment.
 var ErrMissingContent = types.ErrMissingContent
+
+// ErrConflictingData is returned when a fragment sets both WithData and
+// WithDataHandler, or a document both WithBody and WithHandler.
+var ErrConflictingData = types.ErrConflictingData
 
 // ErrMissingTTL is returned when a page uses StrategyIncremental without a positive
 // CacheTTL.

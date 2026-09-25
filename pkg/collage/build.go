@@ -16,23 +16,6 @@ type BuildOptions = build.Options
 // BuildReport summarizes the outcome of a Builder.Build call.
 type BuildReport = build.Report
 
-// PathProvider supplies the concrete paths a dynamic page's pattern expands
-// to, for BuildOptions.PathProvider. A page whose path pattern for a locale
-// contains a "{param}" (or "{param...}") segment cannot be built statically
-// without one.
-type PathProvider = build.PathProvider
-
-// DocumentPathProvider supplies the concrete paths a dynamic document's
-// pattern expands to, for BuildOptions.DocumentPathProvider. It is
-// PathProvider's sibling for documents, kept as its own interface rather than
-// a widening of PathProvider so an existing PathProvider implementation keeps
-// compiling.
-type DocumentPathProvider = build.DocumentPathProvider
-
-// PathInstance is one concrete URL a dynamic page is built for, plus the path
-// parameter values that reached it.
-type PathInstance = build.PathInstance
-
 // SkipRecord describes one page or document, or one locale of one, that a static
 // build could not produce, and why.
 type SkipRecord = build.SkipRecord
@@ -42,8 +25,8 @@ type SkipRecord = build.SkipRecord
 type WarningRecord = build.WarningRecord
 
 // ErrOutputPathCollision is returned by Build when two pages would be written to
-// the same file — two patterns differing only in a trailing slash, or a
-// PathProvider returning one path twice. It is reported before anything renders, so
+// the same file — two patterns differing only in a trailing slash, or
+// StaticParams listing one set of values twice. It is reported before anything renders, so
 // a collision costs no work and leaves no half-built output directory.
 var ErrOutputPathCollision = build.ErrOutputPathCollision
 
@@ -66,14 +49,13 @@ var ErrDangerousOutDir = build.ErrDangerousOutDir
 var ErrPathEscapesOutDir = build.ErrPathEscapesOutDir
 
 // ErrDynamicPathUnresolved is recorded, as SkipRecord.Err and in
-// SkipRecord.Reason, when a page's path pattern for a locale contains a "{param}"
-// segment and BuildOptions.PathProvider is nil — or a document's, and
-// BuildOptions.DocumentPathProvider is nil.
+// SkipRecord.Reason, when a page's or document's path pattern for a locale
+// contains a "{param}" segment and it was built without WithStaticParams.
 var ErrDynamicPathUnresolved = build.ErrDynamicPathUnresolved
 
 // ErrDuplicateOutputPath is recorded, as SkipRecord.Err and in SkipRecord.Reason,
-// when two document build tasks resolve to the same output file — a
-// DocumentPathProvider returning one path twice. One pattern in two locales is not
+// when two document build tasks resolve to the same output file —
+// StaticParams listing one set of values twice. One pattern in two locales is not
 // a collision: a non-default locale's document is written under its prefix,
 // "/tr/sitemap.xml". One task is built and the rest are skipped by name, rather
 // than racing to overwrite one file.

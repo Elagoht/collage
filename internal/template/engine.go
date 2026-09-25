@@ -63,7 +63,8 @@ type Engine interface {
 	// Names returns every loaded template path, sorted.
 	Names() []string
 	// SlotCalls returns the slot names the template at path calls by a literal
-	// name, sorted, so registration can check them against the fragment's
-	// declarations before anything renders.
-	SlotCalls(path string) []string
+	// name, sorted, and whether it also calls one by a name known only when it
+	// renders, so registration can check a fragment's bindings against them
+	// before anything renders.
+	SlotCalls(path string) (names []string, dynamic bool)
 }

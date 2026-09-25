@@ -74,6 +74,10 @@ type Page struct {
 	Strategy RenderStrategy
 	// CacheTTL is how long a cached render stays valid under StrategyIncremental.
 	CacheTTL time.Duration
+	// StaticParams lists the path parameter values a static build writes this
+	// page for, when a path pattern of it has a "{param}". It is consulted only by
+	// a build; a running server answers every value the pattern matches.
+	StaticParams StaticParamsFunc
 	// SEO holds opaque SEO metadata for this page.
 	SEO map[string]any // any: SEO metadata is opaque to the framework
 	// CacheParams restricts which query parameters take part in this page's cache

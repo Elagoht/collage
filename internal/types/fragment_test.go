@@ -29,11 +29,24 @@ func TestFragment_Bind(t *testing.T) {
 		}
 	})
 
-	t.Run("unknown slot", func(t *testing.T) {
+	t.Run("undeclared slot is declared optional and multiple", func(t *testing.T) {
+		f := &Fragment{Name: "parent", TemplatePath: "parent.html"}
+		if err := f.Bind("aside", child); err != nil {
+			t.Fatalf("Bind() error = %v, want nil", err)
+		}
+		if err := f.Bind("aside", child); err != nil {
+			t.Fatalf("second Bind() error = %v, want a second fill", err)
+		}
+		slot, ok := f.Slot("aside")
+		if !ok || slot.Name != "aside" || slot.Required || !slot.AllowMultiple || len(slot.Fill) != 2 {
+			t.Fatalf("slot = %+v, want an optional multi-fill slot with two fills", slot)
+		}
+	})
+
+	t.Run("empty slot name", func(t *testing.T) {
 		f := newSlotted(false)
-		err := f.Bind("missing", child)
-		if !errors.Is(err, ErrUnknownSlot) {
-			t.Fatalf("Bind() error = %v, want ErrUnknownSlot", err)
+		if err := f.Bind("", child); !errors.Is(err, ErrInvalidSlotDefinition) {
+			t.Fatalf("Bind() error = %v, want ErrInvalidSlotDefinition", err)
 		}
 	})
 

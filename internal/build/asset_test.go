@@ -83,7 +83,7 @@ func TestBuild_HonoursWithoutBuildCopy(t *testing.T) {
 }
 
 // TestBuild_AssetCopyCannotEscapeOutDir is the required hostile test: a mount's
-// fs.FS is user-supplied, exactly as a PathProvider is, so its fs.WalkDir names are
+// fs.FS is user-supplied, exactly as StaticParams is, so its fs.WalkDir names are
 // equally untrusted input. evilAssetFS's single entry is named "../../escape",
 // which — joined with the mount's "/static/" prefix — resolves outside OutDir once
 // cleaned. The copy must be refused, with nothing written outside OutDir.

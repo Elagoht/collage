@@ -29,7 +29,8 @@ type DocumentResult struct {
 	Timing observability.Timing
 }
 
-// ExecuteDocument runs doc's handler with panic containment and the engine's
+// ExecuteDocument runs doc's handler — or, for a document with none, takes its
+// fixed Body — with panic containment and the engine's
 // default timeout — Document has no per-document Timeout field, unlike Fragment, so
 // there is no effective timeout to resolve — and returns its body, content type and
 // collected tags. The handler runs on the calling goroutine — see Execute for why a
@@ -48,11 +49,16 @@ func (e *SlotEngine) ExecuteDocument(ctx context.Context, doc *types.Document, r
 		body []byte
 		tags []string
 	)
-	err := Execute(ctx, e.defaultTimeout, func(ctx context.Context) error {
-		var handlerErr error
-		body, tags, handlerErr = doc.Handler(ctx, rc.WithContext(ctx))
-		return handlerErr
-	})
+	var err error
+	if doc.Handler == nil {
+		body = doc.Body
+	} else {
+		err = Execute(ctx, e.defaultTimeout, func(ctx context.Context) error {
+			var handlerErr error
+			body, tags, handlerErr = doc.Handler(ctx, rc.WithContext(ctx))
+			return handlerErr
+		})
+	}
 
 	result.Timing.Total = time.Since(started)
 	result.Timing.Data = result.Timing.Total

@@ -19,6 +19,9 @@ var ErrDuplicateSlot = errors.New("collage: slot already declared")
 type FragmentBuilder struct {
 	fragment *Fragment
 	errs     []error
+	// declared holds the slots WithSlot named, as opposed to those a binding
+	// declared on its own, which WithSlot may still constrain.
+	declared map[string]bool
 }
 
 // NewFragment starts a FragmentBuilder for a fragment named name that renders the
@@ -33,9 +36,39 @@ func NewFragment(name, templatePath string) *FragmentBuilder {
 	}
 }
 
-// WithDataHandler sets the fragment's data handler.
+// WithDataHandler sets the fragment's data handler. A page rendering a fragment
+// with a handler, and declaring no strategy, is dynamic.
 func (b *FragmentBuilder) WithDataHandler(h DataHandlerFunc) *FragmentBuilder {
 	b.fragment.DataHandler = h
+	return b
+}
+
+// WithData hands the fragment's template v on every render — for data fixed when
+// the program starts, a list of links or a heading — with no function to write:
+//
+//	collage.NewFragment("home-content", "pages/home.html").
+//		WithData(homeView{Links: links}).
+//		Build()
+//
+// Unlike a data handler, fixed data leaves a page that declares no strategy
+// static. Data that changes while the program runs wants Load, or DataHandler to
+// report what it came from. Setting both is ErrConflictingData at registration.
+func (b *FragmentBuilder) WithData(v any) *FragmentBuilder { // any: fragment data is opaque to the framework and flows straight into the template engine
+	b.fragment.Data = v
+	return b
+}
+
+// WithTitle declares the page's <title>, as rc.HoistTitle would, without a data
+// handler — so a layout can name the site and still leave its pages static:
+//
+//	collage.NewFragment("layout", "layouts/default.html").
+//		WithTitle("My site").
+//		Build()
+//
+// The innermost declaration wins, so a page's content declaring its own title
+// replaces the layout's.
+func (b *FragmentBuilder) WithTitle(title string) *FragmentBuilder {
+	b.fragment.Title = title
 	return b
 }
 
@@ -63,21 +96,6 @@ func DataHandler[T any](fn func(context.Context, *RenderContext) (T, []string, e
 			return nil, tags, err
 		}
 		return data, tags, nil
-	}
-}
-
-// Data is a data handler that hands the fragment's template v on every render —
-// for data fixed when the program starts, a list of links or a heading:
-//
-//	collage.NewFragment("home-content", "pages/home.html").
-//		WithDataHandler(collage.Data(homeView{Links: links})).
-//		Build()
-//
-// It reports no dependency tags: data that changes while the program runs wants
-// Load, or DataHandler to report what it came from.
-func Data[T any](v T) DataHandlerFunc {
-	return func(context.Context, *RenderContext) (any, []string, error) { // any: restates DataHandlerFunc's own declaration
-		return v, nil, nil
 	}
 }
 
@@ -130,25 +148,45 @@ func Effect(fn func(context.Context, *RenderContext) error) DataHandlerFunc {
 	}
 }
 
-// WithSlot declares a slot named name on the fragment being built. Declaring a slot
-// under a name already declared on this fragment records ErrDuplicateSlot, retrievable
-// via BuildErr, and leaves the existing slot untouched.
+// WithSlot constrains the slot named name on the fragment being built: required,
+// the render fails with nothing bound to it; not allowMultiple, it holds one
+// fragment at most.
+//
+// A slot needs no declaring otherwise. Its template calling {{slot "name"}} is
+// enough to render what is bound there, and WithSlotFragment or WithSlotResolver
+// bind into a slot whether or not it was declared — as an optional one, open to
+// any number of fragments. WithSlot may come before or after them.
+//
+// Naming a slot WithSlot already named records ErrDuplicateSlot, retrievable via
+// BuildErr, and leaves the slot untouched. Constraining a slot to one fragment
+// that already has more records ErrSlotOccupied.
 func (b *FragmentBuilder) WithSlot(name string, required, allowMultiple bool) *FragmentBuilder {
-	if _, exists := b.fragment.Slots[name]; exists {
+	if b.declared[name] {
 		b.errs = append(b.errs, fmt.Errorf("%w: %q on fragment %q", ErrDuplicateSlot, name, b.fragment.Name))
 		return b
 	}
-	b.fragment.Slots[name] = &SlotDefinition{
-		Name:          name,
-		Required:      required,
-		AllowMultiple: allowMultiple,
+	if b.declared == nil {
+		b.declared = make(map[string]bool)
 	}
+	b.declared[name] = true
+
+	slot, bound := b.fragment.Slots[name]
+	if !bound {
+		slot = &SlotDefinition{Name: name}
+		b.fragment.Slots[name] = slot
+	}
+	if !allowMultiple && len(slot.Fill) > 1 {
+		b.errs = append(b.errs, fmt.Errorf("%w: %q on fragment %q has %d fragments bound", ErrSlotOccupied, name, b.fragment.Name, len(slot.Fill)))
+	}
+	slot.Required = required
+	slot.AllowMultiple = allowMultiple
 	return b
 }
 
 // WithSlotFragment binds child into the slot named slotName via Fragment.Bind,
-// recording any error Bind returns (ErrNilFragment, ErrUnknownSlot, or
-// ErrSlotOccupied) on the builder rather than returning it.
+// declaring the slot if nothing has, and recording any error Bind returns
+// (ErrNilFragment, ErrSlotResolved, or ErrSlotOccupied) on the builder rather than
+// returning it.
 func (b *FragmentBuilder) WithSlotFragment(slotName string, child *Fragment) *FragmentBuilder {
 	if err := b.fragment.Bind(slotName, child); err != nil {
 		b.errs = append(b.errs, err)
@@ -161,7 +199,6 @@ func (b *FragmentBuilder) WithSlotFragment(slotName string, child *Fragment) *Fr
 //
 //	sections := collage.NewFragment("sections", "pages/sections.html").
 //		WithDataHandler(collage.DataHandler(loadSections)). // puts the section list in SharedData
-//		WithSlot("sections", false, true).
 //		WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
 //			list, _ := rc.Get("sections")
 //			return fragmentsFor(list), nil
@@ -176,14 +213,18 @@ func (b *FragmentBuilder) WithSlotFragment(slotName string, child *Fragment) *Fr
 // that handler fetched, and before the fragments it returns start theirs, which
 // still run concurrently. What it returns is held to the slot's own rules — one
 // fragment unless it allows multiple, at least one if it is required — when the
-// page renders. Declare the slot first with WithSlot. A slot is filled either by
-// a resolver or by WithSlotFragment, never both; mixing them records
-// ErrSlotResolved.
+// page renders; a slot nothing declared is optional and open to any number. A slot
+// is filled either by a resolver or by WithSlotFragment, never both; mixing them
+// records ErrSlotResolved.
 func (b *FragmentBuilder) WithSlotResolver(slotName string, resolve SlotResolverFunc) *FragmentBuilder {
 	slot, ok := b.fragment.Slots[slotName]
+	if !ok && slotName != "" {
+		slot = &SlotDefinition{Name: slotName, AllowMultiple: true}
+		b.fragment.Slots[slotName] = slot
+	}
 	switch {
-	case !ok:
-		b.errs = append(b.errs, fmt.Errorf("%w: %q on fragment %q", ErrUnknownSlot, slotName, b.fragment.Name))
+	case slotName == "":
+		b.errs = append(b.errs, fmt.Errorf("%w: empty slot name on fragment %q", ErrInvalidSlotDefinition, b.fragment.Name))
 	case resolve == nil:
 		b.errs = append(b.errs, fmt.Errorf("collage: nil slot resolver for %q on fragment %q", slotName, b.fragment.Name))
 	case len(slot.Fill) > 0:

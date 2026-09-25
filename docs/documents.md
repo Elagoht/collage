@@ -66,15 +66,32 @@ func buildSitemap(posts []Post) ([]byte, error) {
 | --- | --- |
 | `collage.NewDocument(name, contentType)` | Starts the builder. Both are required |
 | `WithPath(locale, pattern)` | The URL pattern that reaches this document in `locale` |
-| `WithHandler(fn)` | The function that produces the body. Required |
-| `Dynamic()` | Execute on every request, never serve from cache. The default |
+| `WithHandler(fn)` | The function that produces the body |
+| `WithBody(b)` | A body fixed when the program starts, in place of a handler. One of the two is required, and not both |
+| `Dynamic()` | Execute on every request, never serve from cache. What a document with a handler and no declared strategy resolves to |
 | `Static()` | Execute once, serve from cache until explicitly invalidated |
 | `Incremental(ttl)` | Serve from cache until `ttl` elapses since the last execution |
 | `WithCacheParams(names...)` | The query parameters that take part in the cache key, as for a page |
+| `WithStaticParams(fn)` | The placeholder values a static build writes a `{param}` pattern for |
 | `WithDependency(tags...)` | Tags every response from this document carries |
 | `WithRedirect(from, to, status)` | A source pattern that redirects here |
 | `WithPermanentRedirect(from, to)` | The same, as a 301 |
 | `Build()` / `BuildErr()` | The document, and whatever errors the chain accumulated |
+
+A document that declares no strategy is dynamic with a handler and static with a
+fixed body, so a `robots.txt` needs nothing but its bytes:
+
+```go
+collage.NewDocument("robots", "text/plain; charset=utf-8").
+	AtRoot("/robots.txt").
+	WithBody([]byte("User-agent: *\nAllow: /\n")).
+	Build()
+```
+
+A sitemap or a feed is produced by a handler, so it is dynamic until it says
+`Static()` — the framework cannot see inside a handler to tell a sitemap from a
+health check, and a health check cached forever is the failure that answers "ok"
+long after it stopped being true.
 
 `ContentType` is static, required, and written verbatim on every response —
 including responses served from cache. That is why it is not stored with the
@@ -237,8 +254,8 @@ cache key, so the two feeds are two entries.
 
 The static build writes each locale where it is served: the feed above becomes
 `<OutDir>/feed.xml` and `<OutDir>/tr/feed.xml`, so one pattern in two locales is
-two files. (Two tasks that still resolve to one file — a `DocumentPathProvider`
-returning the same path twice — are detected, and the later one is recorded in
+two files. (Two tasks that still resolve to one file — `WithStaticParams` listing
+the same values twice — are detected, and the later one is recorded in
 `Report.Skipped` as `collage.ErrDuplicateOutputPath` rather than letting two
 goroutines race to write one file.)
 
@@ -253,7 +270,8 @@ coin toss at request time.
 | `collage.ErrNilDocument` | A nil `*Document` |
 | `collage.ErrEmptyName` | No name |
 | `collage.ErrEmptyContentType` | No content type |
-| `collage.ErrNoDocumentHandler` | No handler |
+| `collage.ErrNoDocumentHandler` | Neither a handler nor a body |
+| `collage.ErrConflictingData` | Both a handler and a body |
 | `collage.ErrInvalidPath` | A path pattern not starting with `/` |
 | `collage.ErrMissingTTL` | `Incremental` with no positive TTL |
 | `collage.ErrDuplicateDocument` | A name another document already holds |
@@ -276,10 +294,7 @@ default is written under its prefix, as it is served: `<OutDir>/tr/sitemap.xml`.
 - A `Static()` or `Incremental(ttl)` document is built. A `Dynamic()` one is
   recorded in `Report.Skipped` — it exists to execute per request.
 - A document whose pattern for a locale contains a `{param}` needs
-  `BuildOptions.DocumentPathProvider`, or it is skipped with
-  `collage.ErrDynamicPathUnresolved`. That is a separate interface from
-  `PathProvider`, not a widening of it, so an existing `PathProvider` keeps
-  compiling.
+  `WithStaticParams`, or it is skipped with `collage.ErrDynamicPathUnresolved`.
 - A handler that returns an empty body is refused with
   `collage.ErrEmptyDocumentBody` and no file is written — the same condition the
   live server answers with a 500, rather than a zero-byte file and an exit status
@@ -288,28 +303,21 @@ default is written under its prefix, as it is served: `<OutDir>/tr/sitemap.xml`.
   that document, and the rest of the build continues.
 
 ```go
-// documentPaths expands "/feeds/{category}.xml" into one path per category.
-type documentPaths struct {
-	categories []string
-}
-
-// Paths implements collage.DocumentPathProvider.
-func (p documentPaths) Paths(ctx context.Context, doc *collage.Document, locale string) ([]collage.PathInstance, error) {
-	pattern, ok := doc.PathFor(locale)
-	if !ok || !strings.Contains(pattern, "{category}") {
-		return nil, nil
-	}
-
-	instances := make([]collage.PathInstance, 0, len(p.categories))
-	for _, category := range p.categories {
-		instances = append(instances, collage.PathInstance{
-			Path:   strings.Replace(pattern, "{category}", category, 1),
-			Params: map[string]string{"category": category},
-		})
-	}
-	return instances, nil
-}
+collage.NewDocument("feed", "application/rss+xml").
+	WithPath("en", "/feeds/{category}/rss.xml").
+	WithHandler(feed).
+	Static().
+	WithStaticParams(func(ctx context.Context, locale string) ([]map[string]string, error) {
+		params := make([]map[string]string, 0, len(categories))
+		for _, category := range categories {
+			params = append(params, map[string]string{"category": category})
+		}
+		return params, nil
+	}).
+	Build()
 ```
+
+It works as it does for a page; see [the CLI guide](cli.md#pages-with-a-param-in-their-path).
 
 **A static build runs plugins on documents**, as it does on pages. The builder goes
 through `App.RenderDocumentPath`, not through `App.Handler()`, but that starts the

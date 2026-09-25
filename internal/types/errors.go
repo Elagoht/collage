@@ -6,8 +6,9 @@ import "errors"
 // required — as a Bind child, a Validate receiver, or elsewhere a fragment is expected.
 var ErrNilFragment = errors.New("collage: nil fragment")
 
-// ErrUnknownSlot is returned when an operation references a slot name a fragment has
-// not declared — a Bind target or a Slot lookup that misses.
+// ErrUnknownSlot is returned at registration when a fragment binds into a slot its
+// template never calls: a fill that could never render, usually a typo on one side
+// of the binding.
 var ErrUnknownSlot = errors.New("collage: unknown slot")
 
 // ErrUnknownAsset is returned when a template asks for the URL of a file no mount
@@ -40,6 +41,11 @@ var ErrMissingContent = errors.New("collage: missing content")
 // ErrMissingTTL is returned when a page uses StrategyIncremental without a positive
 // CacheTTL.
 var ErrMissingTTL = errors.New("collage: missing cache ttl for incremental strategy")
+
+// ErrConflictingData is returned when a fragment sets both fixed Data and a
+// DataHandler, or a document both a fixed Body and a Handler. One of them would be
+// ignored, and which one is not something a reader of the builder chain can tell.
+var ErrConflictingData = errors.New("collage: fixed data and a handler are both set")
 
 // ErrInvalidTimeout is returned when a fragment's Timeout is negative.
 var ErrInvalidTimeout = errors.New("collage: invalid timeout")
@@ -87,9 +93,10 @@ var ErrNilDocument = errors.New("collage: nil document")
 // response and never guesses it.
 var ErrEmptyContentType = errors.New("collage: empty content type")
 
-// ErrNoDocumentHandler reports that a document declared no handler. Unlike a page,
-// a document has no template to fall back on, so a handler is mandatory.
-var ErrNoDocumentHandler = errors.New("collage: document has no handler")
+// ErrNoDocumentHandler reports that a document declared neither a handler nor a
+// fixed body. Unlike a page, a document has no template to fall back on, so it
+// must have one or the other.
+var ErrNoDocumentHandler = errors.New("collage: document has no handler or body")
 
 // ErrEmptyDocumentBody reports that a document's handler returned successfully but
 // produced no body. A page may legitimately render nothing — an optional root

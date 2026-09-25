@@ -11,18 +11,6 @@ import (
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// DocumentPathProvider supplies the concrete paths a dynamic document's pattern
-// expands to. It is optional: a build without one skips dynamic documents and
-// records why. It is deliberately separate from PathProvider rather than a widening
-// of it, so an existing PathProvider implementation keeps compiling.
-type DocumentPathProvider interface {
-	// Paths returns every concrete path a static build should render doc at, for
-	// locale. Path values are user-supplied and are validated against
-	// Options.OutDir before its own file is written — an escaping path fails that
-	// task alone; see ErrPathEscapesOutDir.
-	Paths(ctx context.Context, doc *types.Document, locale string) ([]PathInstance, error)
-}
-
 // documentTask is one document, locale, and concrete path to render and write. It
 // is buildTask's sibling for documents.
 type documentTask struct {
@@ -96,27 +84,17 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 				continue
 			}
 
-			if b.opts.DocumentPathProvider == nil {
-				skipped = append(skipped, SkipRecord{
-					Page:   doc.Name,
-					Locale: locale,
-					Reason: ErrDynamicPathUnresolved.Error(),
-					Err:    ErrDynamicPathUnresolved,
-				})
-				continue
+			instances, skip, err := expandPattern(ctx, "document", doc.Name, locale, pattern, doc.StaticParams)
+			if skip != nil {
+				skipped = append(skipped, *skip)
 			}
-
-			instances, err := b.opts.DocumentPathProvider.Paths(ctx, doc, locale)
-			if err != nil {
-				errs = append(errs, fmt.Errorf("collage: resolve paths for document %q locale %q: %w", doc.Name, locale, err))
-				continue
-			}
+			errs = append(errs, err...)
 			for _, instance := range instances {
 				tasks = append(tasks, documentTask{
 					doc:    doc,
 					locale: locale,
-					path:   instance.Path,
-					params: instance.Params,
+					path:   instance.path,
+					params: instance.params,
 				})
 			}
 		}
@@ -138,7 +116,7 @@ func (b *Builder) documentURL(task documentTask) string {
 //
 // Each locale's document is written under that locale's URL — /tr/feed.xml for a
 // "tr" document at "/feed.xml" — so one pattern in two locales is two files. Two
-// tasks can still resolve to one file when a PathProvider hands back the same path
+// tasks can still resolve to one file when StaticParams lists the same values
 // twice. Left alone, and with Options.Concurrency above 1, both goroutines would
 // call os.WriteFile on that path: one body would win nondeterministically, and
 // nothing would report a problem.

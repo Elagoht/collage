@@ -28,23 +28,6 @@ func newTestDocument(name string, strategy types.RenderStrategy, paths map[strin
 	}
 }
 
-// fakeDocumentPathProvider is a DocumentPathProvider backed by a fixed table,
-// keyed by document name and locale, or a fixed error. It is DocumentPathProvider's
-// counterpart to fakePathProvider.
-type fakeDocumentPathProvider struct {
-	instances map[string][]PathInstance
-	err       error
-}
-
-func (p *fakeDocumentPathProvider) Paths(_ context.Context, doc *types.Document, locale string) ([]PathInstance, error) {
-	if p.err != nil {
-		return nil, p.err
-	}
-	return p.instances[doc.Name+"|"+locale], nil
-}
-
-var _ DocumentPathProvider = (*fakeDocumentPathProvider)(nil)
-
 // TestBuild_WritesADocumentToItsLiteralPath is the required test for the one
 // behavioural difference between a page and a document: "/sitemap.xml" must
 // produce "<out>/sitemap.xml" with the handler's exact bytes, and must NOT produce
@@ -114,14 +97,14 @@ func TestBuild_SkipsDynamicStrategyDocuments(t *testing.T) {
 	}
 }
 
-// TestBuild_SkipsADynamicPatternWithoutAProvider verifies a document whose pattern
-// contains a "{param}" segment, with no DocumentPathProvider configured, is
-// recorded as skipped wrapping ErrDynamicPathUnresolved — the exact sentinel a
-// dynamic page without a PathProvider also records, since the failure mode is
-// identical — and that the build still succeeds overall.
-func TestBuild_SkipsADynamicPatternWithoutAProvider(t *testing.T) {
+// TestBuild_SkipsADynamicPatternWithoutStaticParams verifies a document whose
+// pattern contains a "{param}" segment, with no StaticParams, is recorded as
+// skipped wrapping ErrDynamicPathUnresolved — the exact sentinel a dynamic page
+// without them also records, since the failure mode is identical — and that the
+// build still succeeds overall.
+func TestBuild_SkipsADynamicPatternWithoutStaticParams(t *testing.T) {
 	out := resolvedTempDir(t)
-	doc := newTestDocument("api-item", types.StrategyStatic, map[string]string{"en": "/api/{id}.json"})
+	doc := newTestDocument("api-item", types.StrategyStatic, map[string]string{"en": "/api/{id}/item.json"})
 	app := &fakeRenderer{documents: []*types.Document{doc}}
 
 	b, err := New(app, Options{OutDir: out})
@@ -145,21 +128,16 @@ func TestBuild_SkipsADynamicPatternWithoutAProvider(t *testing.T) {
 	}
 }
 
-// TestBuild_UsesTheDocumentPathProvider verifies a dynamic document pattern with a
-// configured DocumentPathProvider that returns two concrete ids writes both files,
-// and that the provider's params reached RenderDocumentPath.
-func TestBuild_UsesTheDocumentPathProvider(t *testing.T) {
+// TestBuild_UsesTheDocumentStaticParams verifies a dynamic document pattern whose
+// StaticParams list two ids writes both files, and that the listed params reached
+// RenderDocumentPath.
+func TestBuild_UsesTheDocumentStaticParams(t *testing.T) {
 	out := resolvedTempDir(t)
-	doc := newTestDocument("api-item", types.StrategyStatic, map[string]string{"en": "/api/{id}.json"})
+	doc := newTestDocument("api-item", types.StrategyStatic, map[string]string{"en": "/api/{id}/item.json"})
+	doc.StaticParams = staticParams(map[string]string{"id": "1"}, map[string]string{"id": "2"})
 	app := &fakeRenderer{documents: []*types.Document{doc}}
-	provider := &fakeDocumentPathProvider{instances: map[string][]PathInstance{
-		"api-item|en": {
-			{Path: "/api/1.json", Params: map[string]string{"id": "1"}},
-			{Path: "/api/2.json", Params: map[string]string{"id": "2"}},
-		},
-	}}
 
-	b, err := New(app, Options{OutDir: out, DocumentPathProvider: provider})
+	b, err := New(app, Options{OutDir: out})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -168,8 +146,8 @@ func TestBuild_UsesTheDocumentPathProvider(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	one := filepath.Join(out, "api", "1.json")
-	two := filepath.Join(out, "api", "2.json")
+	one := filepath.Join(out, "api", "1", "item.json")
+	two := filepath.Join(out, "api", "2", "item.json")
 	if _, err := os.Stat(one); err != nil {
 		t.Fatalf("stat %s: %v", one, err)
 	}
@@ -184,30 +162,26 @@ func TestBuild_UsesTheDocumentPathProvider(t *testing.T) {
 	defer app.mu.Unlock()
 	found := false
 	for _, call := range app.docCalls {
-		if call.path == "/api/1.json" && call.params["id"] == "1" {
+		if call.path == "/api/1/item.json" && call.params["id"] == "1" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("RenderDocumentPath was not called with the provider's params: %+v", app.docCalls)
+		t.Fatalf("RenderDocumentPath was not called with the listed params: %+v", app.docCalls)
 	}
 }
 
-// TestBuild_ADocumentPathCannotEscapeOutDir is the required hostile test: a
-// DocumentPathProvider is user code, and a Path resolving outside OutDir must be
+// TestBuild_ADocumentPathCannotEscapeOutDir is the required hostile test:
+// StaticParams is user code, and a value whose path resolves outside OutDir must be
 // refused, with nothing written outside OutDir. It exercises documentTarget's reuse
 // of resolveTarget's containment check.
 func TestBuild_ADocumentPathCannotEscapeOutDir(t *testing.T) {
 	out := resolvedTempDir(t)
-	doc := newTestDocument("api-item", types.StrategyStatic, map[string]string{"en": "/api/{id}.json"})
+	doc := newTestDocument("api-item", types.StrategyStatic, map[string]string{"en": "/api/{id}"})
+	doc.StaticParams = staticParams(map[string]string{"id": "../../../etc/cron.d/evil"})
 	app := &fakeRenderer{documents: []*types.Document{doc}}
-	provider := &fakeDocumentPathProvider{instances: map[string][]PathInstance{
-		"api-item|en": {
-			{Path: "/../../../etc/cron.d/evil", Params: map[string]string{"id": "../../../etc/cron.d/evil"}},
-		},
-	}}
 
-	b, err := New(app, Options{OutDir: out, DocumentPathProvider: provider})
+	b, err := New(app, Options{OutDir: out})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

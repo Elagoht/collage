@@ -234,6 +234,13 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 // inside a fallback must not escalate past it.
 func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *renderState, pre *prefetch) ([]byte, error) {
 	var data any // any: fragment data is opaque to the framework and flows straight into the template engine, whose parameter is already any
+	// Before the handler, so one of this fragment's own that hoists a title
+	// replaces the fixed one: at the same depth, the later declaration wins. A
+	// prefetched handler may already have finished, so startPrefetch declared it
+	// before launching it.
+	if f.Title != "" && pre == nil {
+		rc.HoistTitle(f.Title)
+	}
 	switch {
 	case pre != nil:
 		// Already running, started by this fragment's parent. Waiting for it is
@@ -263,6 +270,9 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		if err != nil {
 			return nil, wrapFragment("data handler", f.Name, err)
 		}
+
+	default:
+		data = f.Data
 	}
 
 	// After the handler, so a resolver can read what it fetched; before the
@@ -334,9 +344,10 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 // and returns the concatenation as template.HTML so the children's markup is not
 // escaped a second time on its way into the parent.
 //
-// A name f does not declare is an error, not empty output: silently rendering nothing
-// would turn a typo in a template into a section that is simply missing from the
-// page, which nobody notices until a user does.
+// A name f does not declare renders nothing: calling a slot in a template is what
+// declares it, and a slot nothing was bound to is an empty one. A typo on either
+// side of a binding is caught at registration instead, where a fragment bound into
+// a slot its template never calls is refused.
 func (e *SlotEngine) renderSlot(
 	rc *types.RenderContext,
 	f *types.Fragment,
@@ -348,7 +359,7 @@ func (e *SlotEngine) renderSlot(
 ) (htmltemplate.HTML, error) {
 	slot, ok := f.Slot(name)
 	if !ok {
-		return "", fmt.Errorf("%w: fragment %q has no slot %q, only %v", types.ErrUnknownSlot, f.Name, name, f.SlotNames())
+		return "", nil
 	}
 	// Slot reports ok for a key mapped to a nil definition, and Render never
 	// requires that Fragment.Validate has run, so the nil is checked here rather

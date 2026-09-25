@@ -153,6 +153,9 @@ Incremental(time.Minute) // re-render at most this often
 Dynamic()              // never cached
 ```
 
+A page that declares none is static when nothing it renders has a data handler,
+and dynamic when something does.
+
 Invalidate by tag when content changes, which is what a webhook from a CMS is for:
 
 ```go
@@ -193,7 +196,8 @@ because it is never worth caching. A site exported without one answers an unknow
 URL with whatever the host decided to show — somebody else's page, in somebody
 else's language, with none of the navigation a reader needs to get back.
 
-Pages declared `Dynamic()` are skipped and named, and so is a page carrying a form,
+Dynamic pages — declared `Dynamic()`, or declaring nothing and rendering a data
+handler — are skipped and named, and so is a page carrying a form,
 with the reason — a form needs somewhere to post to, and a static host is not it.
 The one exception is the not-found page, which a static host needs as a file: one
 carrying a form fails the export. See [actions](actions.md).

@@ -35,12 +35,19 @@ type Document struct {
 	// by design: the framework reads it from the matched document at serve time, so
 	// it never has to be stored alongside the cached body.
 	ContentType string
-	// Handler produces the body. It is required.
+	// Handler produces the body. A document has a Handler or a Body, not both.
 	Handler DocumentHandlerFunc
+	// Body is a body fixed when the program starts, served when there is no
+	// Handler: a robots.txt, a humans.txt. Unlike a handler, it does not make a
+	// document with no declared strategy dynamic.
+	Body []byte
 	// Strategy selects how the response is cached.
 	Strategy RenderStrategy
 	// CacheTTL is the lifetime of a cached body under StrategyIncremental.
 	CacheTTL time.Duration
+	// StaticParams lists the path parameter values a static build writes this
+	// document for, on the same terms as Page.StaticParams.
+	StaticParams StaticParamsFunc
 	// CacheParams restricts which query parameters take part in this document's
 	// cache key, on the same terms as Page.CacheParams: nil keeps every parameter,
 	// an empty non-nil value drops the query from the key.
@@ -94,7 +101,8 @@ func (d *Document) PathFor(locale string) (string, bool) {
 }
 
 // Validate reports whether the document is coherent enough to register. It returns
-// ErrNilDocument, ErrEmptyName, ErrEmptyContentType, ErrNoDocumentHandler,
+// ErrNilDocument, ErrEmptyName, ErrEmptyContentType, ErrNoDocumentHandler (neither a Handler nor a
+// Body), ErrConflictingData (both),
 // ErrInvalidPath, ErrInvalidTTL, ErrMissingTTL, or a redirect's own error.
 func (d *Document) Validate() error {
 	if d == nil {
@@ -106,8 +114,11 @@ func (d *Document) Validate() error {
 	if strings.TrimSpace(d.ContentType) == "" {
 		return fmt.Errorf("%w: document %q", ErrEmptyContentType, d.Name)
 	}
-	if d.Handler == nil {
+	if d.Handler == nil && len(d.Body) == 0 {
 		return fmt.Errorf("%w: document %q", ErrNoDocumentHandler, d.Name)
+	}
+	if d.Handler != nil && len(d.Body) > 0 {
+		return fmt.Errorf("%w: document %q", ErrConflictingData, d.Name)
 	}
 	for _, locale := range d.Locales() {
 		if pattern := d.Paths[locale]; !strings.HasPrefix(pattern, "/") {

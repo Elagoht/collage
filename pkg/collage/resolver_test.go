@@ -144,7 +144,10 @@ func TestSlotResolver_CannotBeMixedWithBoundFragments(t *testing.T) {
 		t.Errorf("bound fragment after a resolver: BuildErr() = %v, want ErrSlotResolved", err)
 	}
 	undeclared := collage.NewFragment("c", "c.html").WithSlotResolver("s", resolve)
-	if err := undeclared.BuildErr(); !errors.Is(err, collage.ErrUnknownSlot) {
-		t.Errorf("resolver for an undeclared slot: BuildErr() = %v, want ErrUnknownSlot", err)
+	if err := undeclared.BuildErr(); err != nil {
+		t.Errorf("resolver for an undeclared slot: BuildErr() = %v, want it declared", err)
+	}
+	if slot, ok := undeclared.Build().Slot("s"); !ok || slot.Required || !slot.AllowMultiple || slot.Resolve == nil {
+		t.Errorf("slot = %+v, want an optional multi-fill slot holding the resolver", slot)
 	}
 }

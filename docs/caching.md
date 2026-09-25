@@ -23,7 +23,7 @@ A disabled cache is a nil cache: every request renders and nothing is stored.
 
 | Builder call | Meaning | `Cache-Control` |
 | --- | --- | --- |
-| `Dynamic()` (the default) | Render every request, never serve from cache | `no-store` |
+| `Dynamic()` | Render every request, never serve from cache | `no-store` |
 | `Static()` | Render once, serve from cache until explicitly invalidated | `public, max-age=0, must-revalidate` |
 | `Incremental(ttl)` | Serve from cache until `ttl` elapses since the render | `public, max-age=<ttl seconds>` |
 
@@ -36,6 +36,27 @@ page := collage.NewPage("blog-post").
 	WithDependency("blog:posts").
 	Build()
 ```
+
+### A page that declares none
+
+A page that calls none of the three is resolved when it is registered:
+
+- **Dynamic** if anything it renders fetches per render — a data handler
+  (`WithDataHandler`, including `Load` and `Effect`) or a slot resolver, in its
+  layout, its content, anything bound into their slots, their fallbacks, or a
+  fragment opened with `WithFragmentPath`.
+- **Static** otherwise: a page rendering templates and fixed values —
+  `WithData(v)`, `WithTitle(s)` — renders the same for every reader.
+
+A handler means dynamic because it may read the request, a cookie, the clock, and
+nothing outside the function can tell whether it does. The guess costs a render
+when it is wrong, never a reader served another's page. A handler whose output is
+the same for everyone — a post read from a file — is a page that says `Static()`
+or `Incremental(ttl)` itself.
+
+A document resolves the same way: dynamic with a handler, static with a fixed
+body (`WithBody`). A declared strategy is never second-guessed, in either
+direction, and a registered page's `Strategy` is always the resolved one.
 
 `Incremental` without a positive TTL is a registration error
 (`collage.ErrMissingTTL`), not a page that silently never expires.

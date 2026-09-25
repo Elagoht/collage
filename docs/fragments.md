@@ -138,7 +138,8 @@ accumulated:
 
 ```go
 builder := collage.NewFragment("sidebar", "partials/sidebar.html").
-	WithSlot("widgets", false, true)
+	WithSlot("widgets", true, false).
+	WithSlotFragment("widgets", recentPosts)
 
 sidebar := builder.Build()
 if err := builder.BuildErr(); err != nil {
@@ -155,8 +156,8 @@ be well-formed ahead of time, to report the mistake where it was made.
 
 ## Slots
 
-A slot is a named position inside a fragment's template, written `{{slot "name"}}`
-and declared with `WithSlot(name, required, allowMultiple)`:
+A slot is a named position inside a fragment's template, written `{{slot "name"}}`.
+Calling it in the template is all the declaring it needs:
 
 ```html
 <!-- templates/layouts/default.html -->
@@ -170,29 +171,35 @@ and declared with `WithSlot(name, required, allowMultiple)`:
 ```
 
 ```go
-layout := collage.NewFragment("layout", "layouts/default.html").
-	WithSlot("content", true, false). // required, single fill
-	Build()
+layout := collage.NewFragment("layout", "layouts/default.html").Build()
 ```
 
-- `required` — the render fails if nothing is bound to the slot. This is enforced
-  before the template runs, so a required slot is caught even if the template
-  never asks for it.
-- `allowMultiple` — more than one fragment may be bound; they render in binding
-  order, concatenated.
-
-Binding a child explicitly:
+A page's content goes into the layout's `"content"` slot at registration. Binding a
+child yourself:
 
 ```go
 sidebar := collage.NewFragment("sidebar", "partials/sidebar.html").
-	WithSlot("widgets", false, true).
 	WithSlotFragment("widgets", recentPosts).
 	WithSlotFragment("widgets", tagCloud).
 	Build()
 ```
 
-Referring to a slot the fragment never declared is an error, not empty output: a
-typo in a template would otherwise become a section that is simply missing.
+A slot holds any number of fragments, rendered in binding order and
+concatenated, and a slot nothing is bound to renders nothing.
+`WithSlot(name, required, allowMultiple)` is for when that is not what you want,
+and may come before or after the bindings it constrains:
+
+- `required` — the render fails if nothing is bound to the slot. This is enforced
+  before the template runs, so a required slot is caught even if the template
+  never asks for it.
+- `allowMultiple` set to false — one fragment at most; binding a second is
+  `ErrSlotOccupied`.
+
+A typo on either side of a binding — `WithSlotFragment("sidbar", ...)` against
+`{{slot "sidebar"}}` — fails registration with `ErrUnknownSlot`: a fragment bound
+into a slot its template never calls could never render. A template that names a
+slot by anything but a literal, `{{slot .Which}}`, may call any of them, so its
+fragment's bindings are not checked.
 
 ### Slots filled per render
 
@@ -201,8 +208,7 @@ editor chose — bind a resolver instead of fragments:
 
 ```go
 page := collage.NewFragment("sections", "pages/sections.html").
-	WithDataHandler(collage.DataHandler(loadSections)). // rc.Set("sections", blocks)
-	WithSlot("sections", false, true).
+	WithDataHandler(loadSections). // rc.Set("sections", blocks)
 	WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
 		value, _ := rc.Get("sections")
 		blocks, _ := value.([]block)
@@ -262,20 +268,31 @@ A page with no layout renders its content fragment as the root.
 type DataHandlerFunc func(ctx context.Context, rc *RenderContext) (data any, tags []string, err error)
 ```
 
-The `any` is the framework's: `html/template` renders arbitrary data and the
-framework cannot know an application's shape. Your own code does not have to
-spread it around — write handlers against a concrete type and adapt them with
-`collage.DataHandler`:
+A handler is a function of that shape, handed straight to the fragment:
 
 ```go
-// pageData is everything this application's templates render with.
-type pageData struct {
-	Site  siteInfo
-	Posts []Post
-	Post  *Post
-}
+collage.NewFragment("blog-post", "pages/blog-post.html").
+	WithDataHandler(func(ctx context.Context, rc *collage.RenderContext) (any, []string, error) {
+		post, err := store.Post(ctx, rc.Param("slug"))
+		if err != nil {
+			return nil, nil, err
+		}
+		return post, []string{"post:" + post.Slug}, nil
+	}).
+	Build()
+```
 
-func loadPost(ctx context.Context, rc *collage.RenderContext) (*pageData, []string, error) {
+The data is `any` because its one reader, the template, is untyped anyway: a
+`{{.Titel}}` fails when the page renders whatever the handler's return type says,
+so a concrete type would check nothing the template does not.
+
+Where a concrete type does pay is outside the page — a loader called from a test,
+or from a sitemap's handler, is easier to use when it returns a `*Post` rather
+than an `any` to assert. Write that loader against its own type and adapt it
+with `collage.DataHandler`, which is generic over the return type:
+
+```go
+func loadPost(ctx context.Context, rc *collage.RenderContext) (*Post, []string, error) {
 	// ...
 }
 
@@ -284,26 +301,26 @@ collage.NewFragment("blog-post", "pages/blog-post.html").
 	Build()
 ```
 
-It is generic over the handler's return type, so there is one adapter for every
-view type and no `any` in the application at all.
+A Go method cannot take a type parameter, so the adapter is a function of its
+own rather than a form of `WithDataHandler`. Two shorter ones cover the loaders
+that report no tags: `collage.Load(func(ctx, rc) (T, error))`, for a page that is
+not cached or data that does not change — a cached page whose data does change
+wants its tags, so that they invalidate it — and `collage.Effect(func(ctx, rc)
+error)`, for a fragment that only declares things for the page, a title or
+structured data, and renders nothing.
 
-Two shorter adapters cover the handlers that report no tags. `collage.Data(v)`
-hands the template the same value on every render — data fixed when the program
-starts, a list of links or a heading — with no function to write:
+Data fixed when the program starts — a list of links, a heading — needs no
+handler at all. `WithData(v)` hands the template the same value on every render:
 
 ```go
 collage.NewFragment("home-content", "pages/home.html").
-	WithDataHandler(collage.Data(homeView{Links: links})).
+	WithData(homeView{Links: links}).
 	Build()
 ```
 
-`collage.Load(func(ctx, rc) (T, error))` is `DataHandler` without the tags, for a
-page that is not cached or data that does not change. A cached page whose data
-does change wants `DataHandler`, so that the tags invalidate it. A fragment that only declares
-things for the page — a title, structured data — and renders nothing takes
-`collage.Effect(func(ctx, rc) error)` instead. On an error it drops the data
-rather than boxing it: a nil `*pageData` returned alongside an error would
-otherwise become a non-nil interface value, a typed nil that reads as present.
+Unlike a handler, it leaves a page that declares no strategy static; see
+[caching](caching.md#a-page-that-declares-none). Setting both `WithData` and
+`WithDataHandler` is `collage.ErrConflictingData` at registration.
 
 The handler returns three things:
 
@@ -326,12 +343,12 @@ context the handler is handed, not the handler itself — see
 [architecture](architecture.md) for why — so honour `ctx`:
 
 ```go
-func loadPost(ctx context.Context, rc *collage.RenderContext) (*pageData, []string, error) {
+func loadPost(ctx context.Context, rc *collage.RenderContext) (any, []string, error) {
 	post, err := store.Post(ctx, rc.Param("slug"))
 	if err != nil {
 		return nil, nil, err
 	}
-	return &pageData{Post: post}, []string{"post:" + post.Slug}, nil
+	return post, []string{"post:" + post.Slug}, nil
 }
 ```
 
@@ -370,12 +387,12 @@ and `collage.Once`), never as a bare map — see
 
 ```go
 postContent := collage.NewFragment("blog-post", "pages/blog-post.html").
-	WithDataHandler(collage.DataHandler(loadPost)).
+	WithDataHandler(loadPost).
 	Required().
 	Build()
 
 sidebar := collage.NewFragment("sidebar", "partials/sidebar.html").
-	WithDataHandler(collage.DataHandler(loadSidebar)).
+	WithDataHandler(loadSidebar).
 	WithFallback(collage.NewFragment("sidebar-empty", "partials/sidebar-empty.html").Build()).
 	Build()
 ```
@@ -538,7 +555,17 @@ stylesheet it uses, the title it is the subject of, a preload hint for its own
 image. It cannot write those where they go, because it does not know where that is —
 and by the time it renders, the layout has already written its `<head>`.
 
-So it declares, and the layout decides where declarations land:
+So it declares, and the layout decides where declarations land. A title known when
+the program starts — the site's name, on its layout — is `WithTitle`, which takes
+no handler and so leaves the page static:
+
+```go
+collage.NewFragment("layout", "layouts/default.html").
+	WithTitle("My site").
+	Build()
+```
+
+Everything else is declared from a data handler:
 
 ```go
 // in a fragment's data handler

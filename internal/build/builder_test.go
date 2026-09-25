@@ -208,21 +208,12 @@ func (f *fakeRenderer) Mounts() []*asset.Mount {
 
 var _ Renderer = (*fakeRenderer)(nil)
 
-// fakePathProvider is a PathProvider backed by a fixed table, keyed by page name and
-// locale, or a fixed error.
-type fakePathProvider struct {
-	instances map[string][]PathInstance
-	err       error
-}
-
-func (p *fakePathProvider) Paths(_ context.Context, page *types.Page, locale string) ([]PathInstance, error) {
-	if p.err != nil {
-		return nil, p.err
+// staticParams is a StaticParamsFunc listing sets in every locale.
+func staticParams(sets ...map[string]string) types.StaticParamsFunc {
+	return func(context.Context, string) ([]map[string]string, error) {
+		return sets, nil
 	}
-	return p.instances[page.Name+"|"+locale], nil
 }
-
-var _ PathProvider = (*fakePathProvider)(nil)
 
 // newTestPage builds a minimally valid *types.Page for these tests: Builder never
 // calls Page.Validate, so only the fields Builder itself reads need to be set.
@@ -407,18 +398,13 @@ func TestBuild_LocaleFilter(t *testing.T) {
 	}
 }
 
-func TestBuild_DynamicPage_WithPathProvider(t *testing.T) {
+func TestBuild_DynamicPage_WithStaticParams(t *testing.T) {
 	out := resolvedTempDir(t)
 	page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/blog/{slug}"})
+	page.StaticParams = staticParams(map[string]string{"slug": "hello"}, map[string]string{"slug": "world"})
 	app := &fakeRenderer{pages: []*types.Page{page}}
-	provider := &fakePathProvider{instances: map[string][]PathInstance{
-		"post|en": {
-			{Path: "/blog/hello", Params: map[string]string{"slug": "hello"}},
-			{Path: "/blog/world", Params: map[string]string{"slug": "world"}},
-		},
-	}}
 
-	b, err := New(app, Options{OutDir: out, PathProvider: provider})
+	b, err := New(app, Options{OutDir: out})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -439,7 +425,7 @@ func TestBuild_DynamicPage_WithPathProvider(t *testing.T) {
 		t.Fatalf("Written = %v, want 2 entries", report.Written)
 	}
 
-	// The params the provider supplied must have reached RenderPath.
+	// The params listed must have reached RenderPath, with the path they fill.
 	app.mu.Lock()
 	defer app.mu.Unlock()
 	found := false
@@ -449,7 +435,7 @@ func TestBuild_DynamicPage_WithPathProvider(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("RenderPath was not called with the provider's params: %+v", app.calls)
+		t.Fatalf("RenderPath was not called with the listed params: %+v", app.calls)
 	}
 }
 
@@ -501,20 +487,16 @@ func TestBuild_DynamicStrategySkipped(t *testing.T) {
 	}
 }
 
-// TestBuild_PathProvider_Escape is the required path-escape test: a PathProvider is
-// user code, and a Path that resolves outside OutDir after filepath.Clean must be
-// rejected, and nothing must be written outside OutDir.
-func TestBuild_PathProvider_Escape(t *testing.T) {
+// TestBuild_StaticParams_Escape is the required path-escape test: StaticParams is
+// user code, and a value whose path resolves outside OutDir after filepath.Clean
+// must be rejected, and nothing must be written outside OutDir.
+func TestBuild_StaticParams_Escape(t *testing.T) {
 	out := resolvedTempDir(t)
 	page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/blog/{slug}"})
+	page.StaticParams = staticParams(map[string]string{"slug": "../../../etc/cron.d/evil"})
 	app := &fakeRenderer{pages: []*types.Page{page}}
-	provider := &fakePathProvider{instances: map[string][]PathInstance{
-		"post|en": {
-			{Path: "/../../../etc/cron.d/evil", Params: map[string]string{"slug": "../../../etc/cron.d/evil"}},
-		},
-	}}
 
-	b, err := New(app, Options{OutDir: out, PathProvider: provider})
+	b, err := New(app, Options{OutDir: out})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -544,16 +526,16 @@ func TestBuild_PathProvider_Escape(t *testing.T) {
 	}
 }
 
-// TestBuild_PathProvider_SymlinkEscape is the required test reproducing the C1
+// TestBuild_StaticParams_SymlinkEscape is the required test reproducing the C1
 // review finding: resolveTarget's containment check is purely lexical
 // (filepath.Clean + filepath.Rel), which proves nothing about the filesystem. A
 // symlink planted under OutDir — here, OutDir/escaped pointing at a sibling
 // directory entirely outside OutDir — must still be rejected before any bytes are
 // written through it, by the separate, filesystem-aware verifyNoSymlinksBeneath
 // check. This is the "resolves outside OutDir, must be rejected" half of that
-// check's behaviour; TestBuild_PathProvider_SymlinkWithinOutDir_Allowed below is
+// check's behaviour; TestBuild_StaticParams_SymlinkWithinOutDir_Allowed below is
 // the other half ("resolves inside OutDir, must be allowed").
-func TestBuild_PathProvider_SymlinkEscape(t *testing.T) {
+func TestBuild_StaticParams_SymlinkEscape(t *testing.T) {
 	requireSymlinkSupport(t)
 
 	out := resolvedTempDir(t)
@@ -565,14 +547,10 @@ func TestBuild_PathProvider_SymlinkEscape(t *testing.T) {
 	}
 
 	page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/escaped/{slug}"})
+	page.StaticParams = staticParams(map[string]string{"slug": "pwned"})
 	app := &fakeRenderer{pages: []*types.Page{page}}
-	provider := &fakePathProvider{instances: map[string][]PathInstance{
-		"post|en": {
-			{Path: "/escaped/pwned", Params: map[string]string{"slug": "pwned"}},
-		},
-	}}
 
-	b, err := New(app, Options{OutDir: out, PathProvider: provider})
+	b, err := New(app, Options{OutDir: out})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -601,13 +579,13 @@ func TestBuild_PathProvider_SymlinkEscape(t *testing.T) {
 	}
 }
 
-// TestBuild_PathProvider_SymlinkWithinOutDir_Allowed is the fix-round-2 test: a
+// TestBuild_StaticParams_SymlinkWithinOutDir_Allowed is the fix-round-2 test: a
 // symlink is not rejected merely for being a symlink — only one that resolves
 // outside OutDir is. Legitimate layouts rely on this (a shared assets directory
 // symlinked into the output, or artifacts carried between builds under
 // Options.Clean: false). Here OutDir/shortcut is a symlink to OutDir/realdir, both
 // inside OutDir, and the write through it must succeed.
-func TestBuild_PathProvider_SymlinkWithinOutDir_Allowed(t *testing.T) {
+func TestBuild_StaticParams_SymlinkWithinOutDir_Allowed(t *testing.T) {
 	requireSymlinkSupport(t)
 
 	out := resolvedTempDir(t)
@@ -621,14 +599,10 @@ func TestBuild_PathProvider_SymlinkWithinOutDir_Allowed(t *testing.T) {
 	}
 
 	page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/shortcut/{slug}"})
+	page.StaticParams = staticParams(map[string]string{"slug": "hello"})
 	app := &fakeRenderer{pages: []*types.Page{page}}
-	provider := &fakePathProvider{instances: map[string][]PathInstance{
-		"post|en": {
-			{Path: "/shortcut/hello", Params: map[string]string{"slug": "hello"}},
-		},
-	}}
 
-	b, err := New(app, Options{OutDir: out, PathProvider: provider})
+	b, err := New(app, Options{OutDir: out})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1158,7 +1132,7 @@ func TestBuild_SamePatternInTwoLocalesDoesNotCollide(t *testing.T) {
 }
 
 // TestBuild_TwoPagesOnOneOutputPathIsAnError covers what the locale prefix cannot:
-// a PathProvider that returns the same path twice, or two pages whose patterns
+// StaticParams listing the same values twice, or two pages whose patterns
 // resolve to the same file. Silently writing one over the other loses a page from
 // the build with nothing in the report to show for it.
 func TestBuild_TwoPagesOnOneOutputPathIsAnError(t *testing.T) {

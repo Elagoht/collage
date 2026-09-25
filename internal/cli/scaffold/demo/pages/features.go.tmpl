@@ -11,9 +11,7 @@ func FeaturesPage() *collage.Page {
 	clock := demo.Clock()
 
 	content := collage.NewFragment("features-content", "pages/features.html").
-		WithSlot("counter", true, false).
 		WithSlotFragment("counter", demo.Counter()).
-		WithSlot("clock", true, false).
 		WithSlotFragment("clock", clock).
 		Build()
 

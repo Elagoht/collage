@@ -1,23 +1,34 @@
 package types
 
-import "fmt"
+import (
+	"context"
+	"fmt"
+)
 
 // RenderStrategy selects how a page's output is cached and regenerated.
 type RenderStrategy int
 
 const (
+	// StrategyAuto is the strategy of a page or document that declared none.
+	// Registration resolves it: to StrategyDynamic when something in it fetches
+	// per render — a data handler, a slot resolver, a document handler — and to
+	// StrategyStatic when everything in it is fixed. A registered route never
+	// carries it.
+	StrategyAuto RenderStrategy = iota
 	// StrategyDynamic renders on every request and never serves from cache.
-	StrategyDynamic RenderStrategy = iota
+	StrategyDynamic
 	// StrategyStatic renders once and serves from cache until explicitly invalidated.
 	StrategyStatic
 	// StrategyIncremental serves from cache until the page's CacheTTL elapses.
 	StrategyIncremental
 )
 
-// String returns the human-readable name of s: "dynamic", "static", "incremental",
-// or "unknown(<n>)" for a value outside the declared range.
+// String returns the human-readable name of s: "auto", "dynamic", "static",
+// "incremental", or "unknown(<n>)" for a value outside the declared range.
 func (s RenderStrategy) String() string {
 	switch s {
+	case StrategyAuto:
+		return "auto"
 	case StrategyDynamic:
 		return "dynamic"
 	case StrategyStatic:
@@ -35,3 +46,9 @@ func (s RenderStrategy) String() string {
 func (s RenderStrategy) Cacheable() bool {
 	return s == StrategyStatic || s == StrategyIncremental
 }
+
+// StaticParamsFunc returns, for locale, the path parameter values a static build
+// writes a route for: one map per file, keyed by placeholder name —
+// {"slug": "hello-world"} for "/blog/{slug}". Each map must fill the route's
+// pattern in locale exactly, as a link built by name must.
+type StaticParamsFunc func(ctx context.Context, locale string) ([]map[string]string, error)
