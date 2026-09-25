@@ -66,6 +66,47 @@ func DataHandler[T any](fn func(context.Context, *RenderContext) (T, []string, e
 	}
 }
 
+// Data is a data handler that hands the fragment's template v on every render —
+// for data fixed when the program starts, a list of links or a heading:
+//
+//	collage.NewFragment("home-content", "pages/home.html").
+//		WithDataHandler(collage.Data(homeView{Links: links})).
+//		Build()
+//
+// It reports no dependency tags: data that changes while the program runs wants
+// Load, or DataHandler to report what it came from.
+func Data[T any](v T) DataHandlerFunc {
+	return func(context.Context, *RenderContext) (any, []string, error) { // any: restates DataHandlerFunc's own declaration
+		return v, nil, nil
+	}
+}
+
+// Load adapts a data handler that fetches its data but reports no dependency
+// tags to DataHandlerFunc — DataHandler without the tags, for a page that is not
+// cached or whose data does not change:
+//
+//	collage.NewFragment("clock", "fragments/clock.html").
+//		WithDataHandler(collage.Load(func(ctx context.Context, rc *collage.RenderContext) (clockView, error) {
+//			return clockView{Now: time.Now()}, nil
+//		})).
+//		Build()
+//
+// A handler whose page is cached and whose data changes — a post, a count —
+// should report that data's tags, which is DataHandler's shape. As with
+// DataHandler, the data is dropped on an error. A nil fn is a nil handler.
+func Load[T any](fn func(context.Context, *RenderContext) (T, error)) DataHandlerFunc {
+	if fn == nil {
+		return nil
+	}
+	return func(ctx context.Context, rc *RenderContext) (any, []string, error) { // any: restates DataHandlerFunc's own declaration
+		data, err := fn(ctx, rc)
+		if err != nil {
+			return nil, nil, err
+		}
+		return data, nil, nil
+	}
+}
+
 // Effect adapts a data handler that renders nothing to DataHandlerFunc: one that
 // only declares things for the page, through rc.HoistTitle or a plugin's Emit.
 //

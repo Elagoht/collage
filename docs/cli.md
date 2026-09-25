@@ -189,8 +189,9 @@ pages, fragments, action, document and their templates, the tests, a
 
 That is `--template demo`, the default. `--template minimal` is the least a
 project can be: the same `main.go`, `go.mod` and `routes.go`, and a layout around
-one page, `<h1>Hello from collage</h1>`, with a stylesheet that sets the background
-and text colour, dark mode included — no tests, no not-found page, nothing to
+one page, `<h1>Hello from {{.Name}}</h1>` — the project's name, handed to the
+template by `collage.Data` — with a stylesheet that sets the background and text
+colour, dark mode included — no tests, no not-found page, nothing to
 delete before starting a real site. Flags take one dash or two.
 
 The scaffolded `main.go` mounts `static/` with `os.OpenRoot`, **not** `os.DirFS`.

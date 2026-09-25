@@ -18,14 +18,14 @@ type clockView struct {
 
 func Clock() *collage.Fragment {
 	return collage.NewFragment("demo-clock", "fragments/demo/clock.html").
-		WithDataHandler(collage.DataHandler(clockData)).
+		WithDataHandler(collage.Load(clockData)).
 		Build()
 }
 
-func clockData(context.Context, *collage.RenderContext) (clockView, []string, error) {
+func clockData(context.Context, *collage.RenderContext) (clockView, error) {
 	return clockView{
 		Now:       time.Now(),
 		Uptime:    time.Since(startedAt).Round(time.Second).String(),
 		GoVersion: runtime.Version(),
-	}, nil, nil
+	}, nil
 }

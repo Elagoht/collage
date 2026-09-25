@@ -259,6 +259,44 @@ func TestDataHandler_NilIsNil(t *testing.T) {
 	}
 }
 
+func TestData(t *testing.T) {
+	data, tags, err := Data(clockView{Hour: 9})(context.Background(), &RenderContext{})
+	if err != nil || tags != nil {
+		t.Fatalf("Data handler = _, %v, %v; want no tags and no error", tags, err)
+	}
+	if view, ok := data.(clockView); !ok || view.Hour != 9 {
+		t.Errorf("data = %#v, want clockView{Hour: 9}", data)
+	}
+}
+
+func TestLoad(t *testing.T) {
+	data, tags, err := Load(func(context.Context, *RenderContext) (clockView, error) {
+		return clockView{Hour: 9}, nil
+	})(context.Background(), &RenderContext{})
+	if err != nil || tags != nil {
+		t.Fatalf("Load handler = _, %v, %v; want no tags and no error", tags, err)
+	}
+	if view, ok := data.(clockView); !ok || view.Hour != 9 {
+		t.Errorf("data = %#v, want clockView{Hour: 9}", data)
+	}
+
+	failure := errors.New("upstream down")
+	data, _, err = Load(func(context.Context, *RenderContext) (*clockView, error) {
+		return nil, failure
+	})(context.Background(), &RenderContext{})
+	if !errors.Is(err, failure) {
+		t.Fatalf("error = %v, want %v", err, failure)
+	}
+	if data != nil {
+		t.Errorf("data = %#v, want an untyped nil", data)
+	}
+
+	var fn func(context.Context, *RenderContext) (clockView, error)
+	if Load(fn) != nil {
+		t.Error("Load(nil) != nil, want a nil handler")
+	}
+}
+
 func TestEffect(t *testing.T) {
 	ran := false
 	handler := Effect(func(context.Context, *RenderContext) error { ran = true; return nil })

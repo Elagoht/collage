@@ -19,7 +19,7 @@ type helloView struct {
 
 func HelloPage() *collage.Page {
 	content := collage.NewFragment("hello-content", "pages/hello.html").
-		WithDataHandler(collage.DataHandler(helloData)).
+		WithDataHandler(collage.Load(helloData)).
 		Build()
 
 	var page *collage.Page
@@ -43,11 +43,11 @@ func greet(rc *collage.RenderContext, page *collage.Page) *collage.ActionResult 
 	return collage.RenderPage(page)
 }
 
-func helloData(_ context.Context, rc *collage.RenderContext) (helloView, []string, error) {
+func helloData(_ context.Context, rc *collage.RenderContext) (helloView, error) {
 	name := "stranger"
 	// Set by greet, the page's action, when this render is its answer.
 	if submitted, ok := collage.Get[string](rc, nameKey); ok {
 		name = submitted
 	}
-	return helloView{Name: name, RenderedAt: time.Now()}, nil, nil
+	return helloView{Name: name, RenderedAt: time.Now()}, nil
 }

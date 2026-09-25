@@ -285,7 +285,21 @@ collage.NewFragment("blog-post", "pages/blog-post.html").
 ```
 
 It is generic over the handler's return type, so there is one adapter for every
-view type and no `any` in the application at all. A fragment that only declares
+view type and no `any` in the application at all.
+
+Two shorter adapters cover the handlers that report no tags. `collage.Data(v)`
+hands the template the same value on every render — data fixed when the program
+starts, a list of links or a heading — with no function to write:
+
+```go
+collage.NewFragment("home-content", "pages/home.html").
+	WithDataHandler(collage.Data(homeView{Links: links})).
+	Build()
+```
+
+`collage.Load(func(ctx, rc) (T, error))` is `DataHandler` without the tags, for a
+page that is not cached or data that does not change. A cached page whose data
+does change wants `DataHandler`, so that the tags invalidate it. A fragment that only declares
 things for the page — a title, structured data — and renders nothing takes
 `collage.Effect(func(ctx, rc) error)` instead. On an error it drops the data
 rather than boxing it: a nil `*pageData` returned alongside an error would

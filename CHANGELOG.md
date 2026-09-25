@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.14.3
+
+### Added
+
+- **`collage.Data(v)`**: a data handler that hands the template `v` on every
+  render, for data fixed when the program starts — a list of links, a heading —
+  with no function to write:
+  `WithDataHandler(collage.Data(homeView{Links: links}))`.
+- **`collage.Load(fn)`**: `DataHandler` without the tags, for a handler of shape
+  `func(ctx, rc) (T, error)`. A cached page whose data changes still wants
+  `DataHandler`, whose tags invalidate it.
+
+### Changed
+
+- The scaffolded home page hands its template the project's name with
+  `collage.Data`, and the minimal template's page reads `Hello from {{.Name}}`: a
+  first project shows where a template's data comes from. The demo's clock and
+  hello page, which report no tags, use `collage.Load`.
+
 ## v0.14.2
 
 ### Changed

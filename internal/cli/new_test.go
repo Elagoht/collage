@@ -325,7 +325,7 @@ func TestRun_New_Minimal(t *testing.T) {
 		t.Errorf("the minimal template wrote\n  %v\nwant\n  %v", got, want)
 	}
 	home, _ := os.ReadFile(filepath.Join(target, "templates", "pages", "home.html"))
-	if strings.TrimSpace(string(home)) != "<h1>Hello from collage</h1>" {
+	if strings.TrimSpace(string(home)) != "<h1>Hello from {{.Name}}</h1>" {
 		t.Errorf("home.html = %q", home)
 	}
 	css, _ := os.ReadFile(filepath.Join(target, "static", "app.css"))
@@ -355,7 +355,7 @@ func TestRun_New_Minimal(t *testing.T) {
 		t.Errorf("build output = %q, want three files written and nothing skipped", out)
 	}
 	page, err := os.ReadFile(filepath.Join(target, "dist", "index.html"))
-	if err != nil || !strings.Contains(string(page), "<h1>Hello from collage</h1>") || !strings.Contains(string(page), "<title>site</title>") {
+	if err != nil || !strings.Contains(string(page), "<h1>Hello from site</h1>") || !strings.Contains(string(page), "<title>site</title>") {
 		t.Errorf("dist/index.html is not the page, in the layout: %v\n%s", err, page)
 	}
 }
