@@ -2,6 +2,7 @@ package demo
 
 import (
 	"context"
+	"time"
 
 	"@@MODULE@@/store"
 
@@ -18,6 +19,12 @@ func Counter() *collage.Fragment {
 		Build()
 }
 
-func counterData(context.Context, *collage.RenderContext) (counterView, []string, error) {
-	return counterView{Count: store.Count()}, []string{store.CountTag}, nil
+// counterData reads the count through Cached. store.Count stands in for a database
+// query: every page and every fragment path that shows the count shares one read,
+// kept until the count action invalidates store.CountTag. Once would share it only
+// within one render.
+func counterData(_ context.Context, rc *collage.RenderContext) (counterView, []string, error) {
+	count, err := collage.Cached(rc, "demo:count", time.Hour, []string{store.CountTag},
+		func(context.Context) (int64, error) { return store.Count(), nil })
+	return counterView{Count: count}, nil, err
 }

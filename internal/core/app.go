@@ -540,6 +540,7 @@ func New(cfg Config) (*App, error) {
 		// forms too — it used to be configurable on one side only.
 		CSRFField:     cfg.Security.CSRFFieldName,
 		URL:           app.URL,
+		FragmentURL:   app.FragmentURL,
 		DefaultLocale: cfg.Locale.Default,
 		DataCache:     app.dataCacheFor(),
 	})

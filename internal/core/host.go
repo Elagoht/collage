@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"net/http"
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -12,7 +13,7 @@ import (
 )
 
 // hostView is the plugin.Host implementation a plugin receives in Init. It holds the
-// App and forwards each of Host's six methods to it, and it has no other method of
+// App and forwards each of Host's methods to it, and it has no other method of
 // its own.
 //
 // It exists because handing the plugin registry the *App itself made Host's
@@ -95,6 +96,17 @@ func (h *hostView) RegisterDocument(doc *types.Document) error {
 // a prefix shadowing a registered route is refused when the handler is built.
 func (h *hostView) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error {
 	return h.app.Mount(prefix, fsys, opts...)
+}
+
+// Handle serves handler under prefix, on the same terms as the application's own
+// Handle.
+func (h *hostView) Handle(prefix string, handler http.Handler) error {
+	return h.app.Handle(prefix, handler)
+}
+
+// RenderFragment renders one fragment a page opened at its own URL, in parts.
+func (h *hostView) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plugin.FragmentRender, error) {
+	return h.app.RenderFragment(r, req)
 }
 
 // configHostView is the plugin.ConfigHost a plugin receives in Configure.

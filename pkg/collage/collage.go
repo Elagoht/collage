@@ -11,6 +11,7 @@ import (
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/template"
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // ErrNilConfig is returned by New when passed a nil *Config. A nil config is a
@@ -43,6 +44,17 @@ type Plugin = plugin.Plugin
 // without ever referring to *App by name. What Init receives is a narrow forwarding
 // value instead, so the assertion has nothing to find.
 type Host = plugin.Host
+
+// FragmentRequest names a fragment a page opened at its own URL, and the locale and
+// path parameters to render it in, for App.RenderFragment and Host.RenderFragment.
+type FragmentRequest = plugin.FragmentRequest
+
+// FragmentRender is one fragment rendered on its own, in parts: its markup, what it
+// hoisted, the tags it depended on, and whether one render serves every reader.
+type FragmentRender = plugin.FragmentRender
+
+// HoistItem is one hoisted declaration: its area, its key and its markup.
+type HoistItem = types.HoistItem
 
 // Command is a CLI subcommand a plugin contributes through Host.RegisterCommand.
 type Command = plugin.Command

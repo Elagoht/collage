@@ -43,6 +43,9 @@ func DefaultFuncs() template.FuncMap {
 		"pageURL":    pageURLPlaceholder,
 		"pageURLIn":  pageURLInPlaceholder,
 		"localeURL":  localeURLPlaceholder,
+
+		"fragmentURL":   fragmentURLPlaceholder,
+		"fragmentURLIn": fragmentURLInPlaceholder,
 	}
 }
 
@@ -59,6 +62,14 @@ func pageURLInPlaceholder(locale, name string, _ ...string) (string, error) {
 
 func localeURLPlaceholder(locale string) (string, error) {
 	return "", fmt.Errorf("%w: %q", ErrURLOutsideRender, locale)
+}
+
+func fragmentURLPlaceholder(page, fragment string, _ ...string) (string, error) {
+	return "", fmt.Errorf("%w: %q %q", ErrURLOutsideRender, page, fragment)
+}
+
+func fragmentURLInPlaceholder(locale, page, fragment string, _ ...string) (string, error) {
+	return "", fmt.Errorf("%w: %q %q", ErrURLOutsideRender, page, fragment)
 }
 
 // hoistPlaceholder is the parse-time stand-in for "hoist", for the same reason

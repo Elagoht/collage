@@ -46,6 +46,25 @@ func hoistFunc(token string) func(string) htmltemplate.HTML {
 	}
 }
 
+// markedAreas returns the areas html holds a marker for.
+func markedAreas(html []byte, token string) map[string]bool {
+	prefix := []byte("<!--collage:hoist:" + token + ":")
+	areas := make(map[string]bool)
+	for {
+		at := bytes.Index(html, prefix)
+		if at < 0 {
+			return areas
+		}
+		tail := html[at+len(prefix):]
+		end := bytes.Index(tail, []byte("-->"))
+		if end < 0 {
+			return areas
+		}
+		areas[string(tail[:end])] = true
+		html = tail[end+3:]
+	}
+}
+
 // resolveHoists replaces every marker in html with what the fragments declared.
 //
 // Run once, on the finished tree, so a declaration made anywhere below a marker

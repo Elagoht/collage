@@ -17,6 +17,12 @@ import (
 // reload itself. It exists only in development.
 const devReloadPath = "/_collage/reload"
 
+// devReloadOptOut is the query parameter a development page is served without the
+// reload script for: "?collage-reload=0". It is for the tools navigator.webdriver
+// does not cover — headless Chrome's --screenshot and --dump-dom wait for the page
+// to go quiet, and an open event stream never does.
+const devReloadOptOut = "collage-reload"
+
 // devReloadInterval is how often the watched sources are looked at while a page is
 // listening. A variable so the tests can shorten it.
 var devReloadInterval = 300 * time.Millisecond
@@ -30,7 +36,12 @@ var devReloadInterval = 300 * time.Millisecond
 // — the moment between one build stopping and the next listening — is one the
 // standard lets a browser treat as final, and a page that stopped listening then
 // would never reload again.
-const devReloadScript = `<script>(()=>{let id;const listen=()=>{const s=new EventSource("` + devReloadPath + `");` +
+//
+// A browser driven by automation — Playwright, Puppeteer, Selenium, which all set
+// navigator.webdriver — does not connect: a stream that never closes is a page
+// that never finishes loading, and a screenshot or an end-to-end run waits on it
+// forever. See also devReloadOptOut.
+const devReloadScript = `<script>(()=>{if(navigator.webdriver)return;let id;const listen=()=>{const s=new EventSource("` + devReloadPath + `");` +
 	`s.addEventListener("hello",e=>{if(id&&id!==e.data)location.reload();id=e.data});` +
 	`s.addEventListener("reload",()=>location.reload());` +
 	`s.onerror=()=>{if(s.readyState===EventSource.CLOSED)setTimeout(listen,500)}};listen()})()</script>`

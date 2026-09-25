@@ -150,11 +150,32 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `RegisterPage(*Page) error` | Contribute a page, on the same terms as the application's own |
 | `RegisterDocument(*Document) error` | Contribute a document |
 | `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
+| `Handle(prefix, http.Handler) error` | Serve a handler under a prefix, as `App.Handle` does — an event stream, a WebSocket |
+| `RenderFragment(r, FragmentRequest) (*FragmentRender, error)` | Render a fragment a page opened with `WithFragmentPath`, in parts — see below |
 
 A plugin therefore has no way to reach the router, the cache, the render engine,
 the template set, or any page it was not explicitly handed — it can add routes and
 invalidate tags through these methods, but not reach the structures behind them. That is the structural
 half of the framework's rule that plugins cannot mutate core state.
+
+### Pushing fragments
+
+`RenderFragment` is for a plugin that sends fragments over a connection it owns — an
+event stream or a WebSocket — instead of waiting for the browser to ask for them. It
+renders exactly what a request to the fragment's path renders, and returns the parts
+instead of a response:
+
+| Field | |
+| --- | --- |
+| `HTML` | The markup, with the reader's forgery token in any form it holds |
+| `Head` | What the fragment hoisted into an area it placed no marker for, as `HoistItem`s with their area and key |
+| `DependencyTags` | The tags the render depended on — match them against `CacheInvalidateEvent.Tags` to know what to push |
+| `Shared` | The render is the same for every reader: the page is cached for everyone, or no handler in the subtree reads the request, and there is no form token |
+| `Cookie` | The forgery cookie the forms in `HTML` need, when the request carried none |
+
+Only fragments the page opened are rendered: a stream reaches exactly what HTTP
+reaches. A render that is not `Shared` may hold one reader's data, so it must be
+rendered for each connection with that connection's request, never once for all.
 
 `Host` has no `Documents` method, and that is deliberate rather than an
 oversight: nothing outside the framework's own build step reads the document
@@ -369,7 +390,8 @@ app, err := collage.New(&collage.Config{
 | `AddTemplateFunc` | yes | — |
 | `WrapMount` | yes | — |
 | `Pages`, `Page`, `InvalidateTags` | — | yes |
-| `RegisterPage`, `RegisterDocument`, `Mount` | — | yes |
+| `RegisterPage`, `RegisterDocument`, `Mount`, `Handle` | — | yes |
+| `RenderFragment` | — | yes |
 | `RegisterCommand` | — | yes |
 
 `WrapMount` wraps the mounted filesystem rather than transforming a response,

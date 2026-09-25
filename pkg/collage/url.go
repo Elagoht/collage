@@ -13,6 +13,14 @@ var ErrUnknownRoute = types.ErrUnknownRoute
 // path in the locale asked for.
 var ErrNoPathInLocale = types.ErrNoPathInLocale
 
+// ErrUnknownFragmentPath is returned by App.FragmentURL and {{fragmentURL}} for a
+// fragment the page did not open with WithFragmentPath.
+var ErrUnknownFragmentPath = types.ErrUnknownFragmentPath
+
+// ErrAmbiguousFragmentPath is returned by App.FragmentURL and {{fragmentURL}} for
+// a fragment the page opened at more than one path in the locale asked for.
+var ErrAmbiguousFragmentPath = types.ErrAmbiguousFragmentPath
+
 // ErrRouteParams is returned when the parameters given for a URL do not fill the
 // route's pattern exactly.
 var ErrRouteParams = types.ErrRouteParams

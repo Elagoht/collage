@@ -229,10 +229,74 @@ It is the answer to refreshing part of a page without a client framework: fetch 
 URL, replace the element. Combined with an action that returns a `Fragment`, a form
 can post and be answered with only what changed.
 
+**Each fragment path is a render of its own.** Inside a page, fragments that need
+the same slow value share it with `Once`: one fetch per render. A page refreshed
+part by part is several renders, and `Once` shares nothing between them. For
+fragments that read the same data, use `Cached`, which keeps the value across
+renders for as long as its TTL — or until one of its tags is invalidated:
+
+```go
+stats, err := collage.Cached(rc, "system:stats", time.Second, []string{"system"},
+	func(ctx context.Context) (monitor.Stats, error) { return monitor.Collect(ctx) })
+```
+
 **Nothing is reachable unless it is declared.** A framework that exposed every
 fragment automatically would put every internal part of every page on the public web,
 and turning that off again is not something anyone remembers to do.
 
-A fragment answered on its own has no layout around it, so what it hoists has nowhere
-to land unless it writes the marker itself — what a fragment hoists belongs to a
-page, and there is no page here. Its response is not cached.
+A fragment path is claimed like any other route. One spelled like a page's path, a
+document's, another page's fragment path, or a redirect's source is refused at
+registration, in whichever order the two arrive: it would otherwise hide the page
+without a word.
+
+### Linking one
+
+Write the path once, in `WithFragmentPath`, and build every link to it by name,
+as `pageURL` does for pages:
+
+```html
+<div data-live="{{fragmentURL "home" "cpu-usage"}}">{{slot "cpu-usage"}}</div>
+<div data-live="{{fragmentURL "post" "comments" "slug" .Slug}}">…</div>
+```
+
+`fragmentURL` uses the render's locale and falls back to the default one;
+`fragmentURLIn "tr" "home" "cpu-usage"` names the locale. In Go it is
+`app.FragmentURL("home", "cpu-usage", locale, params)`. It is as strict as
+`App.URL`: an unknown page is `ErrUnknownRoute`, a fragment the page did not open is
+`ErrUnknownFragmentPath`, a fragment opened at two paths in one locale is
+`ErrAmbiguousFragmentPath`, and missing parameters are `ErrRouteParams` — in a
+template, each fails the render.
+
+### What it hoists
+
+A fragment answered on its own has no layout around it. A marker the fragment
+writes itself is filled as in a page; what it hoisted into any other area — a
+stylesheet asked for with `{{stylesheet}}`, a title — comes ahead of the markup,
+one inert `<template>` per item:
+
+```html
+<template data-collage-hoist="head" data-collage-key="stylesheet:/static/chart.css"><link rel="stylesheet" href="/static/chart.css"></template>
+<section>…the fragment…</section>
+```
+
+The key is the one the page's own head deduplicated by, so a script can add to
+`document.head` what it does not already have. A client that ignores the channel
+inserts template elements, which render nothing and run nothing.
+
+### Revalidation
+
+The answer to a GET carries an `ETag`, the hash of the body as sent, and
+`Cache-Control: private, no-cache`. A request with a matching `If-None-Match` is
+answered `304` with no body. The render still runs; what is saved is the body on
+the wire and the client's work, which for a panel refreshed every few seconds is
+most of it. A handler that sets `Cache-Control` itself keeps its own.
+
+The response is never cached by the framework.
+
+### Refreshing it from the browser
+
+The framework ships no client script. [collage-live](https://github.com/Elagoht/collage-live)
+is a plugin that does: it refreshes elements marked with `data-collage-fragment` on
+an interval or when the server pushes a change over an event stream, and applies
+the hoist channel and the ETag above. The protocol it speaks is this page, so htmx
+or a script of your own works against the same server.

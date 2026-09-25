@@ -11,6 +11,7 @@ func TestDefaultFuncs_HasAllDocumentedNames(t *testing.T) {
 	want := []string{
 		"slot", "hoist", "asset", "csrfToken", "safeHTML", "safeURL", "dict", "default",
 		"upper", "lower", "title", "join", "formatTime", "pageURL", "pageURLIn", "localeURL", "stylesheet",
+		"fragmentURL", "fragmentURLIn",
 	}
 	funcs := DefaultFuncs()
 	for _, name := range want {

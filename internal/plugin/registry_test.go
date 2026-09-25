@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -467,6 +468,10 @@ func (fakeHost) Config(v any) error                                          { r
 func (fakeHost) RegisterPage(page *types.Page) error                         { return nil }
 func (fakeHost) RegisterDocument(doc *types.Document) error                  { return nil }
 func (fakeHost) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error { return nil }
+func (fakeHost) Handle(prefix string, handler http.Handler) error            { return nil }
+func (fakeHost) RenderFragment(*http.Request, FragmentRequest) (*FragmentRender, error) {
+	return nil, nil
+}
 
 // hostFor is what Registry.Init takes: one host per plugin, chosen by name.
 func hostFor(string) Host { return fakeHost{} }

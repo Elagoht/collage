@@ -48,6 +48,22 @@ func TestDevReload_OnlyOnDevelopmentGETs(t *testing.T) {
 	}
 }
 
+// A tool that cannot be told to ignore a stream asks for the page without one, and
+// an automated browser that can be recognised is not connected at all.
+func TestDevReload_CanBeLeftOut(t *testing.T) {
+	page := testPage("home", "/", types.StrategyDynamic)
+	env := newEnv(t, []*types.Page{page}, withDevMode())
+	if body := env.get("/?collage-reload=0").Body.String(); strings.Contains(body, devReloadPath) {
+		t.Errorf("?collage-reload=0 still carries the reload script: %q", body)
+	}
+	if body := env.get("/?collage-reload=1").Body.String(); !strings.Contains(body, devReloadPath) {
+		t.Errorf("?collage-reload=1 lost the reload script: %q", body)
+	}
+	if !strings.Contains(devReloadScript, "navigator.webdriver") {
+		t.Error("the script connects under automation, and a screenshot waits on it forever")
+	}
+}
+
 // The stream names the process, says reload when a watched file changes, and ends
 // when the handler closes its streams.
 func TestDevReload_StreamsAChangeAndEndsOnClose(t *testing.T) {

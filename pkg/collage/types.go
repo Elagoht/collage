@@ -44,6 +44,11 @@ type SlotDefinition = types.SlotDefinition
 type SlotResolverFunc = types.SlotResolverFunc
 
 // DataHandlerFunc fetches the data a fragment renders with.
+//
+// Several fragments needing the same slow value should fetch it through Once or
+// Cached rather than each on its own. Once shares it among the fragments of one
+// render; Cached shares it across renders — across pages, and across fragment
+// paths, each of which is a render of its own that Once cannot reach across.
 type DataHandlerFunc = types.DataHandlerFunc
 
 // Page is a render configuration: the fragments to compose, the paths that reach it,

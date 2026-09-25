@@ -348,22 +348,9 @@ func resolveStrategy(p *types.Page) {
 	if p.Strategy != types.StrategyAuto {
 		return
 	}
-	fetches := errors.New("fetches per render")
-	visited := make(map[*types.Fragment]bool)
-	visit := func(f *types.Fragment) error {
-		if f.DataHandler != nil && !f.Static {
-			return fetches
-		}
-		for _, slot := range f.Slots {
-			if slot != nil && slot.Resolve != nil {
-				return fetches
-			}
-		}
-		return nil
-	}
 	roots := append([]*types.Fragment{p.LayoutFragment, p.ContentFragment}, p.PathFragments()...)
 	for _, root := range roots {
-		if walkFragments(root, visited, visit) != nil {
+		if !fetchFree(root) {
 			p.Strategy = types.StrategyDynamic
 			return
 		}

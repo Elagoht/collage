@@ -684,9 +684,10 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 // withDevReload adds the live-reload script to a page in development.
 //
 // Only to the answer to a GET. Reloading the answer to a POST asks the browser to
-// submit the form again, which is the last thing a page should do on its own.
+// submit the form again, which is the last thing a page should do on its own. And
+// not when the URL asks to be left alone with ?collage-reload=0.
 func (h *Handler) withDevReload(r *http.Request, html []byte) []byte {
-	if h.reload == nil || r.Method != http.MethodGet {
+	if h.reload == nil || r.Method != http.MethodGet || r.URL.Query().Get(devReloadOptOut) == "0" {
 		return html
 	}
 	return withReloadScript(html)

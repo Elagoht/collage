@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.18.0
+
+### Added
+
+- **`{{fragmentURL "page" "fragment" ...}}`, `{{fragmentURLIn "tr" ...}}` and
+  `App.FragmentURL(page, fragment, locale, params)`**: the path a page opened for a
+  fragment with `WithFragmentPath`, built by name as `pageURL` builds a page's. As
+  strict: an unknown page, a fragment the page did not open
+  (`ErrUnknownFragmentPath`), one opened at two paths in a locale
+  (`ErrAmbiguousFragmentPath`), a locale with no path, or parameters that do not
+  fill the pattern fail it.
+- **What a fragment path's fragment hoists reaches the client.** Declarations for
+  an area the fragment placed no marker for come ahead of the markup, one inert
+  `<template data-collage-hoist="area" data-collage-key="key">` per item, so a
+  script can add a stylesheet the page did not load the first time.
+- **`ETag` and `304` on a fragment read.** A GET answered with a fragment — every
+  fragment path — carries the hash of the body as sent, and `Cache-Control:
+  private, no-cache` unless the handler set its own; a matching `If-None-Match` is
+  answered `304` with no body.
+- **`Host.Handle(prefix, handler)`**: a plugin serves an `http.Handler`, as
+  `App.Handle` does — for an event stream or a WebSocket.
+- **`Host.RenderFragment(r, FragmentRequest)` and `App.RenderFragment`**: a
+  fragment a page opened at its own URL, rendered for a request and returned in
+  parts — `HTML`, `Head` (the hoisted items), `DependencyTags`, `Shared` (one
+  render serves every reader) and the forgery `Cookie` its forms need. For a
+  plugin pushing fragments over a connection it owns. `FragmentRequest`,
+  `FragmentRender` and `HoistItem` are exported.
+- **The development reload script can be left out.** It does not connect in a
+  browser that sets `navigator.webdriver`, and `?collage-reload=0` serves a page
+  without it — for headless `--screenshot` and `--dump-dom`, which waited forever
+  on the open stream.
+
+### Changed
+
+- **Breaking:** an action answering GET or HEAD on the path of a page or document
+  is refused with `ErrDuplicateRoute`, in either registration order. It used to
+  be matched first and hide the page: a fragment path spelled like a page's path
+  served the fragment in the page's place, with no error.
+- **Breaking:** `plugin.Host` has two new methods, `Handle` and `RenderFragment`;
+  a test double implementing it needs them.
+- `render.Engine.RenderFragment` returns the body with the hoist channel;
+  `SlotEngine.RenderFragmentResult` returns the parts.
+
+### Documentation
+
+- `DataHandlerFunc`, `WithDataHandler` and the fragment path section say when to
+  reach for `Once` and when for `Cached`: every fragment path is a render of its
+  own, so fragments refreshed separately share a fetch only through `Cached`. The
+  demo scaffold's counter reads through `Cached`.
+
 ## v0.17.0
 
 ### Added

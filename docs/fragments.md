@@ -454,6 +454,8 @@ Available in every template:
 | `pageURL "name" "param" value ...` | The URL of a page or document, in this render's locale — see below |
 | `pageURLIn "tr" "name" ...` | The same, in exactly the locale given |
 | `localeURL "tr"` | The page being rendered, in another locale; empty when it has no path there |
+| `fragmentURL "page" "fragment" "param" value ...` | The path a page opened for one of its fragments with `WithFragmentPath`, in this render's locale — see [Fragment paths](actions.md#a-fragment-at-its-own-url) |
+| `fragmentURLIn "tr" "page" "fragment" ...` | The same, in exactly the locale given |
 | `asset "/static/app.css"` | A mounted file's content-addressed URL |
 | `stylesheet "/static/app.css"` | Hoist a `<link rel="stylesheet">` for a mounted file into the head, by its content-addressed URL — see [Hoisting](#hoisting) |
 | `csrfToken` | The hidden input a form's forgery token travels in |
@@ -518,7 +520,8 @@ time but can only call a name that was already in the map when the template was
 parsed, and `New` is where parsing happens — so a template calling a name nobody
 registered fails in `New`, not at the first request, and a name added afterwards is
 never consulted. Overriding a per-render function — `slot`, `hoist`, `asset`,
-`stylesheet`, `csrfToken`, `pageURL`, `pageURLIn`, `localeURL` — is possible but
+`stylesheet`, `csrfToken`, `pageURL`, `pageURLIn`, `localeURL`, `fragmentURL`,
+`fragmentURLIn` — is possible but
 pointless: each needs the render it runs in, so the render engine rebinds them all
 on every render and yours never runs.
 
@@ -552,6 +555,13 @@ listens on `/_collage/reload`, a stream that exists only in development and is
 served ahead of middleware. The answer to a POST never carries it: reloading one
 would submit the form again. A strict `Content-Security-Policy` of your own may
 block the inline script in development; production pages never carry it.
+
+A stream that never closes is a page that never finishes loading, which is what a
+screenshot tool or an end-to-end test waits for. A browser driven by Playwright,
+Puppeteer or Selenium sets `navigator.webdriver`, and the script does not connect
+there. For the tools that do not — headless Chrome's `--screenshot` and
+`--dump-dom` — add `?collage-reload=0` to the URL and the page is served without
+the script.
 
 ## Hoisting
 

@@ -119,6 +119,15 @@ var ErrUnknownRoute = errors.New("collage: no page or document by that name")
 // document has no path in.
 var ErrNoPathInLocale = errors.New("collage: no path in that locale")
 
+// ErrUnknownFragmentPath is returned when a fragment's URL is asked for and the
+// page opened no fragment by that name with WithFragmentPath.
+var ErrUnknownFragmentPath = errors.New("collage: the page opened no fragment path by that name")
+
+// ErrAmbiguousFragmentPath is returned when a fragment's URL is asked for and the
+// page opened that fragment at more than one path in the locale, so no single URL
+// is the answer.
+var ErrAmbiguousFragmentPath = errors.New("collage: the fragment is opened at more than one path")
+
 // ErrRouteParams is returned when the parameters given for a URL do not fill
 // its pattern exactly: one is missing or empty, or one names no placeholder.
 var ErrRouteParams = errors.New("collage: route parameters do not match the pattern")

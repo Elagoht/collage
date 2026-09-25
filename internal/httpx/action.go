@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/types"
@@ -166,7 +167,8 @@ func (h *Handler) writeActionResult(
 	// An action's response is what one submission produced. Nothing between here
 	// and the reader should keep it, and a handler that knows better says so by
 	// setting the header itself.
-	if header.Get("Cache-Control") == "" {
+	cacheControlSet := header.Get("Cache-Control") != ""
+	if !cacheControlSet {
 		header.Set("Cache-Control", "no-store")
 	}
 
@@ -188,7 +190,11 @@ func (h *Handler) writeActionResult(
 		if err != nil {
 			return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
 		}
-		return h.writeActionHTML(w, r, statusOr(result.Status, http.StatusOK), html)
+		status := statusOr(result.Status, http.StatusOK)
+		if status == http.StatusOK && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			return h.writeFragmentRead(w, r, html, cacheControlSet)
+		}
+		return h.writeActionHTML(w, r, status, html)
 
 	case result.Page != nil:
 		return h.writeActionPage(w, r, rc, match, result, route)
@@ -280,6 +286,37 @@ func (h *Handler) writeActionHTML(w http.ResponseWriter, r *http.Request, status
 	w.WriteHeader(status)
 	writeBody(w, html)
 	return status
+}
+
+// writeFragmentRead answers a GET for a fragment — every fragment path, and any
+// action reading one — with an ETag, and a 304 with no body when the reader
+// already holds that ETag.
+//
+// A fragment refreshed on a timer is usually unchanged, and the render happens
+// either way; what the 304 saves is the body on the wire and the client's work
+// comparing it. The ETag is the hash of the body as sent, after the reader's own
+// forgery token went in, so it never names bytes this reader was not given.
+//
+// Revalidated rather than unstored: "private, no-cache" lets the reader's own
+// browser keep the body and ask whether it still holds, where "no-store" would
+// have it throw the body away and fetch it whole. Private, because a fragment is
+// as personal as its page may be. A handler that set Cache-Control keeps its own.
+func (h *Handler) writeFragmentRead(w http.ResponseWriter, r *http.Request, html []byte, cacheControlSet bool) int {
+	html, _, _ = h.personalise(w, r, html, "")
+	header := w.Header()
+	if !cacheControlSet {
+		header.Set("Cache-Control", "private, no-cache")
+	}
+	etag := cache.ETag(html)
+	header.Set("ETag", etag)
+	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return http.StatusNotModified
+	}
+	header.Set("Content-Type", contentTypeHTML)
+	w.WriteHeader(http.StatusOK)
+	writeBody(w, html)
+	return http.StatusOK
 }
 
 // statusOr returns declared when it is set, and fallback otherwise.

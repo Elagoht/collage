@@ -337,6 +337,9 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 		"pageURL":   e.pageURLFunc(rc),
 		"pageURLIn": e.pageURLInFunc(),
 		"localeURL": e.localeURLFunc(rc),
+
+		"fragmentURL":   e.fragmentURLFunc(rc),
+		"fragmentURLIn": e.fragmentURLInFunc(),
 	}
 }
 
@@ -555,6 +558,44 @@ func (e *SlotEngine) localeURLFunc(rc *types.RenderContext) func(string) (string
 		}
 		return built, err
 	}
+}
+
+// fragmentURLFunc is the per-render implementation of
+// {{fragmentURL "home" "cpu-usage"}}: the path the page opened for that fragment,
+// in the render's locale, or in the default locale when it opened none in this
+// one — the same fallback {{pageURL}} makes.
+func (e *SlotEngine) fragmentURLFunc(rc *types.RenderContext) func(string, string, ...string) (string, error) {
+	return func(page, fragment string, pairs ...string) (string, error) {
+		params, err := routeParams(page+"/"+fragment, pairs)
+		if err != nil {
+			return "", err
+		}
+		built, err := e.buildFragmentURL(page, fragment, rc.Locale, params)
+		if errors.Is(err, types.ErrNoPathInLocale) && rc.Locale != e.defaultLocale {
+			return e.buildFragmentURL(page, fragment, e.defaultLocale, params)
+		}
+		return built, err
+	}
+}
+
+// fragmentURLInFunc is the per-render implementation of
+// {{fragmentURLIn "tr" "home" "cpu-usage"}}: the path in exactly that locale.
+func (e *SlotEngine) fragmentURLInFunc() func(string, string, string, ...string) (string, error) {
+	return func(locale, page, fragment string, pairs ...string) (string, error) {
+		params, err := routeParams(page+"/"+fragment, pairs)
+		if err != nil {
+			return "", err
+		}
+		return e.buildFragmentURL(page, fragment, locale, params)
+	}
+}
+
+// buildFragmentURL calls the application's fragment URL builder.
+func (e *SlotEngine) buildFragmentURL(page, fragment, locale string, params map[string]string) (string, error) {
+	if e.fragmentURL == nil {
+		return "", fmt.Errorf("%w: %q: this engine knows no routes", types.ErrUnknownRoute, page)
+	}
+	return e.fragmentURL(page, fragment, locale, params)
 }
 
 // buildURL calls the application's URL builder.

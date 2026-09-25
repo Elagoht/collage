@@ -151,6 +151,39 @@ func (h *Hoisted) HTML(area string) template.HTML {
 	return template.HTML(out.String()) // any: the concatenation of values already marked safe by their declarers
 }
 
+// HoistItem is one hoisted declaration as it stands once the render is finished:
+// the area it was declared for, the key that deduplicates it, and its markup.
+type HoistItem struct {
+	Area string
+	Key  string
+	HTML template.HTML
+}
+
+// Items returns what was declared for area, one item per key, each at its
+// earliest declaration in the tree's order — the same order and the same winners
+// HTML writes.
+func (h *Hoisted) Items(area string) []HoistItem {
+	if h == nil {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	a, ok := h.areas[area]
+	if !ok {
+		return nil
+	}
+	keys := make([]string, 0, len(a.position))
+	for key := range a.position {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return a.position[keys[i]].before(a.position[keys[j]]) })
+	items := make([]HoistItem, 0, len(keys))
+	for _, key := range keys {
+		items = append(items, HoistItem{Area: area, Key: key, HTML: a.byKey[key].html})
+	}
+	return items
+}
+
 // Areas returns the area names that have declarations, for diagnostics.
 func (h *Hoisted) Areas() []string {
 	if h == nil {

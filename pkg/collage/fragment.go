@@ -38,6 +38,10 @@ func NewFragment(name, templatePath string) *FragmentBuilder {
 
 // WithDataHandler sets the fragment's data handler. A page rendering a fragment
 // with a handler, and declaring no strategy, is dynamic.
+//
+// A value several handlers need is fetched once through Once, within one render,
+// or Cached, across renders: every fragment path is a render of its own, so
+// fragments refreshed separately share a fetch only through Cached.
 func (b *FragmentBuilder) WithDataHandler(h DataHandlerFunc) *FragmentBuilder {
 	b.fragment.DataHandler = h
 	return b

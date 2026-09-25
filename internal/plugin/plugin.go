@@ -36,6 +36,7 @@ import (
 	"context"
 	"io/fs"
 	"log/slog"
+	"net/http"
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/types"
@@ -126,6 +127,55 @@ type Host interface {
 	// Mount serves fsys under prefix. A plugin that rewrites URLs into its own
 	// namespace — an image optimiser, say — uses this to serve what it rewrote to.
 	Mount(prefix string, fsys fs.FS, opts ...asset.Option) error
+	// Handle serves handler for every request under prefix, on the same terms as
+	// the application's own Handle: a prefix ending in "/", refused when it shadows
+	// a registered route. It is for what a file system cannot answer — an event
+	// stream, a WebSocket.
+	Handle(prefix string, handler http.Handler) error
+	// RenderFragment renders one fragment a page opened at its own URL with
+	// WithFragmentPath, for r, as a request to that URL would — and hands back the
+	// parts rather than a response, so it can travel over a stream the plugin
+	// owns. A fragment the page did not open is ErrUnknownFragmentPath: nothing is
+	// reachable here that is not reachable over HTTP.
+	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
+}
+
+// FragmentRequest names a fragment a page opened at its own URL, and the locale
+// and path parameters to render it in.
+type FragmentRequest struct {
+	// Page is the page's registered name.
+	Page string
+	// Fragment is the fragment's name, as WithFragmentPath was given it.
+	Fragment string
+	// Locale is the locale to render in; empty is the default one.
+	Locale string
+	// Params are the path parameters, as the fragment's path would have captured
+	// them.
+	Params map[string]string
+}
+
+// FragmentRender is one fragment rendered on its own, in parts.
+type FragmentRender struct {
+	// HTML is the fragment's markup, with this reader's forgery token in any form
+	// it holds.
+	HTML []byte
+	// Head is what the fragment hoisted into an area it placed no marker for —
+	// what the page's layout would have received — in the page's own order. Each
+	// item's Key is the one the page's head deduplicated by.
+	Head []types.HoistItem
+	// DependencyTags are the tags the render depended on. A plugin pushing
+	// fragments matches them against CacheInvalidateEvent.Tags.
+	DependencyTags []string
+	// Shared reports that the render is the same for every reader of the same
+	// page, fragment, locale and parameters: the page is one the framework caches
+	// for every reader, or nothing in the subtree has a data handler not declared
+	// Static or a slot resolver — and the markup carries no forgery token. Only a shared render may be rendered once and sent to many
+	// readers; any other may hold one reader's data.
+	Shared bool
+	// Cookie is the forgery cookie the forms in HTML are checked against, when r
+	// carried none. It must reach the reader before one of those forms is
+	// submitted, or the submission is refused. Nil when there is nothing to set.
+	Cookie *http.Cookie
 }
 
 // Command is a CLI subcommand a plugin contributes via Host.RegisterCommand.

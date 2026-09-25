@@ -35,6 +35,12 @@ type Engine interface {
 	RenderFragment(ctx context.Context, rc *types.RenderContext, f *types.Fragment) ([]byte, error)
 }
 
+// FragmentResultRenderer is implemented by an Engine that can hand back a fragment
+// rendered on its own in parts, rather than as a response body. SlotEngine does.
+type FragmentResultRenderer interface {
+	RenderFragmentResult(ctx context.Context, rc *types.RenderContext, f *types.Fragment) (*FragmentResult, error)
+}
+
 // Result is one page's rendered output.
 type Result struct {
 	// HTML is the rendered page. It is nil whenever Render returned an error, and
@@ -142,6 +148,10 @@ type Options struct {
 	// locale, and is what backs {{pageURL}}, {{pageURLIn}} and {{localeURL}}.
 	// Nil leaves those functions reporting that no routes are known.
 	URL func(name, locale string, params map[string]string) (string, error)
+	// FragmentURL builds the path a page opened for one of its fragments, in
+	// locale, and is what backs {{fragmentURL}} and {{fragmentURLIn}}. Nil leaves
+	// those functions reporting that no routes are known.
+	FragmentURL func(page, fragment, locale string, params map[string]string) (string, error)
 	// DefaultLocale is the locale {{pageURL}} falls back to for a route with no
 	// path in the render's own.
 	DefaultLocale string
@@ -164,6 +174,7 @@ type SlotEngine struct {
 	csrfMarker     func() (string, error)
 	csrfField      string
 	url            func(name, locale string, params map[string]string) (string, error)
+	fragmentURL    func(page, fragment, locale string, params map[string]string) (string, error)
 	defaultLocale  string
 	dataCache      types.DataCache
 }
@@ -190,6 +201,7 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 		csrfMarker:     opts.CSRFMarker,
 		csrfField:      opts.CSRFField,
 		url:            opts.URL,
+		fragmentURL:    opts.FragmentURL,
 		defaultLocale:  opts.DefaultLocale,
 		dataCache:      opts.DataCache,
 	}
