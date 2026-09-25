@@ -55,6 +55,13 @@ type Fragment struct {
 	// hoists a title of its own replaces it. Like Data, it is fixed, and does not
 	// make a page dynamic.
 	Title string
+	// Static states that the fragment's DataHandler returns the same for every
+	// request to one URL: what it renders depends on the path's parameters and the
+	// locale, which are part of a cache key, and on nothing a request carries
+	// beyond them — no cookie, no header, no clock. Such a handler does not make a
+	// page that declares no strategy dynamic. It says nothing about slot resolvers:
+	// the fragments a resolver returns are not known until a render asks for them.
+	Static bool
 	// Slots declares the named positions this fragment exposes to child fragments,
 	// keyed by slot name. Each key must equal its SlotDefinition's own Name field.
 	Slots map[string]*SlotDefinition

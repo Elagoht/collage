@@ -309,6 +309,11 @@ wants its tags, so that they invalidate it — and `collage.Effect(func(ctx, rc)
 error)`, for a fragment that only declares things for the page, a title or
 structured data, and renders nothing.
 
+A handler whose output depends only on the URL — the path's parameters and the
+locale — can say so with `Static()` on the fragment, which keeps it from making a
+page that declares no strategy dynamic; see
+[caching](caching.md#a-page-that-declares-none).
+
 Data fixed when the program starts — a list of links, a heading — needs no
 handler at all. `WithData(v)` hands the template the same value on every render:
 

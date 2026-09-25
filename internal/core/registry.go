@@ -333,7 +333,8 @@ func walkFragments(f *types.Fragment, visited map[*types.Fragment]bool, visit fu
 // resolveStrategy gives a page that declared no strategy one: StrategyDynamic when
 // any fragment it renders — its layout, its content, whatever is bound into their
 // slots, their fallbacks, the fragments it opens at URLs of their own — has a data
-// handler or a slot resolver, and StrategyStatic when none does. A page that
+// handler its fragment does not declare Static, or a slot resolver, and
+// StrategyStatic when none does. A page that
 // declared a strategy keeps it.
 //
 // It is a guess about code it cannot see into, so it guesses in the direction that
@@ -341,7 +342,8 @@ func walkFragments(f *types.Fragment, visited map[*types.Fragment]bool, visit fu
 // may read the request, a cookie, the clock, so a handler means dynamic. What a page
 // renders from fixed values — Fragment.Data, Fragment.Title — cannot, which is what
 // lets a site of pages without handlers be static, and exported, without saying so
-// on every one of them.
+// on every one of them. A fragment marked Static has made that promise for its own
+// handler, so its handler does not count.
 func resolveStrategy(p *types.Page) {
 	if p.Strategy != types.StrategyAuto {
 		return
@@ -349,7 +351,7 @@ func resolveStrategy(p *types.Page) {
 	fetches := errors.New("fetches per render")
 	visited := make(map[*types.Fragment]bool)
 	visit := func(f *types.Fragment) error {
-		if f.DataHandler != nil {
+		if f.DataHandler != nil && !f.Static {
 			return fetches
 		}
 		for _, slot := range f.Slots {

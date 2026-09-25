@@ -22,6 +22,7 @@ func strategyApp(t *testing.T) *App {
 	files := map[string]string{
 		"layouts/default.html": `<head>{{hoist "head"}}</head><main>{{slot "content"}}</main><aside>{{slot "aside"}}</aside>`,
 		"pages/data.html":      `<h1>{{.}}</h1>`,
+		"pages/slotted.html":   `<div>{{slot "x"}}</div>`,
 	}
 	for name, body := range files {
 		path := filepath.Join(root, filepath.FromSlash(name))
@@ -259,5 +260,68 @@ func TestWithSlot_ConstrainsInEitherOrder(t *testing.T) {
 	twice := NewFragment("c", "c.html").WithSlotFragment("s", child).WithSlot("s", false, true).WithSlot("s", true, true)
 	if err := twice.BuildErr(); !errors.Is(err, ErrDuplicateSlot) {
 		t.Errorf("WithSlot twice: BuildErr() = %v, want ErrDuplicateSlot", err)
+	}
+}
+
+// TestAutoStrategy_StaticFragment: a fragment that states its handler is the same
+// for every request to one URL does not make a page dynamic — so a shared fragment
+// with data fixed per URL leaves every page that uses it static. It is the
+// fragment's promise alone: another fragment's handler, or a resolver on the
+// static fragment, still makes the page dynamic, and a declared Dynamic() is kept.
+func TestAutoStrategy_StaticFragment(t *testing.T) {
+	load := Load(func(_ context.Context, rc *RenderContext) (string, error) { return "more:" + rc.Param("slug"), nil })
+	shared := func() *Fragment {
+		return NewFragment("more", "pages/data.html").WithDataHandler(load).Static().Build()
+	}
+	tests := map[string]struct {
+		page func() *Page
+		want RenderStrategy
+	}{
+		"static fragment alone": {
+			page: func() *Page {
+				return NewPage("p").WithLayout(strategyLayout().WithSlotFragment("aside", shared()).Build()).
+					WithContent(NewFragment("content", "pages/data.html").WithData("home").Build()).
+					WithPath("en", "/").Build()
+			},
+			want: StrategyStatic,
+		},
+		"beside another fragment's handler": {
+			page: func() *Page {
+				return NewPage("p").WithLayout(strategyLayout().WithSlotFragment("aside", shared()).Build()).
+					WithContent(NewFragment("content", "pages/data.html").WithDataHandler(load).Build()).
+					WithPath("en", "/").Build()
+			},
+			want: StrategyDynamic,
+		},
+		"with a resolver of its own": {
+			page: func() *Page {
+				more := NewFragment("more", "pages/slotted.html").WithDataHandler(load).Static().
+					WithSlotResolver("x", func(*RenderContext) ([]*Fragment, error) { return nil, nil }).Build()
+				return NewPage("p").WithLayout(strategyLayout().WithSlotFragment("aside", more).Build()).
+					WithContent(NewFragment("content", "pages/data.html").Build()).
+					WithPath("en", "/").Build()
+			},
+			want: StrategyDynamic,
+		},
+		"page declared dynamic": {
+			page: func() *Page {
+				return NewPage("p").WithLayout(strategyLayout().WithSlotFragment("aside", shared()).Build()).
+					WithContent(NewFragment("content", "pages/data.html").Build()).
+					WithPath("en", "/").Dynamic().Build()
+			},
+			want: StrategyDynamic,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			app := strategyApp(t)
+			page := tt.page()
+			if err := app.RegisterPage(page); err != nil {
+				t.Fatalf("RegisterPage: %v", err)
+			}
+			if page.Strategy != tt.want {
+				t.Errorf("registered strategy = %v, want %v", page.Strategy, tt.want)
+			}
+		})
 	}
 }

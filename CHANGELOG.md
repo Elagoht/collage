@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.17.0
+
+### Added
+
+- **`FragmentBuilder.Static()`**: a fragment states that its data handler returns
+  the same for every request to one URL — it reads the path's parameters and the
+  locale, and nothing else a request carries — so it does not make a page that
+  declares no strategy dynamic. For a fragment many pages share whose data is
+  fixed per URL, so each page using it need not say `Static()` itself. It covers
+  the fragment's own handler only: a slot resolver still makes a page dynamic, and
+  a page's declared strategy is kept.
+
 ## v0.16.0
 
 ### Added

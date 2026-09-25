@@ -235,6 +235,29 @@ func (b *FragmentBuilder) WithSlotResolver(slotName string, resolve SlotResolver
 	return b
 }
 
+// Static states that the fragment's data handler returns the same for every
+// request to one URL, so it does not make a page that declares no strategy
+// dynamic — for a fragment many pages share whose data is fixed per URL:
+//
+//	collage.NewFragment("more-recipes", "fragments/more-recipes.html").
+//		WithDataHandler(loadMore). // reads the recipes and rc.Param("slug")
+//		Static().
+//		Build()
+//
+// It is the fragment's half of what PageBuilder.Static says for a whole page, and
+// the same promise: the handler reads path parameters and the locale, which the
+// cache key and a static build both carry, and nothing else a request brings — a
+// cookie, a header, the clock. A handler that breaks the promise serves one
+// reader's render to the next.
+//
+// A page's strategy is still its own: Dynamic() on a page is kept whatever its
+// fragments say, and a page with another fragment's handler, or a slot resolver,
+// is still dynamic unless it says otherwise.
+func (b *FragmentBuilder) Static() *FragmentBuilder {
+	b.fragment.Static = true
+	return b
+}
+
 // Required marks the fragment being built as required: a failed render of it must
 // fail the page render rather than falling back to its Fallback fragment.
 func (b *FragmentBuilder) Required() *FragmentBuilder {

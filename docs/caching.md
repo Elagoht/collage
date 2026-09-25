@@ -54,6 +54,27 @@ when it is wrong, never a reader served another's page. A handler whose output i
 the same for everyone — a post read from a file — is a page that says `Static()`
 or `Incremental(ttl)` itself.
 
+What varies from page to page is not what makes a page dynamic: the path and its
+parameters are part of the cache key, and each URL is its own file in an export.
+What does is output that varies between two requests to *one* URL. A fragment
+whose handler reads only the path's parameters and the locale can say so itself,
+with `Static()` on the fragment, and then it does not make a page dynamic:
+
+```go
+more := collage.NewFragment("more-recipes", "fragments/more-recipes.html").
+	WithDataHandler(loadMore). // the recipes, minus rc.Param("slug")
+	Static().
+	Build()
+```
+
+That is for a fragment many pages share — a list of recent posts, a navigation
+built from content — so that each page using it need not repeat the promise. It
+is the same promise `Static()` makes for a page, and breaking it serves one
+reader's render to the next. It covers the fragment's handler and nothing else: a
+slot resolver still makes a page dynamic, since the fragments it returns are not
+known until a render asks for them, and a page that says `Dynamic()` is kept
+dynamic.
+
 A document resolves the same way: dynamic with a handler, static with a fixed
 body (`WithBody`). A declared strategy is never second-guessed, in either
 direction, and a registered page's `Strategy` is always the resolved one.
