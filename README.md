@@ -176,8 +176,9 @@ contribute pages, documents, mounts and template functions of its own. See
 ## What it guarantees
 
 - **No silent failures.** A fragment naming a template that does not exist, a
-  page that does not validate, a page referencing an error page that was never
-  registered — all of these fail at startup, by name, not on the first request.
+  template calling a slot its fragment does not declare, a page that does not
+  validate, a page referencing an error page that was never registered — all of
+  these fail at startup, by name, not on the first request.
 - **Deterministic output.** Templates execute in order, depth-first; sibling
   fragments fetch their data concurrently, but what they hoist is placed by
   declaration order, not by which finished first. So the same page rendered twice

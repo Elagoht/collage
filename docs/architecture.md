@@ -203,6 +203,12 @@ Everything that can be checked at startup is checked at startup, and
 
 - a fragment naming a template the engine did not load is rejected by name, so a
   typo in a template path is a startup error rather than a first-request 500;
+- a template calling `{{slot "name"}}` for a slot its fragment does not declare is
+  rejected, naming the page, the fragment, the template and the slot — including a
+  call in a template it includes or a block it defines. A slot named by anything
+  but a literal, `{{slot .Which}}`, is only known when it renders. In development
+  a template edited after startup is not checked again: its failure shows on the
+  error page, template, line and cause first;
 - a page that does not validate — no content fragment, a path not starting with
   `/`, `Incremental` with no TTL, a fragment cycle, an unfilled required slot — is
   rejected by name;

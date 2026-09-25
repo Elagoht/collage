@@ -91,7 +91,10 @@ still work when the binary serves them.
 
 - **`collage dev`** builds this program with `go build`, runs the binary with
   `COLLAGE_DEV=1` set, and rebuilds and restarts it when its Go code changes.
-  `main.go` reads that variable and turns on development mode.
+  `main.go` reads that variable and turns on development mode. The browser talks
+  to `collage dev`, which passes requests on to the program at the `HOST` and
+  `PORT` it sets for it — so `main.go` must listen there — and shows the
+  program's output in place of the page when it exits.
 - **`collage export`** runs `go run . -collage-build -out <dir>`. `main.go`
   parses those flags and renders through `collage.NewBuilder`, collage's own
   builder.

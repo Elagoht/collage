@@ -217,11 +217,12 @@ to `go` in the current directory, exactly as you would by hand:
 
 | Command | Runs | With |
 | --- | --- | --- |
-| `collage dev` | `go build`, then the binary it built — again on every change | `COLLAGE_DEV=1` in the environment |
+| `collage dev` | `go build`, then the binary it built — again on every change | `COLLAGE_DEV=1`, and the `HOST` and `PORT` to listen on, in the environment |
 | `collage export` | `go run . -collage-build -out <dir>` | `-clean` appended when you passed it |
 
 That is a **contract with your `main.go`**, and the scaffolded one honours both
-halves: it turns on development mode when `COLLAGE_DEV=1` is set, and it renders
+halves: it turns on development mode when `COLLAGE_DEV=1` is set, listens on the
+`HOST` and `PORT` it is given, and it renders
 to static files when `-collage-build` is passed instead of starting a server. If
 you rewrite `main.go`, keep both halves working or these two commands stop doing
 anything useful in your project.
@@ -246,8 +247,16 @@ tool to install:
 - It polls rather than subscribing to file-system events, which keeps collage free
   of dependencies and works the same on every platform. A project is small enough
   that looking every 300 ms costs nothing noticeable.
-- A program that exits by itself — a panic at startup, a port already in use — is
-  not restarted in a loop; the next change is what starts it again.
+- A program that exits by itself — a panic at startup, a page whose template is
+  missing — is not restarted in a loop; the next change is what starts it again.
+- **Errors are shown in the browser.** The browser talks to `collage dev`, not to
+  the program: it listens on `HOST` and `PORT` as your program would read them
+  (`localhost:3000` by default), and passes each request on to the program, which
+  it starts with `HOST` and `PORT` set to a loopback address of its own. A request
+  made while the program starts waits for it. When there is no program — it
+  exited, or the first build failed — the page is a 503 showing what the program or
+  the compiler printed, and it reloads by itself once a change brings the program
+  back. A page already open when the program exits reloads onto that error.
 - **The browser reloads too.** A development page reloads itself when a template or
   a static file changes, and when the program comes back from a rebuild — see
   [fragments.md](fragments.md#development-mode). Nothing to install in the browser.
@@ -259,7 +268,9 @@ tool to install:
 second rule to explain for little gain.
 
 - A variable already set in the shell wins, so `PORT=4000 collage dev` still works.
-  `COLLAGE_DEV=1` is always set, whatever the file says.
+  `COLLAGE_DEV=1` is always set, whatever the file says, and so are the `HOST` and
+  `PORT` the program is to listen on — the file's `HOST` and `PORT` are where
+  `collage dev` itself listens, read once when it starts.
 - `KEY=value` lines, `#` comments and blank lines; an `export ` prefix and single or
   double quotes around a value are allowed. A `#` after whitespace ends an unquoted
   value.

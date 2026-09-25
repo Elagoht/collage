@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.15.0
+
+### Added
+
+- **`collage dev` shows errors in the browser.** It listens on `HOST` and `PORT`
+  itself and passes requests on to the program, which it runs on a loopback
+  address of its own. When the program exits — a template that is not found at
+  registration, a panic at startup — or the first build fails, the page is a 503
+  with what it printed, instead of a refused connection; a page already open
+  reloads onto it, and reloads again once a change brings the program back. A
+  request made while the program starts waits for it.
+- **A template calling a slot its fragment does not declare fails registration.**
+  `{{slot "aside"}}` in a fragment declaring only `more` used to be a 500 on every
+  request that rendered it; `RegisterPage` now returns `ErrUnknownSlot`, naming the
+  page, the fragment, the template and the slot. Calls in included templates and
+  defined blocks count; a slot named by a non-literal, `{{slot .Which}}`, is left
+  to the render.
+- **The development 500 page leads with the cause.** A render failure's message is
+  every template it passed through, outermost first, on one line; the page now puts
+  the template, line and column of the call that failed, and what it returned,
+  above that chain, and is styled like the rest of collage's development pages.
+  The production page is unchanged.
+
+### Changed
+
+- The program `collage dev` runs is given `HOST` and `PORT`, after the environment
+  file's, and must listen there: the scaffolded `main.go` does. One that is still
+  not listening there 10 seconds after it started is named on the page, with the
+  address it was given.
+
 ## v0.14.3
 
 ### Added

@@ -62,4 +62,8 @@ type Engine interface {
 	Reload() error
 	// Names returns every loaded template path, sorted.
 	Names() []string
+	// SlotCalls returns the slot names the template at path calls by a literal
+	// name, sorted, so registration can check them against the fragment's
+	// declarations before anything renders.
+	SlotCalls(path string) []string
 }

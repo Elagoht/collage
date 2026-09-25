@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,34 +43,53 @@ type devCall struct {
 }
 
 // devRunner stands in for the go tool and for the built program: a build
-// succeeds unless failBuild is set, and a program runs until it is stopped.
+// succeeds unless failBuild is set, printing buildOutput when it fails, and a
+// program runs program when it is set and until it is stopped when it is not.
 type devRunner struct {
-	mu        sync.Mutex
-	builds    []devCall
-	failBuild atomic.Bool
-	started   chan devCall
-	stopped   atomic.Int32
+	mu          sync.Mutex
+	builds      []devCall
+	failBuild   atomic.Bool
+	buildOutput string
+	program     func(ctx context.Context, env []string, stderr io.Writer) error
+	started     chan devCall
+	stopped     atomic.Int32
 }
 
 func newDevRunner() *devRunner {
 	return &devRunner{started: make(chan devCall, 16)}
 }
 
-func (r *devRunner) Run(ctx context.Context, _ string, env []string, _, _ io.Writer, name string, args ...string) error {
+func (r *devRunner) Run(ctx context.Context, _ string, env []string, _, stderr io.Writer, name string, args ...string) error {
 	call := devCall{name: name, args: append([]string(nil), args...), env: append([]string(nil), env...)}
 	if name == "go" {
 		r.mu.Lock()
 		r.builds = append(r.builds, call)
+		output := r.buildOutput
 		r.mu.Unlock()
 		if r.failBuild.Load() {
+			fmt.Fprint(stderr, output)
 			return errors.New("exit status 1")
 		}
 		return nil
 	}
 	r.started <- call
+	r.mu.Lock()
+	program := r.program
+	r.mu.Unlock()
+	if program != nil {
+		err := program(ctx, env, stderr)
+		r.stopped.Add(1)
+		return err
+	}
 	<-ctx.Done()
 	r.stopped.Add(1)
 	return ctx.Err()
+}
+
+func (r *devRunner) setProgram(program func(ctx context.Context, env []string, stderr io.Writer) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.program = program
 }
 
 func (r *devRunner) buildCount() int {
@@ -79,6 +102,17 @@ func (r *devRunner) buildCount() int {
 // ends, with the watcher polling fast enough for a test.
 func devSession(t *testing.T, files map[string]string) (*devRunner, *syncBuffer, func() int) {
 	t.Helper()
+	return devSessionWith(t, files, newDevRunner())
+}
+
+// devSessionWith is devSession with a runner the test has already set up, so
+// the first program it starts already behaves as the test wants.
+func devSessionWith(t *testing.T, files map[string]string, runner *devRunner) (*devRunner, *syncBuffer, func() int) {
+	t.Helper()
+	// A port of its own, so no session collides with another, or with a
+	// server the machine running the tests already has on 3000.
+	t.Setenv("PORT", strconv.Itoa(freePort(t)))
+	t.Setenv("HOST", "127.0.0.1")
 	previous := watchInterval
 	watchInterval = 20 * time.Millisecond
 	t.Cleanup(func() { watchInterval = previous })
@@ -89,7 +123,6 @@ func devSession(t *testing.T, files map[string]string) (*devRunner, *syncBuffer,
 	}
 	t.Chdir(dir)
 
-	runner := newDevRunner()
 	stderr := &syncBuffer{}
 	c := &CLI{Stdout: &syncBuffer{}, Stderr: stderr, Runner: runner}
 
@@ -290,4 +323,233 @@ func TestWatchedFile(t *testing.T) {
 			t.Errorf("watchedFile(%q) = %v, want %v", rel, got, want)
 		}
 	}
+}
+
+// freePort is a port nothing on this machine is listening on right now.
+func freePort(t *testing.T) int {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	return listener.Addr().(*net.TCPAddr).Port
+}
+
+// envValue is the value the last KEY=value in env gives key, which is the one
+// the started process sees.
+func envValue(env []string, key string) string {
+	var value string
+	for _, pair := range env {
+		if k, v, ok := strings.Cut(pair, "="); ok && k == key {
+			value = v
+		}
+	}
+	return value
+}
+
+// serveProgram is a program that listens where it is told to, after delay,
+// and answers every request with handler until it is stopped.
+func serveProgram(delay time.Duration, handler http.HandlerFunc) func(context.Context, []string, io.Writer) error {
+	return func(ctx context.Context, env []string, _ io.Writer) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		listener, err := net.Listen("tcp", net.JoinHostPort(envValue(env, "HOST"), envValue(env, "PORT")))
+		if err != nil {
+			return err
+		}
+		server := &http.Server{Handler: handler}
+		go server.Serve(listener)
+		<-ctx.Done()
+		server.Close()
+		return ctx.Err()
+	}
+}
+
+// crashProgram is a program that prints output and exits with an error before
+// it listens, the way one whose pages fail to register does.
+func crashProgram(output string) func(context.Context, []string, io.Writer) error {
+	return func(_ context.Context, _ []string, stderr io.Writer) error {
+		fmt.Fprint(stderr, output)
+		return errors.New("exit status 1")
+	}
+}
+
+// devGet requests path from the session's own address, retrying while it is not
+// listening yet.
+func devGet(t *testing.T, path string) (int, string) {
+	t.Helper()
+	url := "http://" + net.JoinHostPort(os.Getenv("HOST"), os.Getenv("PORT")) + path
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		response, err := http.Get(url)
+		if err == nil {
+			body, _ := io.ReadAll(response.Body)
+			response.Body.Close()
+			return response.StatusCode, string(body)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// The browser talks to collage dev, which passes each request on to the
+// program with the Host it was sent to, and the program is told to listen
+// somewhere else.
+func TestDev_ProxiesToTheProgram(t *testing.T) {
+	runner := newDevRunner()
+	runner.setProgram(serveProgram(0, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "app %s %s", r.Host, r.URL.Path)
+	}))
+	_, _, stop := devSessionWith(t, map[string]string{"main.go": "package main"}, runner)
+
+	call := waitStarted(t, runner)
+	if envValue(call.env, "PORT") == os.Getenv("PORT") {
+		t.Errorf("the program was told PORT=%s, the port collage dev listens on", os.Getenv("PORT"))
+	}
+
+	status, body := devGet(t, "/recipes/soup")
+	want := "app " + net.JoinHostPort(os.Getenv("HOST"), os.Getenv("PORT")) + " /recipes/soup"
+	if status != http.StatusOK || body != want {
+		t.Errorf("GET = %d %q, want 200 %q", status, body, want)
+	}
+	stop()
+}
+
+// A request that arrives while the program is starting waits for it to listen,
+// rather than failing the way a refused connection would.
+func TestDev_ARequestWaitsForTheProgramToListen(t *testing.T) {
+	runner := newDevRunner()
+	runner.setProgram(serveProgram(300*time.Millisecond, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "ready")
+	}))
+	_, _, stop := devSessionWith(t, map[string]string{"main.go": "package main"}, runner)
+
+	if status, body := devGet(t, "/"); status != http.StatusOK || body != "ready" {
+		t.Errorf("GET = %d %q, want 200 \"ready\"", status, body)
+	}
+	stop()
+}
+
+// A program that exits by itself leaves its output in the browser, not only in
+// the terminal — escaped, and with the reload script, so the page replaces
+// itself once a change brings the program back.
+func TestDev_ACrashIsShownInTheBrowser(t *testing.T) {
+	runner := newDevRunner()
+	runner.setProgram(crashProgram(`cookbook: register page "recipe": collage: template not found: <fradgments/more-recipes.html>` + "\n"))
+	_, _, stop := devSessionWith(t, map[string]string{"main.go": "package main"}, runner)
+
+	status, body := devGet(t, "/")
+	if status != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", status)
+	}
+	for _, want := range []string{
+		`template not found: &lt;fradgments/more-recipes.html&gt;`,
+		`exit status 1`,
+		`/_collage/reload`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body does not contain %q:\n%s", want, body)
+		}
+	}
+
+	runner.setProgram(serveProgram(0, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "fixed")
+	}))
+	writeProjectFile(t, "pages/recipe.go", "package pages // fixed")
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if status, body := devGet(t, "/"); status == http.StatusOK && body == "fixed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the fixed program was never served")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	stop()
+}
+
+// A first build that fails has nothing to serve, so its output is the page.
+func TestDev_AFailedFirstBuildIsShownInTheBrowser(t *testing.T) {
+	runner := newDevRunner()
+	runner.buildOutput = "./main.go:3:2: undefined: recipes\n"
+	runner.failBuild.Store(true)
+	_, _, stop := devSessionWith(t, map[string]string{"main.go": "package main"}, runner)
+
+	status, body := devGet(t, "/")
+	if status != http.StatusServiceUnavailable || !strings.Contains(body, "undefined: recipes") {
+		t.Errorf("GET = %d, want 503 with the compiler's output:\n%s", status, body)
+	}
+	stop()
+}
+
+// A page left open when the program goes down is told to reload by the same
+// stream a running program serves: it names a different instance, and it ends
+// when the program is back, so the page reconnects to the program itself.
+func TestDev_TheReloadStreamFollowsTheProgram(t *testing.T) {
+	runner := newDevRunner()
+	runner.setProgram(crashProgram("boom\n"))
+	_, _, stop := devSessionWith(t, map[string]string{"main.go": "package main"}, runner)
+	devGet(t, "/") // until it is down and answering
+
+	url := "http://" + net.JoinHostPort(os.Getenv("HOST"), os.Getenv("PORT")) + "/_collage/reload"
+	response, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if got := response.Header.Get("Content-Type"); got != "text/event-stream" {
+		t.Fatalf("Content-Type = %q, want text/event-stream", got)
+	}
+	first := make([]byte, 256)
+	n, _ := response.Body.Read(first)
+	if !strings.Contains(string(first[:n]), "event: hello") {
+		t.Fatalf("stream began %q, want a hello event", first[:n])
+	}
+
+	ended := make(chan struct{})
+	go func() {
+		io.Copy(io.Discard, response.Body)
+		close(ended)
+	}()
+	select {
+	case <-ended:
+		t.Fatal("the stream ended while the program was still down")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	runner.setProgram(serveProgram(0, func(w http.ResponseWriter, _ *http.Request) {}))
+	writeProjectFile(t, "main.go", "package main // fixed")
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream did not end when the program came back")
+	}
+	stop()
+}
+
+// A program that runs and never listens where it was told — a main.go that
+// ignores HOST and PORT — is named on the page rather than left to hang the
+// browser forever.
+func TestDev_AProgramThatNeverListensIsReported(t *testing.T) {
+	previous := devListenTimeout
+	devListenTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { devListenTimeout = previous })
+
+	runner := newDevRunner() // runs until stopped, listening nowhere
+	_, _, stop := devSessionWith(t, map[string]string{"main.go": "package main"}, runner)
+	call := waitStarted(t, runner)
+
+	status, body := devGet(t, "/")
+	target := net.JoinHostPort(envValue(call.env, "HOST"), envValue(call.env, "PORT"))
+	if status != http.StatusServiceUnavailable || !strings.Contains(body, target) {
+		t.Errorf("GET = %d, want 503 naming %s:\n%s", status, target, body)
+	}
+	stop()
 }

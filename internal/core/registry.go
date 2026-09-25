@@ -24,6 +24,8 @@ import (
 //   - a fragment naming a template the engine has not loaded (ErrTemplateNotFound),
 //     which turns a typo in a template path from a first-request 500 into a startup
 //     error;
+//   - a template calling {{slot "name"}} for a slot its fragment does not declare
+//     (ErrUnknownSlot), the same typo on the other side of the binding;
 //   - a name another page already holds (ErrDuplicatePage);
 //   - registration after the application has started (ErrAppStarted).
 //
@@ -250,7 +252,8 @@ func copyLayout(f *types.Fragment) *types.Fragment {
 
 // checkTemplates reports ErrTemplateNotFound for the first fragment of p whose
 // TemplatePath the engine has not loaded, naming the page, the fragment, and the
-// path.
+// path — and types.ErrUnknownSlot for the first whose template calls, by a literal
+// name, a slot the fragment does not declare.
 //
 // It walks the layout tree and the content tree separately rather than just
 // p.Root(): p is not always a page being registered in its own right — it may be
@@ -260,11 +263,19 @@ func copyLayout(f *types.Fragment) *types.Fragment {
 func (a *App) checkTemplates(p *types.Page) error {
 	visited := make(map[*types.Fragment]bool)
 	visit := func(f *types.Fragment) error {
-		if a.tmpl.Lookup(f.TemplatePath) {
-			return nil
+		if !a.tmpl.Lookup(f.TemplatePath) {
+			return fmt.Errorf("%w: page %q fragment %q references %q",
+				ErrTemplateNotFound, p.Name, f.Name, f.TemplatePath)
 		}
-		return fmt.Errorf("%w: page %q fragment %q references %q",
-			ErrTemplateNotFound, p.Name, f.Name, f.TemplatePath)
+		// A slot the template calls and the fragment does not declare fails
+		// every render that reaches it; the name is a literal, so it fails here.
+		for _, name := range a.tmpl.SlotCalls(f.TemplatePath) {
+			if _, ok := f.Slot(name); !ok {
+				return fmt.Errorf("%w: page %q fragment %q: template %q calls {{slot %q}}, but the fragment declares only %v",
+					types.ErrUnknownSlot, p.Name, f.Name, f.TemplatePath, name, f.SlotNames())
+			}
+		}
+		return nil
 	}
 
 	if err := walkFragments(p.LayoutFragment, visited, visit); err != nil {

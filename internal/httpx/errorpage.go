@@ -327,6 +327,9 @@ func failedFragment(result *render.Result) string {
 // deployment, and an error page is the one response most likely to hand all three to
 // an anonymous client.
 func builtinPage(f failure, devMode bool) []byte {
+	if devMode {
+		return devBuiltinPage(f)
+	}
 	title := statusTitle(f.status)
 
 	var b strings.Builder
@@ -339,22 +342,59 @@ func builtinPage(f failure, devMode bool) []byte {
 	b.WriteString(statusMessage(f.status))
 	b.WriteString("</p>\n")
 
-	if devMode {
-		if f.fragment != "" {
-			b.WriteString("<p>Fragment: <code>")
-			b.WriteString(html.EscapeString(f.fragment))
-			b.WriteString("</code></p>\n")
+	b.WriteString("</body>\n</html>\n")
+	return []byte(b.String())
+}
+
+// devBuiltinPage is builtinPage in development: the cause first, and where in
+// which template it happened, then the fragment and the full chain — a panic's
+// stack included. Styled inline, so it is still one self-contained document.
+func devBuiltinPage(f failure) []byte {
+	title := statusTitle(f.status)
+
+	var b strings.Builder
+	b.WriteString("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n")
+	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>")
+	b.WriteString(title)
+	b.WriteString("</title>\n<style>" + devPageStyle + "</style>\n</head>\n<body>\n<h1>")
+	b.WriteString(title)
+	b.WriteString("</h1>\n")
+
+	if cause, where, ok := devCause(f.err); ok {
+		b.WriteString("<div class=\"cause\">")
+		if where != "" {
+			b.WriteString("<div class=\"where\">")
+			b.WriteString(html.EscapeString(where))
+			b.WriteString("</div>")
 		}
-		if detail := errorDetail(f.err); detail != "" {
-			b.WriteString("<pre>")
-			b.WriteString(html.EscapeString(detail))
-			b.WriteString("</pre>\n")
-		}
+		b.WriteString("<div>")
+		b.WriteString(html.EscapeString(cause))
+		b.WriteString("</div></div>\n")
+	}
+	if f.fragment != "" {
+		b.WriteString("<p>Fragment: <code>")
+		b.WriteString(html.EscapeString(f.fragment))
+		b.WriteString("</code></p>\n")
+	}
+	if detail := errorDetail(f.err); detail != "" {
+		b.WriteString("<pre>")
+		b.WriteString(html.EscapeString(detail))
+		b.WriteString("</pre>\n")
 	}
 
 	b.WriteString("</body>\n</html>\n")
 	return []byte(b.String())
 }
+
+// devPageStyle is the development error page's look: the same as the overlay a
+// page that rendered with a broken part carries, and the page "collage dev" shows
+// when there is no program.
+const devPageStyle = `body{margin:0;padding:2rem;font:14px/1.5 ui-sans-serif,system-ui,sans-serif;background:#1b1b1f;color:#e8e8ea}` +
+	`h1{margin:0 0 1rem;font-size:1.1rem;color:#ff8a80}` +
+	`.cause{margin:0 0 1rem;padding:1rem;border-left:4px solid #e4572e;background:#111114;border-radius:6px;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-break:break-word}` +
+	`.where{margin-bottom:.25rem;color:#f3b61f}` +
+	`p{color:#a0a0a8}code{color:#f3b61f}` +
+	`pre{margin:0;padding:1rem;overflow:auto;white-space:pre-wrap;word-break:break-word;background:#111114;border-radius:6px;color:#a0a0a8;font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace}`
 
 // statusTitle returns the built-in page's title for status, such as "404 Not Found".
 func statusTitle(status int) string {

@@ -6,6 +6,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -53,6 +55,13 @@ The file read is named on stderr when there is one; no file is not an error.
 
 Only "collage dev" reads these files. "collage build", "collage export" and the
 built binary take their environment from wherever they run.
+
+The browser talks to "collage dev" itself, at HOST and PORT as the program
+would read them (localhost:3000 by default), and each request is passed on to
+the program, which is started with HOST and PORT set to a loopback address of
+its own. A request made while the program is starting waits for it. When there
+is no program — it exited, or the first build failed — the page is its output,
+and it reloads by itself once a change brings the program back.
 `
 
 // runDev implements the "dev" command.
@@ -88,7 +97,27 @@ func (c *CLI) runDev(ctx context.Context, args []string) int {
 	}
 	defer os.RemoveAll(buildDir)
 
-	(&devLoop{cli: c, buildDir: buildDir}).run(ctx)
+	// The address is settled once, from the shell and the environment file as
+	// they are now: moving it would move the page open in the browser.
+	env, _, _ := loadDevEnv(".", os.LookupEnv)
+	public := devAddress(env, os.LookupEnv)
+	target, err := freeLoopbackAddress()
+	if err != nil {
+		fmt.Fprintf(c.stderr(), "collage: dev: %v\n", err)
+		return 1
+	}
+	listener, err := net.Listen("tcp", public)
+	if err != nil {
+		fmt.Fprintf(c.stderr(), "collage: dev: %v\n", err)
+		return 1
+	}
+	proxy := newDevProxy(public, target)
+	server := &http.Server{Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
+	go server.Serve(listener)
+	defer server.Close()
+	fmt.Fprintf(c.stderr(), "collage: dev: serving http://%s (the program itself listens on %s)\n", public, target)
+
+	(&devLoop{cli: c, buildDir: buildDir, proxy: proxy}).run(ctx)
 	return 0
 }
 
@@ -99,6 +128,7 @@ type devLoop struct {
 	buildDir string
 	builds   int
 	current  *devProcess
+	proxy    *devProxy
 	// loaded is the environment file the last restart read, so it is named
 	// when it changes rather than on every rebuild.
 	loaded string
@@ -109,6 +139,8 @@ type devProcess struct {
 	binary string
 	stop   context.CancelFunc
 	done   chan error
+	// output is the end of what it printed, for the page shown if it exits.
+	output *tailBuffer
 }
 
 // run builds and starts the program, then rebuilds and restarts it on every
@@ -134,7 +166,9 @@ func (l *devLoop) run(ctx context.Context) {
 		case err := <-exited:
 			// Its done channel is drained, so it is no longer current whatever
 			// happens next: stopCurrent waiting on it again would wait forever.
-			os.Remove(l.current.binary)
+			exitedProcess := l.current
+			exitedProcess.stop()
+			os.Remove(exitedProcess.binary)
 			l.current = nil
 			// Stopped with the session: Ctrl-C reaches the program too, and it
 			// can exit before this loop hears about the signal.
@@ -143,7 +177,9 @@ func (l *devLoop) run(ctx context.Context) {
 			}
 			// Stopped by itself: a crash, or a port already in use. Starting it
 			// again would only repeat that, so the next change is what does.
-			fmt.Fprintf(l.cli.stderr(), "collage: dev: the program exited (%v); waiting for a change\n", exitReason(err))
+			message := fmt.Sprintf("collage: dev: the program exited (%v); waiting for a change\n", exitReason(err))
+			fmt.Fprint(l.cli.stderr(), message)
+			l.proxy.down(exitedProcess.output.String() + message)
 
 		case <-ticker.C:
 			next, err := snapshotSources(".")
@@ -178,22 +214,33 @@ func (l *devLoop) restart(ctx context.Context) {
 
 	// Read on every restart, so an edited environment file takes effect — it is
 	// watched for exactly that reason.
+	// With nothing serving, what follows is what the browser waits for.
+	if l.current == nil {
+		l.proxy.starting(nil)
+	}
+
 	env, loaded, err := loadDevEnv(".", os.LookupEnv)
 	if err != nil {
 		fmt.Fprintf(stderr, "collage: dev: %v\n", err)
+		if l.current == nil {
+			l.proxy.down(fmt.Sprintf("collage: dev: %v\n", err))
+		}
 		return
 	}
 	if loaded != "" && loaded != l.loaded {
 		fmt.Fprintf(stderr, "collage: dev: loaded %s\n", loaded)
 	}
 	l.loaded = loaded
-	// Last, so no file can turn development mode off: a later duplicate wins
-	// in the started process's environment.
-	env = append(env, "COLLAGE_DEV=1")
+	// Last, so no file can turn development mode off, or move the program off
+	// the address the proxy passes requests to: a later duplicate wins in the
+	// started process's environment.
+	host, port, _ := net.SplitHostPort(l.proxy.target)
+	env = append(env, "HOST="+host, "PORT="+port, "COLLAGE_DEV=1")
 
 	l.builds++
 	binary := filepath.Join(l.buildDir, fmt.Sprintf("app-%d%s", l.builds, exeSuffix()))
-	if err := l.cli.runner().Run(ctx, "", nil, l.cli.stdout(), stderr, "go", "build", "-o", binary, "."); err != nil {
+	buildOutput := &tailBuffer{}
+	if err := l.cli.runner().Run(ctx, "", nil, l.cli.stdout(), io.MultiWriter(stderr, buildOutput), "go", "build", "-o", binary, "."); err != nil {
 		if ctx.Err() != nil {
 			return
 		}
@@ -201,6 +248,7 @@ func (l *devLoop) restart(ctx context.Context) {
 			fmt.Fprintln(stderr, "collage: dev: build failed; the last good build is still serving")
 		} else {
 			fmt.Fprintln(stderr, "collage: dev: build failed; waiting for a change")
+			l.proxy.down(buildOutput.String() + "collage: dev: build failed; waiting for a change\n")
 		}
 		return
 	}
@@ -208,9 +256,11 @@ func (l *devLoop) restart(ctx context.Context) {
 	l.stopCurrent()
 
 	processCtx, stop := context.WithCancel(ctx)
-	process := &devProcess{binary: binary, stop: stop, done: make(chan error, 1)}
+	process := &devProcess{binary: binary, stop: stop, done: make(chan error, 1), output: &tailBuffer{}}
+	l.proxy.starting(process)
+	go l.proxy.awaitListening(processCtx, process)
 	go func() {
-		process.done <- l.cli.runner().Run(processCtx, "", env, l.cli.stdout(), stderr, binary)
+		process.done <- l.cli.runner().Run(processCtx, "", env, l.cli.stdout(), io.MultiWriter(stderr, process.output), binary)
 	}()
 	l.current = process
 }
