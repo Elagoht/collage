@@ -52,6 +52,10 @@ func (rt *router) RegisterAction(action *types.Action) error {
 			return fmt.Errorf("collage: action %q path %q locale %q: %w", action.Name, pattern, locale, err)
 		}
 
+		if occupant := occupantName(target); occupant != "" && readsPage(action.Methods) {
+			return fmt.Errorf("%w: action %q and %s both answer GET %q for locale %q",
+				ErrDuplicateRoute, action.Name, occupant, pattern, locale)
+		}
 		if target.actions == nil {
 			target.actions = make(map[string]*types.Action)
 		}
@@ -72,6 +76,23 @@ func (rt *router) RegisterAction(action *types.Action) error {
 	}
 
 	return nil
+}
+
+// readsPage reports whether methods include one a page or document answers. An
+// action claiming GET or HEAD on a page's path would be matched first and hide the
+// page without a word — a fragment path spelled like a page's path did exactly that
+// — so it is refused at registration, in whichever order the two arrive. The other
+// methods share the path freely: that is a page and the form it submits.
+func readsPage(methods []string) bool {
+	return slices.Contains(methods, http.MethodGet) || slices.Contains(methods, http.MethodHead)
+}
+
+// readingAction returns the action at n that answers GET or HEAD, or nil.
+func readingAction(n *node) *types.Action {
+	if a := n.actions[http.MethodGet]; a != nil {
+		return a
+	}
+	return n.actions[http.MethodHead]
 }
 
 // actionLocales returns the locales an action declares a path for, in sorted order so

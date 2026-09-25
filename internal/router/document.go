@@ -41,6 +41,10 @@ func (rt *router) RegisterDocument(doc *types.Document) error {
 			return fmt.Errorf("%w: document %q and %s both claim %q for locale %q",
 				ErrDuplicateRoute, doc.Name, occupant, pattern, locale)
 		}
+		if reader := readingAction(target); reader != nil {
+			return fmt.Errorf("%w: document %q and action %q both answer GET %q for locale %q",
+				ErrDuplicateRoute, doc.Name, reader.Name, pattern, locale)
+		}
 		target.document = doc
 
 		rt.recordRoutedPath(locale, pattern, normalized, owner)

@@ -143,7 +143,8 @@ type Router interface {
 	// RegisterAction adds action's paths, across every locale in action.Paths, for
 	// every method in action.Methods. An action shares a path with a page or a
 	// document freely — a page and the POST its own form submits are one URL —
-	// but two actions claiming one method for one path is ErrDuplicateRoute.
+	// but two actions claiming one method for one path is ErrDuplicateRoute, and
+	// so is an action answering GET or HEAD where a page or document is read.
 	RegisterAction(action *types.Action) error
 	// RegisterNotFound sets the page served when a request resolves to no
 	// content.
@@ -451,6 +452,10 @@ func (rt *router) Register(page *types.Page) error {
 		if occupant := occupantName(target); occupant != "" {
 			return fmt.Errorf("%w: page %q and %s both claim %q for locale %q",
 				ErrDuplicateRoute, page.Name, occupant, pattern, locale)
+		}
+		if reader := readingAction(target); reader != nil {
+			return fmt.Errorf("%w: page %q and action %q both answer GET %q for locale %q",
+				ErrDuplicateRoute, page.Name, reader.Name, pattern, locale)
 		}
 		target.page = page
 

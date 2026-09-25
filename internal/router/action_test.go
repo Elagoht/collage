@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -158,5 +159,46 @@ func TestAction_DifferentMethodsShareAPath(t *testing.T) {
 	}
 	if match.PathParams["slug"] != "hello" {
 		t.Errorf("PathParams[slug] = %q, want %q", match.PathParams["slug"], "hello")
+	}
+}
+
+// An action answering GET where a page or document is read would be matched first
+// and hide it without a word. Refused in either order, for either method that reads.
+func TestAction_CannotAnswerGetWhereAPageIsRead(t *testing.T) {
+	cases := []struct {
+		name     string
+		method   string
+		occupant func(rt Router) error
+	}{
+		{"page GET", http.MethodGet, func(rt Router) error {
+			return rt.Register(&types.Page{Name: "about", Paths: map[string]string{"en": "/about"}})
+		}},
+		{"page HEAD", http.MethodHead, func(rt Router) error {
+			return rt.Register(&types.Page{Name: "about", Paths: map[string]string{"en": "/about"}})
+		}},
+		{"document GET", http.MethodGet, func(rt Router) error {
+			return rt.RegisterDocument(testDocument("about", "/about"))
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+", occupant first", func(t *testing.T) {
+			rt := New(LocaleOptions{Default: "en"})
+			if err := tc.occupant(rt); err != nil {
+				t.Fatalf("occupant: %v", err)
+			}
+			err := rt.RegisterAction(testAction("home:cpu", "/about", tc.method))
+			if !errors.Is(err, ErrDuplicateRoute) {
+				t.Fatalf("RegisterAction() = %v, want ErrDuplicateRoute", err)
+			}
+		})
+		t.Run(tc.name+", action first", func(t *testing.T) {
+			rt := New(LocaleOptions{Default: "en"})
+			if err := rt.RegisterAction(testAction("home:cpu", "/about", tc.method)); err != nil {
+				t.Fatalf("RegisterAction: %v", err)
+			}
+			if err := tc.occupant(rt); !errors.Is(err, ErrDuplicateRoute) {
+				t.Fatalf("occupant = %v, want ErrDuplicateRoute", err)
+			}
+		})
 	}
 }
