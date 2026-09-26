@@ -25,8 +25,13 @@
   fragment a page opened at its own URL, rendered for a request and returned in
   parts — `HTML`, `Head` (the hoisted items), `DependencyTags`, `Shared` (one
   render serves every reader) and the forgery `Cookie` its forms need. For a
-  plugin pushing fragments over a connection it owns. `FragmentRequest`,
-  `FragmentRender` and `HoistItem` are exported.
+  plugin pushing fragments over a connection it owns. A request names the
+  fragment by page and name, or by `Path`, the URL a page linked, resolved as a
+  request to it would be. `FragmentRequest`, `FragmentRender` and `HoistItem` are
+  exported.
+- **`StreamCloser`**: a plugin serving connections that never end by themselves
+  implements `CloseStreams`, which runs when shutdown begins, before the server
+  waits for open requests.
 - **The development reload script can be left out.** It does not connect in a
   browser that sets `navigator.webdriver`, and `?collage-reload=0` serves a page
   without it — for headless `--screenshot` and `--dump-dom`, which waited forever
@@ -42,6 +47,13 @@
   a test double implementing it needs them.
 - `render.Engine.RenderFragment` returns the body with the hoist channel;
   `SlotEngine.RenderFragmentResult` returns the parts.
+
+### Fixed
+
+- A handler mounted with `App.Handle` can reach the connection through
+  `http.ResponseController`: `SetWriteDeadline`, `Flush` and `Hijack` pass the
+  wrapper that records its status. A stream could not push its deadline forward
+  and was cut by `WriteTimeout`, and a WebSocket upgrade failed with 501.
 
 ### Documentation
 

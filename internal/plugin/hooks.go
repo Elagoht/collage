@@ -81,6 +81,19 @@ type CacheInvalidateHook interface {
 	OnCacheInvalidate(ctx context.Context, ev *CacheInvalidateEvent) error
 }
 
+// StreamCloser is implemented by a plugin serving connections that never end by
+// themselves — an event stream, a WebSocket.
+//
+// Shutdown runs after the server has stopped, because a plugin must not be torn
+// out from under requests still in flight; but the server stops by waiting for
+// every open request to finish, and a stream never does. CloseStreams runs first,
+// before the server waits, so the plugin can end its streams and let it.
+type StreamCloser interface {
+	// CloseStreams ends every open stream the plugin serves. It must not block
+	// on those streams finishing.
+	CloseStreams()
+}
+
 // ErrorHook is implemented by a plugin that wants to observe a failure encountered
 // while serving a request.
 type ErrorHook interface {

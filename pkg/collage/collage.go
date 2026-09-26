@@ -59,6 +59,11 @@ type HoistItem = types.HoistItem
 // Command is a CLI subcommand a plugin contributes through Host.RegisterCommand.
 type Command = plugin.Command
 
+// StreamCloser is implemented by a plugin serving connections that never end by
+// themselves — an event stream, a WebSocket. CloseStreams runs when shutdown
+// begins, before the server waits for open requests, which a stream never ends.
+type StreamCloser = plugin.StreamCloser
+
 // PageResolvedHook is implemented by a plugin that wants to observe a request
 // having been resolved to a page, before rendering begins.
 type PageResolvedHook = plugin.PageResolvedHook

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
@@ -30,36 +32,16 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 	if r == nil {
 		return nil, ErrNoRequest
 	}
-	locale := req.Locale
-	if locale == "" {
-		locale = a.cfg.Locale.Default
-	}
-	if !a.localeReachable(locale) {
-		return nil, fmt.Errorf("%w: %q", ErrLocaleUnreachable, locale)
-	}
-
-	a.mu.RLock()
-	page := a.pages[req.Page]
-	a.mu.RUnlock()
-	if page == nil {
-		return nil, fmt.Errorf("%w: %q", types.ErrUnknownRoute, req.Page)
-	}
-	var fragment *types.Fragment
-	for _, f := range page.PathFragments() {
-		if f.Name == req.Fragment {
-			fragment = f
-			break
-		}
-	}
-	if fragment == nil {
-		return nil, fmt.Errorf("%w: %q on page %q", types.ErrUnknownFragmentPath, req.Fragment, req.Page)
+	page, fragment, locale, params, r, err := a.resolveFragmentRequest(r, req)
+	if err != nil {
+		return nil, err
 	}
 
 	renderer, ok := a.renderer.(render.FragmentResultRenderer)
 	if !ok {
 		return nil, fmt.Errorf("collage: this application's renderer cannot render a fragment in parts")
 	}
-	rc := types.NewRenderContext(r.Context(), r, page, locale, req.Params)
+	rc := types.NewRenderContext(r.Context(), r, page, locale, params)
 	result, err := renderer.RenderFragmentResult(r.Context(), rc, fragment)
 	if err != nil {
 		return nil, err
@@ -87,6 +69,55 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 		}
 	}
 	return out, nil
+}
+
+// resolveFragmentRequest finds the fragment req names — by its URL when it has
+// one, by name otherwise — and returns the request to render it for: r itself, or,
+// for a URL, a copy of r pointed at that URL, so the render reads its query.
+func (a *App) resolveFragmentRequest(r *http.Request, req plugin.FragmentRequest) (
+	*types.Page, *types.Fragment, string, map[string]string, *http.Request, error,
+) {
+	if req.Path != "" {
+		target, err := url.Parse(req.Path)
+		if err != nil || target.IsAbs() || target.Host != "" || !strings.HasPrefix(target.Path, "/") {
+			return nil, nil, "", nil, nil, fmt.Errorf("%w: %q is not a path on this site", types.ErrUnknownFragmentPath, req.Path)
+		}
+		forFragment := r.Clone(r.Context())
+		forFragment.Method = http.MethodGet
+		forFragment.URL = &url.URL{Path: target.Path, RawPath: target.RawPath, RawQuery: target.RawQuery}
+		forFragment.RequestURI = target.RequestURI()
+		match, err := a.routes.Match(forFragment)
+		if err != nil || match == nil || match.Action == nil {
+			return nil, nil, "", nil, nil, fmt.Errorf("%w: %q", types.ErrUnknownFragmentPath, req.Path)
+		}
+		a.mu.RLock()
+		found, ok := a.fragmentPaths[match.Action]
+		a.mu.RUnlock()
+		if !ok {
+			return nil, nil, "", nil, nil, fmt.Errorf("%w: %q", types.ErrUnknownFragmentPath, req.Path)
+		}
+		return found.page, found.fragment, match.Locale, match.PathParams, forFragment, nil
+	}
+
+	locale := req.Locale
+	if locale == "" {
+		locale = a.cfg.Locale.Default
+	}
+	if !a.localeReachable(locale) {
+		return nil, nil, "", nil, nil, fmt.Errorf("%w: %q", ErrLocaleUnreachable, locale)
+	}
+	a.mu.RLock()
+	page := a.pages[req.Page]
+	a.mu.RUnlock()
+	if page == nil {
+		return nil, nil, "", nil, nil, fmt.Errorf("%w: %q", types.ErrUnknownRoute, req.Page)
+	}
+	for _, f := range page.PathFragments() {
+		if f.Name == req.Fragment {
+			return page, f, locale, req.Params, r, nil
+		}
+	}
+	return nil, nil, "", nil, nil, fmt.Errorf("%w: %q on page %q", types.ErrUnknownFragmentPath, req.Fragment, req.Page)
 }
 
 // fetchFree reports whether nothing in f's subtree renders differently per

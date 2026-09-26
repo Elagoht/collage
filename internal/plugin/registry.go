@@ -149,6 +149,17 @@ func (r *Registry) Shutdown(ctx context.Context) error {
 	return err
 }
 
+// CloseStreams asks every plugin implementing StreamCloser to end its open
+// streams, in registration order. A panic in one is contained, so the others
+// still close theirs. A nil Registry does nothing.
+func (r *Registry) CloseStreams() {
+	for _, p := range r.snapshot() {
+		if closer, ok := p.(StreamCloser); ok {
+			_ = safeCall(func() error { closer.CloseStreams(); return nil })
+		}
+	}
+}
+
 // PageResolved dispatches ev to every registered plugin implementing
 // PageResolvedHook, in registration order. It stops and returns a wrapped error at
 // the first hook failure, including a contained panic. A nil Registry, or a

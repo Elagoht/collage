@@ -496,3 +496,40 @@ func equalStrings(a, b []string) bool {
 	}
 	return true
 }
+
+// streamPlugin closes its streams when asked, or panics doing it.
+type streamPlugin struct {
+	testPlugin
+	panics bool
+}
+
+func (p *streamPlugin) CloseStreams() {
+	if p.panics {
+		panic(errPluginPanic)
+	}
+	p.log.add(p.name + ".CloseStreams")
+}
+
+// Every stream closer is asked, in order, and one that panics does not keep the
+// next from closing its own.
+func TestRegistry_CloseStreams(t *testing.T) {
+	log := &callLog{}
+	r := NewRegistry(nil)
+	for _, p := range []Plugin{
+		&streamPlugin{testPlugin: testPlugin{name: "a", log: log}},
+		&streamPlugin{testPlugin: testPlugin{name: "b", log: log}, panics: true},
+		&testPlugin{name: "c", log: log},
+		&streamPlugin{testPlugin: testPlugin{name: "d", log: log}},
+	} {
+		if err := r.Register(p); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.CloseStreams()
+	got := strings.Join(log.get(), ",")
+	if got != "a.CloseStreams,d.CloseStreams" {
+		t.Errorf("calls = %s", got)
+	}
+	var nilRegistry *Registry
+	nilRegistry.CloseStreams()
+}

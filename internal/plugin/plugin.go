@@ -143,6 +143,12 @@ type Host interface {
 // FragmentRequest names a fragment a page opened at its own URL, and the locale
 // and path parameters to render it in.
 type FragmentRequest struct {
+	// Path is the fragment's URL as a browser requests it — "/tr/canli/cpu",
+	// "/search/results?q=grid" — what {{fragmentURL}} built. When it is set, the
+	// page, the fragment, the locale and the parameters are the ones a request to
+	// it would resolve, its query is the render's, and the fields below are
+	// ignored.
+	Path string
 	// Page is the page's registered name.
 	Page string
 	// Fragment is the fragment's name, as WithFragmentPath was given it.

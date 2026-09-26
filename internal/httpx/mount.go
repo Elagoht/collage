@@ -1,8 +1,10 @@
 package httpx
 
 import (
+	"bufio"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 
 	"github.com/Elagoht/collage/internal/asset"
@@ -66,7 +68,26 @@ var (
 	_ http.ResponseWriter = (*statusCapturingWriter)(nil)
 	_ io.ReaderFrom       = (*statusCapturingWriter)(nil)
 	_ http.Flusher        = (*statusCapturingWriter)(nil)
+	_ http.Hijacker       = (*statusCapturingWriter)(nil)
 )
+
+// Unwrap returns the wrapped ResponseWriter, which is how http.ResponseController
+// reaches what this wrapper does not declare. A mounted handler serving an event
+// stream pushes its write deadline forward through it; without Unwrap that call
+// fails quietly and the server's WriteTimeout cuts the stream.
+func (s *statusCapturingWriter) Unwrap() http.ResponseWriter { return s.ResponseWriter }
+
+// Hijack hands the connection to a handler that upgrades it — a WebSocket — and
+// records 101, the status an upgrade answers with, since nothing is written
+// through this wrapper afterwards.
+func (s *statusCapturingWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	conn, rw, err := http.NewResponseController(s.ResponseWriter).Hijack()
+	if err == nil && !s.wroteHeader {
+		s.wroteHeader = true
+		s.status = http.StatusSwitchingProtocols
+	}
+	return conn, rw, err
+}
 
 // WriteHeader records status the first time it is called, then forwards it to the
 // wrapped ResponseWriter regardless — a later, superfluous call is still the

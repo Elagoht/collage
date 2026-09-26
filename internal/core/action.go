@@ -154,9 +154,20 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 			}
 			a.actions[action.Name] = action
 			a.actionOrder = append(a.actionOrder, action)
+			if a.fragmentPaths == nil {
+				a.fragmentPaths = make(map[*types.Action]fragmentPath)
+			}
+			a.fragmentPaths[action] = fragmentPath{page: page, fragment: target}
 		}
 	}
 	return nil
+}
+
+// fragmentPath is what a fragment path's action renders: which fragment of which
+// page. RenderFragment reads it to resolve a URL back to the fragment.
+type fragmentPath struct {
+	page     *types.Page
+	fragment *types.Fragment
 }
 
 // ErrNilFragmentPath reports a fragment path declared with no fragment to render.

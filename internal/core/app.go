@@ -297,6 +297,8 @@ type App struct {
 	tracker dependency.Tracker
 	// routes resolves a request to a page, a redirect, or a not-found result.
 	routes router.Router
+	// fragmentPaths maps each fragment path's action to the fragment it renders.
+	fragmentPaths map[*types.Action]fragmentPath
 	// plugins owns plugin registration, lifecycle, and hook dispatch.
 	plugins *plugin.Registry
 	// metrics is the single Metrics instance the whole application reports
@@ -928,6 +930,8 @@ func (a *App) shutdown(ctx context.Context) error {
 	if handler, ok := current.(*httpx.Handler); ok {
 		handler.CloseDevStreams()
 	}
+	// A plugin's streams too, for the same reason: see plugin.StreamCloser.
+	a.plugins.CloseStreams()
 
 	var err error
 	if server != nil {

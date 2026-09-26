@@ -287,3 +287,42 @@ func TestRenderFragment_Parts(t *testing.T) {
 		t.Errorf("a fragment the page did not open: err = %v, want ErrUnknownFragmentPath", err)
 	}
 }
+
+// A stream subscribes by the URLs a page links, so RenderFragment resolves one as
+// a request to it would — locale, parameters and query included.
+func TestRenderFragment_ByPath(t *testing.T) {
+	app := newFragmentApp(t, map[string]string{
+		"page.html":    `<main>{{slot "results"}}</main>`,
+		"results.html": `<p>{{.}}</p>`,
+	})
+	results := collage.NewFragment("results", "results.html").WithDataHandler(func(_ context.Context, rc *collage.RenderContext) (any, []string, error) {
+		return rc.Locale + ":" + rc.Param("slug") + ":" + rc.Request.URL.Query().Get("q"), nil, nil
+	}).Build()
+	page := collage.NewFragment("page", "page.html").WithSlotFragment("results", results).Build()
+	if err := app.RegisterPage(collage.NewPage("search").WithContent(page).
+		WithPath("en", "/search/{slug}").WithPath("tr", "/ara/{slug}").
+		WithFragmentPath("en", "/search/{slug}/results", results).
+		WithFragmentPath("tr", "/ara/{slug}/sonuclar", results).Build()); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/_live/stream", nil)
+
+	for path, want := range map[string]string{
+		"/search/go/results?q=grid": "<p>en:go:grid</p>",
+		"/tr/ara/go/sonuclar":       "<p>tr:go:</p>",
+	} {
+		got, err := app.RenderFragment(r, collage.FragmentRequest{Path: path})
+		if err != nil {
+			t.Errorf("RenderFragment(%q): %v", path, err)
+			continue
+		}
+		if string(got.HTML) != want {
+			t.Errorf("RenderFragment(%q) = %q, want %q", path, got.HTML, want)
+		}
+	}
+	for _, path := range []string{"/search/go", "/nope", "https://evil.example/search/go/results", "search/go/results"} {
+		if _, err := app.RenderFragment(r, collage.FragmentRequest{Path: path}); !errors.Is(err, collage.ErrUnknownFragmentPath) {
+			t.Errorf("RenderFragment(%q) = %v, want ErrUnknownFragmentPath", path, err)
+		}
+	}
+}

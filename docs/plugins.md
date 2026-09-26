@@ -173,9 +173,30 @@ instead of a response:
 | `Shared` | The render is the same for every reader: the page is cached for everyone, or no handler in the subtree reads the request, and there is no form token |
 | `Cookie` | The forgery cookie the forms in `HTML` need, when the request carried none |
 
+A `FragmentRequest` names the fragment either by `Page`, `Fragment`, `Locale` and
+`Params`, or by `Path` — the URL a page linked with `{{fragmentURL}}`, query
+included — which is resolved as a request to it would be. A client subscribing to
+the elements it shows only knows their URLs, so `Path` is usually what a stream
+has.
+
 Only fragments the page opened are rendered: a stream reaches exactly what HTTP
 reaches. A render that is not `Shared` may hold one reader's data, so it must be
 rendered for each connection with that connection's request, never once for all.
+
+### Streams and shutdown
+
+A plugin's `Shutdown` runs after the server has stopped, and the server stops by
+waiting for every open request to end — which an event stream or a WebSocket never
+does by itself. A plugin serving one implements `StreamCloser`:
+
+```go
+func (p *Plugin) CloseStreams() { p.hub.close() }
+```
+
+`CloseStreams` runs when shutdown begins, before the server waits, and must end the
+streams without waiting for them. A handler served through `Handle` can push its
+write deadline forward with `http.NewResponseController(w).SetWriteDeadline`, and
+take the connection over with `Hijack`, as it could on a bare `net/http` server.
 
 `Host` has no `Documents` method, and that is deliberate rather than an
 oversight: nothing outside the framework's own build step reads the document
