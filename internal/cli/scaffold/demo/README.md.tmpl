@@ -87,6 +87,27 @@ restart does not re-render everything.
 that need a server — a form, or a `Dynamic()` page — are skipped and named, and
 still work when the binary serves them.
 
+## Plugins
+
+What the framework leaves out comes as plugins, each its own module. A few worth
+adding early:
+
+- [collage-htmlcheck](https://github.com/Elagoht/collage-htmlcheck) checks the
+  HTML you render — a missing `alt`, a skipped heading, a link to nothing — over the
+  page in development and in `collage export`'s report.
+- [collage-sitemap](https://github.com/Elagoht/collage-sitemap),
+  [collage-robots](https://github.com/Elagoht/collage-robots) and
+  [collage-feed](https://github.com/Elagoht/collage-feed) for search engines and
+  feed readers.
+- [collage-secure](https://github.com/Elagoht/collage-secure) for security headers,
+  [collage-flash](https://github.com/Elagoht/collage-flash) for a "saved" message
+  after a form, [collage-i18n](https://github.com/Elagoht/collage-i18n) for
+  translations.
+
+`go get` one, add it to `Plugins` in `main.go`, and its settings go in
+`plugins-config.json`. All of them:
+https://collage.furkanbaytekin.dev/en/docs/plugins/.
+
 ## The collage CLI contract
 
 - **`collage dev`** builds this program with `go build`, runs the binary with

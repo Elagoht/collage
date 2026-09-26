@@ -282,6 +282,11 @@ type CacheInvalidateEvent struct {
 	// a plugin that wants to trigger an invalidation uses Host.InvalidateTags
 	// instead of trying to feed this back into one.
 	Tags []string
+	// Paths are the URL paths of the cached pages and documents the
+	// invalidation dropped, sorted — what a CDN has to purge and a search engine
+	// be told has changed. A page that is not cached is never in it: nothing of
+	// it was dropped.
+	Paths []string
 }
 
 // ErrorEvent describes a failure encountered while serving a request.

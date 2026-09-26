@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.23.0
+
+### Added
+
+- **`CacheInvalidateEvent.Paths`**: the URL paths of the cached pages and
+  documents an invalidation dropped, for a plugin purging a CDN or telling a
+  search engine what changed.
+- **`collage.PathTag(path)`**: every cached entry depends on a tag naming the URL
+  path it was rendered for, so `InvalidateTags(ctx, collage.PathTag("/blog"))`
+  drops what is cached there.
+
+### Changed
+
+- Findings are shown over a page an action answers with and over an error page in
+  development, as over any other page.
+- The scaffold's `main.go` and READMEs point to the published plugins.
+
 ## v0.22.0
 
 ### Added

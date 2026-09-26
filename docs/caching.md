@@ -226,8 +226,18 @@ not included in the returned count — the `Cache` contract gives `Invalidate` n
 count to report, and inventing one would make the number mean different things for
 different caches.
 
+Every cached page and document also depends on a tag naming the URL path it was
+rendered for, `collage.PathTag(path)`, so an entry can be dropped by its path when
+that is what you know:
+
+```go
+app.InvalidateTags(ctx, collage.PathTag("/blog/hello"))
+```
+
 Plugins observe invalidation through `OnCacheInvalidate`, and a plugin triggers
-one through `Host.InvalidateTags`.
+one through `Host.InvalidateTags`. The event names the tags, and — in `Paths` —
+the URL paths of the cached entries it dropped: what a CDN has to purge, and a
+search engine be told has changed. A page that was never cached is not in it.
 
 An action that asks for invalidation declaratively, through
 `ActionResult.InvalidateTags`, has it run before its response is written — so a

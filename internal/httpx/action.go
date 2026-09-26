@@ -287,7 +287,10 @@ func (h *Handler) writeActionPage(
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender,
 			fmt.Errorf("%w: page %q", ErrEmptyRender, result.Page.Name)))
 	}
-	return h.writeActionHTML(w, r, statusOr(result.Status, http.StatusOK), afterRender.HTML)
+	// A page an action answers with is a page: what the checks found about it is
+	// shown as on any other. Written, never cached.
+	html := withDevOverlay(afterRender.HTML, overlayHeading(nil), h.devFindings(afterRender.Findings))
+	return h.writeActionHTML(w, r, statusOr(result.Status, http.StatusOK), html)
 }
 
 // writeActionHTML writes an HTML body with status. Cache-Control is already set by

@@ -245,7 +245,9 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 	if len(afterRender.HTML) == 0 {
 		return fail("collage: error page rendered empty", fmt.Errorf("%w: page %q", ErrEmptyErrorPage, page.Name))
 	}
-	return afterRender.HTML, true
+	// What the checks found about the error page itself, shown as on any page.
+	// Never cached: an error response is not.
+	return withDevOverlay(afterRender.HTML, overlayHeading(nil), h.devFindings(afterRender.Findings)), true
 }
 
 // reportErrorPageFailure tells plugins that the error page itself is broken, under

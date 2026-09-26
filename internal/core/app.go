@@ -23,6 +23,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1006,6 +1007,24 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 		a.data.Invalidate(tags)
 	}
 
+	// The URL paths of what is being dropped, read before the keys are forgotten:
+	// every cached entry carries a tag naming the path it was rendered for.
+	var paths []string
+	seenPath := make(map[string]bool)
+	for _, key := range keys {
+		keyTags, err := a.tracker.Tags(ctx, key)
+		if err != nil {
+			continue
+		}
+		for _, tag := range keyTags {
+			if path, ok := strings.CutPrefix(tag, types.PathTagPrefix); ok && !seenPath[path] {
+				seenPath[path] = true
+				paths = append(paths, path)
+			}
+		}
+	}
+	slices.Sort(paths)
+
 	var failures error
 	invalidated := 0
 	for _, key := range keys {
@@ -1033,7 +1052,8 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 	// as the event's own, and a plugin must not be able to reach back into the
 	// caller's slice through it.
 	if err := a.plugins.CacheInvalidate(ctx, &plugin.CacheInvalidateEvent{
-		Tags: append([]string(nil), tags...),
+		Tags:  append([]string(nil), tags...),
+		Paths: paths,
 	}); err != nil {
 		failures = errors.Join(failures, err)
 	}

@@ -128,12 +128,18 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 			DefaultTTL: 5 * time.Minute,
 		},
 		PluginConfig: pluginConfig,
-		// Plugins go here, and their settings in plugins-config.json:
+		// Plugins go here, and their settings in plugins-config.json — a
+		// checker for the HTML you render, a sitemap, a feed, translations:
 		//
-		//	Plugins: []collage.Plugin{minimizer.New(), jsonld.New()},
+		//	Plugins: []collage.Plugin{
+		//		htmlcheck.New(htmlcheck.Options{}),
+		//		sitemap.New(sitemap.Options{BaseURL: "https://example.com"}),
+		//	},
 		//
-		// A plugin that contributes to the document head reaches it through
-		// {{hoist "head"}} in the layout.
+		// Each is its own module, github.com/Elagoht/collage-<name>; the list is
+		// at https://collage.furkanbaytekin.dev/en/docs/plugins/. A plugin that
+		// contributes to the document head reaches it through {{hoist "head"}}
+		// in the layout.
 		Security: collage.SecurityConfig{
 			// Signs the forgery tokens forms carry. Unset, one is generated
 			// per process: fine in development, wrong to deploy, because every

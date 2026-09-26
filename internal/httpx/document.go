@@ -236,7 +236,7 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
 
-	if err := h.tracker.Track(ctx, key, event.Tags); err != nil {
+	if err := h.tracker.Track(ctx, key, withPathTag(event.Tags, r.URL.Path)); err != nil {
 		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: track %q: %w", key, err)))
 	}
 	return etag

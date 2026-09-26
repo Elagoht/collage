@@ -240,7 +240,7 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | `AfterRenderHook` | `OnAfterRender` | After a successful render. **Pages only**, on the same terms | `ev.HTML`; reports with `ev.Warn`, `ev.Error` |
 | `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
 | `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored — for a page or a document alike | `ev.Skip`, `ev.TTL`, `ev.Tags` |
-| `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike | nothing |
+| `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike; `ev.Paths` names the URL paths dropped | nothing |
 | `ErrorHook` | `OnError` | On any failure while serving a request — a page, a document, or a mounted asset alike | nothing |
 | `BuildFinishedHook` | `OnBuildFinished` | Once, when a static build has written every file | reports with `ev.Warn`, `ev.Error` |
 
@@ -276,7 +276,8 @@ plugin — filled in by the framework — and the page's path. Where it goes dep
 on where the page was rendered:
 
 - **In development** it is shown over the page, in the panel a failed fragment
-  uses, and the page is served as it is.
+  uses, and the page is served as it is — a page an action answers with and an
+  error page included.
 - **In a static build** it is listed in the report under the page it is about. An
   error-level finding fails the build with `collage.ErrBuildFindings`; the pages are
   written either way.

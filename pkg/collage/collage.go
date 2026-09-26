@@ -89,6 +89,11 @@ type BuildFinishedEvent = plugin.BuildFinishedEvent
 // BuiltFile is one file a static build wrote.
 type BuiltFile = plugin.BuiltFile
 
+// PathTag is the dependency tag every cached page and document carries for the
+// URL path it was rendered for: InvalidateTags(ctx, PathTag("/blog")) drops what
+// is cached for that path, whatever else it depends on.
+func PathTag(path string) string { return types.PathTag(path) }
+
 // PageURL is one URL a page answers, as Host.PageURLs lists them.
 type PageURL = plugin.PageURL
 

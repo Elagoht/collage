@@ -979,10 +979,20 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
 
-	if err := h.tracker.Track(ctx, key, event.Tags); err != nil {
+	if err := h.tracker.Track(ctx, key, withPathTag(event.Tags, r.URL.Path)); err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
 	}
 	return etag
+}
+
+// withPathTag adds to tags the one naming the URL path an entry was rendered for:
+// types.PathTag(path). It is how an invalidation learns which URLs it dropped —
+// a CDN purge needs them — and how an entry can be invalidated by its path.
+// Kept out of the CacheWriteEvent, since it is the framework's, not the page's.
+func withPathTag(tags []string, path string) []string {
+	out := make([]string, 0, len(tags)+1)
+	out = append(out, tags...)
+	return append(out, types.PathTag(path))
 }
 
 // ttlFor returns the cache TTL for a route with the given strategy and cacheTTL:

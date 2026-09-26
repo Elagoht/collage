@@ -44,11 +44,15 @@ func (c *checker) Init(ctx context.Context, host collage.Host) error {
 	c.host = host
 	c.defLoc, c.locales = host.Locales()
 	var err error
-	if c.urls, err = host.PageURLs(ctx, "post"); err != nil {
-		return err
+	if _, ok := host.Page("post"); ok {
+		if c.urls, err = host.PageURLs(ctx, "post"); err != nil {
+			return err
+		}
 	}
-	if c.aboutURL, err = host.URL("about", "tr", nil); err != nil {
-		return err
+	if _, ok := host.Page("about"); ok {
+		if c.aboutURL, err = host.URL("about", "tr", nil); err != nil {
+			return err
+		}
 	}
 	return host.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -231,5 +235,33 @@ func TestFindings_Build(t *testing.T) {
 		if paths[want] != "page" {
 			t.Errorf("built files lack page %q: %v", want, paths)
 		}
+	}
+}
+
+// A page an action answers with is checked and shown like any other.
+func TestFindings_OnAnActionsPage(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		DevMode:  true,
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<html><body><p>no heading</p></body></html>`)}}, Root: "t"},
+		Plugins:  []collage.Plugin{&checker{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	form := collage.NewPage("form").WithContent(collage.NewFragment("form", "p.html").Build()).WithPath("en", "/form").Build()
+	if err := app.RegisterPage(form); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RegisterAction(collage.NewAction("show").WithPath("en", "/show").WithMethods(http.MethodGet).
+		WithHandler(func(context.Context, *collage.RenderContext) (*collage.ActionResult, error) {
+			return collage.RenderPage(form), nil
+		}).Build()); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/show", nil))
+	if body := rec.Body.String(); !strings.Contains(body, "one-h1") || !strings.Contains(body, "collage-dev-overlay") {
+		t.Errorf("an action's page carries no findings:\n%s", body)
 	}
 }

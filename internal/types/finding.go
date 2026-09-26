@@ -46,3 +46,11 @@ type Finding struct {
 	// finding about one render; a check across the whole build sets it itself.
 	Path string
 }
+
+// PathTagPrefix begins the dependency tag every cached entry carries for the URL
+// path it was rendered for. See PathTag.
+const PathTagPrefix = "collage:path:"
+
+// PathTag is the dependency tag of the cached entries rendered for path:
+// invalidating it drops them, whatever else they depend on.
+func PathTag(path string) string { return PathTagPrefix + path }
