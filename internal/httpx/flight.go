@@ -77,6 +77,11 @@ func newFlight() *flight {
 // pressing stop into an error page for every reader who asked at the same moment.
 // So a waiter that receives a leader's cancellation failure, while its own request
 // is still live, tries again — becoming the leader itself if no one else has.
+//
+// The handler goes further and gives fn a context the leader's cancellation does
+// not reach (see serve), because a failure is not the only way a cancellation
+// shows: an optional fragment that fails with it leaves a render that succeeded,
+// with a hole in it, and nothing here could tell that apart.
 func (f *flight) do(ctx context.Context, key string, fn func() *outcome) (*outcome, bool) {
 	for {
 		f.mu.Lock()

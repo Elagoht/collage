@@ -191,3 +191,42 @@ func TestExecute_RecoversPanics(t *testing.T) {
 		}
 	})
 }
+
+// A context cancelled above Execute is not Execute's timeout, and is not reported
+// as one: the message would send someone looking for a slow handler.
+func TestExecute_ParentCancellationIsNotATimeout(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := Execute(context.WithoutCancel(ctx), 5*time.Second, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatalf("WithoutCancel: %v", err)
+	}
+
+	parent, cancelParent := context.WithCancel(context.Background())
+	err = Execute(parent, 5*time.Second, func(ctx context.Context) error {
+		cancelParent()
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "exceeded") {
+		t.Errorf("parent cancelled: %v", err)
+	}
+
+	err = Execute(context.Background(), 10*time.Millisecond, func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "exceeded 10ms") {
+		t.Errorf("own timeout: %v", err)
+	}
+
+	short, cancelShort := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancelShort()
+	err = Execute(short, 5*time.Second, func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "exceeded 5s") {
+		t.Errorf("a shorter deadline above: %v", err)
+	}
+}

@@ -637,14 +637,22 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// A page with no key is rendered directly. There is nothing to coalesce on,
 	// and a page the application declared dynamic is two renders for two requests
 	// by its own declaration.
-	produce := func() *outcome { return h.renderPage(ctx, r, page, match, key, cacheable) }
-
 	var out *outcome
 	shared := false
 	if key != "" {
-		out, shared = h.flight.do(ctx, key, produce)
+		// A shared render belongs to no one request, so it does not end when the
+		// request that started it does. Under that request's context, a reader
+		// leaving would fail every data handler still running with "context
+		// canceled", and the optional parts among them would reach every waiter
+		// as a page with holes in it. WithoutCancel keeps the context's values —
+		// the trace, the locale — and the render stays bounded by its fragments'
+		// own timeouts.
+		renderCtx := context.WithoutCancel(ctx)
+		out, shared = h.flight.do(ctx, key, func() *outcome {
+			return h.renderPage(renderCtx, r, page, match, key, cacheable)
+		})
 	} else {
-		out = produce()
+		out = h.renderPage(ctx, r, page, match, key, cacheable)
 	}
 	if shared {
 		// Not a hit: nothing was in the cache when this request asked. It is the
@@ -690,7 +698,7 @@ func (h *Handler) withDevReload(r *http.Request, html []byte) []byte {
 	if h.reload == nil || r.Method != http.MethodGet || r.URL.Query().Get(devReloadOptOut) == "0" {
 		return html
 	}
-	return withReloadScript(html)
+	return withReloadScript(html, h.reload.version())
 }
 
 // CloseDevStreams ends every development reload stream. A graceful shutdown waits

@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.18.1
+
+### Fixed
+
+- **A render several requests share outlives the request that started it.** It
+  ran under that request's context, so a reader leaving — a closed tab, a stopped
+  reload, a development page reloading twice — failed every data handler still
+  running with "context canceled", and every request waiting on the render got a
+  page with those parts missing. It now runs under the context's values without
+  its cancellation, bounded by the fragments' own timeouts.
+- **A cancellation is no longer reported as a timeout.** A fragment whose context
+  ended above it — a request cancelled, a shorter deadline — failed with
+  "execution exceeded 5s" though nothing ran for five seconds. Only the fragment's
+  own timeout is reported as one now; anything else is "stopped by context", with
+  its cause.
+- **A hidden development tab lets its reload stream go.** A browser holds at most
+  six connections to an origin over HTTP/1.1, across all its tabs, and every open
+  development page held one: from the seventh tab on, pages and fragment requests
+  waited for a free connection. The stream closes when the tab is hidden and
+  reconnects when it is seen. The page carries the version it was served at, and
+  the stream greets it with the current one, so a change made while it was hidden
+  still reloads it.
+
 ## v0.18.0
 
 ### Added

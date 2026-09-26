@@ -552,7 +552,9 @@ Every page it serves in answer to a GET carries a small script that reloads it
 when a template or a mounted file changes, and when the program restarts — so under
 `collage dev`, which rebuilds on a Go change, saving any file is enough. The script
 listens on `/_collage/reload`, a stream that exists only in development and is
-served ahead of middleware. The answer to a POST never carries it: reloading one
+served ahead of middleware. A hidden tab closes its stream and reconnects when it is
+seen again — a browser allows six connections to one origin across all its tabs —
+and the page reloads then if anything changed while it was hidden. The answer to a POST never carries it: reloading one
 would submit the form again. A strict `Content-Security-Policy` of your own may
 block the inline script in development; production pages never carry it.
 

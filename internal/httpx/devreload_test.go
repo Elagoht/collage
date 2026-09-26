@@ -16,11 +16,15 @@ import (
 )
 
 func TestWithReloadScript(t *testing.T) {
-	if got := string(withReloadScript([]byte("<html><body><p>x</p></BODY></html>"))); !strings.Contains(got, devReloadScript+"</BODY>") {
+	script := strings.Replace(devReloadScript, devReloadVersion, "abc-1", 1)
+	if got := string(withReloadScript([]byte("<html><body><p>x</p></BODY></html>"), "abc-1")); !strings.Contains(got, script+"</BODY>") {
 		t.Errorf("script not placed before the closing body tag: %q", got)
 	}
-	if got := string(withReloadScript([]byte("<p>x</p>"))); got != "<p>x</p>"+devReloadScript {
+	if got := string(withReloadScript([]byte("<p>x</p>"), "abc-1")); got != "<p>x</p>"+script {
 		t.Errorf("script not appended to a page with no body tag: %q", got)
+	}
+	if !strings.Contains(script, `const v="abc-1"`) {
+		t.Errorf("the page's version is not in the script: %q", script)
 	}
 }
 
@@ -61,6 +65,9 @@ func TestDevReload_CanBeLeftOut(t *testing.T) {
 	}
 	if !strings.Contains(devReloadScript, "navigator.webdriver") {
 		t.Error("the script connects under automation, and a screenshot waits on it forever")
+	}
+	if !strings.Contains(devReloadScript, "visibilitychange") || !strings.Contains(devReloadScript, "s.close()") {
+		t.Error("a hidden tab keeps its stream, and six tabs use up the browser's connections")
 	}
 }
 
@@ -125,10 +132,24 @@ func TestDevReload_StreamsAChangeAndEndsOnClose(t *testing.T) {
 	}
 
 	await("event: hello")
+	// The greeting names the version a page served now carries, so a tab that let
+	// its stream go while hidden can tell, on coming back, whether it is current.
+	hello := ""
+	select {
+	case hello = <-lines:
+	case <-ctx.Done():
+	}
+	page := env.get("/missing").Body.String()
+	if want := strings.TrimPrefix(hello, "data: "); want == "" || !strings.Contains(page, `const v="`+want+`"`) {
+		t.Errorf("greeting %q does not match the version in a page served now", hello)
+	}
 	// A different size, so the change shows even on a file system that keeps
 	// modification times too coarsely to tell the two writes apart.
 	write("two, longer")
 	await("event: reload")
+	if env.handler.reload.version() == strings.TrimPrefix(hello, "data: ") {
+		t.Error("the version did not change with the sources")
+	}
 
 	env.handler.CloseDevStreams()
 	for {

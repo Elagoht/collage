@@ -9,6 +9,7 @@ import (
 	"hash/fnv"
 	"io/fs"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -27,10 +28,18 @@ const devReloadOptOut = "collage-reload"
 // listening. A variable so the tests can shorten it.
 var devReloadInterval = 300 * time.Millisecond
 
-// devReloadScript is what a development page carries. EventSource reconnects by
-// itself, which is what makes a restart visible: the server that answers the
-// reconnect names itself differently, and a page that sees a new name was served
-// by a program that no longer exists.
+// devReloadScript is what a development page carries, with the version it was
+// rendered at — the process's name and a fingerprint of the watched sources — in
+// place of devReloadVersion. The stream greets every connection with the version
+// as it stands, and a page greeted with another one reloads: the program
+// restarted, or a template changed, since it was served.
+//
+// A hidden tab lets its stream go and reconnects when it is seen again. A browser
+// holds at most six connections to one origin over HTTP/1.1, across all its tabs,
+// and a stream held open by every tab of a development site used them up: the
+// seventh tab, and every request after it, waited for one to free. The version is
+// what makes letting go safe — a change made while the tab was hidden is seen in
+// the greeting when it comes back.
 //
 // It reconnects by hand once the browser gives up. A connection refused outright
 // — the moment between one build stopping and the next listening — is one the
@@ -41,10 +50,17 @@ var devReloadInterval = 300 * time.Millisecond
 // navigator.webdriver — does not connect: a stream that never closes is a page
 // that never finishes loading, and a screenshot or an end-to-end run waits on it
 // forever. See also devReloadOptOut.
-const devReloadScript = `<script>(()=>{if(navigator.webdriver)return;let id;const listen=()=>{const s=new EventSource("` + devReloadPath + `");` +
-	`s.addEventListener("hello",e=>{if(id&&id!==e.data)location.reload();id=e.data});` +
-	`s.addEventListener("reload",()=>location.reload());` +
-	`s.onerror=()=>{if(s.readyState===EventSource.CLOSED)setTimeout(listen,500)}};listen()})()</script>`
+const devReloadScript = `<script>(()=>{if(navigator.webdriver)return;const v="` + devReloadVersion + `";let s=null;` +
+	`const listen=()=>{if(s||document.hidden)return;const e=s=new EventSource("` + devReloadPath + `");` +
+	`e.addEventListener("hello",m=>{if(m.data!==v)location.reload()});` +
+	`e.addEventListener("reload",()=>location.reload());` +
+	`e.onerror=()=>{if(e.readyState===EventSource.CLOSED&&s===e){s=null;setTimeout(listen,500)}}};` +
+	`document.addEventListener("visibilitychange",()=>{if(!document.hidden)return listen();if(s){s.close();s=null}});` +
+	`listen()})()</script>`
+
+// devReloadVersion is the placeholder in devReloadScript the page's version
+// replaces.
+const devReloadVersion = "@@collage-version@@"
 
 // reloadHub tells listening development pages to reload: when a template or a
 // static file changes, and — by naming each process differently — when the program
@@ -90,7 +106,7 @@ func (hub *reloadHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer unsubscribe()
 
 	// retry keeps the gap short while a rebuild is under way.
-	fmt.Fprintf(w, "retry: 500\nevent: hello\ndata: %s\n\n", hub.instance)
+	fmt.Fprintf(w, "retry: 500\nevent: hello\ndata: %s\n\n", hub.version())
 	if controller.Flush() != nil {
 		return
 	}
@@ -199,10 +215,18 @@ func (hub *reloadHub) fingerprint() uint64 {
 	return sum.Sum64()
 }
 
-// withReloadScript returns html carrying the development reload script, before
-// its closing body tag when it has one and at the end when it does not.
-func withReloadScript(html []byte) []byte {
-	return insertBeforeBodyEnd(html, devReloadScript)
+// version names what a page served now was built from: this process, and the
+// watched sources as they are. Hex and a dash, so it is safe inside the script's
+// string literal.
+func (hub *reloadHub) version() string {
+	return fmt.Sprintf("%s-%x", hub.instance, hub.fingerprint())
+}
+
+// withReloadScript returns html carrying the development reload script for
+// version, before its closing body tag when it has one and at the end when it
+// does not.
+func withReloadScript(html []byte, version string) []byte {
+	return insertBeforeBodyEnd(html, strings.Replace(devReloadScript, devReloadVersion, version, 1))
 }
 
 // insertBeforeBodyEnd returns html with insert placed before its closing body tag,
