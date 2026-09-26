@@ -2,8 +2,12 @@ package collage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+
+	"github.com/Elagoht/collage/internal/core"
 )
 
 // ErrNilApp is returned by DispatchCommands when passed a nil *App. There is nothing
@@ -37,10 +41,10 @@ var ErrUnknownCommand = errors.New("collage: unknown command")
 // same rule Handler and ListenAndServe already impose, and a later ListenAndServe on
 // the same App reuses this start rather than repeating it.
 //
-// It dispatches only plugin commands. It has no built-ins of its own: "dev",
-// "build", "export" and the rest belong to the `collage` binary, which invokes this
-// program rather than the other way round, and a program that wants a usage listing
-// has App.Commands.
+// It dispatches plugin commands, and one of its own: InspectCommand, which prints
+// App.Inspect as JSON for an editor or a linter. "dev", "build", "export" and the
+// rest belong to the `collage` binary, which invokes this program rather than the
+// other way round, and a program that wants a usage listing has App.Commands.
 //
 // The exit codes follow the `collage` binary's: 0 for success, 2 for a usage problem
 // (a nil App, or a name nothing claims), and 1 for a command that ran and failed.
@@ -75,6 +79,9 @@ func DispatchCommands(ctx context.Context, app *App, args []string) (int, error)
 	}
 
 	name, rest := args[0], args[1:]
+	if name == InspectCommand {
+		return inspect(app, rest)
+	}
 	for _, cmd := range app.Commands() {
 		if cmd.Name != name {
 			continue
@@ -92,4 +99,39 @@ func DispatchCommands(ctx context.Context, app *App, args []string) (int, error)
 	}
 
 	return 2, fmt.Errorf("%w: %q", ErrUnknownCommand, name)
+}
+
+// InspectCommand is the command DispatchCommands answers itself with App.Inspect,
+// as indented JSON on standard output: `go run . collage-inspect`, which is what
+// `collage inspect` and editor extensions run. Prefixed, so no plugin's command is
+// taken.
+const InspectCommand = "collage-inspect"
+
+// Inspection is what an application is made of, as a tool outside it needs to
+// know it; see App.Inspect.
+type Inspection = core.Inspection
+
+// InspectedPage, InspectedFragment, InspectedDocument, InspectedAction,
+// InspectedPlugin, InspectedMount and InspectedFragmentPath are the parts of an
+// Inspection.
+type (
+	InspectedPage         = core.InspectedPage
+	InspectedFragment     = core.InspectedFragment
+	InspectedDocument     = core.InspectedDocument
+	InspectedAction       = core.InspectedAction
+	InspectedPlugin       = core.InspectedPlugin
+	InspectedMount        = core.InspectedMount
+	InspectedFragmentPath = core.InspectedFragmentPath
+)
+
+func inspect(app *App, args []string) (int, error) {
+	if len(args) > 0 {
+		return 2, fmt.Errorf("collage: %s takes no arguments", InspectCommand)
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(app.Inspect()); err != nil {
+		return 1, err
+	}
+	return 0, nil
 }

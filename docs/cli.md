@@ -281,6 +281,17 @@ second rule to explain for little gain.
 Only `collage dev` reads these files. `collage build`, `collage export` and the
 built binary never do: production takes its environment from wherever it runs.
 
+## `collage inspect`
+
+Prints what the current directory's project is made of, as JSON — every page with
+its patterns and parameters, every fragment with its template and slots, documents,
+actions, the template functions, the plugins, the locales, and the files the mounts
+serve. It runs `go run . collage-inspect`, which `DispatchCommands` answers itself
+with `App.Inspect`, so a scaffolded project needs nothing more. It is what an
+editor's completion reads: the Collage Snippets & Highlighter extension for VS Code
+offers page names in `{{pageURL "…"}}`, slots in `{{slot "…"}}` and files in
+`{{asset "…"}}` from it.
+
 ## Plugin commands
 
 A plugin registers a subcommand from its `Init`, through `Host.RegisterCommand`.

@@ -601,6 +601,46 @@ Plugin names should read like module paths — `elagoht/minimizer` — so the
 configuration key and the plugin are the same identifier rather than two that have
 to be kept in step.
 
+## Editor support: `collage.json`
+
+A plugin can describe itself to editors in a `collage.json` at its module's root.
+An editor extension finds it through `go list -m -json all` — the file ships in the
+module like any other — and offers what it lists: the template functions with their
+signatures and documentation, the attributes, the snippets, and the schema of the
+plugin's section of `plugins-config.json`.
+
+```json
+{
+  "$schema": "https://raw.githubusercontent.com/Elagoht/collage-snippets-highlighter/main/schemas/collage-plugin-manifest.schema.json",
+  "name": "you/greeting",
+  "description": "Greets the reader by name.",
+  "templateFunctions": [
+    {
+      "name": "greet",
+      "signature": "greet name",
+      "insert": "greet ${1:.Name}",
+      "doc": "\"Hello, name\" in the render's locale."
+    }
+  ],
+  "attributes": [],
+  "snippets": {
+    "greeting": { "language": "html", "prefix": "cgreet", "body": ["<p>{{greet .Name}}</p>"], "description": "A greeting" }
+  },
+  "config": {
+    "type": "object",
+    "properties": { "formal": { "type": "boolean", "description": "Use the formal greeting." } }
+  }
+}
+```
+
+`name` is the plugin's `Name()`, the key its configuration is found under. `insert`
+and snippet bodies use VS Code's snippet syntax. Every field but `name` is optional.
+
+The editor learns which of those functions the application actually has, and every
+page, fragment, slot and mounted file by name, from `collage inspect` (see the CLI
+guide) — which is `go run . collage-inspect`, answered by `DispatchCommands` with
+`App.Inspect` as JSON.
+
 ## Third-party plugins need no mechanism
 
 Go compiles plugins in. `plugin.Open` is Linux and macOS only, demands an identical

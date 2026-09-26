@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.27.0
+
+### Added
+
+- **`App.Inspect()`** and **`collage inspect`**: what an application is made of,
+  as data — pages with their patterns and parameters, fragments with their
+  templates and slots, documents, actions, template functions, plugins, locales,
+  and the files mounts serve (`collage.Inspection`). `DispatchCommands` answers
+  `collage-inspect` (`collage.InspectCommand`) with it as JSON, so
+  `go run . collage-inspect` works in a scaffolded project; `collage inspect` runs
+  that.
+- **`collage.json`**, a plugin's description of itself for editors — template
+  functions, attributes, snippets and its configuration's schema — documented in
+  the plugins guide.
+
 ## v0.26.0
 
 ### Added
