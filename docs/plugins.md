@@ -170,7 +170,8 @@ instead of a response:
 | `HTML` | The markup, with the reader's forgery token in any form it holds |
 | `Head` | What the fragment hoisted into an area it placed no marker for, as `HoistItem`s with their area and key |
 | `DependencyTags` | The tags the render depended on — match them against `CacheInvalidateEvent.Tags` to know what to push |
-| `Shared` | The render is the same for every reader: the page is cached for everyone, or no handler in the subtree reads the request, and there is no form token |
+| `Shared` | The render is the same for every reader at this moment: the page is cached for everyone, or every handler in the subtree is declared `Static()` or `Shared()` and there is no slot resolver — and there is no form token |
+| `ETag` | The ETag a request to the fragment's path would get for the same body, so a client can tell a pushed copy from one it already shows |
 | `Cookie` | The forgery cookie the forms in `HTML` need, when the request carried none |
 
 A `FragmentRequest` names the fragment either by `Page`, `Fragment`, `Locale` and

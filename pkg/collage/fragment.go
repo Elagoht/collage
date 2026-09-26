@@ -262,6 +262,34 @@ func (b *FragmentBuilder) Static() *FragmentBuilder {
 	return b
 }
 
+// Shared states that the fragment's data handler returns the same for every
+// reader at one moment — it reads no cookie, no session, no header, nothing that
+// tells one reader from another — though what it returns changes over time:
+//
+//	collage.NewFragment("cpu", "fragments/cpu.html").
+//		WithDataHandler(cpuUsage). // a measurement, the same for everyone
+//		Shared().
+//		Build()
+//
+// A render of such a fragment can be made once and sent to every reader, which is
+// what a plugin pushing fragments over a stream does with it (see
+// FragmentRender.Shared): one render per change rather than one per open tab.
+//
+// It is the half of Static that says nothing about time. Static promises the
+// handler depends on the URL and nothing else, so a page of Static fragments is
+// cached and exported; a measurement is not that, and marking it Static would
+// have the page cached, and a build write one moment's reading into the HTML.
+// Shared leaves the page's strategy alone: a page with a Shared fragment's handler
+// is dynamic unless it declares otherwise. Static implies Shared.
+//
+// A handler that breaks the promise sends one reader's render to another reader.
+// Only mark a fragment Shared when its handler reads nothing of the request that
+// could differ between readers.
+func (b *FragmentBuilder) Shared() *FragmentBuilder {
+	b.fragment.Shared = true
+	return b
+}
+
 // Required marks the fragment being built as required: a failed render of it must
 // fail the page render rather than falling back to its Fallback fragment.
 func (b *FragmentBuilder) Required() *FragmentBuilder {

@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.19.0
+
+### Added
+
+- **`FragmentBuilder.Shared()`**: the fragment's data handler returns the same for
+  every reader at one moment — it reads nothing that tells readers apart — though
+  what it returns changes over time. Its render may be sent to many readers:
+  `FragmentRender.Shared` counts it. Unlike `Static()` it leaves the page's
+  strategy alone, so a page of measurements stays dynamic and is not exported with
+  one moment's readings. `Static()` implies it.
+- **`FragmentRender.ETag`**: the ETag a request to the fragment's path would be
+  answered with for the same body, so a pushed copy and a polled one can be told
+  apart, or recognised as the same.
+
 ## v0.18.1
 
 ### Fixed

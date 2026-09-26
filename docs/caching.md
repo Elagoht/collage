@@ -75,6 +75,24 @@ slot resolver still makes a page dynamic, since the fragments it returns are not
 known until a render asks for them, and a page that says `Dynamic()` is kept
 dynamic.
 
+`Static()` promises two things at once: the output is the same for every reader,
+and it stays the same until something is invalidated. A handler that reads no
+cookie but returns a measurement — CPU load, a queue's length, the time — keeps
+the first promise and not the second. Mark it `Shared()` instead:
+
+```go
+cpu := collage.NewFragment("cpu", "fragments/cpu.html").
+	WithDataHandler(cpuUsage). // the same for everyone, different every second
+	Shared().
+	Build()
+```
+
+`Shared()` leaves the page's strategy alone — the page stays dynamic, and an
+export does not write one moment's reading into it — and tells whatever pushes the
+fragment to readers that one render may be sent to all of them (see
+[plugins](plugins.md#pushing-fragments)). `Static()` implies it. As with
+`Static()`, a handler that breaks the promise sends one reader's data to another.
+
 A document resolves the same way: dynamic with a handler, static with a fixed
 body (`WithBody`). A declared strategy is never second-guessed, in either
 direction, and a registered page's `Strategy` is always the resolved one.
@@ -284,10 +302,11 @@ than as a hit or a miss. It is not a hit — nothing was cached when the request
 climbs steadily is a page expiring faster than it can be re-made, which is what a
 too-short `Incremental` TTL looks like from the outside.
 
-A request whose own connection goes away stops waiting. And a render that fails
-because the *first* request was cancelled is not passed on to the requests behind
-it — they try again — so one reader pressing stop cannot turn into an error page for
-everyone who happened to ask at the same moment.
+A request whose own connection goes away stops waiting. The render itself belongs
+to none of the requests waiting on it, so it does not stop when the first of them
+does: it runs with that request's context values but not its cancellation, bounded
+by the fragments' own timeouts. One reader pressing stop cannot hand everyone who
+asked at the same moment a page whose parts failed with "context canceled".
 
 ## What is never cached
 

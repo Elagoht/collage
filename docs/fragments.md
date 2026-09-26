@@ -312,7 +312,9 @@ structured data, and renders nothing.
 A handler whose output depends only on the URL — the path's parameters and the
 locale — can say so with `Static()` on the fragment, which keeps it from making a
 page that declares no strategy dynamic; see
-[caching](caching.md#a-page-that-declares-none).
+[caching](caching.md#a-page-that-declares-none). One whose output is the same for
+every reader but changes over time — a measurement — says `Shared()` instead, which
+lets its render be shared without making the page static.
 
 Data fixed when the program starts — a list of links, a heading — needs no
 handler at all. `WithData(v)` hands the template the same value on every render:

@@ -326,3 +326,53 @@ func TestRenderFragment_ByPath(t *testing.T) {
 		}
 	}
 }
+
+// Shared says a handler is the same for every reader without saying it is the same
+// over time: its render is shared, and its page stays dynamic.
+func TestShared_SharesTheRenderAndLeavesThePageDynamic(t *testing.T) {
+	app := newFragmentApp(t, map[string]string{
+		"page.html": `<main>{{slot "cpu"}}</main>`,
+		"cpu.html":  `<p>{{.}}</p>`,
+	})
+	var n int
+	cpu := collage.NewFragment("cpu", "cpu.html").WithDataHandler(func(context.Context, *collage.RenderContext) (any, []string, error) {
+		n++
+		return n, []string{"system:cpu"}, nil
+	}).Shared().Build()
+	page := collage.NewFragment("page", "page.html").WithSlotFragment("cpu", cpu).Build()
+	if err := app.RegisterPage(collage.NewPage("home").WithContent(page).WithPath("en", "/").
+		WithFragmentPath("en", "/live/cpu", cpu).Build()); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := app.Page("home"); p.Strategy != collage.StrategyDynamic {
+		t.Errorf("Strategy = %v, want dynamic: Shared says nothing about time", p.Strategy)
+	}
+	first := serveFragment(app, httptest.NewRequest(http.MethodGet, "/", nil)).Body.String()
+	second := serveFragment(app, httptest.NewRequest(http.MethodGet, "/", nil)).Body.String()
+	if first == second {
+		t.Errorf("the page was cached: %q twice", first)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	got, err := app.RenderFragment(r, collage.FragmentRequest{Path: "/live/cpu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Shared {
+		t.Error("a Shared fragment's render is not Shared")
+	}
+}
+
+// A pushed render carries the ETag a request to its path gets for the same body,
+// so a client can tell a copy it already shows whichever way it arrived.
+func TestRenderFragment_ETagMatchesTheFragmentPath(t *testing.T) {
+	app := hoistingSite(t)
+	res := serveFragment(app, httptest.NewRequest(http.MethodGet, "/live/chart", nil))
+	got, err := app.RenderFragment(httptest.NewRequest(http.MethodGet, "/", nil), collage.FragmentRequest{Path: "/live/chart"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ETag == "" || got.ETag != res.Header().Get("ETag") {
+		t.Errorf("RenderFragment ETag %q, fragment path ETag %q", got.ETag, res.Header().Get("ETag"))
+	}
+}

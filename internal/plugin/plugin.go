@@ -173,11 +173,17 @@ type FragmentRender struct {
 	// fragments matches them against CacheInvalidateEvent.Tags.
 	DependencyTags []string
 	// Shared reports that the render is the same for every reader of the same
-	// page, fragment, locale and parameters: the page is one the framework caches
-	// for every reader, or nothing in the subtree has a data handler not declared
-	// Static or a slot resolver — and the markup carries no forgery token. Only a shared render may be rendered once and sent to many
-	// readers; any other may hold one reader's data.
+	// page, fragment, locale and parameters at this moment: the page is one the
+	// framework caches for every reader, or every data handler in the subtree is
+	// declared Static or Shared and none has a slot resolver — and the markup
+	// carries no forgery token. Only a shared render may be rendered once and sent
+	// to many readers; any other may hold one reader's data.
 	Shared bool
+	// ETag is the ETag a request to the fragment's path would be answered with
+	// for this render: the same hash of the same body. A client holding it from a
+	// poll can tell a pushed copy is one it already shows, and the other way
+	// round.
+	ETag string
 	// Cookie is the forgery cookie the forms in HTML are checked against, when r
 	// carried none. It must reach the reader before one of those forms is
 	// submitted, or the submission is refused. Nil when there is nothing to set.

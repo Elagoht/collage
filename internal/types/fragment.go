@@ -62,6 +62,13 @@ type Fragment struct {
 	// page that declares no strategy dynamic. It says nothing about slot resolvers:
 	// the fragments a resolver returns are not known until a render asks for them.
 	Static bool
+	// Shared states that the fragment's DataHandler returns the same for every
+	// reader at one moment: it reads no cookie, no session, no header — nothing
+	// that tells one reader from another — though what it returns may change from
+	// one moment to the next. A render of it may be made once and sent to many
+	// readers. Unlike Static it says nothing about time, so it leaves a page's
+	// strategy alone. Static implies it.
+	Shared bool
 	// Slots declares the named positions this fragment exposes to child fragments,
 	// keyed by slot name. Each key must equal its SlotDefinition's own Name field.
 	Slots map[string]*SlotDefinition

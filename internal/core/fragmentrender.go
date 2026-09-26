@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
@@ -53,7 +54,7 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 		DependencyTags: result.DependencyTags,
 		// A page served from one cached render to every reader has said its
 		// handlers answer the same for everyone; a fragment of it can say no less.
-		Shared: page.Strategy.Cacheable() || fetchFree(fragment),
+		Shared: page.Strategy.Cacheable() || readerFree(fragment),
 	}
 	if a.csrf != nil {
 		if marker := []byte(a.csrf.Marker()); bytes.Contains(out.HTML, marker) {
@@ -68,6 +69,9 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 			}
 		}
 	}
+	// The ETag a request to the fragment's path would be answered with: the hash
+	// of the same body, built the same way, after the same token went in.
+	out.ETag = cache.ETag((&render.FragmentResult{HTML: out.HTML, Head: out.Head}).Body())
 	return out, nil
 }
 
@@ -124,9 +128,22 @@ func (a *App) resolveFragmentRequest(r *http.Request, req plugin.FragmentRequest
 // request: no data handler that is not declared Static, no slot resolver. The same
 // test resolveStrategy makes of a whole page, made of one fragment.
 func fetchFree(f *types.Fragment) bool {
+	return subtreeFree(f, func(f *types.Fragment) bool { return f.Static })
+}
+
+// readerFree reports whether nothing in f's subtree renders differently per
+// reader: every data handler is declared Static or Shared, and there is no slot
+// resolver. What it renders may still change over time.
+func readerFree(f *types.Fragment) bool {
+	return subtreeFree(f, func(f *types.Fragment) bool { return f.Static || f.Shared })
+}
+
+// subtreeFree reports whether every data handler in f's subtree is one trusted
+// says may be discounted, and no fragment in it has a slot resolver.
+func subtreeFree(f *types.Fragment, trusted func(*types.Fragment) bool) bool {
 	fetches := errors.New("fetches per render")
 	err := walkFragments(f, make(map[*types.Fragment]bool), func(f *types.Fragment) error {
-		if f.DataHandler != nil && !f.Static {
+		if f.DataHandler != nil && !trusted(f) {
 			return fetches
 		}
 		for _, slot := range f.Slots {
