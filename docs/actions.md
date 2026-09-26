@@ -236,9 +236,13 @@ fragments that read the same data, use `Cached`, which keeps the value across
 renders for as long as its TTL — or until one of its tags is invalidated:
 
 ```go
-stats, err := collage.Cached(rc, "system:stats", time.Second, []string{"system"},
+stats, err := collage.Cached(rc, "system:stats", time.Second, nil,
 	func(ctx context.Context) (monitor.Stats, error) { return monitor.Collect(ctx) })
 ```
+
+A measurement like this one takes no tags: its TTL keeps it fresh, and each
+fragment reading it returns a tag of its own. Tagged, every fragment would depend on
+every tag, and invalidating one part would re-render them all.
 
 **Nothing is reachable unless it is declared.** A framework that exposed every
 fragment automatically would put every internal part of every page on the public web,
