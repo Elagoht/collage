@@ -286,6 +286,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.reload.ServeHTTP(w, r)
 		return
 	}
+	if h.reload != nil && r.URL.Path == devReloadWorkerPath {
+		serveReloadWorker(w)
+		return
+	}
 
 	start := time.Now()
 

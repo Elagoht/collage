@@ -145,6 +145,14 @@ func (h *Handler) bodyLimit(action *types.Action) int64 {
 	return defaultMaxBodyBytes
 }
 
+// FetchHeader marks a request a script made with fetch, which would rather be told
+// where an action redirects than be redirected: an action answering it with a
+// Location answers 204 with LocationHeader instead.
+const FetchHeader = "Collage-Fetch"
+
+// LocationHeader carries an action's redirect to a request marked with FetchHeader.
+const LocationHeader = "Collage-Location"
+
 // writeActionResult writes the response an action asked for.
 //
 // Exactly one of Location, Fragment, Page and Body decides the body, checked in that
@@ -180,6 +188,15 @@ func (h *Handler) writeActionResult(
 			// a GET, so a reload does not submit the form a second time — which is
 			// the bug the pattern exists to prevent.
 			status = http.StatusSeeOther
+		}
+		// A script submitting the form with fetch says so, and is handed the
+		// destination instead of being redirected to it: fetch would follow the
+		// redirect and download the page, and the script would then navigate to
+		// it and have it rendered a second time. It navigates once, with this.
+		if r.Header.Get(FetchHeader) != "" {
+			header.Set(LocationHeader, result.Location)
+			w.WriteHeader(http.StatusNoContent)
+			return http.StatusNoContent
 		}
 		header.Set("Location", result.Location)
 		w.WriteHeader(status)

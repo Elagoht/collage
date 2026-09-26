@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.20.0
+
+### Added
+
+- **`Collage-Fetch` / `Collage-Location`** (`collage.FetchHeader`,
+  `collage.LocationHeader`): an action answering a request marked `Collage-Fetch`
+  with a redirect answers `204` with the destination in `Collage-Location` instead.
+  A form submitted with `fetch` followed the redirect, downloading the page, and
+  then navigated to it and had it rendered again.
+
+### Fixed
+
+- **Development pages share one reload stream.** Every tab listens through a shared
+  worker, `/_collage/reload-worker.js`, that holds one stream for all of them. Six
+  development pages side by side — visible, so v0.18.1's hidden-tab rule did not
+  apply — held the browser's six connections to the origin, and nothing else loaded,
+  collage-live's stream included. Without a shared worker, a tab keeps its own
+  stream and lets it go while hidden, as before.
+
 ## v0.19.0
 
 ### Added

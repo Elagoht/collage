@@ -71,6 +71,27 @@ func TestDevReload_CanBeLeftOut(t *testing.T) {
 	}
 }
 
+// Every development tab listens through one shared worker, served only in
+// development: six pages side by side used to hold the browser's six connections to
+// the origin between them.
+func TestDevReload_SharedWorker(t *testing.T) {
+	page := testPage("home", "/", types.StrategyDynamic)
+	env := newEnv(t, []*types.Page{page}, withDevMode())
+	rec := env.get(devReloadWorkerPath)
+	if rec.Code != http.StatusOK || !strings.HasPrefix(rec.Header().Get("Content-Type"), "text/javascript") {
+		t.Fatalf("worker = %d %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "onconnect") || !strings.Contains(body, devReloadPath) {
+		t.Errorf("worker script: %q", body)
+	}
+	if body := env.get("/").Body.String(); !strings.Contains(body, `new SharedWorker("`+devReloadWorkerPath+`"`) {
+		t.Errorf("the page does not listen through the worker: %q", body)
+	}
+	if rec := newEnv(t, []*types.Page{page}).get(devReloadWorkerPath); rec.Code != http.StatusNotFound {
+		t.Errorf("worker in production = %d, want 404", rec.Code)
+	}
+}
+
 // The stream names the process, says reload when a watched file changes, and ends
 // when the handler closes its streams.
 func TestDevReload_StreamsAChangeAndEndsOnClose(t *testing.T) {

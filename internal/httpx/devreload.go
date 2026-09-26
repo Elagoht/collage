@@ -34,12 +34,13 @@ var devReloadInterval = 300 * time.Millisecond
 // as it stands, and a page greeted with another one reloads: the program
 // restarted, or a template changed, since it was served.
 //
-// A hidden tab lets its stream go and reconnects when it is seen again. A browser
-// holds at most six connections to one origin over HTTP/1.1, across all its tabs,
-// and a stream held open by every tab of a development site used them up: the
-// seventh tab, and every request after it, waited for one to free. The version is
-// what makes letting go safe — a change made while the tab was hidden is seen in
-// the greeting when it comes back.
+// Every tab listens through one shared worker, which holds one stream for all of
+// them. A browser holds at most six connections to one origin over HTTP/1.1,
+// across all its tabs and windows, and a stream per page used them up: six
+// development pages side by side, and nothing else loaded — collage-live's stream
+// included. Where there is no shared worker, each tab holds its own stream and lets
+// it go while hidden; the version is what makes that safe, since a change made
+// meanwhile shows in the greeting when the tab comes back.
 //
 // It reconnects by hand once the browser gives up. A connection refused outright
 // — the moment between one build stopping and the next listening — is one the
@@ -50,13 +51,46 @@ var devReloadInterval = 300 * time.Millisecond
 // navigator.webdriver — does not connect: a stream that never closes is a page
 // that never finishes loading, and a screenshot or an end-to-end run waits on it
 // forever. See also devReloadOptOut.
-const devReloadScript = `<script>(()=>{if(navigator.webdriver)return;const v="` + devReloadVersion + `";let s=null;` +
-	`const listen=()=>{if(s||document.hidden)return;const e=s=new EventSource("` + devReloadPath + `");` +
-	`e.addEventListener("hello",m=>{if(m.data!==v)location.reload()});` +
-	`e.addEventListener("reload",()=>location.reload());` +
+const devReloadScript = `<script>(()=>{if(navigator.webdriver)return;const v="` + devReloadVersion + `";` +
+	`const check=m=>{if(m.t==="reload"||m.t==="hello"&&m.v!==v)location.reload()};` +
+	`if(window.SharedWorker){let p;const join=()=>{try{p=new SharedWorker("` + devReloadWorkerPath + `",{name:"collage-reload"}).port;` +
+	`p.onmessage=e=>check(e.data);p.start()}catch{}};join();` +
+	`addEventListener("pagehide",()=>p&&p.postMessage("bye"));addEventListener("pageshow",e=>e.persisted&&join());return}` +
+	`let s=null;const listen=()=>{if(s||document.hidden)return;const e=s=new EventSource("` + devReloadPath + `");` +
+	`e.addEventListener("hello",m=>check({t:"hello",v:m.data}));` +
+	`e.addEventListener("reload",()=>check({t:"reload"}));` +
 	`e.onerror=()=>{if(e.readyState===EventSource.CLOSED&&s===e){s=null;setTimeout(listen,500)}}};` +
 	`document.addEventListener("visibilitychange",()=>{if(!document.hidden)return listen();if(s){s.close();s=null}});` +
 	`listen()})()</script>`
+
+// devReloadWorkerPath is the shared worker every development tab listens through.
+const devReloadWorkerPath = "/_collage/reload-worker.js"
+
+// devReloadWorker holds the one stream for every tab and passes its events on.
+//
+// It keeps no greeting to hand a tab that joins later. A greeting kept from before
+// a change would name the old version to a tab rendered at the new one, which
+// would reload, render the new one again, be told the old one again — until the
+// change reached the worker. It reopens the stream instead, when a tab joins and
+// after every reload event, so each tab is greeted with the version as it is now;
+// the tabs already listening are greeted too, with a version they either match or
+// were about to be told to reload for.
+const devReloadWorker = `"use strict";const ports=new Set();let es=null;` +
+	`const all=m=>ports.forEach(p=>p.postMessage(m));` +
+	`const open=()=>{if(es||!ports.size)return;const e=es=new EventSource("` + devReloadPath + `");` +
+	`e.addEventListener("hello",m=>all({t:"hello",v:m.data}));` +
+	`e.addEventListener("reload",()=>{all({t:"reload"});if(es===e){e.close();es=null;open()}});` +
+	`e.onerror=()=>{if(e.readyState===EventSource.CLOSED&&es===e){es=null;setTimeout(open,500)}}};` +
+	`onconnect=c=>{const p=c.ports[0];ports.add(p);` +
+	`p.onmessage=m=>{if(m.data!=="bye")return;ports.delete(p);if(!ports.size&&es){es.close();es=null}};p.start();` +
+	`if(es){es.close();es=null}open()};`
+
+// serveReloadWorker answers the shared worker's script.
+func serveReloadWorker(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(devReloadWorker))
+}
 
 // devReloadVersion is the placeholder in devReloadScript the page's version
 // replaces.

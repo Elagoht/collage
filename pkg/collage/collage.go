@@ -45,6 +45,14 @@ type Plugin = plugin.Plugin
 // value instead, so the assertion has nothing to find.
 type Host = plugin.Host
 
+// FetchHeader marks a request a script made with fetch. An action redirecting it
+// answers 204 with the destination in LocationHeader, so the script navigates once
+// rather than downloading the page with fetch and then again by navigating.
+const FetchHeader = httpx.FetchHeader
+
+// LocationHeader carries an action's redirect to a request marked with FetchHeader.
+const LocationHeader = httpx.LocationHeader
+
 // FragmentRequest names a fragment a page opened at its own URL, and the locale and
 // path parameters to render it in, for App.RenderFragment and Host.RenderFragment.
 type FragmentRequest = plugin.FragmentRequest

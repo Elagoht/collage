@@ -127,6 +127,13 @@ The exception is a submission that changed nothing and can be repeated harmlessl
 search, a filter, a preview. Those are usually a `GET` anyway, and a `Fragment` is a
 better answer than either.
 
+A form a script submits with `fetch` would follow the redirect too, downloading the
+page it leads to, and then navigate there and have it rendered a second time. A
+request carrying the header `Collage-Fetch` (`collage.FetchHeader`) is answered
+`204 No Content` with the destination in `Collage-Location`
+(`collage.LocationHeader`) instead of a redirect, and the script navigates once.
+collage-live's forms send it.
+
 ## Invalidating what the change made wrong
 
 ```go

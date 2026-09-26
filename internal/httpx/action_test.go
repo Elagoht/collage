@@ -45,6 +45,30 @@ func post(target string, body string) *http.Request {
 
 // The ordinary successful form post: the handler does its work and redirects, and
 // the redirect is a 303 so that reloading the destination does not submit again.
+// A form a script submitted with fetch is told where the action redirects, and
+// navigates there once, instead of fetch following the redirect and downloading
+// the page first.
+func TestAction_FetchIsToldTheRedirect(t *testing.T) {
+	create := action("create", "/posts/new", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+			return &types.ActionResult{Location: "/posts/hello"}, nil
+		})
+	env := actionEnv(t, []*types.Page{testPage("new", "/posts/new", types.StrategyDynamic)}, []*types.Action{create})
+
+	req := post("/posts/new", "title=Hello")
+	req.Header.Set(FetchHeader, "1")
+	res := env.do(req)
+	if res.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", res.Code)
+	}
+	if got := res.Header().Get(LocationHeader); got != "/posts/hello" {
+		t.Errorf("%s = %q", LocationHeader, got)
+	}
+	if got := res.Header().Get("Location"); got != "" {
+		t.Errorf("Location = %q: fetch would follow it", got)
+	}
+}
+
 func TestAction_FormPostRedirects(t *testing.T) {
 	var got string
 	create := action("create", "/posts/new", []string{http.MethodPost},
