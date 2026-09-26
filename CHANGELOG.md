@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.26.0
+
+### Added
+
+- **`collage.RouteInfo(ctx)`**: what a request resolved to — kind, registered
+  name, the path pattern it was registered with (`/blog/{slug}`, no locale prefix)
+  and the locale — for pages, documents and actions alike, so a span's
+  `http.route` or a metric's label can be the pattern for every kind of route.
+
 ## v0.25.0
 
 ### Added

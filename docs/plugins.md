@@ -288,7 +288,9 @@ to be the parent of collage's own span, and middleware runs inside it.
 `collage.RouteOf(ctx)` reports what the request resolved to — `"page"`, `"document"`,
 `"action"`, `"mount"` or `"handler"`, and the registered name or prefix — from that
 context, which `Metrics.HTTPResponse` also receives: a metric or a span can be
-labelled with the route rather than the raw path.
+labelled with the route rather than the raw path. `collage.RouteInfo(ctx)` adds
+the pattern the route was registered with — `/blog/{slug}`, without a locale
+prefix — and the locale, for pages, documents and actions alike.
 
 ### Checking the output: findings
 

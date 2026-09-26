@@ -117,6 +117,15 @@ type RequestHook = plugin.RequestHook
 // Metrics.HTTPResponse and a RequestHook's context carry it.
 func RouteOf(ctx context.Context) (kind, name string) { return httpx.RouteOf(ctx) }
 
+// Route is what a request resolved to: its kind, its registered name, the path
+// pattern it was registered with ("/blog/{slug}", no locale prefix) and the locale.
+type Route = httpx.Route
+
+// RouteInfo reports what the request carrying ctx resolved to, pattern and locale
+// included — a bounded label for a span or a metric, for pages, documents and
+// actions alike. The zero Route means it resolved to nothing.
+func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
+
 // StreamCloser is implemented by a plugin serving connections that never end by
 // themselves — an event stream, a WebSocket. CloseStreams runs when shutdown
 // begins, before the server waits for open requests, which a stream never ends.

@@ -77,6 +77,16 @@ type routeRef struct {
 	// which name leaves empty — for a metric or a trace that must not be labelled
 	// with raw paths.
 	label string
+	// pattern is the path pattern the route was registered with, as registered —
+	// "/blog/{slug}", without a locale prefix — or a mount's or handler's prefix;
+	// locale is the locale the request resolved to.
+	pattern, locale string
+}
+
+// at records the pattern and the locale the route matched with.
+func (ref *routeRef) at(pattern, locale string) {
+	ref.pattern = pattern
+	ref.locale = locale
 }
 
 // resolved records that the request resolved to a route of kind kind, named name.
@@ -106,6 +116,32 @@ func (k routeKind) String() string {
 	default:
 		return "page"
 	}
+}
+
+// Route is what a request resolved to, as RouteInfo reports it.
+type Route struct {
+	// Kind is "page", "document", "action", "mount" or "handler".
+	Kind string
+	// Name is the page's, document's or action's registered name, or the mount's
+	// or handler's prefix.
+	Name string
+	// Pattern is the path pattern the route was registered with, as it was
+	// registered — "/blog/{slug}", no locale prefix — or the mount's or handler's
+	// prefix: a label with a bounded number of values, unlike the path.
+	Pattern string
+	// Locale is the locale the request resolved to; empty for a mount or a
+	// handler, which are in none.
+	Locale string
+}
+
+// RouteInfo reports what the request carrying ctx resolved to, pattern and locale
+// included. The zero Route means it resolved to nothing, or has not yet.
+func RouteInfo(ctx context.Context) Route {
+	ref, ok := ctx.Value(routeCtxKey{}).(*routeRef)
+	if !ok || ref.label == "" {
+		return Route{}
+	}
+	return Route{Kind: ref.kind.String(), Name: ref.label, Pattern: ref.pattern, Locale: ref.locale}
 }
 
 type routeCtxKey struct{}

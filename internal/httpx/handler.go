@@ -490,12 +490,14 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	for _, mount := range h.mounts {
 		if mount.Handles(r.URL.Path) {
 			route.resolved(routeKindMount, mount.Prefix())
+			route.at(mount.Prefix(), "")
 			return h.serveMount(w, r, mount, route)
 		}
 	}
 	for _, mount := range h.handlers {
 		if mount.Matches(r.URL.Path) {
 			route.resolved(routeKindHandler, mount.Prefix)
+			route.at(mount.Prefix, "")
 			return h.serveHandler(w, r, mount, route)
 		}
 	}
@@ -548,6 +550,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// nil-Page check below would read that as a 404.
 	if match.Action != nil {
 		route.resolved(routeKindAction, match.Action.Name)
+		route.at(match.Action.Paths[match.Locale], match.Locale)
 		return h.serveAction(w, r, match, route)
 	}
 
@@ -579,6 +582,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 
 	if match.Document != nil {
 		route.resolved(routeKindDocument, match.Document.Name)
+		route.at(documentPattern(match.Document, match.Locale), match.Locale)
 		return h.serveDocument(w, r, match, route)
 	}
 
@@ -597,6 +601,8 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 
 	page := match.Page
 	route.resolvedPage(page.Name)
+	pagePattern, _ := page.PathFor(match.Locale)
+	route.at(pagePattern, match.Locale)
 
 	if err := h.plugins.PageResolved(ctx, &plugin.PageResolvedEvent{
 		Page:   page,
@@ -1006,6 +1012,16 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
 	}
 	return etag
+}
+
+// documentPattern is the pattern doc answers in locale: its own path there, or
+// its path outside every locale.
+func documentPattern(doc *types.Document, locale string) string {
+	if pattern, ok := doc.PathFor(locale); ok {
+		return pattern
+	}
+	pattern, _ := doc.RootPath()
+	return pattern
 }
 
 // cleanPath returns p with dot segments resolved and repeated slashes collapsed,

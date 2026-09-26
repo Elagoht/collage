@@ -59,6 +59,7 @@ func (noSpan) End()                        {}
 type routeMetrics struct {
 	mu     sync.Mutex
 	routes []string
+	infos  []string
 }
 
 func (m *routeMetrics) RenderDuration(context.Context, string, time.Duration, bool)            {}
@@ -67,8 +68,10 @@ func (m *routeMetrics) CacheEvent(context.Context, collage.CacheEvent, string)  
 func (m *routeMetrics) Invalidation(context.Context, []string, int)                            {}
 func (m *routeMetrics) HTTPResponse(ctx context.Context, status int, path string, _ time.Duration) {
 	kind, name := collage.RouteOf(ctx)
+	info := collage.RouteInfo(ctx)
 	m.mu.Lock()
 	m.routes = append(m.routes, kind+":"+name)
+	m.infos = append(m.infos, info.Kind+"|"+info.Name+"|"+info.Pattern+"|"+info.Locale)
 	m.mu.Unlock()
 }
 
@@ -102,6 +105,12 @@ func TestRequestHookAndRouteOf(t *testing.T) {
 	for i, s := range want {
 		if i >= len(hook.finished) || hook.finished[i] != s {
 			t.Fatalf("finish statuses = %v, want %v", hook.finished, want)
+		}
+	}
+	wantInfos := []string{"page|post|/posts/{slug}|en", "page|post|/posts/{slug}|en", "document|feed|/feed.xml|en", "|||"}
+	for i, w := range wantInfos {
+		if i >= len(metrics.infos) || metrics.infos[i] != w {
+			t.Fatalf("route infos = %v, want %v", metrics.infos, wantInfos)
 		}
 	}
 	got := metrics.routes
