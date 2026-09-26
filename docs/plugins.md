@@ -239,7 +239,8 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | --- | --- | --- | --- |
 | `PageResolvedHook` | `OnPageResolved` | After routing, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch four hooks, not seven" below) | nothing |
 | `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** — including an error page, and a page an action answers with | nothing |
-| `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure) and `ev.DependencyTags`. **Pages only**, on the same terms | `ev.HTML`; reports with `ev.Warn`, `ev.Error` |
+| `RequestHook` | `OnRequest` | First, before collage's request span, middleware and routing; returns the context to serve under and a function told the final status | the request's context |
+| `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure) and `ev.DependencyTags`. **Pages only**, on the same terms | `ev.HTML`, `ev.Hoist(area, key, html)`; reports with `ev.Warn`, `ev.Error` |
 | `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
 | `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored — for a page or a document alike | `ev.Skip`, `ev.TTL`, `ev.Tags` |
 | `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike; `ev.Paths` names the URL paths dropped | nothing |
@@ -257,6 +258,37 @@ Two consequences of where `OnAfterRender` sits are worth stating plainly:
   `404.html` an export writes. So does a page an action answers with — a form
   re-rendered with its validation errors is a page. Neither runs `OnPageResolved`:
   nothing was resolved to them.
+
+### Adding to the head after the render
+
+A plugin that learns what a page needs only from its finished markup — the code
+blocks it highlighted need a stylesheet — adds it with `ev.Hoist` in
+`OnAfterRender`:
+
+```go
+if highlighted {
+	ev.Hoist("head", "highlight:css", `<link rel="stylesheet" href="/_highlight/style.css">`)
+}
+```
+
+It lands where the layout put `{{hoist "head"}}`, after what the render declared
+there. A key the render already declared is left alone — the page is more specific
+than a plugin afterwards — and so is a key hoisted twice. If an earlier plugin
+replaced `ev.HTML`, the layout's place can no longer be found: `"head"` then lands
+before `</head>`, and another area reports false.
+
+### Before collage starts on a request
+
+`RequestHook.OnRequest` runs before anything else — before collage starts its
+request span, before middleware, before routing — and returns the context the
+request is served under, and a function called with the status once the response is
+written. It is what a tracing plugin needs: a trace carried in from the caller has
+to be the parent of collage's own span, and middleware runs inside it.
+
+`collage.RouteOf(ctx)` reports what the request resolved to — `"page"`, `"document"`,
+`"action"`, `"mount"` or `"handler"`, and the registered name or prefix — from that
+context, which `Metrics.HTTPResponse` also receives: a metric or a span can be
+labelled with the route rather than the raw path.
 
 ### Checking the output: findings
 

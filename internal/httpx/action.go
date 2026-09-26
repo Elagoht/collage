@@ -282,6 +282,7 @@ func (h *Handler) writeActionPage(
 		Data:           rc.SharedData,
 		HTML:           rendered.HTML,
 	}
+	plugin.PrepareHoist(afterRender, rendered.HoistEnds, rc.Hoisted())
 	if err := h.plugins.AfterRender(r.Context(), afterRender); err != nil {
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageAfterRender, err))
 	}

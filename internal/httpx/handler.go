@@ -302,14 +302,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
+	// What the request resolves to is recorded here, in the context every later
+	// frame shares, so a hook, a metric or a trace can name the route instead of
+	// the raw path. See RouteOf.
+	route := &routeRef{}
+	r = r.WithContext(context.WithValue(r.Context(), routeCtxKey{}, route))
+
+	// Before the request's span: a plugin carrying a trace in from the caller
+	// makes its span the parent of collage's own. See plugin.RequestHook.
+	r, finish := h.plugins.Request(r)
+
 	ctx, span := h.startRequestSpan(r)
-	defer span.End()
 	r = withVarySet(r.WithContext(ctx))
 
-	status := h.serveGuarded(w, r)
+	status := h.serveGuarded(w, r, route)
 
 	span.SetAttribute("http.status_code", strconv.Itoa(status))
+	span.End()
 	h.metrics.HTTPResponse(ctx, status, r.URL.Path, time.Since(start))
+	finish(status)
 }
 
 // startRequestSpan opens the request's span, containing a panic from an
@@ -414,8 +425,7 @@ func queryVary(u *url.URL, allow []string) []string {
 // the body write — cannot be turned into a 500 any more; serveFailure will try, and
 // net/http will log the superfluous WriteHeader. That is still better than dropping
 // the connection, and there is nothing else left to do at that point.
-func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request) (status int) {
-	var route routeRef
+func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request, route *routeRef) (status int) {
 	defer func() {
 		recovered := recover()
 		if recovered == nil {
@@ -428,13 +438,13 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request) (status i
 		))
 	}()
 	if h.chain == nil {
-		return h.serve(w, r, &route)
+		return h.serve(w, r, route)
 	}
 
 	// Through the middleware, which may answer the request itself — a 401, a
 	// redirect — without serve ever running. The status is then whatever it
 	// wrote.
-	state := &chainState{route: &route}
+	state := &chainState{route: route}
 	capture := &statusCapturingWriter{ResponseWriter: w}
 	h.chain.ServeHTTP(capture, r.WithContext(context.WithValue(r.Context(), chainStateKey{}, state)))
 	if state.status != 0 {
@@ -586,6 +596,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	}
 
 	page := match.Page
+	route.resolvedPage(page.Name)
 
 	if err := h.plugins.PageResolved(ctx, &plugin.PageResolvedEvent{
 		Page:   page,
@@ -834,6 +845,7 @@ func (h *Handler) renderPage(
 		Data:           rc.SharedData,
 		HTML:           result.HTML,
 	}
+	plugin.PrepareHoist(afterRender, result.HoistEnds, rc.Hoisted())
 	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {
 		// No fragment is named: the failure is the plugin's, and pointing the dev
 		// page at a fragment that merely happened to be degraded would send a

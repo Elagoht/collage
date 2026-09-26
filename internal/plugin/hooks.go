@@ -1,7 +1,10 @@
 package plugin
 
 import (
+	"bytes"
 	"context"
+	"html/template"
+	"net/http"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -81,6 +84,21 @@ type CacheInvalidateHook interface {
 	OnCacheInvalidate(ctx context.Context, ev *CacheInvalidateEvent) error
 }
 
+// RequestHook is implemented by a plugin that shapes the context a request is
+// served under before collage starts on it — before its request span, before
+// middleware, before routing.
+//
+// It is for what has to be the outermost thing about a request: a trace carried
+// in from the caller, whose span must be the parent of collage's own. Middleware
+// added with Host.Use runs too late for that, inside the span collage has already
+// started.
+type RequestHook interface {
+	// OnRequest returns the context to serve r under, derived from r's, and a
+	// function collage calls with the status once the response is written. The
+	// function may be nil. It must not write to the response.
+	OnRequest(r *http.Request) (context.Context, func(status int))
+}
+
 // StreamCloser is implemented by a plugin serving connections that never end by
 // themselves — an event stream, a WebSocket.
 //
@@ -92,6 +110,73 @@ type StreamCloser interface {
 	// CloseStreams ends every open stream the plugin serves. It must not block
 	// on those streams finishing.
 	CloseStreams()
+}
+
+// Hoist adds html to the page's hoist area under key, after the render — what a
+// plugin that only learns what the page needs from its finished markup would
+// otherwise splice in by hand: a stylesheet for the code blocks it highlighted.
+//
+// It lands where the layout put {{hoist area}}, after what the render declared
+// there. A key the render already declared in the area is left alone, and so is a
+// key an earlier Hoist added: what a page declares is more specific than what a
+// plugin adds afterwards. When an earlier plugin has replaced the HTML, the place
+// the layout chose can no longer be found; "head" then lands before </head>, and
+// any other area reports false. It reports whether html was added.
+func (ev *AfterRenderEvent) Hoist(area, key string, html template.HTML) bool {
+	if area == "" || key == "" {
+		return false
+	}
+	if ev.hoisted == nil {
+		ev.hoisted = make(map[string]bool)
+	}
+	id := area + "\x00" + key
+	if ev.declared[id] || ev.hoisted[id] {
+		return false
+	}
+	at, ok := ev.hoistEnds[area]
+	if !ok || !sameSlice(ev.HTML, ev.hoistBase) {
+		if area != "head" {
+			return false
+		}
+		at = bytes.Index(bytes.ToLower(ev.HTML), []byte("</head>"))
+		if at < 0 {
+			return false
+		}
+		ev.hoistEnds = nil
+	}
+	out := make([]byte, 0, len(ev.HTML)+len(html))
+	out = append(out, ev.HTML[:at]...)
+	out = append(out, html...)
+	out = append(out, ev.HTML[at:]...)
+	for a, end := range ev.hoistEnds {
+		if end >= at {
+			ev.hoistEnds[a] = end + len(html)
+		}
+	}
+	ev.HTML = out
+	ev.hoistBase = out
+	ev.hoisted[id] = true
+	return true
+}
+
+func sameSlice(a, b []byte) bool {
+	return len(a) == len(b) && (len(a) == 0 || &a[0] == &b[0])
+}
+
+// PrepareHoist gives ev what Hoist needs: where each area ends in ev.HTML, and the
+// keys the render declared in each. The framework calls it before dispatching.
+func PrepareHoist(ev *AfterRenderEvent, ends map[string]int, hoisted *types.Hoisted) {
+	ev.hoistEnds = make(map[string]int, len(ends))
+	for a, end := range ends {
+		ev.hoistEnds[a] = end
+	}
+	ev.hoistBase = ev.HTML
+	ev.declared = make(map[string]bool)
+	for _, area := range hoisted.Areas() {
+		for _, item := range hoisted.Items(area) {
+			ev.declared[area+"\x00"+item.Key] = true
+		}
+	}
 }
 
 // Warn reports a warning-level finding about this render: shown over the page in
@@ -224,6 +309,11 @@ type AfterRenderEvent struct {
 	// development tool shows beside the page; this event's own copies.
 	Fragments      []types.FragmentReport
 	DependencyTags []string
+	// Hoist's bookkeeping, set by PrepareHoist.
+	hoistEnds map[string]int
+	hoistBase []byte
+	declared  map[string]bool
+	hoisted   map[string]bool
 	// Static reports that the page was rendered for a static build — through
 	// App.RenderPath — rather than for a request. A plugin checking the output
 	// runs then, and in development, and stays out of a production server's way.

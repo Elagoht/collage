@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sync"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -149,6 +150,38 @@ func (r *Registry) Shutdown(ctx context.Context) error {
 		}
 	}
 	return err
+}
+
+// Request gives every plugin implementing RequestHook, in registration order, the
+// request to shape, and returns it under the context they made and a function
+// that hands each of them the final status, in the reverse order. A hook that
+// panics is skipped, and the request is served under the context before it.
+func (r *Registry) Request(req *http.Request) (*http.Request, func(status int)) {
+	var finishers []func(int)
+	for _, p := range r.snapshot() {
+		hook, ok := p.(RequestHook)
+		if !ok {
+			continue
+		}
+		var ctx context.Context
+		var finish func(int)
+		if err := safeCall(func() error { ctx, finish = hook.OnRequest(req); return nil }); err != nil {
+			r.logOrDefault().Error("collage: request hook panicked", "plugin", p.Name(), "err", err)
+			continue
+		}
+		if ctx != nil {
+			req = req.WithContext(ctx)
+		}
+		if finish != nil {
+			finishers = append(finishers, finish)
+		}
+	}
+	return req, func(status int) {
+		for i := len(finishers) - 1; i >= 0; i-- {
+			f := finishers[i]
+			_ = safeCall(func() error { f(status); return nil })
+		}
+	}
 }
 
 // CloseStreams asks every plugin implementing StreamCloser to end its open

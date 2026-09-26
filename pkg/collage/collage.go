@@ -1,6 +1,7 @@
 package collage
 
 import (
+	"context"
 	"errors"
 
 	"github.com/Elagoht/collage/internal/cache"
@@ -103,6 +104,18 @@ type PageURL = plugin.PageURL
 
 // Command is a CLI subcommand a plugin contributes through Host.RegisterCommand.
 type Command = plugin.Command
+
+// RequestHook is implemented by a plugin that shapes the context a request is
+// served under before collage starts on it — before its request span and before
+// middleware: a trace carried in from the caller, whose span must be the parent
+// of collage's own.
+type RequestHook = plugin.RequestHook
+
+// RouteOf reports what the request carrying ctx resolved to: its kind — "page",
+// "document", "action", "mount", "handler" — and its name, the registered name or
+// the prefix. For a metric or a trace that must not be labelled with raw paths;
+// Metrics.HTTPResponse and a RequestHook's context carry it.
+func RouteOf(ctx context.Context) (kind, name string) { return httpx.RouteOf(ctx) }
 
 // StreamCloser is implemented by a plugin serving connections that never end by
 // themselves — an event stream, a WebSocket. CloseStreams runs when shutdown

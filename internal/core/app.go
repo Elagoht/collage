@@ -1185,6 +1185,7 @@ func (a *App) renderResolved(
 		Data:           rc.SharedData,
 		Static:         true,
 	}
+	plugin.PrepareHoist(event, result.HoistEnds, rc.Hoisted())
 	if err := a.plugins.AfterRender(ctx, event); err != nil {
 		return nil, err
 	}

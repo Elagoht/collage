@@ -64,6 +64,9 @@ type Result struct {
 	// the error before consulting this field. A non-required fragment's
 	// ErrNotFound follows the ordinary optional-failure policy and never sets it.
 	NotFound bool
+	// HoistEnds is where, in HTML, each hoist area's content ends — at the first
+	// {{hoist}} marker for it — for adding to an area after the render.
+	HoistEnds map[string]int
 	// Findings are what plugins checking the output reported about this render,
 	// filled in by the caller that ran the AfterRender hooks.
 	Findings []types.Finding
@@ -282,7 +285,8 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	// Resolved on the finished tree, so a declaration made anywhere below a marker
 	// still reaches it — which is the whole reason a marker is written rather than
 	// the content itself.
-	html = resolveHoists(html, state.hoistToken, rc.Hoisted())
+	var hoistEnds map[string]int
+	html, hoistEnds = resolveHoistsAt(html, state.hoistToken, rc.Hoisted())
 	total := time.Since(start)
 
 	// Reported whether or not the render succeeded: a render that failed still
@@ -304,6 +308,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	state.addTags(types.DeclaredTags(rc))
 	result := &Result{
 		HTML:           html,
+		HoistEnds:      hoistEnds,
 		DependencyTags: state.sortedTags(rc.Page.DependencyTags),
 		Metadata:       metadata,
 		NotFound:       state.notFound,

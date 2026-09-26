@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.25.0
+
+### Added
+
+- **`RequestHook`**: `OnRequest` runs before collage's request span, middleware and
+  routing, returns the context to serve the request under and a function told the
+  status. A tracing plugin makes the caller's trace the parent of collage's span.
+- **`collage.RouteOf(ctx)`**: what a request resolved to — its kind and the
+  registered name or prefix — from the context `Metrics.HTTPResponse` and a
+  request hook receive, so metrics and spans are labelled by route, not raw path.
+- **`AfterRenderEvent.Hoist(area, key, html)`**: a plugin adds to a hoist area
+  after the render, where the layout put `{{hoist}}`; a key the render declared is
+  left alone, and `"head"` falls back to before `</head>` when an earlier plugin
+  replaced the HTML.
+
+### Changed
+
+- The request span ends before `Metrics.HTTPResponse` is reported rather than when
+  `ServeHTTP` returns.
+
 ## v0.24.0
 
 ### Added

@@ -72,21 +72,30 @@ func markedAreas(html []byte, token string) map[string]bool {
 // being left in place: a marker on the wire is a comment that leaks the mechanism
 // and, worse, one that a later render could mistake for its own.
 func resolveHoists(html []byte, token string, hoisted *types.Hoisted) []byte {
+	out, _ := resolveHoistsAt(html, token, hoisted)
+	return out
+}
+
+// resolveHoistsAt is resolveHoists, also reporting where in the result each area's
+// content ends — at its first marker — so a plugin running after the render can
+// add to an area in the place the layout chose. See plugin.AfterRenderEvent.Hoist.
+func resolveHoistsAt(html []byte, token string, hoisted *types.Hoisted) ([]byte, map[string]int) {
 	if len(html) == 0 {
-		return html
+		return html, nil
 	}
 
 	prefix := []byte("<!--collage:hoist:" + token + ":")
 	if !bytes.Contains(html, prefix) {
-		return html
+		return html, nil
 	}
 
+	ends := make(map[string]int)
 	out := make([]byte, 0, len(html))
 	rest := html
 	for {
 		at := bytes.Index(rest, prefix)
 		if at < 0 {
-			return append(out, rest...)
+			return append(out, rest...), ends
 		}
 		out = append(out, rest[:at]...)
 
@@ -95,10 +104,13 @@ func resolveHoists(html []byte, token string, hoisted *types.Hoisted) []byte {
 		if end < 0 {
 			// An unterminated marker is not a marker. Copying it through is the
 			// only thing that cannot make the page worse.
-			return append(out, rest[at:]...)
+			return append(out, rest[at:]...), ends
 		}
 		area := string(tail[:end])
 		out = append(out, hoisted.HTML(area)...)
+		if _, seen := ends[area]; !seen {
+			ends[area] = len(out)
+		}
 		rest = tail[end+3:]
 	}
 }
