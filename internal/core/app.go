@@ -1142,6 +1142,7 @@ func (a *App) renderResolved(
 		Page:    page,
 		Locale:  locale,
 		Path:    path,
+		Static:  true,
 	}); err != nil {
 		return nil, err
 	}
@@ -1157,6 +1158,7 @@ func (a *App) renderResolved(
 		Degraded: result.Degraded(),
 		HTML:     result.HTML,
 		Data:     rc.SharedData,
+		Static:   true,
 	}
 	if err := a.plugins.AfterRender(ctx, event); err != nil {
 		return nil, err

@@ -206,6 +206,9 @@ type BeforeRenderEvent struct {
 	Locale string
 	// Path is the request path being served.
 	Path string
+	// Static reports that the page is being rendered for a static build rather
+	// than for a request; see AfterRenderEvent.Static.
+	Static bool
 }
 
 // AfterRenderEvent describes a render that just completed.
@@ -216,6 +219,10 @@ type AfterRenderEvent struct {
 	// Findings are what the plugins that ran so far reported about this render,
 	// through Warn and Error.
 	Findings []types.Finding
+	// Static reports that the page was rendered for a static build — through
+	// App.RenderPath — rather than for a request. A plugin checking the output
+	// runs then, and in development, and stays out of a production server's way.
+	Static bool
 	// Page is the live *types.Page that was rendered. Not copied for this event,
 	// and not defended against mutation; see PageResolvedEvent.Page.
 	Page *types.Page

@@ -25,6 +25,8 @@ type checker struct {
 	defLoc   string
 	locales  []string
 	aboutURL string
+	static   atomic.Int64
+	served   atomic.Int64
 }
 
 func (c *checker) Name() string                   { return "test/checker" }
@@ -62,6 +64,11 @@ func (c *checker) OnBeforeRender(_ context.Context, ev *collage.BeforeRenderEven
 }
 
 func (c *checker) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) error {
+	if ev.Static {
+		c.static.Add(1)
+	} else {
+		c.served.Add(1)
+	}
 	if !strings.Contains(string(ev.HTML), "<h1>") {
 		ev.Error("one-h1", "the page has no <h1>")
 	}
@@ -119,6 +126,9 @@ func TestHost_URLsLocalesAndMiddleware(t *testing.T) {
 	app, c := checkerSite(t, false)
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if c.served.Load() != 1 || c.static.Load() != 0 {
+		t.Errorf("a request's render: %d served, %d static", c.served.Load(), c.static.Load())
+	}
 	if rec.Header().Get("X-Checked") != "1" {
 		t.Error("the plugin's middleware did not run")
 	}
@@ -209,6 +219,9 @@ func TestFindings_Build(t *testing.T) {
 	}
 	if c.built == nil {
 		t.Fatal("OnBuildFinished did not run")
+	}
+	if c.static.Load() == 0 || c.served.Load() != 0 {
+		t.Errorf("a build's renders: %d static, %d served; want all static", c.static.Load(), c.served.Load())
 	}
 	paths := map[string]string{}
 	for _, f := range c.built.Files {

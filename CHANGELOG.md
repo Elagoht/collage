@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.22.0
+
+### Added
+
+- **`BeforeRenderEvent.Static` and `AfterRenderEvent.Static`** say a page is
+  being rendered for a static build, not for a request, so a checking plugin can
+  run in a build and in development and stay out of a production server's way.
+
 ## v0.21.0
 
 ### Added

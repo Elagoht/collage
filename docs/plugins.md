@@ -282,7 +282,8 @@ on where the page was rendered:
   written either way.
 - **In production** nothing is done with it. A check re-run on every render would
   spend a server's time on what the build already knew; a checking plugin should
-  turn itself off there.
+  turn itself off there — `ev.Static` says a render is a static build's, and
+  `host.DevMode()` says the server is a development one.
 
 What no single render can tell — two pages with one title, a link to a page the
 build did not write — is checked in `OnBuildFinished`, which runs once every file
