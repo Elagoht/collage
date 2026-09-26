@@ -2072,3 +2072,37 @@ func TestHandler_DevModeNeverServesACachedPage(t *testing.T) {
 		t.Error("nothing was written to the cache; the write path must still run in dev mode")
 	}
 }
+
+// A path with dot segments or doubled slashes is sent to its clean spelling
+// before anything reads it: a middleware skipping "/_collage/" must not be walked
+// past with "/_collage/../admin".
+func TestCleanPath_RedirectsBeforeMiddleware(t *testing.T) {
+	cases := []struct{ in, clean string }{
+		{"/_collage/../admin", "/admin"},
+		{"/a//b", "/a/b"},
+		{"/a/./b/", "/a/b/"},
+		{"/..", "/"},
+		{"/blog/.", "/blog"},
+	}
+	for _, tc := range cases {
+		got, dirty := cleanPath(tc.in)
+		if !dirty || got != tc.clean {
+			t.Errorf("cleanPath(%q) = %q, %v; want %q", tc.in, got, dirty, tc.clean)
+		}
+	}
+	for _, clean := range []string{"/", "/a/b", "/a/b/", "/file.v2.txt", "/.well-known/x"} {
+		if _, dirty := cleanPath(clean); dirty {
+			t.Errorf("cleanPath(%q) reports dirty", clean)
+		}
+	}
+
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyDynamic)})
+	rec := env.get("/x/../?q=1")
+	if rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/?q=1" {
+		t.Errorf("GET = %d %q", rec.Code, rec.Header().Get("Location"))
+	}
+	post := env.do(httptest.NewRequest(http.MethodPost, "/a//b", nil))
+	if post.Code != http.StatusPermanentRedirect || post.Header().Get("Location") != "/a/b" {
+		t.Errorf("POST = %d %q", post.Code, post.Header().Get("Location"))
+	}
+}

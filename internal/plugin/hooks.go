@@ -219,6 +219,11 @@ type AfterRenderEvent struct {
 	// Findings are what the plugins that ran so far reported about this render,
 	// through Warn and Error.
 	Findings []types.Finding
+	// Fragments reports how each fragment of the render went — its time, whether
+	// it failed — and DependencyTags the tags the render depended on. What a
+	// development tool shows beside the page; this event's own copies.
+	Fragments      []types.FragmentReport
+	DependencyTags []string
 	// Static reports that the page was rendered for a static build — through
 	// App.RenderPath — rather than for a request. A plugin checking the output
 	// runs then, and in development, and stays out of a production server's way.

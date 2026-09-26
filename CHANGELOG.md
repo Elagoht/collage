@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.24.0
+
+### Added
+
+- **`Host.BuildID()` and `App.BuildID()`**: the build serving —
+  `Config.Cache.Version`, or a fingerprint of the executable — for a plugin
+  versioning what a browser keeps across deploys.
+- **`Host.ServeStatus(w, r, status)` and `App.ServeStatus`**: a plugin answering a
+  request itself serves the site's not-found page for 404 and 410 and its error
+  page otherwise, rather than a line of text.
+- **`AfterRenderEvent.Fragments` and `AfterRenderEvent.DependencyTags`**: each
+  fragment's time and failure (`collage.FragmentReport`), and the tags the render
+  depended on.
+- **`Handle` takes an exact path.** A prefix without a trailing slash, `/metrics`,
+  answers that path alone.
+
+### Fixed
+
+- **Paths are cleaned before anything reads them.** A path with dot segments or
+  doubled slashes is redirected to its clean spelling — 301, or 308 for a method
+  with a body — ahead of middleware and plugins, so `/_collage/../admin` cannot
+  walk past a check on `/_collage/`.
+- **A static build starts the application first**, running every plugin's Init
+  before pages are enumerated: a page a plugin registers, or the WithStaticParams
+  of data a plugin loads, is built.
+
+### Changed
+
+- **Breaking:** `plugin.Host` has `BuildID` and `ServeStatus`; a test double needs
+  them.
+
 ## v0.23.0
 
 ### Added

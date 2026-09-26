@@ -19,12 +19,27 @@ import (
 // every request gets: the span, the metrics, the panic guard, the middleware,
 // and the shutdown drain.
 type HandlerMount struct {
-	// Prefix begins and ends with "/". The request is passed on unchanged, so
-	// the handler sees the full path; wrap it in http.StripPrefix if it expects
-	// otherwise.
+	// Prefix begins with "/". Ending in "/", it claims every path beneath it;
+	// otherwise it is one exact path, "/metrics". The request is passed on
+	// unchanged, so the handler sees the full path; wrap it in http.StripPrefix
+	// if it expects otherwise.
 	Prefix string
 	// Handler answers every request whose path begins with Prefix.
 	Handler http.Handler
+}
+
+// Matches reports whether the mount answers path.
+func (m HandlerMount) Matches(path string) bool {
+	if strings.HasSuffix(m.Prefix, "/") {
+		return strings.HasPrefix(path, m.Prefix)
+	}
+	return path == m.Prefix
+}
+
+// Overlaps reports whether the mount and one claiming other would both answer
+// some path.
+func (m HandlerMount) Overlaps(other string) bool {
+	return m.Matches(other) || HandlerMount{Prefix: other}.Matches(m.Prefix)
 }
 
 // ErrHandlerFailed is reported to the error hooks when a mounted handler answers

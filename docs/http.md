@@ -158,3 +158,11 @@ inside it drops what that change made stale.
 For an endpoint that should get the forgery check and the body limit — a form
 post, a small JSON endpoint next to the pages it changes — use an
 [action](actions.md) instead.
+
+## Paths are cleaned first
+
+A path with dot segments or doubled slashes — `/a/../b`, `/a//b`, `/a/./b` — is
+redirected to its clean spelling before anything reads it, middleware and plugins
+included: 301 for GET and HEAD, 308 for a method that carries a body, the query
+kept. A middleware that skips `/_collage/` or protects `/admin/` therefore never
+meets `/_collage/../admin`.

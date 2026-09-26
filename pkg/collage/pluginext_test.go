@@ -68,6 +68,9 @@ func (c *checker) OnBeforeRender(_ context.Context, ev *collage.BeforeRenderEven
 }
 
 func (c *checker) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) error {
+	if len(ev.Fragments) == 0 {
+		ev.Error("report", "no fragment report")
+	}
 	if ev.Static {
 		c.static.Add(1)
 	} else {
@@ -215,6 +218,11 @@ func TestFindings_Build(t *testing.T) {
 	if strings.Join(errorsAt, ",") != "/about,/tr/hakkinda" {
 		t.Errorf("errors at %v", errorsAt)
 	}
+	for _, f := range report.Findings {
+		if f.Rule == "report" {
+			t.Errorf("a render without its fragment report: %s", f.Path)
+		}
+	}
 	if len(warnings) != 6 { // one per page — home, about ×2, post ×2 — and the cross-page one
 		t.Errorf("warnings at %v", warnings)
 	}
@@ -264,4 +272,37 @@ func TestFindings_OnAnActionsPage(t *testing.T) {
 	if body := rec.Body.String(); !strings.Contains(body, "one-h1") || !strings.Contains(body, "collage-dev-overlay") {
 		t.Errorf("an action's page carries no findings:\n%s", body)
 	}
+}
+
+// A page a plugin registers in Init is built: the build starts the application
+// before it enumerates pages.
+func TestBuild_RunsPluginInitFirst(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>from a plugin</p>`)}}, Root: "t"},
+		Plugins:  []collage.Plugin{pagePlugin{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	b, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: out})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Build(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if body, err := os.ReadFile(out + "/from-plugin/index.html"); err != nil || !strings.Contains(string(body), "from a plugin") {
+		t.Errorf("the plugin's page was not built: %v %q", err, body)
+	}
+}
+
+type pagePlugin struct{}
+
+func (pagePlugin) Name() string                   { return "test/pages" }
+func (pagePlugin) Version() string                { return "0" }
+func (pagePlugin) Shutdown(context.Context) error { return nil }
+func (pagePlugin) Init(_ context.Context, host collage.Host) error {
+	return host.RegisterPage(collage.NewPage("from-plugin").WithContent(collage.NewFragment("p", "p.html").Build()).WithPath("en", "/from-plugin").Build())
 }

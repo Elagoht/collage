@@ -274,11 +274,13 @@ func (h *Handler) writeActionPage(
 	// AfterRender as for any page: a validation failure's page is a page, and the
 	// minifier, the image rewriter and whatever else shapes pages shape it too.
 	afterRender := &plugin.AfterRenderEvent{
-		Page:     result.Page,
-		Locale:   match.Locale,
-		Degraded: rendered.Degraded(),
-		Data:     rc.SharedData,
-		HTML:     rendered.HTML,
+		Page:           result.Page,
+		Locale:         match.Locale,
+		Degraded:       rendered.Degraded(),
+		Fragments:      rendered.FragmentReports(),
+		DependencyTags: append([]string(nil), rendered.DependencyTags...),
+		Data:           rc.SharedData,
+		HTML:           rendered.HTML,
 	}
 	if err := h.plugins.AfterRender(r.Context(), afterRender); err != nil {
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageAfterRender, err))

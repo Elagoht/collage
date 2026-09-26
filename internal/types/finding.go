@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 // FindingLevel is how serious a Finding is.
 type FindingLevel int
 
@@ -54,3 +56,18 @@ const PathTagPrefix = "collage:path:"
 // PathTag is the dependency tag of the cached entries rendered for path:
 // invalidating it drops them, whatever else they depend on.
 func PathTag(path string) string { return PathTagPrefix + path }
+
+// FragmentReport is how one fragment of a render went: what a development tool
+// shows beside the page.
+type FragmentReport struct {
+	// Name is the fragment's name.
+	Name string
+	// Duration is its wall-clock time, the fragments in its slots included.
+	Duration time.Duration
+	// Failed reports that its own render failed, even when a fallback stood in.
+	Failed bool
+	// UsedFallback reports that its fallback rendered in its place.
+	UsedFallback bool
+	// Err is what it failed with, or nil.
+	Err error
+}

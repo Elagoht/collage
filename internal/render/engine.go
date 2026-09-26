@@ -69,6 +69,18 @@ type Result struct {
 	Findings []types.Finding
 }
 
+// FragmentReports lists how each fragment of the render went, for plugins.
+func (r *Result) FragmentReports() []types.FragmentReport {
+	if r == nil || r.Metadata == nil {
+		return nil
+	}
+	out := make([]types.FragmentReport, 0, len(r.Metadata.Fragments))
+	for _, f := range r.Metadata.Fragments {
+		out = append(out, types.FragmentReport{Name: f.Name, Duration: f.Duration, Failed: f.Failed, UsedFallback: f.UsedFallback, Err: f.Err})
+	}
+	return out
+}
+
 // Degraded reports whether any fragment in the render failed, whether or not a
 // fallback covered for it. A degraded result is complete enough to serve but must
 // not be cached: caching it would pin one request's transient failure in front of

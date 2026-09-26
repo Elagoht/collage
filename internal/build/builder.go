@@ -354,6 +354,17 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	start := time.Now()
 	report := &Report{}
 
+	// The application is started first, which runs every plugin's Init: a page
+	// a plugin registers, or the WithStaticParams of a page whose data a plugin
+	// loads, must be ready before the pages are enumerated — as it is before a
+	// server answers its first request.
+	if starter, ok := b.app.(Starter); ok {
+		if err := starter.Start(); err != nil {
+			report.Duration = time.Since(start)
+			return report, err
+		}
+	}
+
 	outDirResolved, err := b.prepareOutDir()
 	if err != nil {
 		report.Duration = time.Since(start)
@@ -499,6 +510,12 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		return report, nil
 	}
 	return report, errors.Join(errs...)
+}
+
+// Starter is implemented by a Renderer that has to be started before it renders:
+// the application, whose plugins' Init must run first.
+type Starter interface {
+	Start() error
 }
 
 // BuildFinisher is implemented by a Renderer whose plugins check a finished build.

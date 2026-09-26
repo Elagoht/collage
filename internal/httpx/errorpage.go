@@ -81,6 +81,28 @@ func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure
 	return f.status
 }
 
+// ServeStatus answers r with status and the page the application shows for it:
+// its not-found page for 404 and 410, its error page otherwise, the built-in one
+// when it has neither. It is for a plugin answering a request itself — a rule
+// saying a page is gone, a gate refusing a reader — that should look like the
+// site rather than print a line of text.
+func (h *Handler) ServeStatus(w http.ResponseWriter, r *http.Request, status int) {
+	locale := ""
+	if match, err := h.router.Match(r); err == nil && match != nil {
+		locale = match.Locale
+	}
+	stage := stagePlugin
+	if status == http.StatusNotFound || status == http.StatusGone {
+		stage = stageNotFound
+	}
+	h.serveFailure(w, r, failure{
+		status: status,
+		err:    fmt.Errorf("collage: %d %s for %s", status, http.StatusText(status), r.URL.Path),
+		locale: locale,
+		stage:  stage,
+	})
+}
+
 // reportError logs f and dispatches it to every registered ErrorHook.
 //
 // Only a route miss is logged at debug level, and the test is the stage, not the
@@ -168,7 +190,7 @@ func (h *Handler) reportError(r *http.Request, f failure) {
 
 // errorPageFor returns the page registered to serve f, or nil when none is.
 func (h *Handler) errorPageFor(f failure) *types.Page {
-	if f.status == http.StatusNotFound {
+	if f.status == http.StatusNotFound || f.status == http.StatusGone {
 		return h.resolveNotFound(f.page)
 	}
 	return h.resolveError(f.page)
@@ -233,11 +255,13 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 	}
 
 	afterRender := &plugin.AfterRenderEvent{
-		Page:     page,
-		Locale:   f.locale,
-		Degraded: result.Degraded(),
-		Data:     rc.SharedData,
-		HTML:     result.HTML,
+		Page:           page,
+		Locale:         f.locale,
+		Degraded:       result.Degraded(),
+		Fragments:      result.FragmentReports(),
+		DependencyTags: append([]string(nil), result.DependencyTags...),
+		Data:           rc.SharedData,
+		HTML:           result.HTML,
 	}
 	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {
 		return fail("collage: error page after-render hook failed", err)

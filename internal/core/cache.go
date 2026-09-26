@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
 )
@@ -126,4 +128,26 @@ func buildFingerprint() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(sum.Sum(nil)[:16]), nil
+}
+
+// BuildID names the build of the program serving: Config.Cache.Version when set,
+// otherwise a fingerprint of the executable — the value the disk cache is
+// namespaced by — and, when neither can be had, the moment the process started,
+// which is at least never the same for two builds. A plugin versioning something
+// a browser keeps — a service worker's caches, an asset's query string — reads it
+// through Host.BuildID.
+func (a *App) BuildID() string {
+	a.buildIDOnce.Do(func() {
+		switch {
+		case a.cfg.Cache.Version != "":
+			a.buildID = a.cfg.Cache.Version
+		default:
+			if fp, err := buildFingerprint(); err == nil {
+				a.buildID = fp
+			} else {
+				a.buildID = "t" + strconv.FormatInt(time.Now().UnixNano(), 36)
+			}
+		}
+	})
+	return a.buildID
 }

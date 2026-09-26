@@ -94,6 +94,10 @@ type BuiltFile = plugin.BuiltFile
 // is cached for that path, whatever else it depends on.
 func PathTag(path string) string { return types.PathTag(path) }
 
+// FragmentReport is how one fragment of a render went, as AfterRenderEvent.Fragments
+// lists them: its time, whether it failed.
+type FragmentReport = types.FragmentReport
+
 // PageURL is one URL a page answers, as Host.PageURLs lists them.
 type PageURL = plugin.PageURL
 

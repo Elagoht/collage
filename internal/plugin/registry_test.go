@@ -479,6 +479,8 @@ func (fakeHost) FragmentURL(string, string, string, map[string]string) (string, 
 }
 func (fakeHost) Locales() (string, []string)                         { return "en", []string{"en"} }
 func (fakeHost) PageURLs(context.Context, string) ([]PageURL, error) { return nil, nil }
+func (fakeHost) BuildID() string                                     { return "test" }
+func (fakeHost) ServeStatus(http.ResponseWriter, *http.Request, int) {}
 
 // hostFor is what Registry.Init takes: one host per plugin, chosen by name.
 func hostFor(string) Host { return fakeHost{} }

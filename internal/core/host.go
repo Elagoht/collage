@@ -135,6 +135,14 @@ func (h *hostView) PageURLs(ctx context.Context, name string) ([]plugin.PageURL,
 	return h.app.PageURLs(ctx, name)
 }
 
+// BuildID names the build of the program serving.
+func (h *hostView) BuildID() string { return h.app.BuildID() }
+
+// ServeStatus answers r with status and the application's page for it.
+func (h *hostView) ServeStatus(w http.ResponseWriter, r *http.Request, status int) {
+	h.app.ServeStatus(w, r, status)
+}
+
 // configHostView is the plugin.ConfigHost a plugin receives in Configure.
 //
 // It is a separate type from hostView rather than a subset of it because the two

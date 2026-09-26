@@ -145,18 +145,18 @@ func (a *App) checkMountsDoNotShadow() error {
 		prefix := handler.Prefix
 
 		for _, path := range claimed {
-			if strings.HasPrefix(path.Pattern, prefix) {
+			if handler.Matches(path.Pattern) {
 				return fmt.Errorf("%w: handler %q would swallow %s at %q",
 					ErrMountShadowsRoute, prefix, path.Owner, path.Pattern)
 			}
 		}
 		for _, m := range a.mounts {
-			if strings.HasPrefix(m.Prefix(), prefix) || strings.HasPrefix(prefix, m.Prefix()) {
+			if handler.Overlaps(m.Prefix()) {
 				return fmt.Errorf("%w: handler %q and mount %q", ErrMountConflict, prefix, m.Prefix())
 			}
 		}
 		for _, other := range a.handlers[i+1:] {
-			if strings.HasPrefix(other.Prefix, prefix) || strings.HasPrefix(prefix, other.Prefix) {
+			if handler.Overlaps(other.Prefix) {
 				return fmt.Errorf("%w: handlers %q and %q", ErrMountConflict, prefix, other.Prefix)
 			}
 		}

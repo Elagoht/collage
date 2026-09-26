@@ -12,13 +12,15 @@ import (
 // ErrInvalidHandlerPrefix reports a Handle prefix that is not a slash-delimited
 // path, or is "/" alone. A handler at "/" would take every request from every
 // page; wrap app.Handler() in a mux of your own if that is what you want.
-var ErrInvalidHandlerPrefix = errors.New("collage: handler prefix must begin and end with \"/\" and not be \"/\"")
+var ErrInvalidHandlerPrefix = errors.New("collage: handler prefix must begin with \"/\" and not be \"/\"")
 
 // ErrNilHandler reports a Handle or Use call given nothing to run.
 var ErrNilHandler = errors.New("collage: nil handler")
 
 // Handle mounts an http.Handler of the application's own under prefix: an API
-// written with any router, a gRPC gateway, a webhook receiver.
+// written with any router, a gRPC gateway, a webhook receiver. A prefix ending in
+// "/" claims every path beneath it; one without is a single exact path —
+// "/metrics", "/webhooks/stripe".
 //
 // Collage passes the request on unchanged — the handler sees the full path, so
 // wrap it in http.StripPrefix if it expects otherwise — and does nothing to it: no
@@ -30,7 +32,7 @@ var ErrNilHandler = errors.New("collage: nil handler")
 // reported when the handler is built, whichever was registered first. It returns
 // ErrAppStarted once the server has started.
 func (a *App) Handle(prefix string, handler http.Handler) error {
-	if prefix == "/" || !strings.HasPrefix(prefix, "/") || !strings.HasSuffix(prefix, "/") || strings.HasPrefix(prefix, "//") {
+	if prefix == "/" || !strings.HasPrefix(prefix, "/") || strings.HasPrefix(prefix, "//") || strings.Contains(prefix, "/.") {
 		return fmt.Errorf("%w: %q", ErrInvalidHandlerPrefix, prefix)
 	}
 	if handler == nil {

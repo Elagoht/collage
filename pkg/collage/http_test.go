@@ -178,9 +178,34 @@ func TestHandle_RefusesToShadowARoute(t *testing.T) {
 	}
 }
 
+// A handler at a path without a trailing slash answers that path alone.
+func TestHandle_ExactPath(t *testing.T) {
+	app := langApp(t, false, nil)
+	if err := app.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("up 1"))
+	})); err != nil {
+		t.Fatal(err)
+	}
+	h := app.Handler()
+	for path, want := range map[string]int{"/metrics": http.StatusOK, "/metrics/x": http.StatusNotFound, "/metricsx": http.StatusNotFound} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("GET %s = %d, want %d", path, rec.Code, want)
+		}
+	}
+
+	clash := langApp(t, false, nil)
+	_ = clash.Handle("/api/", http.NotFoundHandler())
+	_ = clash.Handle("/api/health", http.NotFoundHandler())
+	if err := clash.Start(); !errors.Is(err, collage.ErrMountConflict) {
+		t.Errorf("an exact path under a prefix handler: Start() = %v, want ErrMountConflict", err)
+	}
+}
+
 func TestHandle_Rejections(t *testing.T) {
 	app := langApp(t, false, nil)
-	for _, prefix := range []string{"/", "api/", "/api", "//api/"} {
+	for _, prefix := range []string{"/", "api/", "//api/", "/api/../x"} {
 		if err := app.Handle(prefix, http.NotFoundHandler()); !errors.Is(err, collage.ErrInvalidHandlerPrefix) {
 			t.Errorf("Handle(%q) = %v, want ErrInvalidHandlerPrefix", prefix, err)
 		}

@@ -301,6 +301,9 @@ type App struct {
 	tracker dependency.Tracker
 	// routes resolves a request to a page, a redirect, or a not-found result.
 	routes router.Router
+	// buildID is BuildID's answer, worked out once.
+	buildID     string
+	buildIDOnce sync.Once
 	// fragmentPaths maps each fragment path's action to the fragment it renders.
 	fragmentPaths map[*types.Action]fragmentPath
 	// plugins owns plugin registration, lifecycle, and hook dispatch.
@@ -1173,12 +1176,14 @@ func (a *App) renderResolved(
 	}
 
 	event := &plugin.AfterRenderEvent{
-		Page:     page,
-		Locale:   locale,
-		Degraded: result.Degraded(),
-		HTML:     result.HTML,
-		Data:     rc.SharedData,
-		Static:   true,
+		Page:           page,
+		Locale:         locale,
+		Degraded:       result.Degraded(),
+		Fragments:      result.FragmentReports(),
+		DependencyTags: append([]string(nil), result.DependencyTags...),
+		HTML:           result.HTML,
+		Data:           rc.SharedData,
+		Static:         true,
 	}
 	if err := a.plugins.AfterRender(ctx, event); err != nil {
 		return nil, err
@@ -1245,6 +1250,21 @@ func (a *App) PageURLs(ctx context.Context, name string) (urls []plugin.PageURL,
 		}
 	}
 	return urls, nil
+}
+
+// ServeStatus answers r with status and the page the application shows for it:
+// its not-found page for 404 and 410, its error page otherwise. Plugins reach it
+// through Host.ServeStatus. Before the handler is built it writes the status
+// text alone.
+func (a *App) ServeStatus(w http.ResponseWriter, r *http.Request, status int) {
+	a.buildMu.Lock()
+	current := a.handler
+	a.buildMu.Unlock()
+	if handler, ok := current.(*httpx.Handler); ok {
+		handler.ServeStatus(w, r, status)
+		return
+	}
+	http.Error(w, http.StatusText(status), status)
 }
 
 // BuildFinished hands a finished static build to the plugins that check one; see

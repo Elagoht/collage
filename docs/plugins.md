@@ -150,13 +150,15 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `RegisterPage(*Page) error` | Contribute a page, on the same terms as the application's own |
 | `RegisterDocument(*Document) error` | Contribute a document |
 | `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
-| `Handle(prefix, http.Handler) error` | Serve a handler under a prefix, as `App.Handle` does — an event stream, a WebSocket |
+| `Handle(prefix, http.Handler) error` | Serve a handler under a prefix ending in `/`, or at one exact path without it (`/metrics`), as `App.Handle` does — an event stream, a WebSocket |
 | `RenderFragment(r, FragmentRequest) (*FragmentRender, error)` | Render a fragment a page opened with `WithFragmentPath`, in parts — see below |
 | `Use(middleware) error` | Wrap every request, after the application's own middleware |
 | `URL(name, locale, params) (string, error)` | The path of a page or document, as `App.URL` builds it |
 | `FragmentURL(page, fragment, locale, params) (string, error)` | The path of a fragment path, as `App.FragmentURL` builds it |
 | `Locales() (default, supported)` | The default locale and every supported one |
 | `PageURLs(ctx, name) ([]PageURL, error)` | Every URL a page answers, in every locale, a pattern's `WithStaticParams` expanded — a sitemap's contents |
+| `BuildID() string` | The build serving — `Config.Cache.Version`, or a fingerprint of the executable — for versioning what a browser keeps across deploys |
+| `ServeStatus(w, r, status)` | Answer with a status and the site's own page for it: the not-found page for 404 and 410, the error page otherwise |
 
 A plugin therefore has no way to reach the router, the cache, the render engine,
 the template set, or any page it was not explicitly handed — it can add routes and
@@ -237,7 +239,7 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | --- | --- | --- | --- |
 | `PageResolvedHook` | `OnPageResolved` | After routing, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch four hooks, not seven" below) | nothing |
 | `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** — including an error page, and a page an action answers with | nothing |
-| `AfterRenderHook` | `OnAfterRender` | After a successful render. **Pages only**, on the same terms | `ev.HTML`; reports with `ev.Warn`, `ev.Error` |
+| `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure) and `ev.DependencyTags`. **Pages only**, on the same terms | `ev.HTML`; reports with `ev.Warn`, `ev.Error` |
 | `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
 | `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored — for a page or a document alike | `ev.Skip`, `ev.TTL`, `ev.Tags` |
 | `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike; `ev.Paths` names the URL paths dropped | nothing |

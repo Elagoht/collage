@@ -156,6 +156,14 @@ type Host interface {
 	// WithStaticParams lists; a pattern without it has none a plugin could know.
 	// It is what a sitemap is made of.
 	PageURLs(ctx context.Context, name string) ([]PageURL, error)
+	// BuildID names the build of the program serving — Config.Cache.Version, or
+	// a fingerprint of the executable — for a plugin versioning what a browser
+	// keeps across deploys: a service worker's caches, an asset's query string.
+	BuildID() string
+	// ServeStatus answers r with status and the page the application shows for
+	// it — its not-found page for 404 and 410, its error page otherwise — for a
+	// plugin answering a request itself that should look like the site.
+	ServeStatus(w http.ResponseWriter, r *http.Request, status int)
 }
 
 // PageURL is one URL a page answers.

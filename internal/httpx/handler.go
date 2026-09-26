@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"regexp"
 	"runtime/debug"
 	"slices"
@@ -96,6 +97,7 @@ const (
 	stagePanic        = "panic"
 	stageAsset        = "asset"
 	stageHandler      = "handler"
+	stagePlugin       = "plugin"
 )
 
 // contentTypeHTML is the Content-Type every rendered page and built-in error page
@@ -290,6 +292,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serveReloadWorker(w)
 		return
 	}
+	// Before middleware and plugins, so that a check on a path — "skip
+	// /_collage/", "protect /admin/" — never meets "/_collage/../admin" and lets
+	// it through to the page behind it.
+	if cleaned, dirty := cleanPath(r.URL.Path); dirty {
+		redirectClean(w, r, cleaned)
+		return
+	}
 
 	start := time.Now()
 
@@ -475,7 +484,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		}
 	}
 	for _, mount := range h.handlers {
-		if strings.HasPrefix(r.URL.Path, mount.Prefix) {
+		if mount.Matches(r.URL.Path) {
 			route.resolved(routeKindHandler, mount.Prefix)
 			return h.serveHandler(w, r, mount, route)
 		}
@@ -817,11 +826,13 @@ func (h *Handler) renderPage(
 	// The hook may replace the HTML, and the replacement is what goes on the wire
 	// and, below, into the cache.
 	afterRender := &plugin.AfterRenderEvent{
-		Page:     page,
-		Locale:   match.Locale,
-		Degraded: result.Degraded(),
-		Data:     rc.SharedData,
-		HTML:     result.HTML,
+		Page:           page,
+		Locale:         match.Locale,
+		Degraded:       result.Degraded(),
+		Fragments:      result.FragmentReports(),
+		DependencyTags: append([]string(nil), result.DependencyTags...),
+		Data:           rc.SharedData,
+		HTML:           result.HTML,
 	}
 	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {
 		// No fragment is named: the failure is the plugin's, and pointing the dev
@@ -983,6 +994,38 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
 	}
 	return etag
+}
+
+// cleanPath returns p with dot segments resolved and repeated slashes collapsed,
+// its trailing slash kept, and whether that differs from p.
+func cleanPath(p string) (string, bool) {
+	if p == "" {
+		return "/", true
+	}
+	if !strings.Contains(p, "//") && !strings.Contains(p, "/.") {
+		return p, false
+	}
+	cleaned := path.Clean(p)
+	if strings.HasSuffix(p, "/") && cleaned != "/" {
+		cleaned += "/"
+	}
+	return cleaned, cleaned != p
+}
+
+// redirectClean sends the request to the clean spelling of its path, as
+// net/http's ServeMux does: 301 for a read, 308 for anything that carries a body,
+// so a form is posted again rather than turned into a GET.
+func redirectClean(w http.ResponseWriter, r *http.Request, cleaned string) {
+	target := cleaned
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	status := http.StatusPermanentRedirect
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		status = http.StatusMovedPermanently
+	}
+	w.Header().Set("Location", target)
+	w.WriteHeader(status)
 }
 
 // withPathTag adds to tags the one naming the URL path an entry was rendered for:
