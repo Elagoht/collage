@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // Configurer is implemented by a plugin that needs to act before the application is
@@ -63,6 +65,15 @@ type ConfigHost interface {
 	// A minifier returns an fs.FS whose files are already minified, and
 	// ServeContent keeps working on whatever it is handed.
 	WrapMount(wrap func(fs.FS) fs.FS)
+	// AddRenderFunc registers a template function made anew for each render:
+	// factory is called with the render's context and returns the function the
+	// templates call, which can then read what that render holds — a nonce set in
+	// BeforeRender, the render's locale. AddTemplateFunc's functions are fixed for
+	// the life of the application and cannot.
+	//
+	// Like AddTemplateFunc it must be called from Configure, and a name another
+	// plugin registered is ErrDuplicateTemplateFunc.
+	AddRenderFunc(name string, factory func(rc *types.RenderContext) any) error // any: html/template.FuncMap's own value type
 }
 
 // ErrDuplicateTemplateFunc is returned by ConfigHost.AddTemplateFunc when a name is

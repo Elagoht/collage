@@ -685,7 +685,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	if h.devMode {
 		header.Set(renderTimeHeader, out.renderTime.String())
 	}
-	content = withDevOverlay(content, "this page rendered, but part of it failed", out.problems)
+	content = withDevOverlay(content, overlayHeading(out.problems), out.problems)
 	content = h.withDevReload(r, content)
 	w.WriteHeader(http.StatusOK)
 	writeBody(w, content)
@@ -859,7 +859,8 @@ func (h *Handler) renderPage(
 		etag = cache.ETag(content)
 	}
 
-	return &outcome{content: content, etag: etag, renderTime: renderTime, problems: h.devProblems(result)}
+	problems := append(h.devProblems(result), h.devFindings(afterRender.Findings)...)
+	return &outcome{content: content, etag: etag, renderTime: renderTime, problems: problems}
 }
 
 // cacheGet is the cache lookup, which never finds anything in development. See the

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // ErrNilRegistry is returned by Register when called on a nil *Registry. Every
@@ -207,11 +209,39 @@ func (r *Registry) AfterRender(ctx context.Context, ev *AfterRenderEvent) error 
 		if !ok {
 			continue
 		}
+		before := len(ev.Findings)
 		if err := runHook(p.Name(), "OnAfterRender", func() error { return hook.OnAfterRender(ctx, ev) }); err != nil {
 			return err
 		}
+		stamp(ev.Findings, before, p.Name())
 	}
 	return nil
+}
+
+// BuildFinished dispatches ev to every registered plugin implementing
+// BuildFinishedHook, in registration order, stopping at the first that fails.
+func (r *Registry) BuildFinished(ctx context.Context, ev *BuildFinishedEvent) error {
+	for _, p := range r.snapshot() {
+		hook, ok := p.(BuildFinishedHook)
+		if !ok {
+			continue
+		}
+		before := len(ev.Findings)
+		if err := runHook(p.Name(), "OnBuildFinished", func() error { return hook.OnBuildFinished(ctx, ev) }); err != nil {
+			return err
+		}
+		stamp(ev.Findings, before, p.Name())
+	}
+	return nil
+}
+
+// stamp names the plugin on the findings it just added, from index from on.
+func stamp(findings []types.Finding, from int, plugin string) {
+	for i := from; i < len(findings); i++ {
+		if findings[i].Plugin == "" {
+			findings[i].Plugin = plugin
+		}
+	}
 }
 
 // CacheWrite dispatches ev to every registered plugin implementing CacheWriteHook,

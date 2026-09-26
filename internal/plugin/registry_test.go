@@ -472,6 +472,13 @@ func (fakeHost) Handle(prefix string, handler http.Handler) error            { r
 func (fakeHost) RenderFragment(*http.Request, FragmentRequest) (*FragmentRender, error) {
 	return nil, nil
 }
+func (fakeHost) Use(func(http.Handler) http.Handler) error             { return nil }
+func (fakeHost) URL(string, string, map[string]string) (string, error) { return "", nil }
+func (fakeHost) FragmentURL(string, string, string, map[string]string) (string, error) {
+	return "", nil
+}
+func (fakeHost) Locales() (string, []string)                         { return "en", []string{"en"} }
+func (fakeHost) PageURLs(context.Context, string) ([]PageURL, error) { return nil, nil }
 
 // hostFor is what Registry.Init takes: one host per plugin, chosen by name.
 func hostFor(string) Host { return fakeHost{} }

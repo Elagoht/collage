@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.21.0
+
+### Added
+
+- **Findings.** A plugin checking a page's output reports what it finds with
+  `AfterRenderEvent.Warn` and `Error` (`collage.Finding`, `FindingWarning`,
+  `FindingError`). In development they are shown over the page; in a static build
+  they are listed in `BuildReport.Findings`, and an error-level one fails the build
+  with `ErrBuildFindings`. The page is served and written either way.
+- **`BuildFinishedHook`**: `OnBuildFinished` runs once a static build has written
+  every file, with each one's kind, URL path and place on disk
+  (`BuildFinishedEvent`, `BuiltFile`), for checks across pages.
+- **`ConfigHost.AddRenderFunc(name, factory)`**: a template function made anew for
+  each render from its `*RenderContext` — a nonce, a translation in the render's
+  locale.
+- **`Host.Use`**: a plugin wraps every request, after the application's own
+  middleware.
+- **`Host.URL`, `Host.FragmentURL`, `Host.Locales`, `Host.PageURLs`**: where every
+  page lives, by name, in every locale — `PageURLs` expands a pattern through its
+  `WithStaticParams` (`collage.PageURL`). `App.Locales` and `App.PageURLs` too.
+
+### Changed
+
+- **Breaking:** `plugin.Host` and `plugin.ConfigHost` have new methods; a test
+  double implementing either needs them.
+
 ## v0.20.0
 
 ### Added

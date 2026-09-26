@@ -94,6 +94,65 @@ type StreamCloser interface {
 	CloseStreams()
 }
 
+// Warn reports a warning-level finding about this render: shown over the page in
+// development, listed in a build's report.
+func (ev *AfterRenderEvent) Warn(rule, message string) {
+	ev.Findings = append(ev.Findings, types.Finding{Level: types.FindingWarning, Rule: rule, Message: message})
+}
+
+// Error reports an error-level finding about this render: shown over the page in
+// development, and it fails a static build. The page is still served.
+func (ev *AfterRenderEvent) Error(rule, message string) {
+	ev.Findings = append(ev.Findings, types.Finding{Level: types.FindingError, Rule: rule, Message: message})
+}
+
+// BuildFinishedHook is implemented by a plugin that checks a static build as a
+// whole — what no single render can tell: two pages with one title, a link to a
+// page the build did not write.
+type BuildFinishedHook interface {
+	// OnBuildFinished is called once every page, document and asset has been
+	// written. An error returned from it fails the build; a finding is reported
+	// with ev.Warn or ev.Error.
+	OnBuildFinished(ctx context.Context, ev *BuildFinishedEvent) error
+}
+
+// BuildFinishedEvent describes a finished static build.
+type BuildFinishedEvent struct {
+	// OutDir is the directory the build wrote into.
+	OutDir string
+	// Files are every file the build wrote, in no particular order.
+	Files []BuiltFile
+	// Findings are what the plugins that ran so far reported.
+	Findings []types.Finding
+}
+
+// Warn reports a warning-level finding about the build, about the page at path
+// when it concerns one.
+func (ev *BuildFinishedEvent) Warn(path, rule, message string) {
+	ev.Findings = append(ev.Findings, types.Finding{Level: types.FindingWarning, Rule: rule, Message: message, Path: path})
+}
+
+// Error reports an error-level finding about the build; it fails the build.
+func (ev *BuildFinishedEvent) Error(path, rule, message string) {
+	ev.Findings = append(ev.Findings, types.Finding{Level: types.FindingError, Rule: rule, Message: message, Path: path})
+}
+
+// BuiltFile is one file a static build wrote.
+type BuiltFile struct {
+	// Kind is "page", "document" or "asset".
+	Kind string
+	// Name is the page's or document's registered name; empty for an asset.
+	Name string
+	// Locale is the locale a page or document was rendered in.
+	Locale string
+	// Path is the URL path the file answers, as a link on the site would name it.
+	Path string
+	// File is the file's absolute path on disk. Read it with os.ReadFile when
+	// the content is needed: holding every page of a large site in memory to
+	// hand over here would cost what few checks need.
+	File string
+}
+
 // ErrorHook is implemented by a plugin that wants to observe a failure encountered
 // while serving a request.
 type ErrorHook interface {
@@ -150,7 +209,13 @@ type BeforeRenderEvent struct {
 }
 
 // AfterRenderEvent describes a render that just completed.
+//
+// A plugin checking the output reports what it finds with Warn and Error; see
+// types.Finding.
 type AfterRenderEvent struct {
+	// Findings are what the plugins that ran so far reported about this render,
+	// through Warn and Error.
+	Findings []types.Finding
 	// Page is the live *types.Page that was rendered. Not copied for this event,
 	// and not defended against mutation; see PageResolvedEvent.Page.
 	Page *types.Page

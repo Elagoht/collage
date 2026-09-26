@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/internal/asset"
+	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/types"
@@ -269,6 +270,10 @@ type Report struct {
 	// whole of what the served one is — one whose content depends on a query
 	// string, which a file has no way to carry.
 	Warnings []WarningRecord
+	// Findings lists what plugins checking the output reported: about each page
+	// as it rendered, and about the build as a whole once it was written. An
+	// error-level finding also puts ErrFindings in Errors.
+	Findings []types.Finding
 	// Errors lists every render, path-resolution, or write failure encountered.
 	// Build's returned error is errors.Join of exactly these, so a caller that
 	// wants the individual failures can read them here instead of unwrapping the
@@ -371,6 +376,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	written := make([]string, len(tasks))
 	taskErrs := make([]error, len(tasks))
 	taskSkips := make([]*SkipRecord, len(tasks))
+	taskFindings := make([][]types.Finding, len(tasks))
 
 	sem := make(chan struct{}, b.opts.Concurrency)
 	var wg sync.WaitGroup
@@ -395,7 +401,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 						ErrBuildPanic, task.page.Name, task.locale, task.path, recovered, debug.Stack())
 				}
 			}()
-			target, err := b.renderAndWrite(ctx, outDirResolved, task)
+			target, findings, err := b.renderAndWrite(ctx, outDirResolved, task)
 			if errors.Is(err, ErrUnresolvedToken) {
 				// Skipped rather than failed. Nothing is wrong with the page; it
 				// has a form, and a form needs the server a built site lacks.
@@ -412,6 +418,13 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 				return
 			}
 			written[i] = target
+			urlPath := b.pageOutputPath(task.locale, b.app.DefaultLocale(), task.path)
+			for _, f := range findings {
+				if f.Path == "" {
+					f.Path = urlPath
+				}
+				taskFindings[i] = append(taskFindings[i], f)
+			}
 		}(i, task)
 	}
 	wg.Wait()
@@ -428,6 +441,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 			continue
 		}
 		report.Written = append(report.Written, written[i])
+		report.Findings = append(report.Findings, taskFindings[i]...)
 
 		// A page that declared which query parameters it reads renders
 		// differently for each of them, and a file has no query string: a static
@@ -463,6 +477,21 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	report.Written = append(report.Written, assetWritten...)
 	errs = append(errs, assetErrs...)
 
+	// Last, so the checks see the build as it will be deployed.
+	if finisher, ok := b.app.(BuildFinisher); ok {
+		event := &plugin.BuildFinishedEvent{
+			OutDir: outDirResolved,
+			Files:  b.builtFiles(outDirResolved, tasks, written, docWritten, assetWritten, report.Written),
+		}
+		if err := finisher.BuildFinished(ctx, event); err != nil {
+			errs = append(errs, err)
+		}
+		report.Findings = append(report.Findings, event.Findings...)
+	}
+	if n := countErrors(report.Findings); n > 0 {
+		errs = append(errs, fmt.Errorf("%w: %d", ErrFindings, n))
+	}
+
 	report.Errors = errs
 	report.Duration = time.Since(start)
 
@@ -470,6 +499,80 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		return report, nil
 	}
 	return report, errors.Join(errs...)
+}
+
+// BuildFinisher is implemented by a Renderer whose plugins check a finished build.
+// The application is one; a Renderer without plugins need not be.
+type BuildFinisher interface {
+	BuildFinished(ctx context.Context, ev *plugin.BuildFinishedEvent) error
+}
+
+// ErrFindings is in a build's errors when a plugin reported an error-level
+// finding. The pages were written; the findings are in Report.Findings.
+var ErrFindings = errors.New("collage: checks reported errors")
+
+func countErrors(findings []types.Finding) int {
+	n := 0
+	for _, f := range findings {
+		if f.Level == types.FindingError {
+			n++
+		}
+	}
+	return n
+}
+
+// builtFiles describes every file the build wrote, for BuildFinishedHook.
+func (b *Builder) builtFiles(outDir string, tasks []buildTask, pages, documents, assets, all []string) []plugin.BuiltFile {
+	kind := make(map[string]string, len(all))
+	for _, f := range documents {
+		kind[f] = "document"
+	}
+	for _, f := range assets {
+		kind[f] = "asset"
+	}
+	files := make([]plugin.BuiltFile, 0, len(all))
+	seen := make(map[string]bool, len(all))
+	for i, task := range tasks {
+		if pages[i] == "" {
+			continue
+		}
+		seen[pages[i]] = true
+		files = append(files, plugin.BuiltFile{
+			Kind:   "page",
+			Name:   task.page.Name,
+			Locale: task.locale,
+			Path:   b.pageOutputPath(task.locale, b.app.DefaultLocale(), task.path),
+			File:   pages[i],
+		})
+	}
+	for _, f := range all {
+		if seen[f] {
+			continue
+		}
+		k := kind[f]
+		if k == "" {
+			k = "page" // the root redirect, a not-found page
+		}
+		files = append(files, plugin.BuiltFile{Kind: k, Path: urlPathOf(outDir, f), File: f})
+	}
+	return files
+}
+
+// urlPathOf is the URL a static host answers file at: its path under outDir, with
+// index.html standing for its directory.
+func urlPathOf(outDir, file string) string {
+	rel, err := filepath.Rel(outDir, file)
+	if err != nil {
+		return ""
+	}
+	u := "/" + filepath.ToSlash(rel)
+	if dir, ok := strings.CutSuffix(u, "/index.html"); ok {
+		if dir == "" {
+			return "/"
+		}
+		return dir + "/"
+	}
+	return u
 }
 
 // checkNoOutputCollisions reports the first pair of tasks that would write to one
@@ -724,29 +827,30 @@ func isDynamicPattern(pattern string) bool {
 // renderAndWrite renders one task through the application and writes the result
 // under outDirResolved, which must already be an absolute, symlink-resolved
 // directory (see prepareOutDir). It returns the absolute path written.
-func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, task buildTask) (string, error) {
+func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, task buildTask) (string, []types.Finding, error) {
 	target, err := resolveTarget(outDirResolved, b.pageOutputPath(task.locale, b.app.DefaultLocale(), task.path))
 	if err != nil {
-		return "", fmt.Errorf("collage: page %q locale %q: %w", task.page.Name, task.locale, err)
+		return "", nil, fmt.Errorf("collage: page %q locale %q: %w", task.page.Name, task.locale, err)
 	}
 
 	result, err := b.app.RenderPath(ctx, task.path, task.locale, task.params)
 	if err != nil {
-		return "", fmt.Errorf("collage: render page %q locale %q path %q: %w", task.page.Name, task.locale, task.path, err)
+		return "", nil, fmt.Errorf("collage: render page %q locale %q path %q: %w", task.page.Name, task.locale, task.path, err)
 	}
+	findings := result.Findings
 
 	// A render can succeed and still be unfit to write. Both checks run before the
 	// filesystem is touched at all, so a refused page leaves no file behind — not
 	// even an empty one, which is what a caller running with Options.Clean would
 	// otherwise be left serving.
 	if result.Degraded() && !b.opts.AllowDegraded {
-		return "", fmt.Errorf("%w: page %q locale %q path %q: %s", ErrDegradedRender, task.page.Name, task.locale, task.path, degradedSummary(result))
+		return "", nil, fmt.Errorf("%w: page %q locale %q path %q: %s", ErrDegradedRender, task.page.Name, task.locale, task.path, degradedSummary(result))
 	}
 	if len(result.HTML) == 0 {
-		return "", fmt.Errorf("%w: page %q locale %q path %q", ErrEmptyRender, task.page.Name, task.locale, task.path)
+		return "", nil, fmt.Errorf("%w: page %q locale %q path %q", ErrEmptyRender, task.page.Name, task.locale, task.path)
 	}
 	if marker := b.app.CSRFMarker(); marker != "" && bytes.Contains(result.HTML, []byte(marker)) {
-		return "", fmt.Errorf("%w: page %q locale %q path %q", ErrUnresolvedToken, task.page.Name, task.locale, task.path)
+		return "", nil, fmt.Errorf("%w: page %q locale %q path %q", ErrUnresolvedToken, task.page.Name, task.locale, task.path)
 	}
 
 	// resolveTarget's containment check is purely lexical: it proves the *string*
@@ -757,16 +861,16 @@ func (b *Builder) renderAndWrite(ctx context.Context, outDirResolved string, tas
 	// when it walks existing parent directories, so checking afterwards is too
 	// late to catch what it would already have walked through.
 	if err := verifyNoSymlinksBeneath(outDirResolved, target); err != nil {
-		return "", fmt.Errorf("collage: page %q locale %q: %w", task.page.Name, task.locale, err)
+		return "", nil, fmt.Errorf("collage: page %q locale %q: %w", task.page.Name, task.locale, err)
 	}
 
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-		return "", fmt.Errorf("collage: create directory for %q: %w", target, err)
+		return "", nil, fmt.Errorf("collage: create directory for %q: %w", target, err)
 	}
 	if err := os.WriteFile(target, result.HTML, 0o644); err != nil {
-		return "", fmt.Errorf("collage: write %q: %w", target, err)
+		return "", nil, fmt.Errorf("collage: write %q: %w", target, err)
 	}
-	return target, nil
+	return target, findings, nil
 }
 
 // degradedSummary names the fragments whose failure made result degraded, and the

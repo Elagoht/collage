@@ -138,6 +138,37 @@ type Host interface {
 	// owns. A fragment the page did not open is ErrUnknownFragmentPath: nothing is
 	// reachable here that is not reachable over HTTP.
 	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
+	// Use adds middleware around the handling of every request, as the
+	// application's own Use does, after the application's: a plugin's headers,
+	// limits and cookies wrap what the application's middleware produced.
+	Use(middleware func(http.Handler) http.Handler) error
+	// URL returns the path of the page or document registered as name, in
+	// locale, with params filling its pattern — App.URL, with its strictness.
+	URL(name, locale string, params map[string]string) (string, error)
+	// FragmentURL returns the path page opened for its fragment with
+	// WithFragmentPath — App.FragmentURL.
+	FragmentURL(page, fragment, locale string, params map[string]string) (string, error)
+	// Locales returns the default locale and every supported one, the default
+	// included, in the order they were configured.
+	Locales() (defaultLocale string, supported []string)
+	// PageURLs returns every URL the page registered as name answers — one per
+	// locale for a fixed path, one per locale and parameter set for a pattern its
+	// WithStaticParams lists; a pattern without it has none a plugin could know.
+	// It is what a sitemap is made of.
+	PageURLs(ctx context.Context, name string) ([]PageURL, error)
+}
+
+// PageURL is one URL a page answers.
+type PageURL struct {
+	// Locale is the locale the URL is in.
+	Locale string
+	// Path is the URL's path, locale prefix and trailing slash as the
+	// application spells them.
+	Path string
+	// Params are the values that filled the page's pattern; nil for a fixed
+	// path. Two URLs of one page with equal Params are the same page in two
+	// locales.
+	Params map[string]string
 }
 
 // FragmentRequest names a fragment a page opened at its own URL, and the locale

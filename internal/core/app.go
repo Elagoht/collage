@@ -274,6 +274,9 @@ type App struct {
 	// application always wins a name a plugin also claims: the application is the
 	// party that can see both and decide.
 	pluginFuncs map[string]any // any: html/template.FuncMap's own value type
+	// renderFuncs are the plugins' template functions made anew for each render,
+	// by name; pluginFuncs holds a parse-time stand-in under each name.
+	renderFuncs map[string]func(*types.RenderContext) any // any: html/template.FuncMap's own value type
 	// mountWrappers transform every mounted filesystem, in the order plugins
 	// registered them during Configure.
 	mountWrappers []func(fs.FS) fs.FS
@@ -444,7 +447,8 @@ func New(cfg Config) (*App, error) {
 		devMode:     devMode,
 		logger:      logger,
 		plugins:     plugin.NewRegistry(logger),
-		pluginFuncs: make(map[string]any), // any: html/template.FuncMap's own value type
+		pluginFuncs: make(map[string]any),                            // any: html/template.FuncMap's own value type
+		renderFuncs: make(map[string]func(*types.RenderContext) any), // any: html/template.FuncMap's own value type
 	}
 
 	for _, p := range cfg.Plugins {
@@ -543,6 +547,7 @@ func New(cfg Config) (*App, error) {
 		CSRFField:     cfg.Security.CSRFFieldName,
 		URL:           app.URL,
 		FragmentURL:   app.FragmentURL,
+		RenderFuncs:   app.renderFuncs,
 		DefaultLocale: cfg.Locale.Default,
 		DataCache:     app.dataCacheFor(),
 	})
@@ -1159,7 +1164,71 @@ func (a *App) renderResolved(
 	// What the hooks produced is what the caller gets, exactly as on the serving
 	// path — otherwise the dispatch would be observation dressed as transformation.
 	result.HTML = event.HTML
+	result.Findings = event.Findings
 	return result, nil
+}
+
+// Locales returns the default locale and every supported one, the default
+// included, in the order they were configured.
+func (a *App) Locales() (string, []string) {
+	supported := []string{a.cfg.Locale.Default}
+	for _, l := range a.cfg.Locale.Supported {
+		if l != a.cfg.Locale.Default {
+			supported = append(supported, l)
+		}
+	}
+	return a.cfg.Locale.Default, supported
+}
+
+// PageURLs returns every URL the page registered as name answers: one per locale
+// for a fixed path, one per locale and parameter set for a pattern whose
+// WithStaticParams lists them. A pattern without WithStaticParams answers URLs
+// nobody can enumerate, and contributes none. It is what a sitemap is made of,
+// and it builds each URL as App.URL does, prefix and trailing slash included.
+func (a *App) PageURLs(ctx context.Context, name string) (urls []plugin.PageURL, err error) {
+	a.mu.RLock()
+	page := a.pages[name]
+	a.mu.RUnlock()
+	if page == nil {
+		return nil, fmt.Errorf("%w: %q", types.ErrUnknownRoute, name)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil { // any: a recovered panic value is any by the language definition
+			err = fmt.Errorf("collage: static params for page %q panicked: %v", name, recovered)
+		}
+	}()
+	for _, locale := range page.Locales() {
+		pattern, _ := page.PathFor(locale)
+		if !strings.Contains(pattern, "{") {
+			path, err := a.URL(name, locale, nil)
+			if err != nil {
+				return nil, err
+			}
+			urls = append(urls, plugin.PageURL{Locale: locale, Path: path})
+			continue
+		}
+		if page.StaticParams == nil {
+			continue
+		}
+		sets, err := page.StaticParams(ctx, locale)
+		if err != nil {
+			return nil, fmt.Errorf("collage: static params for page %q locale %q: %w", name, locale, err)
+		}
+		for _, params := range sets {
+			path, err := a.URL(name, locale, params)
+			if err != nil {
+				return nil, err
+			}
+			urls = append(urls, plugin.PageURL{Locale: locale, Path: path, Params: params})
+		}
+	}
+	return urls, nil
+}
+
+// BuildFinished hands a finished static build to the plugins that check one; see
+// plugin.BuildFinishedHook. The builder calls it once every file is written.
+func (a *App) BuildFinished(ctx context.Context, ev *plugin.BuildFinishedEvent) error {
+	return a.plugins.BuildFinished(ctx, ev)
 }
 
 // syntheticRequest builds the GET request RenderPath resolves and renders through.

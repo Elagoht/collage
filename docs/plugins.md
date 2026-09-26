@@ -152,6 +152,11 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
 | `Handle(prefix, http.Handler) error` | Serve a handler under a prefix, as `App.Handle` does — an event stream, a WebSocket |
 | `RenderFragment(r, FragmentRequest) (*FragmentRender, error)` | Render a fragment a page opened with `WithFragmentPath`, in parts — see below |
+| `Use(middleware) error` | Wrap every request, after the application's own middleware |
+| `URL(name, locale, params) (string, error)` | The path of a page or document, as `App.URL` builds it |
+| `FragmentURL(page, fragment, locale, params) (string, error)` | The path of a fragment path, as `App.FragmentURL` builds it |
+| `Locales() (default, supported)` | The default locale and every supported one |
+| `PageURLs(ctx, name) ([]PageURL, error)` | Every URL a page answers, in every locale, a pattern's `WithStaticParams` expanded — a sitemap's contents |
 
 A plugin therefore has no way to reach the router, the cache, the render engine,
 the template set, or any page it was not explicitly handed — it can add routes and
@@ -232,11 +237,12 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | --- | --- | --- | --- |
 | `PageResolvedHook` | `OnPageResolved` | After routing, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch four hooks, not seven" below) | nothing |
 | `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** — including an error page, and a page an action answers with | nothing |
-| `AfterRenderHook` | `OnAfterRender` | After a successful render. **Pages only**, on the same terms | `ev.HTML` |
+| `AfterRenderHook` | `OnAfterRender` | After a successful render. **Pages only**, on the same terms | `ev.HTML`; reports with `ev.Warn`, `ev.Error` |
 | `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
 | `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored — for a page or a document alike | `ev.Skip`, `ev.TTL`, `ev.Tags` |
 | `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike | nothing |
 | `ErrorHook` | `OnError` | On any failure while serving a request — a page, a document, or a mounted asset alike | nothing |
+| `BuildFinishedHook` | `OnBuildFinished` | Once, when a static build has written every file | reports with `ev.Warn`, `ev.Error` |
 
 Two consequences of where `OnAfterRender` sits are worth stating plainly:
 
@@ -249,6 +255,40 @@ Two consequences of where `OnAfterRender` sits are worth stating plainly:
   `404.html` an export writes. So does a page an action answers with — a form
   re-rendered with its validation errors is a page. Neither runs `OnPageResolved`:
   nothing was resolved to them.
+
+### Checking the output: findings
+
+A plugin that checks what a page renders — a heading level skipped, an image
+without `alt`, a form field without a label — reports what it finds rather than
+failing the render:
+
+```go
+func (p *Plugin) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) error {
+	if !bytes.Contains(ev.HTML, []byte("<h1")) {
+		ev.Error("one-h1", "the page has no <h1>")
+	}
+	return nil
+}
+```
+
+A finding (`collage.Finding`) has a level, the rule that found it, a message, the
+plugin — filled in by the framework — and the page's path. Where it goes depends
+on where the page was rendered:
+
+- **In development** it is shown over the page, in the panel a failed fragment
+  uses, and the page is served as it is.
+- **In a static build** it is listed in the report under the page it is about. An
+  error-level finding fails the build with `collage.ErrBuildFindings`; the pages are
+  written either way.
+- **In production** nothing is done with it. A check re-run on every render would
+  spend a server's time on what the build already knew; a checking plugin should
+  turn itself off there.
+
+What no single render can tell — two pages with one title, a link to a page the
+build did not write — is checked in `OnBuildFinished`, which runs once every file
+is written. `ev.Files` lists each file with its kind (`page`, `document`, `asset`),
+the URL path it answers and its place on disk; `ev.Warn(path, rule, message)` and
+`ev.Error` report against a page.
 
 ### Documents dispatch four hooks, not seven
 
@@ -409,12 +449,25 @@ app, err := collage.New(&collage.Config{
 | | `ConfigHost` (Configure) | `Host` (Init) |
 |---|---|---|
 | `DevMode`, `Logger`, `Config` | yes | yes |
-| `AddTemplateFunc` | yes | — |
+| `AddTemplateFunc`, `AddRenderFunc` | yes | — |
 | `WrapMount` | yes | — |
 | `Pages`, `Page`, `InvalidateTags` | — | yes |
-| `RegisterPage`, `RegisterDocument`, `Mount`, `Handle` | — | yes |
+| `URL`, `FragmentURL`, `Locales`, `PageURLs` | — | yes |
+| `RegisterPage`, `RegisterDocument`, `Mount`, `Handle`, `Use` | — | yes |
 | `RenderFragment` | — | yes |
 | `RegisterCommand` | — | yes |
+
+`AddTemplateFunc`'s function is one value for the life of the application.
+`AddRenderFunc` takes a factory instead, called for each render with its
+`*RenderContext`, so the function it returns can read what that render holds — a
+nonce a `BeforeRender` hook set, the render's locale:
+
+```go
+host.AddRenderFunc("nonce", func(rc *collage.RenderContext) any {
+	nonce, _ := collage.Get[string](rc, "csp:nonce")
+	return func() string { return nonce }
+})
+```
 
 `WrapMount` wraps the mounted filesystem rather than transforming a response,
 because a mount serves through `http.ServeContent` and therefore supports `Range`.

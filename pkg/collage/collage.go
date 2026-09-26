@@ -64,6 +64,34 @@ type FragmentRender = plugin.FragmentRender
 // HoistItem is one hoisted declaration: its area, its key and its markup.
 type HoistItem = types.HoistItem
 
+// Finding is something a plugin checking the output noticed about a page: shown
+// over the page in development, listed in a build's report, and — at
+// FindingError — failing the build. See AfterRenderEvent.Warn and Error.
+type Finding = types.Finding
+
+// FindingLevel is how serious a Finding is.
+type FindingLevel = types.FindingLevel
+
+const (
+	// FindingWarning is worth fixing and stops nothing.
+	FindingWarning = types.FindingWarning
+	// FindingError fails a static build.
+	FindingError = types.FindingError
+)
+
+// BuildFinishedHook is implemented by a plugin that checks a finished static build
+// as a whole: two pages with one title, a link to a page nobody wrote.
+type BuildFinishedHook = plugin.BuildFinishedHook
+
+// BuildFinishedEvent describes a finished static build: every file it wrote.
+type BuildFinishedEvent = plugin.BuildFinishedEvent
+
+// BuiltFile is one file a static build wrote.
+type BuiltFile = plugin.BuiltFile
+
+// PageURL is one URL a page answers, as Host.PageURLs lists them.
+type PageURL = plugin.PageURL
+
 // Command is a CLI subcommand a plugin contributes through Host.RegisterCommand.
 type Command = plugin.Command
 

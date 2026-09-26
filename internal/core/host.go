@@ -9,6 +9,7 @@ import (
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/plugin"
+	"github.com/Elagoht/collage/internal/template"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -109,6 +110,31 @@ func (h *hostView) RenderFragment(r *http.Request, req plugin.FragmentRequest) (
 	return h.app.RenderFragment(r, req)
 }
 
+// Use adds middleware after the application's own.
+func (h *hostView) Use(middleware func(http.Handler) http.Handler) error {
+	return h.app.Use(middleware)
+}
+
+// URL builds the path of a page or document by name.
+func (h *hostView) URL(name, locale string, params map[string]string) (string, error) {
+	return h.app.URL(name, locale, params)
+}
+
+// FragmentURL builds the path of a page's fragment path by name.
+func (h *hostView) FragmentURL(page, fragment, locale string, params map[string]string) (string, error) {
+	return h.app.FragmentURL(page, fragment, locale, params)
+}
+
+// Locales returns the default locale and every supported one.
+func (h *hostView) Locales() (string, []string) {
+	return h.app.Locales()
+}
+
+// PageURLs returns every URL a page answers.
+func (h *hostView) PageURLs(ctx context.Context, name string) ([]plugin.PageURL, error) {
+	return h.app.PageURLs(ctx, name)
+}
+
 // configHostView is the plugin.ConfigHost a plugin receives in Configure.
 //
 // It is a separate type from hostView rather than a subset of it because the two
@@ -142,6 +168,26 @@ func (h *configHostView) AddTemplateFunc(name string, fn any) error { // any: re
 		return fmt.Errorf("%w: %q", plugin.ErrDuplicateTemplateFunc, name)
 	}
 	h.app.pluginFuncs[name] = fn
+	return nil
+}
+
+// AddRenderFunc registers a template function made anew for each render.
+func (h *configHostView) AddRenderFunc(name string, factory func(rc *types.RenderContext) any) error { // any: html/template.FuncMap's own value type
+	if factory == nil {
+		return fmt.Errorf("collage: nil render function factory for %q", name)
+	}
+	if _, taken := h.app.pluginFuncs[name]; taken {
+		return fmt.Errorf("%w: %q", plugin.ErrDuplicateTemplateFunc, name)
+	}
+	if _, reserved := template.DefaultFuncs()[name]; reserved {
+		return fmt.Errorf("%w: %q is the framework's own", plugin.ErrDuplicateTemplateFunc, name)
+	}
+	// A stand-in for parsing, which needs every name the templates call; the
+	// render engine binds factory's function in its place on every render.
+	h.app.pluginFuncs[name] = func(...any) (any, error) { // any: a stand-in whose arguments and result are the factory's to decide
+		return nil, fmt.Errorf("collage: %q called outside a render", name)
+	}
+	h.app.renderFuncs[name] = factory
 	return nil
 }
 

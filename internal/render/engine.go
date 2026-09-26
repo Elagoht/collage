@@ -64,6 +64,9 @@ type Result struct {
 	// the error before consulting this field. A non-required fragment's
 	// ErrNotFound follows the ordinary optional-failure policy and never sets it.
 	NotFound bool
+	// Findings are what plugins checking the output reported about this render,
+	// filled in by the caller that ran the AfterRender hooks.
+	Findings []types.Finding
 }
 
 // Degraded reports whether any fragment in the render failed, whether or not a
@@ -152,6 +155,9 @@ type Options struct {
 	// locale, and is what backs {{fragmentURL}} and {{fragmentURLIn}}. Nil leaves
 	// those functions reporting that no routes are known.
 	FragmentURL func(page, fragment, locale string, params map[string]string) (string, error)
+	// RenderFuncs are template functions made anew for each render: each factory
+	// is called with the render's context and its result bound under the name.
+	RenderFuncs map[string]func(*types.RenderContext) any // any: html/template.FuncMap's own value type
 	// DefaultLocale is the locale {{pageURL}} falls back to for a route with no
 	// path in the render's own.
 	DefaultLocale string
@@ -175,6 +181,7 @@ type SlotEngine struct {
 	csrfField      string
 	url            func(name, locale string, params map[string]string) (string, error)
 	fragmentURL    func(page, fragment, locale string, params map[string]string) (string, error)
+	renderFuncs    map[string]func(*types.RenderContext) any // any: html/template.FuncMap's own value type
 	defaultLocale  string
 	dataCache      types.DataCache
 }
@@ -202,6 +209,7 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 		csrfField:      opts.CSRFField,
 		url:            opts.URL,
 		fragmentURL:    opts.FragmentURL,
+		renderFuncs:    opts.RenderFuncs,
 		defaultLocale:  opts.DefaultLocale,
 		dataCache:      opts.DataCache,
 	}

@@ -40,6 +40,7 @@ func PrintBuildReport(w io.Writer, report *BuildReport, buildErr error) {
 	printWritten(w, s, report.Written)
 	printSkipped(w, s, report.Skipped)
 	printWarnings(w, s, report.Warnings)
+	printFindings(w, s, report.Findings)
 	printErrors(w, s, report.Errors, buildErr)
 	printSummary(w, s, report)
 }
@@ -96,6 +97,38 @@ func printWarnings(w io.Writer, s term.Style, warnings []WarningRecord) {
 	}
 }
 
+// printFindings lists what the checks found, grouped by page, errors first within
+// each. Never truncated: a finding is only worth reporting if it is read.
+func printFindings(w io.Writer, s term.Style, findings []Finding) {
+	if len(findings) == 0 {
+		return
+	}
+	sorted := append([]Finding(nil), findings...)
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Path != sorted[j].Path {
+			return sorted[i].Path < sorted[j].Path
+		}
+		return sorted[i].Level > sorted[j].Level
+	})
+	fmt.Fprintf(w, "\n%s %s\n", s.Warn(s.Mark("◆", "*")), s.Bold(plural(len(findings), "finding", "findings")))
+	path := "\x00"
+	for _, f := range sorted {
+		if f.Path != path {
+			path = f.Path
+			label := path
+			if label == "" {
+				label = "(the build)"
+			}
+			fmt.Fprintf(w, "  %s\n", s.Bold(label))
+		}
+		level := s.Warn(f.Level.String())
+		if f.Level == FindingError {
+			level = s.Fail(f.Level.String())
+		}
+		fmt.Fprintf(w, "    %s %s  %s %s\n", level, f.Rule, f.Message, s.Dim(f.Plugin))
+	}
+}
+
 func printErrors(w io.Writer, s term.Style, errs []error, buildErr error) {
 	// buildErr is errors.Join of exactly report.Errors, so the list is what to
 	// print — unless a build failed before it could record any, which is the one
@@ -123,6 +156,9 @@ func printSummary(w io.Writer, s term.Style, report *BuildReport) {
 	if len(report.Warnings) > 0 {
 		parts = append(parts, plural(len(report.Warnings), "warning", "warnings"))
 	}
+	if len(report.Findings) > 0 {
+		parts = append(parts, plural(len(report.Findings), "finding", "findings"))
+	}
 	parts = append(parts, round(report.Duration))
 	line := strings.Join(parts, " · ")
 
@@ -131,7 +167,7 @@ func printSummary(w io.Writer, s term.Style, report *BuildReport) {
 	switch {
 	case len(report.Errors) > 0:
 		line = s.Fail(line)
-	case len(report.Skipped) > 0 || len(report.Warnings) > 0:
+	case len(report.Skipped) > 0 || len(report.Warnings) > 0 || len(report.Findings) > 0:
 		line = s.Warn(line)
 	default:
 		line = s.OK(line)

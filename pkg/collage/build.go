@@ -24,6 +24,10 @@ type SkipRecord = build.SkipRecord
 // of: one whose content depends on a query string. See BuildReport.Warnings.
 type WarningRecord = build.WarningRecord
 
+// ErrBuildFindings is in a build's errors when a plugin reported an error-level
+// finding. The pages were written; what was found is in BuildReport.Findings.
+var ErrBuildFindings = build.ErrFindings
+
 // ErrOutputPathCollision is returned by Build when two pages would be written to
 // the same file — two patterns differing only in a trailing slash, or
 // StaticParams listing one set of values twice. It is reported before anything renders, so

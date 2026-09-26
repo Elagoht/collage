@@ -324,7 +324,7 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 	// one each time rather than sharing a single result. Two bindings of one
 	// fragment are two fragments as far as a render is concerned.
 	taken := make(map[*types.Fragment]int)
-	return htmltemplate.FuncMap{
+	funcs := htmltemplate.FuncMap{
 		"slot": func(name string) (htmltemplate.HTML, error) {
 			return e.renderSlot(rc, f, name, state, started, taken, fills)
 		},
@@ -341,6 +341,14 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 		"fragmentURL":   e.fragmentURLFunc(rc),
 		"fragmentURLIn": e.fragmentURLInFunc(),
 	}
+	// A plugin's render functions last, bound to this render; the framework's own
+	// names are not theirs to take, and registration refuses a clash.
+	for name, factory := range e.renderFuncs {
+		if _, own := funcs[name]; !own {
+			funcs[name] = factory(rc)
+		}
+	}
+	return funcs
 }
 
 // renderSlot renders every fragment bound to f's slot named name, in binding order,
