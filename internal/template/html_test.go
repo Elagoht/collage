@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"fmt"
 	"html/template"
 	"os"
 	"path/filepath"
@@ -462,5 +463,69 @@ func TestAddSource_RefusesDefine(t *testing.T) {
 	}
 	if got := renderString(t, e, "partials/name.html", "Ada"); got != "<b>Ada</b>" {
 		t.Fatalf("partial after refused define = %q, want it untouched", got)
+	}
+}
+
+// A Reload that snapshotted the sources before an AddSource and swapped its set
+// in after it must not drop the new source: dev mode reloads on every render, and
+// a resolver adds inline sources while other requests render.
+func TestAddSource_NotLostToAConcurrentReload(t *testing.T) {
+	e := inlineEngine(t, false)
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+					if err := e.Reload(); err != nil {
+						t.Errorf("Reload: %v", err)
+						return
+					}
+				}
+			}
+		}()
+	}
+	lost := 0
+	for i := 0; i < 300; i++ {
+		name := fmt.Sprintf("inline:row#%d", i)
+		if err := e.AddSource(name, `<tr/>`); err != nil {
+			t.Fatalf("AddSource: %v", err)
+		}
+		if !e.Lookup(name) {
+			lost++
+		}
+	}
+	close(stop)
+	wg.Wait()
+	if lost > 0 {
+		t.Fatalf("%d of 300 sources were missing right after AddSource", lost)
+	}
+}
+
+// Adding a source whose name is kept but absent from the live set re-adds it.
+func TestAddSource_ReAddsWhenTheLiveSetLacksIt(t *testing.T) {
+	e := inlineEngine(t, false)
+	if err := e.AddSource("inline:row#1", `<tr/>`); err != nil {
+		t.Fatalf("AddSource: %v", err)
+	}
+	// Simulate a stale swap: a set without the source goes live.
+	e.mu.Lock()
+	stale, err := NewHTML(HTMLConfig{FS: fstest.MapFS{"partials/name.html": {Data: []byte(`<b>{{.}}</b>`)}}, Extension: ".html"})
+	if err != nil {
+		e.mu.Unlock()
+		t.Fatalf("NewHTML: %v", err)
+	}
+	e.tmpl = stale.tmpl
+	e.mu.Unlock()
+	if err := e.AddSource("inline:row#1", `<tr/>`); err != nil {
+		t.Fatalf("AddSource again: %v", err)
+	}
+	if !e.Lookup("inline:row#1") {
+		t.Fatal("AddSource of a kept source missing from the live set left it missing")
 	}
 }

@@ -205,9 +205,19 @@ func (e *HTMLEngine) Reload() error {
 	}
 
 	e.mu.Lock()
+	defer e.mu.Unlock()
+	// A source AddSource kept after the snapshot above is not in set yet; without
+	// this pass the swap would drop it from the live set while it stays kept.
+	for name, src := range e.sources {
+		if _, seen := sources[name]; seen {
+			continue
+		}
+		if err := addSource(set, name, src); err != nil {
+			return err
+		}
+	}
 	e.tmpl = set
 	e.names = names
-	e.mu.Unlock()
 	return nil
 }
 
@@ -218,10 +228,14 @@ func (e *HTMLEngine) AddSource(name, src string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if existing, ok := e.sources[name]; ok {
-		if existing == src {
+		if existing != src {
+			return fmt.Errorf("%w: %s already holds another template", ErrSourceConflict, name)
+		}
+		// Kept and live: nothing to do. Kept but missing from the live set — a
+		// set swapped in without it — is put back rather than reported added.
+		if e.tmpl.Lookup(name) != nil {
 			return nil
 		}
-		return fmt.Errorf("%w: %s already holds another template", ErrSourceConflict, name)
 	}
 	next, err := e.tmpl.Clone()
 	if err != nil {
