@@ -48,11 +48,14 @@ var ErrUnsafeRedirectTarget = errors.New("collage: unsafe redirect target")
 // redirect, or no match, always alongside the resolved locale.
 type MatchResult struct {
 	// Page is the matched page. It is nil when RedirectTo is set or IsNotFound is
-	// true.
+	// true. It is also set — alongside Action — when the action is one of a
+	// page's own, registered on the page's URL: the page is what a guard
+	// applies to, so it travels with the action the handler never reads.
 	Page *types.Page
 	// Document is the matched document. It is nil when a page matched, when
 	// RedirectTo is set, or when IsNotFound is true. Exactly one of Page,
-	// Document and Action is non-nil on a successful match.
+	// Document and Action carries the answer's kind on a successful match;
+	// Page may accompany Action, never Document.
 	Document *types.Document
 	// Action is the matched action: the route that answers this request's method.
 	// It is nil when a page or a document answered instead.

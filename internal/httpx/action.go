@@ -56,6 +56,18 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 			fmt.Errorf("%w: %q", ErrNoActionHandler, action.Name)))
 	}
 
+	// The page's guards, not the action's own: an action has no spine to
+	// guard, but one on a page's URL is reached through that page, and a page
+	// a reader may not see is a page whose form the reader may not submit.
+	// Before the body limit and the CSRF check — a guard that answers never
+	// reads the body, and a logged-out forged POST is better spent against the
+	// guard than the forgery check.
+	if page := match.Page; page != nil {
+		if status, allowed := h.checkGuards(w, r, route, match.Locale, page.Guards()); !allowed {
+			return status
+		}
+	}
+
 	// Bounded before the handler sees it, not by the handler. A limit every
 	// handler has to remember is a limit the one handler that forgot does not
 	// have, and that handler is the one an anonymous caller will find.

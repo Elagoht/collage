@@ -142,7 +142,25 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 				Name:    page.Name + ":" + fragment.Name,
 				Paths:   map[string]string{locale: pattern},
 				Methods: []string{"GET"},
-				Handler: func(_ context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
+				Handler: func(ctx context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
+					// A fragment path is its own route; its fragment's guard
+					// is its whole policy, and nothing flows down from the
+					// page that declared it. The decision is validated before
+					// it becomes a result: a redirect with no Location would
+					// fall through the result's own switch — Location, then
+					// Fragment — and render the fragment the guard refused.
+					if target.Guard != nil {
+						decision, err := target.Guard(ctx, rc.Request)
+						if err != nil {
+							return nil, fmt.Errorf("collage: fragment %q: %w", target.Name, err)
+						}
+						if decision != nil {
+							if err := decision.Validate(); err != nil {
+								return nil, fmt.Errorf("collage: fragment %q: %w", target.Name, err)
+							}
+							return &types.ActionResult{Status: decision.Status, Location: decision.Location}, nil
+						}
+					}
 					return &types.ActionResult{Fragment: target}, nil
 				},
 			}

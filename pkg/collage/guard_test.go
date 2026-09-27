@@ -295,3 +295,120 @@ func TestGuardSeesLocalePrefixedPath(t *testing.T) {
 		t.Fatalf("guard saw %q, want /tr/x", seen)
 	}
 }
+
+func post(h http.Handler, target, header string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, target, nil)
+	if header != "" {
+		req.Header.Set("X-Logged-In", header)
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+// A form posts to the page it sits on; a page a reader may not see is a page
+// whose form the reader may not submit.
+func TestGuardCoversPageAttachedAction(t *testing.T) {
+	app, _ := guardedApp(t, nil, false)
+	page := collage.NewPage("save").
+		WithLayouts(collage.NewFragment("private", "layouts/private.html").
+			WithGuard(func(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
+				if r.Header.Get("X-Logged-In") != "" {
+					return nil, nil
+				}
+				return &collage.GuardDecision{Status: http.StatusSeeOther, Location: "/login"}, nil
+			}).Build()).
+		WithContent(collage.NewFragment("c", "layouts/private.html").Build()).
+		WithPath("en", "/save").
+		WithActionFor(collage.NewAction("save").
+			WithMethods(http.MethodPost).
+			WithoutCSRF().
+			WithHandler(func(ctx context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+				return &collage.ActionResult{Status: http.StatusOK}, nil
+			}).Build()).
+		Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if w := post(app.Handler(), "/save", ""); w.Code != http.StatusSeeOther {
+		t.Fatalf("logged-out POST: status = %d, want 303", w.Code)
+	}
+	if w := post(app.Handler(), "/save", "1"); w.Code != http.StatusOK {
+		t.Fatalf("logged-in POST: status = %d, want 200", w.Code)
+	}
+}
+
+// A standalone action has no page, so no spine: guarding it is not something
+// the framework invents for it.
+func TestGuardSkipsStandaloneAction(t *testing.T) {
+	app, _ := guardedApp(t, nil, false)
+	action := collage.NewAction("webhook").
+		WithPath("en", "/hook").
+		WithMethods(http.MethodPost).
+		WithoutCSRF().
+		WithHandler(func(ctx context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+			return &collage.ActionResult{Status: http.StatusTeapot}, nil
+		}).
+		Build()
+	if err := app.RegisterAction(action); err != nil {
+		t.Fatalf("RegisterAction: %v", err)
+	}
+	if w := post(app.Handler(), "/hook", ""); w.Code != http.StatusTeapot {
+		t.Fatalf("status = %d, want 418 (no guard to run)", w.Code)
+	}
+}
+
+// A fragment path is its own route: its fragment's guard is its whole policy,
+// and nothing flows down from the page that declared it.
+func TestFragmentPathOwnGuard(t *testing.T) {
+	app, _ := guardedApp(t, nil, false)
+	frag := collage.NewFragment("results", "layouts/private.html").
+		WithGuard(func(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
+			if r.Header.Get("X-Logged-In") != "" {
+				return nil, nil
+			}
+			return &collage.GuardDecision{Status: http.StatusUnauthorized}, nil
+		}).
+		Build()
+	page := collage.NewPage("search").
+		WithLayouts(collage.NewFragment("private", "layouts/private.html").
+			WithGuard(func(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
+				t.Fatal("the declaring page's guard ran for a fragment path")
+				return nil, nil
+			}).Build()).
+		WithContent(collage.NewFragment("c", "layouts/private.html").Build()).
+		WithPath("en", "/search").
+		WithFragmentPath("en", "/search/results", frag).
+		Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if w := get(app.Handler(), "/search/results", ""); w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", w.Code)
+	}
+	if w := get(app.Handler(), "/search/results", "1"); w.Code != http.StatusOK {
+		t.Fatalf("allowed: status = %d, want 200", w.Code)
+	}
+}
+
+// The leak pin: a redirect decision with no Location must fail the request,
+// never fall through to rendering the fragment.
+func TestFragmentPathMalformedDecisionFails(t *testing.T) {
+	app, _ := guardedApp(t, nil, false)
+	frag := collage.NewFragment("results", "layouts/private.html").
+		WithGuard(func(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
+			return &collage.GuardDecision{Status: http.StatusSeeOther}, nil // no Location
+		}).
+		Build()
+	page := collage.NewPage("search").
+		WithContent(collage.NewFragment("c", "layouts/private.html").Build()).
+		WithPath("en", "/search").
+		WithFragmentPath("en", "/search/results", frag).
+		Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if w := get(app.Handler(), "/search/results", "1"); w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500, not the fragment's render", w.Code)
+	}
+}

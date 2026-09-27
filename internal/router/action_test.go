@@ -20,6 +20,41 @@ func testAction(name, pattern string, methods ...string) *types.Action {
 	}
 }
 
+// An action on a page's own URL must carry the page: the page is what a guard
+// applies to, and the handler has no other way to reach it.
+func TestResolveReturnsOwningPageWithAction(t *testing.T) {
+	rt := New(LocaleOptions{Default: "en"})
+	page := &types.Page{
+		Name:            "p",
+		Paths:           map[string]string{"en": "/p"},
+		ContentFragment: &types.Fragment{Name: "c", TemplatePath: "c.html"},
+	}
+	if err := rt.Register(page); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+	if err := rt.RegisterAction(testAction("save", "/p", http.MethodPost)); err != nil {
+		t.Fatalf("RegisterAction: %v", err)
+	}
+	match, err := rt.Match(httptest.NewRequest(http.MethodPost, "/p", nil))
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if match.Action == nil || match.Page != page {
+		t.Fatalf("match = action %v page %v, want the action and its owning page", match.Action, match.Page)
+	}
+	// A standalone action still matches alone: no page, no spine.
+	if err := rt.RegisterAction(testAction("hook", "/hook", http.MethodPost)); err != nil {
+		t.Fatalf("RegisterAction: %v", err)
+	}
+	match, err = rt.Match(httptest.NewRequest(http.MethodPost, "/hook", nil))
+	if err != nil {
+		t.Fatalf("Match: %v", err)
+	}
+	if match.Page != nil {
+		t.Fatalf("standalone match = page %v, want nil", match.Page)
+	}
+}
+
 func TestAction_MatchesItsMethod(t *testing.T) {
 	rt := New(LocaleOptions{Default: "en"})
 	action := testAction("create", "/posts", http.MethodPost)
@@ -93,8 +128,8 @@ func TestAction_SharesAPathWithItsPage(t *testing.T) {
 	if post.Action != action {
 		t.Error("POST did not reach the action")
 	}
-	if post.Page != nil {
-		t.Error("POST reached the page as well; exactly one of them answers a request")
+	if post.Page != page {
+		t.Error("POST did not carry the owning page; a guard has no other way to reach it")
 	}
 
 	allowed, err := rt.Match(httptest.NewRequest(http.MethodOptions, "/posts/new", nil))
