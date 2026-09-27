@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -149,17 +150,12 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 					// it becomes a result: a redirect with no Location would
 					// fall through the result's own switch — Location, then
 					// Fragment — and render the fragment the guard refused.
-					if target.Guard != nil {
-						decision, err := target.Guard(ctx, rc.Request)
-						if err != nil {
-							return nil, fmt.Errorf("collage: fragment %q: %w", target.Name, err)
-						}
-						if decision != nil {
-							if err := decision.Validate(); err != nil {
-								return nil, fmt.Errorf("collage: fragment %q: %w", target.Name, err)
-							}
-							return &types.ActionResult{Status: decision.Status, Location: decision.Location}, nil
-						}
+					decision, err := fragmentGuard(ctx, rc.Request, target)
+					if err != nil {
+						return nil, err
+					}
+					if decision != nil {
+						return &types.ActionResult{Status: decision.Status, Location: decision.Location}, nil
 					}
 					return &types.ActionResult{Fragment: target}, nil
 				},
@@ -179,6 +175,27 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 		}
 	}
 	return nil
+}
+
+// fragmentGuard asks f's own guard about r: the whole policy of a fragment path,
+// over HTTP and through RenderFragment alike. A nil decision allows. A decision
+// comes back validated, so no caller can turn a redirect with nowhere to go into
+// the render the guard refused.
+func fragmentGuard(ctx context.Context, r *http.Request, f *types.Fragment) (*types.GuardDecision, error) {
+	if f.Guard == nil {
+		return nil, nil
+	}
+	decision, err := f.Guard(ctx, r)
+	if err != nil {
+		return nil, fmt.Errorf("collage: fragment %q: %w", f.Name, err)
+	}
+	if decision == nil {
+		return nil, nil
+	}
+	if err := decision.Validate(); err != nil {
+		return nil, fmt.Errorf("collage: fragment %q: %w", f.Name, err)
+	}
+	return decision, nil
 }
 
 // fragmentPath is what a fragment path's action renders: which fragment of which

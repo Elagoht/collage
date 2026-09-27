@@ -37,6 +37,16 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 	if err != nil {
 		return nil, err
 	}
+	// The fragment's own guard, as a request to its URL would meet it. A refusal
+	// has no response to be written to here, so it comes back as an error the
+	// plugin reads as "send this reader nothing".
+	decision, err := fragmentGuard(r.Context(), r, fragment)
+	if err != nil {
+		return nil, err
+	}
+	if decision != nil {
+		return nil, fmt.Errorf("%w: fragment %q answered %d", types.ErrGuardRefused, fragment.Name, decision.Status)
+	}
 
 	renderer, ok := a.renderer.(render.FragmentResultRenderer)
 	if !ok {

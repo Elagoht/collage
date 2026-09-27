@@ -136,7 +136,9 @@ type Host interface {
 	// WithFragmentPath, for r, as a request to that URL would — and hands back the
 	// parts rather than a response, so it can travel over a stream the plugin
 	// owns. A fragment the page did not open is ErrUnknownFragmentPath: nothing is
-	// reachable here that is not reachable over HTTP.
+	// reachable here that is not reachable over HTTP. The fragment's guard runs
+	// for r as it would for a request to that URL, and a refusal is
+	// ErrGuardRefused: send that reader nothing.
 	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
 	// Use adds middleware around the handling of every request, as the
 	// application's own Use does, after the application's: a plugin's headers,

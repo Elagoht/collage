@@ -2,6 +2,7 @@ package collage_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -424,6 +425,43 @@ func TestGuardedPageIsPrivateToSharedCaches(t *testing.T) {
 		cc := w.Header().Get("Cache-Control")
 		if w.Code != http.StatusOK || !strings.Contains(cc, "private") || strings.Contains(cc, "public") {
 			t.Fatalf("%s: status = %d Cache-Control = %q, want private and not public", attempt, w.Code, cc)
+		}
+	}
+}
+
+// RenderFragment is the render a request to the fragment's URL gets, so a
+// guarded fragment path refuses a plugin's stream for a reader its guard
+// refuses over HTTP — whether the plugin names the fragment by path or by name.
+func TestRenderFragmentRunsTheFragmentsGuard(t *testing.T) {
+	app, _ := guardedApp(t, nil, false)
+	frag := collage.NewFragment("results", "layouts/private.html").
+		WithGuard(func(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
+			if r.Header.Get("X-Logged-In") != "" {
+				return nil, nil
+			}
+			return &collage.GuardDecision{Status: http.StatusUnauthorized}, nil
+		}).
+		Build()
+	page := collage.NewPage("search").
+		WithContent(collage.NewFragment("c", "layouts/private.html").Build()).
+		WithPath("en", "/search").
+		WithFragmentPath("en", "/search/results", frag).
+		Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	for _, req := range []collage.FragmentRequest{
+		{Path: "/search/results"},
+		{Page: "search", Fragment: "results"},
+	} {
+		blocked := httptest.NewRequest(http.MethodGet, "/", nil)
+		if got, err := app.RenderFragment(blocked, req); !errors.Is(err, collage.ErrGuardRefused) {
+			t.Fatalf("RenderFragment(%+v) for a blocked reader = %v, %v; want ErrGuardRefused", req, got, err)
+		}
+		allowed := httptest.NewRequest(http.MethodGet, "/", nil)
+		allowed.Header.Set("X-Logged-In", "1")
+		if _, err := app.RenderFragment(allowed, req); err != nil {
+			t.Fatalf("RenderFragment(%+v) for an allowed reader: %v", req, err)
 		}
 	}
 }

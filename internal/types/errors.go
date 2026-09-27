@@ -148,6 +148,12 @@ var ErrNoActionHandler = errors.New("collage: action has no handler")
 // serving the content the guard was put there to keep from the reader.
 var ErrInvalidGuardDecision = errors.New("collage: invalid guard decision")
 
+// ErrGuardRefused is returned when a render outside a response — a plugin's
+// RenderFragment for a stream — asks for a fragment whose guard refuses the
+// reader. Over HTTP the guard's decision is written as the answer; with no
+// response to write it to, the caller is told to send nothing.
+var ErrGuardRefused = errors.New("collage: the guard refused this reader")
+
 // ErrMissingLayout is recorded when WithLayouts is called with no layouts at
 // all. A page wanting no layout simply does not call it; a call that names
 // none is a chain somebody forgot to finish.

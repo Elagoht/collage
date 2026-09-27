@@ -165,6 +165,10 @@ var ErrNotFound = types.ErrNotFound
 // written as an answer.
 var ErrInvalidGuardDecision = types.ErrInvalidGuardDecision
 
+// ErrGuardRefused is returned by RenderFragment when the fragment's guard
+// refuses the reader: the plugin sends that reader nothing.
+var ErrGuardRefused = types.ErrGuardRefused
+
 // ErrMissingLayout is recorded when WithLayouts is called with no layouts.
 var ErrMissingLayout = types.ErrMissingLayout
 
