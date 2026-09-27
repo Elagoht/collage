@@ -232,3 +232,17 @@ func TestInspect_InlineFragment(t *testing.T) {
 	}
 	t.Fatal("inline fragment not inspected")
 }
+
+const inlineRow collage.InlineHTML = `<p>{{template "partials/name.html" .}}</p>`
+
+func TestInlineFragment_TakesAnInlineHTMLConstant(t *testing.T) {
+	app := inlineApp(t, false)
+	row := collage.NewInlineFragment("row", inlineRow).WithData("Ada").Build()
+	layout := collage.NewFragment("layout", "layouts/default.html").Build()
+	if err := app.RegisterPage(collage.NewPage("home").WithLayouts(layout).WithContent(row).WithPath("en", "/").Build()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if got := inlineBody(t, app.Handler(), "/"); !strings.Contains(got, "<p><b>Ada</b></p>") {
+		t.Fatalf("body = %s", got)
+	}
+}

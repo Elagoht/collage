@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.30.0
+
+### Added
+
+- **`InlineHTML`**: a name for `string` to declare an inline template as a
+  constant of its own (``const form collage.InlineHTML = `…` ``), which editor
+  tooling colours as HTML.
+
 ## v0.29.0
 
 ### Added

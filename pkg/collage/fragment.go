@@ -36,6 +36,16 @@ func NewFragment(name, templatePath string) *FragmentBuilder {
 	}
 }
 
+// InlineHTML is an inline template declared apart from its NewInlineFragment
+// call. It is only a string; the name is for editors, which colour the raw string
+// of a constant declared with it as HTML:
+//
+//	const loginForm collage.InlineHTML = `
+//	  <form method="post">{{csrfToken}}…</form>`
+//
+//	collage.NewInlineFragment("login", loginForm)
+type InlineHTML = string
+
 // NewInlineFragment starts a FragmentBuilder for a fragment named name whose
 // template is html itself rather than a file — for the small parts of a page, a
 // table row or a button, whose markup reads best next to the handler that feeds

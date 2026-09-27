@@ -174,6 +174,18 @@ checks it like one: a parse error or a slot it never calls stops startup, naming
 the page and the fragment. Two fragments may share a name and still carry
 different templates; each renders its own.
 
+A longer template can be a constant of its own, declared as `collage.InlineHTML`
+— a name for `string` that editor tooling colours as HTML:
+
+```go
+const loginForm collage.InlineHTML = `
+  <form method="post">
+    <input type="email" name="email" required>
+  </form>`
+
+content := collage.NewInlineFragment("login", loginForm).Build()
+```
+
 Use it for the parts of a page that are a few lines of markup next to the handler
 that feeds them. Layouts and whole pages read better as files.
 
