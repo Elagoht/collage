@@ -50,7 +50,7 @@ func TestHead_HelpersAndStylesheets(t *testing.T) {
 			return href, nil, err
 		})).
 		Build()
-	page := collage.NewPage("article").WithLayout(layout).WithContent(content).WithPath("en", "/a").Dynamic().Build()
+	page := collage.NewPage("article").WithLayouts(layout).WithContent(content).WithPath("en", "/a").Dynamic().Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}

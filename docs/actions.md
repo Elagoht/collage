@@ -5,7 +5,7 @@ A page answers `GET` and `HEAD`. Everything else — a form post, a `DELETE` fro
 
 ```go
 collage.NewPage("new-post").
-	WithLayout(layout).
+	WithLayouts(layout).
 	WithContent(form).
 	WithPath("en", "/posts/new").
 	WithAction("POST", createPost)

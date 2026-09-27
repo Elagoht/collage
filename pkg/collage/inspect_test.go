@@ -33,7 +33,7 @@ func inspectedApp(t *testing.T) *collage.App {
 		func(context.Context, *collage.RenderContext) (any, []string, error) { return nil, nil, nil }).Build()
 	post := collage.NewFragment("post", "post.html").WithSlotFragment("comments", comments).WithSlot("aside", false, true).Build()
 	layout := collage.NewFragment("layout", "layout.html").Build()
-	if err := app.RegisterPage(collage.NewPage("post").WithLayout(layout).WithContent(post).
+	if err := app.RegisterPage(collage.NewPage("post").WithLayouts(layout).WithContent(post).
 		WithPath("en", "/blog/{slug}").WithPath("tr", "/yazi/{slug}").
 		WithFragmentPath("en", "/blog/{slug}/comments", comments).Build()); err != nil {
 		t.Fatal(err)

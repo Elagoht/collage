@@ -59,7 +59,7 @@ func TestNew_ServesThroughThePublicAPI(t *testing.T) {
 		Build()
 	content := NewFragment("home-content", "pages/home.html").Build()
 	page := NewPage("home").
-		WithLayout(layout).
+		WithLayouts(layout).
 		WithContent(content).
 		WithPath("en", "/").
 		Incremental(5 * time.Minute).
@@ -365,7 +365,7 @@ func TestPlugin_ImplementableFromThePublicPackage(t *testing.T) {
 	}
 
 	page := NewPage("home").
-		WithLayout(NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()).
+		WithLayouts(NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()).
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).
 		WithPath("en", "/").
 		Static().

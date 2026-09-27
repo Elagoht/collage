@@ -4,7 +4,7 @@ A page declares the path that reaches it, per locale:
 
 ```go
 page := collage.NewPage("blog-post").
-	WithLayout(layout).
+	WithLayouts(layout).
 	WithContent(postContent).
 	WithPath("en", "/blog/{slug}").
 	WithPath("tr", "/blog/{slug}").

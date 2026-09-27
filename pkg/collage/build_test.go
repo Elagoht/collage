@@ -27,7 +27,7 @@ func buildTestApp(t *testing.T) *App {
 		Build()
 	content := NewFragment("home-content", "pages/home.html").Build()
 	page := NewPage("home").
-		WithLayout(layout).
+		WithLayouts(layout).
 		WithContent(content).
 		WithPath("en", "/").
 		Static().

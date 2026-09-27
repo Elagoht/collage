@@ -544,7 +544,7 @@ func TestDefaultContentSlot_IsTheSlotRegistrationFills(t *testing.T) {
 	}
 
 	page := NewPage("home").
-		WithLayout(NewFragment("layout", "layouts/default.html").
+		WithLayouts(NewFragment("layout", "layouts/default.html").
 			WithSlot(DefaultContentSlot, true, false).
 			Build()).
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).

@@ -24,7 +24,7 @@ func TestPageBuilder_MinimalApp(t *testing.T) {
 		Build()
 
 	homePage := NewPage("home").
-		WithLayout(layout).
+		WithLayouts(layout).
 		WithContent(homeContent).
 		WithPath("en", "/").
 		Incremental(5 * time.Minute).
@@ -64,7 +64,7 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		Build()
 
 	blog404Page := NewPage("blog-404").
-		WithLayout(layout).
+		WithLayouts(layout).
 		WithContent(blog404Content).
 		Build()
 
@@ -72,7 +72,7 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		Build()
 
 	blog500Page := NewPage("blog-500").
-		WithLayout(layout).
+		WithLayouts(layout).
 		WithContent(blog500Content).
 		Build()
 
@@ -96,7 +96,7 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		Build()
 
 	blogPostPage := NewPage("blog-post").
-		WithLayout(layout).
+		WithLayouts(layout).
 		WithContent(blogPostContent).
 		WithPath("en", "/blog/{slug}").
 		WithPath("tr", "/blog/{slug}").

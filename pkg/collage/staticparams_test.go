@@ -43,7 +43,7 @@ func staticBlog(t *testing.T, posts map[string][]string) (*App, *Page) {
 		})).
 		Build()
 	page := NewPage("post").
-		WithLayout(NewFragment("layout", "layouts/default.html").Build()).
+		WithLayouts(NewFragment("layout", "layouts/default.html").Build()).
 		WithContent(content).
 		WithPath("en", "/blog/{slug}").
 		WithPath("tr", "/yazi/{slug}").

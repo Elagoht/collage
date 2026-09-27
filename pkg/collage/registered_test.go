@@ -36,7 +36,7 @@ func TestAction_AnUnregisteredPageIsNamed(t *testing.T) {
 
 	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
 	build := func() *collage.Page {
-		return collage.NewPage("form").WithLayout(layout).
+		return collage.NewPage("form").WithLayouts(layout).
 			WithContent(collage.NewFragment("form-content", "form.html").Build()).Dynamic().Build()
 	}
 	registered := build()
@@ -142,7 +142,7 @@ func TestDev500_NamesTheBrokenFragment(t *testing.T) {
 		WithDataHandler(collage.DataHandler(func(context.Context, *collage.RenderContext) (struct{ Name string }, []string, error) {
 			return struct{ Name string }{"soup"}, nil, nil
 		})).Required().Build()
-	if err := app.RegisterPage(collage.NewPage("recipe").WithLayout(layout).WithContent(content).WithPath("en", "/").Dynamic().Build()); err != nil {
+	if err := app.RegisterPage(collage.NewPage("recipe").WithLayouts(layout).WithContent(content).WithPath("en", "/").Dynamic().Build()); err != nil {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()

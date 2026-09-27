@@ -245,7 +245,7 @@ registration — you do not bind it yourself:
 
 ```go
 page := collage.NewPage("home").
-	WithLayout(layout).
+	WithLayouts(layout).
 	WithContent(content).
 	WithPath("en", "/").
 	Incremental(time.Minute).

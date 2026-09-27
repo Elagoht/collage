@@ -44,7 +44,7 @@ func langApp(t *testing.T, vary bool, extra func(*collage.App)) *collage.App {
 			return lang, nil, nil
 		})).
 		Build()
-	page := collage.NewPage("home").WithLayout(layout).WithContent(content).WithPath("en", "/").Incremental(time.Minute).Build()
+	page := collage.NewPage("home").WithLayouts(layout).WithContent(content).WithPath("en", "/").Incremental(time.Minute).Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}

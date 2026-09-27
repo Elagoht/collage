@@ -29,7 +29,7 @@ A disabled cache is a nil cache: every request renders and nothing is stored.
 
 ```go
 page := collage.NewPage("blog-post").
-	WithLayout(layout).
+	WithLayouts(layout).
 	WithContent(postContent).
 	WithPath("en", "/blog/{slug}").
 	Incremental(10 * time.Minute).

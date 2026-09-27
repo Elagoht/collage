@@ -40,7 +40,7 @@ func urlApp(t *testing.T) *collage.App {
 	}
 	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
 	page := func(name, template string, paths map[string]string) *collage.Page {
-		builder := collage.NewPage(name).WithLayout(layout).
+		builder := collage.NewPage(name).WithLayouts(layout).
 			WithContent(collage.NewFragment(name+"-content", template).Build()).Dynamic()
 		for locale, path := range paths {
 			builder = builder.WithPath(locale, path)

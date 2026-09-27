@@ -448,7 +448,7 @@ A page at `/blog/{slug}` is one file per post, and the page says which posts wit
 
 ```go
 collage.NewPage("post").
-	WithLayout(layout).
+	WithLayouts(layout).
 	WithContent(post).
 	WithPath("en", "/blog/{slug}").
 	WithPath("tr", "/yazi/{slug}").

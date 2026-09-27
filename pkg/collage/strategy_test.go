@@ -53,7 +53,7 @@ func strategyLayout() *FragmentBuilder {
 func TestAutoStrategy_FixedPageIsStatic(t *testing.T) {
 	app := strategyApp(t)
 	page := NewPage("fixed").
-		WithLayout(strategyLayout().WithTitle("Site").Build()).
+		WithLayouts(strategyLayout().WithTitle("Site").Build()).
 		WithContent(NewFragment("content", "pages/data.html").WithData("hello").Build()).
 		WithPath("en", "/").
 		Build()
@@ -85,19 +85,19 @@ func TestAutoStrategy_HandlerMakesDynamic(t *testing.T) {
 	effect := Effect(func(context.Context, *RenderContext) error { return nil })
 	tests := map[string]func() *Page{
 		"handler in the content": func() *Page {
-			return NewPage("p").WithLayout(strategyLayout().Build()).
+			return NewPage("p").WithLayouts(strategyLayout().Build()).
 				WithContent(NewFragment("content", "pages/data.html").WithDataHandler(effect).Build()).
 				WithPath("en", "/").Build()
 		},
 		"handler in the layout": func() *Page {
-			return NewPage("p").WithLayout(strategyLayout().WithDataHandler(effect).Build()).
+			return NewPage("p").WithLayouts(strategyLayout().WithDataHandler(effect).Build()).
 				WithContent(NewFragment("content", "pages/data.html").Build()).
 				WithPath("en", "/").Build()
 		},
 		"handler in a bound child": func() *Page {
 			child := NewFragment("child", "pages/data.html").WithDataHandler(effect).Build()
 			layout := strategyLayout().WithSlot("aside", false, false).WithSlotFragment("aside", child).Build()
-			return NewPage("p").WithLayout(layout).
+			return NewPage("p").WithLayouts(layout).
 				WithContent(NewFragment("content", "pages/data.html").Build()).
 				WithPath("en", "/").Build()
 		},
@@ -105,7 +105,7 @@ func TestAutoStrategy_HandlerMakesDynamic(t *testing.T) {
 			layout := strategyLayout().WithSlot("aside", false, true).
 				WithSlotResolver("aside", func(*RenderContext) ([]*Fragment, error) { return nil, nil }).
 				Build()
-			return NewPage("p").WithLayout(layout).
+			return NewPage("p").WithLayouts(layout).
 				WithContent(NewFragment("content", "pages/data.html").Build()).
 				WithPath("en", "/").Build()
 		},
@@ -128,10 +128,10 @@ func TestAutoStrategy_HandlerMakesDynamic(t *testing.T) {
 // second-guessed, in either direction.
 func TestAutoStrategy_DeclaredStrategyIsKept(t *testing.T) {
 	app := strategyApp(t)
-	fixed := NewPage("fixed").WithLayout(strategyLayout().Build()).
+	fixed := NewPage("fixed").WithLayouts(strategyLayout().Build()).
 		WithContent(NewFragment("content", "pages/data.html").Build()).
 		WithPath("en", "/fixed").Dynamic().Build()
-	handled := NewPage("handled").WithLayout(strategyLayout().Build()).
+	handled := NewPage("handled").WithLayouts(strategyLayout().Build()).
 		WithContent(NewFragment("content", "pages/data.html").
 			WithDataHandler(Load(func(context.Context, *RenderContext) (string, error) { return "x", nil })).Build()).
 		WithPath("en", "/handled").Static().Build()
@@ -153,7 +153,7 @@ func TestFragment_DataAndHandlerConflict(t *testing.T) {
 		WithData("fixed").
 		WithDataHandler(Load(func(context.Context, *RenderContext) (string, error) { return "fetched", nil })).
 		Build()
-	page := NewPage("p").WithLayout(strategyLayout().Build()).WithContent(content).WithPath("en", "/").Build()
+	page := NewPage("p").WithLayouts(strategyLayout().Build()).WithContent(content).WithPath("en", "/").Build()
 	if err := app.RegisterPage(page); !errors.Is(err, ErrConflictingData) {
 		t.Fatalf("RegisterPage = %v, want ErrConflictingData", err)
 	}
@@ -171,7 +171,7 @@ func TestFragment_HandlerTitleReplacesFixedTitle(t *testing.T) {
 			return nil
 		})).
 		Build()
-	page := NewPage("p").WithLayout(strategyLayout().WithTitle("Site").Build()).WithContent(content).WithPath("en", "/").Build()
+	page := NewPage("p").WithLayouts(strategyLayout().WithTitle("Site").Build()).WithContent(content).WithPath("en", "/").Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestSlots_NeedNoDeclaring(t *testing.T) {
 	layout := NewFragment("layout", "layouts/default.html").
 		WithSlotFragment("aside", NewFragment("note", "pages/data.html").WithData("note").Build()).
 		Build()
-	page := NewPage("p").WithLayout(layout).
+	page := NewPage("p").WithLayouts(layout).
 		WithContent(NewFragment("content", "pages/data.html").WithData("content").Build()).
 		WithPath("en", "/").Build()
 	if err := app.RegisterPage(page); err != nil {
@@ -279,7 +279,7 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 	}{
 		"static fragment alone": {
 			page: func() *Page {
-				return NewPage("p").WithLayout(strategyLayout().WithSlotFragment("aside", shared()).Build()).
+				return NewPage("p").WithLayouts(strategyLayout().WithSlotFragment("aside", shared()).Build()).
 					WithContent(NewFragment("content", "pages/data.html").WithData("home").Build()).
 					WithPath("en", "/").Build()
 			},
@@ -287,7 +287,7 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 		},
 		"beside another fragment's handler": {
 			page: func() *Page {
-				return NewPage("p").WithLayout(strategyLayout().WithSlotFragment("aside", shared()).Build()).
+				return NewPage("p").WithLayouts(strategyLayout().WithSlotFragment("aside", shared()).Build()).
 					WithContent(NewFragment("content", "pages/data.html").WithDataHandler(load).Build()).
 					WithPath("en", "/").Build()
 			},
@@ -297,7 +297,7 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 			page: func() *Page {
 				more := NewFragment("more", "pages/slotted.html").WithDataHandler(load).Static().
 					WithSlotResolver("x", func(*RenderContext) ([]*Fragment, error) { return nil, nil }).Build()
-				return NewPage("p").WithLayout(strategyLayout().WithSlotFragment("aside", more).Build()).
+				return NewPage("p").WithLayouts(strategyLayout().WithSlotFragment("aside", more).Build()).
 					WithContent(NewFragment("content", "pages/data.html").Build()).
 					WithPath("en", "/").Build()
 			},
@@ -305,7 +305,7 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 		},
 		"page declared dynamic": {
 			page: func() *Page {
-				return NewPage("p").WithLayout(strategyLayout().WithSlotFragment("aside", shared()).Build()).
+				return NewPage("p").WithLayouts(strategyLayout().WithSlotFragment("aside", shared()).Build()).
 					WithContent(NewFragment("content", "pages/data.html").Build()).
 					WithPath("en", "/").Dynamic().Build()
 			},

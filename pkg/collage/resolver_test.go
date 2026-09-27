@@ -65,7 +65,7 @@ func sectionsApp(t *testing.T, order *[]string, mu *sync.Mutex, required, multip
 	if err := builder.BuildErr(); err != nil {
 		return nil, err
 	}
-	page := collage.NewPage("home").WithLayout(layout).WithContent(builder.Build()).WithPath("en", "/").Dynamic().Build()
+	page := collage.NewPage("home").WithLayouts(layout).WithContent(builder.Build()).WithPath("en", "/").Dynamic().Build()
 	return app, app.RegisterPage(page)
 }
 

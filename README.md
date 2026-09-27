@@ -113,7 +113,7 @@ func main() {
 		Build()
 
 	homePage := collage.NewPage("home").
-		WithLayout(layout).
+		WithLayouts(layout).
 		WithContent(homeContent).
 		WithPath("en", "/").
 		Incremental(5 * time.Minute).
