@@ -88,6 +88,7 @@ var ErrAssetFailed = errors.New("collage: asset request failed")
 const (
 	stageRoute        = "route"
 	stageNotFound     = "not_found"
+	stageGuard        = "guard"
 	stagePageResolved = "page_resolved"
 	stageBeforeRender = "before_render"
 	stageRender       = "render"
@@ -603,6 +604,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	route.resolvedPage(page.Name)
 	pagePattern, _ := page.PathFor(match.Locale)
 	route.at(pagePattern, match.Locale)
+
+	// Guards before the cache and before PageResolved: a blocked reader
+	// reaches neither the page's cached render nor the plugins that watch a
+	// page being reached — the request never touched the page.
+	if status, allowed := h.checkGuards(w, r, route, match.Locale, page.Guards()); !allowed {
+		return status
+	}
 
 	if err := h.plugins.PageResolved(ctx, &plugin.PageResolvedEvent{
 		Page:   page,

@@ -189,18 +189,7 @@ func (h *Handler) writeActionResult(
 			// the bug the pattern exists to prevent.
 			status = http.StatusSeeOther
 		}
-		// A script submitting the form with fetch says so, and is handed the
-		// destination instead of being redirected to it: fetch would follow the
-		// redirect and download the page, and the script would then navigate to
-		// it and have it rendered a second time. It navigates once, with this.
-		if r.Header.Get(FetchHeader) != "" {
-			header.Set(LocationHeader, result.Location)
-			w.WriteHeader(http.StatusNoContent)
-			return http.StatusNoContent
-		}
-		header.Set("Location", result.Location)
-		w.WriteHeader(status)
-		return status
+		return writeRedirect(w, r, status, result.Location)
 
 	case result.Fragment != nil:
 		html, err := h.renderer.RenderFragment(r.Context(), rc, result.Fragment)
@@ -340,6 +329,21 @@ func (h *Handler) writeFragmentRead(w http.ResponseWriter, r *http.Request, html
 	w.WriteHeader(http.StatusOK)
 	writeBody(w, html)
 	return http.StatusOK
+}
+
+// writeRedirect answers with a redirect, honouring the fetch convention: a
+// script marked the request with FetchHeader would rather be handed the
+// destination than redirected to it, because fetch follows redirects itself
+// and the script would navigate to the page and have it rendered twice.
+func writeRedirect(w http.ResponseWriter, r *http.Request, status int, location string) int {
+	if r.Header.Get(FetchHeader) != "" {
+		w.Header().Set(LocationHeader, location)
+		w.WriteHeader(http.StatusNoContent)
+		return http.StatusNoContent
+	}
+	w.Header().Set("Location", location)
+	w.WriteHeader(status)
+	return status
 }
 
 // statusOr returns declared when it is set, and fallback otherwise.
