@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"text/template/parse"
 )
 
 // HTMLConfig configures an HTMLEngine.
@@ -50,6 +51,9 @@ type HTMLEngine struct {
 	mu    sync.RWMutex
 	tmpl  *template.Template
 	names []string
+	// sources are the templates added as text with AddSource, by name, re-parsed
+	// by every Reload so a dev-mode reload does not lose them.
+	sources map[string]string
 }
 
 var _ Engine = (*HTMLEngine)(nil)
@@ -191,10 +195,70 @@ func (e *HTMLEngine) Reload() error {
 
 	sort.Strings(names)
 
+	e.mu.RLock()
+	sources := maps.Clone(e.sources)
+	e.mu.RUnlock()
+	for name, src := range sources {
+		if err := addSource(set, name, src); err != nil {
+			return err
+		}
+	}
+
 	e.mu.Lock()
 	e.tmpl = set
 	e.names = names
 	e.mu.Unlock()
+	return nil
+}
+
+// AddSource parses src into a clone of the current set under name and swaps the
+// clone in. It never touches the shared set in place: every render executes a
+// clone of it, and adding to the original while a render clones it is a data race.
+func (e *HTMLEngine) AddSource(name, src string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if existing, ok := e.sources[name]; ok {
+		if existing == src {
+			return nil
+		}
+		return fmt.Errorf("%w: %s already holds another template", ErrSourceConflict, name)
+	}
+	next, err := e.tmpl.Clone()
+	if err != nil {
+		return fmt.Errorf("collage: clone template set: %w", err)
+	}
+	if err := addSource(next, name, src); err != nil {
+		return err
+	}
+	if e.sources == nil {
+		e.sources = make(map[string]string)
+	}
+	e.sources[name] = src
+	e.tmpl = next
+	return nil
+}
+
+// addSource parses src into set under name, refusing a source that defines any
+// template besides its own. Comparing tree pointers, not counting templates,
+// catches a {{define}} that replaces an existing template as well as one that
+// adds a new name. Callers pass a clone, so a refused source leaves the live set
+// untouched.
+func addSource(set *template.Template, name, src string) error {
+	trees := make(map[string]*parse.Tree)
+	for _, t := range set.Templates() {
+		trees[t.Name()] = t.Tree
+	}
+	if _, err := set.New(name).Parse(src); err != nil {
+		return fmt.Errorf("collage: parse inline template %s: %w", name, err)
+	}
+	for _, t := range set.Templates() {
+		if t.Name() == name {
+			continue
+		}
+		if old, ok := trees[t.Name()]; !ok || old != t.Tree {
+			return fmt.Errorf("%w: %s defines template %q; move it to a file", ErrSourceConflict, name, t.Name())
+		}
+	}
 	return nil
 }
 

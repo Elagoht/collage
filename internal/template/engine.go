@@ -67,4 +67,15 @@ type Engine interface {
 	// renders, so registration can check a fragment's bindings against them
 	// before anything renders.
 	SlotCalls(path string) (names []string, dynamic bool)
+	// AddSource adds a template given as text rather than as a file, under name,
+	// to the set every render draws from, and keeps it so Reload does not drop
+	// it. The same name and source again is a no-op; the same name with another
+	// source, or a source that defines a template besides its own, is
+	// ErrSourceConflict.
+	AddSource(name, src string) error
 }
+
+// ErrSourceConflict is returned by AddSource for a name already holding another
+// source, and for a source that {{define}}s or {{block}}s a template of its own —
+// which would replace a file template of that name for every page.
+var ErrSourceConflict = errors.New("collage: inline template conflicts with another template")

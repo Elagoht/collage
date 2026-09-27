@@ -380,3 +380,87 @@ func TestNewHTML_FS_TakesPrecedenceOverDiskPath(t *testing.T) {
 		t.Fatalf("Names() = %v, want [only.html] (disk testdata/valid must not be consulted)", got)
 	}
 }
+
+func inlineEngine(t *testing.T, dev bool) *HTMLEngine {
+	t.Helper()
+	engine, err := NewHTML(HTMLConfig{
+		FS:        fstest.MapFS{"partials/name.html": {Data: []byte(`<b>{{.}}</b>`)}},
+		Extension: ".html",
+		DevMode:   dev,
+	})
+	if err != nil {
+		t.Fatalf("NewHTML: %v", err)
+	}
+	return engine
+}
+
+func renderString(t *testing.T, e *HTMLEngine, name string, data string) string {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := e.Render(context.Background(), &buf, name, data); err != nil {
+		t.Fatalf("Render(%q): %v", name, err)
+	}
+	return buf.String()
+}
+
+func TestAddSource_RendersAndCallsAPartial(t *testing.T) {
+	e := inlineEngine(t, false)
+	if err := e.AddSource("inline:row#1", `<tr>{{template "partials/name.html" .}}</tr>`); err != nil {
+		t.Fatalf("AddSource: %v", err)
+	}
+	if got := renderString(t, e, "inline:row#1", "Ada"); got != "<tr><b>Ada</b></tr>" {
+		t.Fatalf("render = %q", got)
+	}
+	for _, n := range e.Names() {
+		if n == "inline:row#1" {
+			t.Fatal("Names() lists an inline source; it describes the template directory")
+		}
+	}
+}
+
+func TestAddSource_SurvivesReload(t *testing.T) {
+	e := inlineEngine(t, true) // dev mode reloads before every render
+	if err := e.AddSource("inline:row#1", `<tr>{{.}}</tr>`); err != nil {
+		t.Fatalf("AddSource: %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		if got := renderString(t, e, "inline:row#1", "x"); got != "<tr>x</tr>" {
+			t.Fatalf("render %d after reload = %q", i, got)
+		}
+	}
+}
+
+func TestAddSource_SameNameSameSourceIsANoOp(t *testing.T) {
+	e := inlineEngine(t, false)
+	for i := 0; i < 2; i++ {
+		if err := e.AddSource("inline:row#1", `<tr/>`); err != nil {
+			t.Fatalf("AddSource %d: %v", i, err)
+		}
+	}
+	if err := e.AddSource("inline:row#1", `<td/>`); !errors.Is(err, ErrSourceConflict) {
+		t.Fatalf("different source under one name: %v, want ErrSourceConflict", err)
+	}
+}
+
+func TestAddSource_ParseError(t *testing.T) {
+	e := inlineEngine(t, false)
+	if err := e.AddSource("inline:row#1", `{{.Broken`); err == nil {
+		t.Fatal("a malformed source was accepted")
+	}
+	if e.Lookup("inline:row#1") {
+		t.Fatal("a source that failed to parse is in the set")
+	}
+}
+
+// A source defining a template of its own would replace a file partial of that
+// name for every page in the application.
+func TestAddSource_RefusesDefine(t *testing.T) {
+	e := inlineEngine(t, false)
+	err := e.AddSource("inline:row#1", `{{define "partials/name.html"}}hijacked{{end}}<tr/>`)
+	if !errors.Is(err, ErrSourceConflict) {
+		t.Fatalf("define in an inline source: %v, want ErrSourceConflict", err)
+	}
+	if got := renderString(t, e, "partials/name.html", "Ada"); got != "<b>Ada</b>" {
+		t.Fatalf("partial after refused define = %q, want it untouched", got)
+	}
+}
