@@ -81,7 +81,7 @@ func TestRegisterPage_BindsContentExactlyOnce(t *testing.T) {
 func TestRegisterPage_BindsOnceIntoAMultiFillSlot(t *testing.T) {
 	app := newTestApp(t, nil)
 	page := newHomePage()
-	page.LayoutFragment.Slots[types.DefaultContentSlot].AllowMultiple = true
+	page.LayoutChain[0].Slots[types.DefaultContentSlot].AllowMultiple = true
 
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -120,7 +120,7 @@ func TestRegisterPage_RendersContentOnce(t *testing.T) {
 func TestRegisterPage_WithoutLayout(t *testing.T) {
 	app := newTestApp(t, nil)
 	page := newHomePage()
-	page.LayoutFragment = nil
+	page.LayoutChain = nil
 
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -148,7 +148,7 @@ func TestRegisterPage_SharedLayoutRendersEachPagesOwnContent(t *testing.T) {
 	pages := []*types.Page{
 		{
 			Name:           "home",
-			LayoutFragment: shared,
+			LayoutChain:     []*types.Fragment{shared},
 			ContentFragment: &types.Fragment{
 				Name:         "home-content",
 				TemplatePath: "pages/home.html",
@@ -158,13 +158,13 @@ func TestRegisterPage_SharedLayoutRendersEachPagesOwnContent(t *testing.T) {
 		},
 		{
 			Name:            "about",
-			LayoutFragment:  shared,
+			LayoutChain:     []*types.Fragment{shared},
 			ContentFragment: &types.Fragment{Name: "about-content", TemplatePath: "pages/about.html"},
 			Paths:           map[string]string{"en": "/about"},
 		},
 		{
 			Name:            "contact",
-			LayoutFragment:  shared,
+			LayoutChain:     []*types.Fragment{shared},
 			ContentFragment: &types.Fragment{Name: "contact-content", TemplatePath: "pages/contact.html"},
 			Paths:           map[string]string{"en": "/contact"},
 		},
@@ -226,7 +226,7 @@ func TestRegisterPage_SharedLayoutKeepsEverythingElseShared(t *testing.T) {
 	shared.Slots["sidebar"] = &types.SlotDefinition{Name: "sidebar", Fill: []*types.Fragment{sidebar}}
 
 	page := newHomePage()
-	page.LayoutFragment = shared
+	page.LayoutChain = []*types.Fragment{shared}
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestRegisterPage_HandBoundLayoutStillGetsItsOwnCopy(t *testing.T) {
 	shared := newLayout("shared-layout")
 
 	page := newHomePage()
-	page.LayoutFragment = shared
+	page.LayoutChain = []*types.Fragment{shared}
 	if err := shared.Bind(types.DefaultContentSlot, page.ContentFragment); err != nil {
 		t.Fatalf("hand-binding the content: %v", err)
 	}
@@ -290,7 +290,7 @@ func TestRegisterPage_RejectsAPreFilledContentSlot(t *testing.T) {
 	}
 
 	page := newHomePage()
-	page.LayoutFragment = layout
+	page.LayoutChain = []*types.Fragment{layout}
 
 	err := app.RegisterPage(page)
 	if !errors.Is(err, types.ErrSlotOccupied) {
@@ -318,7 +318,7 @@ func TestRegisterPage_RejectsMissingTemplate(t *testing.T) {
 		},
 		{
 			name:     "layout",
-			mutate:   func(p *types.Page) { p.LayoutFragment.TemplatePath = "layouts/typo.html" },
+			mutate:   func(p *types.Page) { p.LayoutChain[0].TemplatePath = "layouts/typo.html" },
 			fragment: "layout",
 		},
 		{
@@ -388,7 +388,7 @@ func TestRegisterPage_ChecksErrorPageTemplates(t *testing.T) {
 					page: func() *types.Page {
 						return &types.Page{
 							Name:            "broken",
-							LayoutFragment:  newLayout("broken-layout"),
+							LayoutChain:     []*types.Fragment{newLayout("broken-layout")},
 							ContentFragment: &types.Fragment{Name: "broken-content", TemplatePath: "pages/typo.html"},
 						}
 					},
@@ -401,7 +401,7 @@ func TestRegisterPage_ChecksErrorPageTemplates(t *testing.T) {
 						layout.TemplatePath = "layouts/typo.html"
 						return &types.Page{
 							Name:            "broken",
-							LayoutFragment:  layout,
+							LayoutChain:     []*types.Fragment{layout},
 							ContentFragment: &types.Fragment{Name: "broken-content", TemplatePath: "pages/about.html"},
 						}
 					},
@@ -436,7 +436,7 @@ func TestRegisterPage_AcceptsSoundErrorPages(t *testing.T) {
 	page := newHomePage()
 	page.NotFoundPage = &types.Page{
 		Name:            "page-404",
-		LayoutFragment:  newLayout("404-layout"),
+		LayoutChain:     []*types.Fragment{newLayout("404-layout")},
 		ContentFragment: &types.Fragment{Name: "404-content", TemplatePath: "pages/about.html"},
 	}
 	page.ErrorPage = &types.Page{
@@ -475,18 +475,18 @@ func newBlogFixture() blogFixture {
 		layout: layout,
 		post: &types.Page{
 			Name:            "blog-post",
-			LayoutFragment:  layout,
+			LayoutChain:     []*types.Fragment{layout},
 			ContentFragment: &types.Fragment{Name: "blog-post-content", TemplatePath: "pages/home.html", DataHandler: homeDataHandler},
 			Paths:           map[string]string{"en": "/blog/{slug}"},
 		},
 		notFound: &types.Page{
 			Name:            "blog-404",
-			LayoutFragment:  layout,
+			LayoutChain:     []*types.Fragment{layout},
 			ContentFragment: &types.Fragment{Name: "blog-404-content", TemplatePath: "pages/about.html"},
 		},
 		errorPage: &types.Page{
 			Name:            "blog-500",
-			LayoutFragment:  layout,
+			LayoutChain:     []*types.Fragment{layout},
 			ContentFragment: &types.Fragment{Name: "blog-500-content", TemplatePath: "pages/contact.html"},
 		},
 	}
@@ -609,7 +609,7 @@ func TestRegisterPage_RejectsDuplicateName(t *testing.T) {
 	}
 
 	duplicate := newHomePage()
-	duplicate.LayoutFragment = newLayout("other-layout")
+	duplicate.LayoutChain = []*types.Fragment{newLayout("other-layout")}
 	duplicate.Paths = map[string]string{"en": "/other"}
 
 	err := app.RegisterPage(duplicate)
@@ -699,7 +699,7 @@ func TestRegisterPage_RejectsNil(t *testing.T) {
 func TestRegisterPage_LayoutNeedsNoContentSlotDeclared(t *testing.T) {
 	app := newTestApp(t, nil)
 	page := newHomePage()
-	page.LayoutFragment.Slots = nil
+	page.LayoutChain[0].Slots = nil
 
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage = %v, want nil", err)
@@ -733,7 +733,7 @@ func TestRegisterPage_RejectsDuplicateRoute(t *testing.T) {
 
 	clash := newHomePage()
 	clash.Name = "home-again"
-	clash.LayoutFragment = newLayout("another-layout")
+	clash.LayoutChain = []*types.Fragment{newLayout("another-layout")}
 
 	if err := app.RegisterPage(clash); err == nil {
 		t.Fatal("registering a second page at the same path = nil, want an error")
@@ -929,7 +929,7 @@ func TestApp_PagesPreservesRegistrationOrder(t *testing.T) {
 	home := newHomePage()
 	about := &types.Page{
 		Name:            "about",
-		LayoutFragment:  newLayout("about-layout"),
+		LayoutChain:     []*types.Fragment{newLayout("about-layout")},
 		ContentFragment: &types.Fragment{Name: "about-content", TemplatePath: "pages/about.html"},
 		Paths:           map[string]string{"en": "/about"},
 	}
@@ -1014,3 +1014,122 @@ func (p *commandPlugin) Init(_ context.Context, host plugin.Host) error {
 
 // Shutdown does nothing.
 func (p *commandPlugin) Shutdown(context.Context) error { return nil }
+
+func newNamedFragment(name, templatePath string) *types.Fragment {
+	return &types.Fragment{Name: name, TemplatePath: templatePath, Slots: map[string]*types.SlotDefinition{}}
+}
+
+// foldTree spells out the chain one page folded: master's content slot holds
+// the auth copy, whose content slot holds the content fragment.
+func foldTree(t *testing.T, p *types.Page) (master, auth *types.Fragment) {
+	t.Helper()
+	master = p.LayoutFragment
+	if master == nil || master.Name != "master" {
+		t.Fatalf("root = %v, want the folded master copy", master)
+	}
+	slot, ok := master.Slot(types.DefaultContentSlot)
+	if !ok || len(slot.Fill) != 1 {
+		t.Fatalf("master content slot = %v, want exactly one fill", slot)
+	}
+	auth = slot.Fill[0]
+	if auth.Name != "auth" || auth == p.LayoutChain[1] {
+		t.Fatalf("inner layout = %v, want a copy of auth", auth)
+	}
+	inner, ok := auth.Slot(types.DefaultContentSlot)
+	if !ok || len(inner.Fill) != 1 || inner.Fill[0].Name != "content" {
+		t.Fatalf("auth content slot = %v, want the content fragment", inner)
+	}
+	return master, auth
+}
+
+func TestRegisterPageFoldsLayoutChain(t *testing.T) {
+	app := newTestApp(t, nil)
+	master := newLayout("master")
+	auth := newLayout("auth")
+	p := &types.Page{
+		Name:            "login",
+		LayoutChain:     []*types.Fragment{master, auth},
+		ContentFragment: newNamedFragment("content", "pages/home.html"),
+		Paths:           map[string]string{"en": "/login"},
+	}
+	if err := app.RegisterPage(p); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	foldTree(t, p)
+	// The originals are untouched: registration binds into copies. (newLayout
+	// declares its content slot, so what must stay empty is the fill, not the
+	// slot itself.)
+	if slot, ok := master.Slot(types.DefaultContentSlot); ok && len(slot.Fill) > 0 {
+		t.Fatalf("registration bound %d fills into the shared master layout", len(slot.Fill))
+	}
+}
+
+func TestRegisterPageChainSlotsPrivatePerPage(t *testing.T) {
+	app := newTestApp(t, nil)
+	master := newLayout("master")
+	for _, name := range []string{"a", "b", "c"} {
+		p := &types.Page{
+			Name:            name,
+			LayoutChain:     []*types.Fragment{master},
+			ContentFragment: newNamedFragment(name+"-content", "pages/home.html"),
+			Paths:           map[string]string{"en": "/" + name},
+		}
+		if err := app.RegisterPage(p); err != nil {
+			t.Fatalf("RegisterPage(%s): %v", name, err)
+		}
+	}
+	// Three pages on one shared layout value, and the first one's slot table
+	// stayed private: still exactly its own content in its content slot.
+	pageA, ok := app.Page("a")
+	if !ok {
+		t.Fatal("page a not found")
+	}
+	slot, _ := pageA.LayoutFragment.Slot(types.DefaultContentSlot)
+	if len(slot.Fill) != 1 || slot.Fill[0].Name != "a-content" {
+		t.Fatalf("page a content slot = %v, want exactly a-content", slot.Fill)
+	}
+}
+
+func TestRegisterPageOuterLayoutPrefilledRejected(t *testing.T) {
+	app := newTestApp(t, nil)
+	stray := newNamedFragment("stray", "pages/home.html")
+	outer := newLayout("outer")
+	if err := outer.Bind(types.DefaultContentSlot, stray); err != nil {
+		t.Fatalf("hand-bind: %v", err)
+	}
+	p := &types.Page{
+		Name:            "login",
+		LayoutChain:     []*types.Fragment{outer, newLayout("inner")},
+		ContentFragment: newNamedFragment("content", "pages/home.html"),
+		Paths:           map[string]string{"en": "/login"},
+	}
+	err := app.RegisterPage(p)
+	if err == nil {
+		t.Fatal("a chain whose outer layout has a filled content slot was accepted")
+	}
+}
+
+func TestRegisterPageInnermostHandBoundStillCopies(t *testing.T) {
+	app := newTestApp(t, nil)
+	content := newNamedFragment("content", "pages/home.html")
+	inner := newLayout("inner")
+	if err := inner.Bind(types.DefaultContentSlot, content); err != nil {
+		t.Fatalf("hand-bind: %v", err)
+	}
+	p := &types.Page{
+		Name:            "login",
+		LayoutChain:     []*types.Fragment{inner},
+		ContentFragment: content,
+		Paths:           map[string]string{"en": "/login"},
+	}
+	if err := app.RegisterPage(p); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if p.LayoutFragment == inner {
+		t.Fatal("hand-bound innermost layout was not copied")
+	}
+	slot, _ := p.LayoutFragment.Slot(types.DefaultContentSlot)
+	if len(slot.Fill) != 1 || slot.Fill[0] != content {
+		t.Fatalf("hand-bound fill = %v, want the original content once", slot.Fill)
+	}
+}

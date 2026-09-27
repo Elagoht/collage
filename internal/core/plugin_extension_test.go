@@ -530,7 +530,7 @@ func TestPlugin_CanHoistFromBeforeRender(t *testing.T) {
 	}
 	content := &types.Fragment{Name: "home-content", TemplatePath: "home.html"}
 	page := &types.Page{
-		Name: "home", LayoutFragment: layout, ContentFragment: content,
+		Name: "home", LayoutChain: []*types.Fragment{layout}, ContentFragment: content,
 		Paths: map[string]string{"en": "/"},
 	}
 	if err := app.RegisterPage(page); err != nil {

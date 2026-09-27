@@ -164,39 +164,37 @@ func (a *App) remember(p *types.Page) {
 	a.order = append(a.order, p.Name)
 }
 
-// bindContent gives p its own private copy of its layout fragment and binds p's
-// content fragment into that copy's content slot, replacing p.LayoutFragment with
-// it so Page.Root returns the bound copy. A page with no layout fragment needs no
-// binding: its content fragment is already the root.
+// bindContent folds p's layout chain into p.LayoutFragment: each layout gets
+// its own per-page copy of its slot table, the content fragment is bound into
+// the innermost copy's content slot, and each copy is bound into the next outer
+// copy's content slot. p.LayoutFragment ends as the outermost copy — the folded
+// tree's root — and p.LayoutChain keeps pointing at the originals.
 //
-// The copy is what makes a layout shareable, and a layout is the most reusable
-// object a component framework has — a typical blog uses one layout for a post page
-// and its 404 and 500 pages. types.Fragment.Bind
-// appends to the SlotDefinition's Fill, and a SlotDefinition reached through a
-// shared layout is one object: binding three pages' content into it would leave
-// three fills in one slot and render all three pages' content on every one of them.
-// Copying the slot table per page makes each page's bindings private.
+// The per-page copies are what make layouts shareable, and a layout is the most
+// reusable object a component framework has — a typical blog uses one layout for
+// a post page and its 404 and 500 pages. types.Fragment.Bind appends to the
+// SlotDefinition's Fill, and a SlotDefinition reached through a shared layout is
+// one object: binding three pages' content into it would leave three fills in
+// one slot and render all three pages' content on every one of them. Copying
+// each layout's slot table per page makes each page's bindings private.
 //
-// Only the layout's own slot table is copied — a fresh Slots map holding fresh
+// Only each layout's own slot table is copied — a fresh Slots map holding fresh
 // SlotDefinition values with copied Fill slices. Everything else stays shared by
 // pointer: the template path, the data handler, the fallback, and every child
-// fragment already bound into a slot. Registration therefore snapshots the layout's
-// bindings: a fragment bound into the shared layout after a page was registered
-// does not appear on that page.
+// fragment already bound into a slot. Registration therefore snapshots the
+// chain's bindings: a fragment bound into a shared layout after a page was
+// registered does not appear on that page.
 //
-// Binding also happens exactly once per page. The slot's fills render in binding
-// order, so binding the same content fragment twice would render the page's content
-// twice. The "already done" test is a.bound — the set of pages whose layout this App
-// has already replaced with their own copy — and deliberately not "the slot already
-// holds this content fragment": a caller who hand-bound the content into a shared
-// layout satisfies the latter while still pointing at the shared layout, so taking
-// that as done would leave the page sharing its slot table and make the next page on
-// that layout fail. What a hand-bound layout does skip is the Bind itself, since the
-// copy already carries the fill.
+// The innermost layout may arrive with its content slot already holding the
+// content fragment — the hand-bound escape hatch — and no layout may arrive
+// with any other fill in its content slot: registration fills every content
+// slot in the chain itself, so one that is already filled is a page whose
+// author and whose registration disagree about what it wraps.
 //
-// It must be called with a.mu held.
+// Binding also happens exactly once per page; the "already done" test is
+// a.bound, as it has always been. It must be called with a.mu held.
 func (a *App) bindContent(p *types.Page) error {
-	if p.LayoutFragment == nil {
+	if len(p.LayoutChain) == 0 {
 		return nil
 	}
 	if p.ContentFragment == nil {
@@ -206,17 +204,53 @@ func (a *App) bindContent(p *types.Page) error {
 		return nil
 	}
 
-	layout := copyLayout(p.LayoutFragment)
-	if !contentBound(layout, p.ContentFragment) {
-		if err := layout.Bind(types.DefaultContentSlot, p.ContentFragment); err != nil {
+	copies := make([]*types.Fragment, len(p.LayoutChain))
+	for i, layout := range p.LayoutChain {
+		copies[i] = copyLayout(layout)
+	}
+
+	innermost := copies[len(copies)-1]
+	if !contentBound(innermost, p.ContentFragment) {
+		if err := requireEmptyContentSlot(p, innermost); err != nil {
+			return err
+		}
+		if err := innermost.Bind(types.DefaultContentSlot, p.ContentFragment); err != nil {
 			return fmt.Errorf(
-				"collage: page %q: binding content fragment %q into layout fragment %q slot %q (registration fills the content slot itself, so a layout must not have it filled already): %w",
-				p.Name, p.ContentFragment.Name, p.LayoutFragment.Name, types.DefaultContentSlot, err,
+				"collage: page %q: binding content fragment %q into layout fragment %q slot %q: %w",
+				p.Name, p.ContentFragment.Name, p.LayoutChain[len(p.LayoutChain)-1].Name, types.DefaultContentSlot, err,
 			)
 		}
 	}
-	p.LayoutFragment = layout
+	for i := len(copies) - 2; i >= 0; i-- {
+		if err := requireEmptyContentSlot(p, copies[i]); err != nil {
+			return err
+		}
+		if err := copies[i].Bind(types.DefaultContentSlot, copies[i+1]); err != nil {
+			return fmt.Errorf(
+				"collage: page %q: binding layout %q into layout %q slot %q (registration fills every content slot in the chain, so no layout may have it filled already): %w",
+				p.Name, p.LayoutChain[i+1].Name, p.LayoutChain[i].Name, types.DefaultContentSlot, err,
+			)
+		}
+	}
+
+	p.LayoutFragment = copies[0]
 	a.bound[p] = true
+	return nil
+}
+
+// requireEmptyContentSlot rejects a layout whose content slot already holds any
+// fragment. The innermost layout's hand-bound escape hatch is checked by
+// contentBound before this runs; anything else in a content slot is a fill
+// registration never made and cannot account for. ErrSlotOccupied is the
+// sentinel, as it was when the single-layout Bind path produced this error
+// itself: an error hook or a test matching it keeps matching it.
+func requireEmptyContentSlot(p *types.Page, layout *types.Fragment) error {
+	if slot, ok := layout.Slot(types.DefaultContentSlot); ok && len(slot.Fill) > 0 {
+		return fmt.Errorf(
+			"collage: page %q: layout %q content slot is already filled (registration fills the content slot itself, so a layout must not have it filled already): %w",
+			p.Name, layout.Name, types.ErrSlotOccupied,
+		)
+	}
 	return nil
 }
 
@@ -286,8 +320,19 @@ func (a *App) checkTemplates(p *types.Page) error {
 		return nil
 	}
 
+	// LayoutFragment first: for a page registration has folded it is the bound
+	// tree, fills and all, which is what the unknown-slot check needs to see.
+	// The chain after it: a page handed to registration as another's NotFoundPage
+	// or ErrorPage is checked before it is registered — and folded — in its own
+	// right, so its layouts are reachable only through the chain. The visited
+	// set keeps the double walk of an already-folded page harmless.
 	if err := walkFragments(p.LayoutFragment, visited, visit); err != nil {
 		return err
+	}
+	for _, layout := range p.LayoutChain {
+		if err := walkFragments(layout, visited, visit); err != nil {
+			return err
+		}
 	}
 	if err := walkFragments(p.ContentFragment, visited, visit); err != nil {
 		return err
@@ -348,7 +393,11 @@ func resolveStrategy(p *types.Page) {
 	if p.Strategy != types.StrategyAuto {
 		return
 	}
-	roots := append([]*types.Fragment{p.LayoutFragment, p.ContentFragment}, p.PathFragments()...)
+	// The chain originals, not the folded LayoutFragment: the two walk the same
+	// fragments once a page is folded, and a page resolved before it is folded
+	// — see checkTemplates — has its layouts only in the chain.
+	roots := append(append([]*types.Fragment(nil), p.LayoutChain...), p.ContentFragment)
+	roots = append(roots, p.PathFragments()...)
 	for _, root := range roots {
 		if !fetchFree(root) {
 			p.Strategy = types.StrategyDynamic
@@ -525,6 +574,7 @@ func copyPage(p *types.Page) *types.Page {
 	copied.Paths = maps.Clone(p.Paths)
 	copied.SEO = maps.Clone(p.SEO)
 	copied.DependencyTags = slices.Clone(p.DependencyTags)
+	copied.LayoutChain = slices.Clone(p.LayoutChain)
 
 	if p.Redirects != nil {
 		copied.Redirects = make([]*types.Redirect, len(p.Redirects))

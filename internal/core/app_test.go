@@ -168,8 +168,8 @@ func newLayout(name string) *types.Fragment {
 // dependency tag comes from the data handler, not from the Page.
 func newHomePage() *types.Page {
 	return &types.Page{
-		Name:           "home",
-		LayoutFragment: newLayout("layout"),
+		Name:        "home",
+		LayoutChain: []*types.Fragment{newLayout("layout")},
 		ContentFragment: &types.Fragment{
 			Name:         "home-content",
 			TemplatePath: "pages/home.html",
@@ -294,7 +294,7 @@ func TestApp_InvalidateTagsLeavesOtherPagesCached(t *testing.T) {
 	home := newHomePage()
 	about := &types.Page{
 		Name:            "about",
-		LayoutFragment:  newLayout("about-layout"),
+		LayoutChain:     []*types.Fragment{newLayout("about-layout")},
 		ContentFragment: &types.Fragment{Name: "about-content", TemplatePath: "pages/about.html"},
 		Paths:           map[string]string{"en": "/about"},
 		Strategy:        types.StrategyStatic,
@@ -810,7 +810,7 @@ func TestApp_RenderPathReachesANonDefaultLocaleThroughItsPrefix(t *testing.T) {
 	app := newTestApp(t, func(cfg *Config) { cfg.Locale.Supported = []string{"en", "tr"} })
 	about := &types.Page{
 		Name:            "about",
-		LayoutFragment:  newLayout("layout"),
+		LayoutChain:     []*types.Fragment{newLayout("layout")},
 		ContentFragment: &types.Fragment{Name: "about-content", TemplatePath: "pages/about.html"},
 		Paths:           map[string]string{"en": "/about", "tr": "/hakkinda"},
 		Strategy:        types.StrategyStatic,
@@ -1241,7 +1241,7 @@ func TestApp_RenderPath_LocaleCannotDisagreeWithThePage(t *testing.T) {
 
 	tr := newHomePage()
 	tr.Name = "home-tr"
-	tr.LayoutFragment = newLayout("layout-tr")
+	tr.LayoutChain = []*types.Fragment{newLayout("layout-tr")}
 	tr.Paths = map[string]string{"tr": "/"}
 	if err := app.RegisterPage(tr); err != nil {
 		t.Fatalf("RegisterPage(tr): %v", err)
