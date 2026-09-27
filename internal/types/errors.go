@@ -77,6 +77,11 @@ var ErrEmptyName = errors.New("collage: empty name")
 // ErrEmptyTemplatePath is returned when a fragment's TemplatePath is empty.
 var ErrEmptyTemplatePath = errors.New("collage: empty template path")
 
+// ErrConflictingTemplate is returned when a fragment names both a template file
+// and an inline template source. Which one renders is not something a reader of
+// the fragment could tell, so neither is chosen.
+var ErrConflictingTemplate = errors.New("collage: fragment has both a template path and an inline template")
+
 // ErrInvalidPath is returned when a path pattern does not start with "/".
 var ErrInvalidPath = errors.New("collage: invalid path")
 

@@ -344,3 +344,19 @@ func TestWithGuardNil(t *testing.T) {
 		t.Fatal("WithGuard(nil) recorded no error")
 	}
 }
+
+func TestNewInlineFragment(t *testing.T) {
+	b := NewInlineFragment("row", "<tr>{{.}}</tr>")
+	f := b.Build()
+	if err := b.BuildErr(); err != nil {
+		t.Fatalf("BuildErr = %v", err)
+	}
+	if f.Source != "<tr>{{.}}</tr>" || f.TemplatePath != "" {
+		t.Fatalf("fragment = %+v, want the source and no path", f)
+	}
+	empty := NewInlineFragment("row", "")
+	empty.Build()
+	if err := empty.BuildErr(); !errors.Is(err, ErrEmptyTemplatePath) {
+		t.Fatalf("empty source: %v, want ErrEmptyTemplatePath", err)
+	}
+}

@@ -2,6 +2,8 @@ package types
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"time"
@@ -42,6 +44,10 @@ type Fragment struct {
 	Name string
 	// TemplatePath is the path to the fragment's template file.
 	TemplatePath string
+	// Source, when set, is the fragment's template itself rather than the path
+	// to a file holding it: an inline fragment. A fragment has exactly one of
+	// TemplatePath and Source. See TemplateName for how the engine addresses it.
+	Source string
 	// DataHandler fetches the data this fragment renders with. A nil DataHandler
 	// means the fragment renders with Data.
 	DataHandler DataHandlerFunc
@@ -94,6 +100,25 @@ type Fragment struct {
 	// buildErr is what the builder that made this value recorded; see
 	// RecordBuildErr. Registration refuses a value that carries one.
 	buildErr error
+}
+
+// IsInline reports whether f carries its template as Source rather than naming a
+// file. It is nil-safe.
+func IsInline(f *Fragment) bool { return f != nil && f.Source != "" }
+
+// TemplateName is the name the template engine knows f's template by: its
+// TemplatePath, or for an inline fragment "inline:<name>#<hash>". The hash is of
+// the source, so two fragments that share a name but not a template never collide,
+// and one template used by two fragment values is parsed once. It is nil-safe.
+func TemplateName(f *Fragment) string {
+	if f == nil {
+		return ""
+	}
+	if f.Source == "" {
+		return f.TemplatePath
+	}
+	sum := sha256.Sum256([]byte(f.Source))
+	return "inline:" + f.Name + "#" + hex.EncodeToString(sum[:8])
 }
 
 // Slot looks up the slot named name on f. It is nil-safe: a nil receiver or a
@@ -192,8 +217,11 @@ func (f *Fragment) validate(stack map[*Fragment]bool) error {
 	if f.Name == "" {
 		return ErrEmptyName
 	}
-	if f.TemplatePath == "" {
+	switch {
+	case f.TemplatePath == "" && f.Source == "":
 		return ErrEmptyTemplatePath
+	case f.TemplatePath != "" && f.Source != "":
+		return fmt.Errorf("%w: fragment %q", ErrConflictingTemplate, f.Name)
 	}
 	if f.Timeout < 0 {
 		return fmt.Errorf("%w: fragment %q has negative timeout", ErrInvalidTimeout, f.Name)

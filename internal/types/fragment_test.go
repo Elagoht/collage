@@ -2,9 +2,41 @@ package types
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestTemplateName(t *testing.T) {
+	file := &Fragment{Name: "home", TemplatePath: "pages/home.html"}
+	if got := TemplateName(file); got != "pages/home.html" {
+		t.Fatalf("TemplateName(file) = %q", got)
+	}
+	a := &Fragment{Name: "row", Source: "<tr>a</tr>"}
+	b := &Fragment{Name: "row", Source: "<tr>b</tr>"}
+	same := &Fragment{Name: "row", Source: "<tr>a</tr>"}
+	if !strings.HasPrefix(TemplateName(a), "inline:row#") {
+		t.Fatalf("TemplateName(inline) = %q, want inline:row#<hash>", TemplateName(a))
+	}
+	if TemplateName(a) == TemplateName(b) {
+		t.Fatal("two sources under one fragment name share a template name")
+	}
+	if TemplateName(a) != TemplateName(same) {
+		t.Fatal("one source under one name got two template names")
+	}
+}
+
+func TestValidateTemplateSource(t *testing.T) {
+	if err := (&Fragment{Name: "x"}).Validate(); !errors.Is(err, ErrEmptyTemplatePath) {
+		t.Fatalf("no path, no source: %v, want ErrEmptyTemplatePath", err)
+	}
+	if err := (&Fragment{Name: "x", TemplatePath: "a.html", Source: "<p/>"}).Validate(); !errors.Is(err, ErrConflictingTemplate) {
+		t.Fatalf("path and source: %v, want ErrConflictingTemplate", err)
+	}
+	if err := (&Fragment{Name: "x", Source: "<p/>"}).Validate(); err != nil {
+		t.Fatalf("source only: %v, want nil", err)
+	}
+}
 
 func TestFragment_Bind(t *testing.T) {
 	newSlotted := func(allowMultiple bool) *Fragment {

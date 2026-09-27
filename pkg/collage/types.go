@@ -150,6 +150,10 @@ var ErrEmptyName = types.ErrEmptyName
 // ErrEmptyTemplatePath is returned when a fragment's TemplatePath is empty.
 var ErrEmptyTemplatePath = types.ErrEmptyTemplatePath
 
+// ErrConflictingTemplate is returned when a fragment names both a template file
+// and an inline template.
+var ErrConflictingTemplate = types.ErrConflictingTemplate
+
 // ErrInvalidPath is returned when a path pattern does not start with "/".
 var ErrInvalidPath = types.ErrInvalidPath
 

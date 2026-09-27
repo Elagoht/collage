@@ -36,6 +36,35 @@ func NewFragment(name, templatePath string) *FragmentBuilder {
 	}
 }
 
+// NewInlineFragment starts a FragmentBuilder for a fragment named name whose
+// template is html itself rather than a file — for the small parts of a page, a
+// table row or a button, whose markup reads best next to the handler that feeds
+// it:
+//
+//	row := collage.NewInlineFragment("post-row", `
+//	  <tr><td>{{.Title}}</td><td>{{.Date}}</td></tr>`).
+//		WithDataHandler(loadRow).
+//		Build()
+//
+// It renders exactly as a file template does: slots, hoist, every template
+// function, and {{template}} calls into the template directory's partials.
+// Registration parses it and checks it like one. A Go raw string cannot hold a
+// backtick, so a template with a JavaScript template literal stays in a file.
+// An empty html records ErrEmptyTemplatePath, retrievable via BuildErr.
+func NewInlineFragment(name, html string) *FragmentBuilder {
+	b := &FragmentBuilder{
+		fragment: &Fragment{
+			Name:   name,
+			Source: html,
+			Slots:  make(map[string]*SlotDefinition),
+		},
+	}
+	if html == "" {
+		b.errs = append(b.errs, fmt.Errorf("%w: inline fragment %q has no template", ErrEmptyTemplatePath, name))
+	}
+	return b
+}
+
 // WithDataHandler sets the fragment's data handler. A page rendering a fragment
 // with a handler, and declaring no strategy, is dynamic.
 //
