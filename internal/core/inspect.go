@@ -41,9 +41,13 @@ type InspectedPage struct {
 	// Paths are its patterns by locale, as registered.
 	Paths map[string]string `json:"paths"`
 	// Params are the placeholders its patterns name, in order of appearance.
-	Params        []string                `json:"params,omitempty"`
-	Strategy      string                  `json:"strategy"`
-	Layout        string                  `json:"layout,omitempty"`
+	Params   []string `json:"params,omitempty"`
+	Strategy string   `json:"strategy"`
+	// Layouts are the page's layout chain, outermost first, by fragment name.
+	Layouts []string `json:"layouts,omitempty"`
+	// Guards are the spine fragments carrying a guard, in the order they are
+	// asked: the chain outermost first, then the content fragment.
+	Guards        []string                `json:"guards,omitempty"`
 	Content       string                  `json:"content,omitempty"`
 	FragmentPaths []InspectedFragmentPath `json:"fragmentPaths,omitempty"`
 }
@@ -177,8 +181,17 @@ func (a *App) Inspect() Inspection {
 			Params:   patternParams(sortedValues(p.Paths)...),
 			Strategy: strategyName(p.Strategy),
 		}
-		if p.LayoutFragment != nil {
-			ip.Layout = p.LayoutFragment.Name
+		for _, f := range p.LayoutChain {
+			if f == nil {
+				continue
+			}
+			ip.Layouts = append(ip.Layouts, f.Name)
+			if f.Guard != nil {
+				ip.Guards = append(ip.Guards, f.Name)
+			}
+		}
+		if p.ContentFragment != nil && p.ContentFragment.Guard != nil {
+			ip.Guards = append(ip.Guards, p.ContentFragment.Name)
 		}
 		if p.ContentFragment != nil {
 			ip.Content = p.ContentFragment.Name
@@ -191,7 +204,12 @@ func (a *App) Inspect() Inspection {
 			}
 		}
 		out.Pages = append(out.Pages, ip)
-		for _, root := range append([]*types.Fragment{p.LayoutFragment, p.ContentFragment}, p.PathFragments()...) {
+		// The chain originals, not the folded LayoutFragment: registration gives
+		// each page its own copy of every layout's slot table, so the folded
+		// tree holds a distinct copy per page, and a layout shared by every page
+		// would be listed once per page. The originals are what the author wrote.
+		roots := append(append([]*types.Fragment(nil), p.LayoutChain...), p.ContentFragment)
+		for _, root := range append(roots, p.PathFragments()...) {
 			_ = walkFragments(root, seen, addFragment)
 		}
 	}

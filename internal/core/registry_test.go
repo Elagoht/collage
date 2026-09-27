@@ -147,8 +147,8 @@ func TestRegisterPage_SharedLayoutRendersEachPagesOwnContent(t *testing.T) {
 
 	pages := []*types.Page{
 		{
-			Name:           "home",
-			LayoutChain:     []*types.Fragment{shared},
+			Name:        "home",
+			LayoutChain: []*types.Fragment{shared},
 			ContentFragment: &types.Fragment{
 				Name:         "home-content",
 				TemplatePath: "pages/home.html",

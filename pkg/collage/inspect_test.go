@@ -64,7 +64,7 @@ func TestInspect(t *testing.T) {
 		t.Fatalf("pages = %+v", in.Pages)
 	}
 	p := in.Pages[0]
-	if p.Name != "post" || p.Paths["tr"] != "/yazi/{slug}" || strings.Join(p.Params, ",") != "slug" || p.Layout != "layout" || p.Content != "post" {
+	if p.Name != "post" || p.Paths["tr"] != "/yazi/{slug}" || strings.Join(p.Params, ",") != "slug" || strings.Join(p.Layouts, ",") != "layout" || len(p.Guards) != 0 || p.Content != "post" {
 		t.Errorf("page = %+v", p)
 	}
 	if len(p.FragmentPaths) != 1 || p.FragmentPaths[0].Fragment != "comments" || p.FragmentPaths[0].Pattern != "/blog/{slug}/comments" {
@@ -124,5 +124,65 @@ func TestDispatchCommands_Inspect(t *testing.T) {
 	}
 	if code, err := collage.DispatchCommands(context.Background(), inspectedApp(t), []string{collage.InspectCommand, "extra"}); code != 2 || err == nil {
 		t.Errorf("with an argument: %d, %v", code, err)
+	}
+}
+
+// A chained, guarded page reports its layouts outermost first and the spine
+// fragments that carry a guard, in the order they are asked.
+func TestInspectLayoutsAndGuards(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{
+			"t/layout.html": {Data: []byte(`{{slot "content"}}`)},
+			"t/panel.html":  {Data: []byte(`p`)},
+		}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allow := func(context.Context, *http.Request) (*collage.GuardDecision, error) { return nil, nil }
+	private := collage.NewFragment("private", "layout.html").WithGuard(allow).Build()
+	auth := collage.NewFragment("auth", "layout.html").Build()
+	panel := collage.NewFragment("panel", "panel.html").WithGuard(allow).Build()
+	if err := app.RegisterPage(collage.NewPage("panel").WithLayouts(private, auth).WithContent(panel).
+		WithPath("en", "/panel").Build()); err != nil {
+		t.Fatal(err)
+	}
+	p := app.Inspect().Pages[0]
+	if got := strings.Join(p.Layouts, ","); got != "private,auth" {
+		t.Errorf("Layouts = %q, want private,auth", got)
+	}
+	if got := strings.Join(p.Guards, ","); got != "private,panel" {
+		t.Errorf("Guards = %q, want private,panel", got)
+	}
+}
+
+// A layout shared by two pages is one fragment the author wrote, reported once
+// — not once per page's private copy of its slot table.
+func TestInspectSharedLayoutOnce(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{
+			"t/layout.html": {Data: []byte(`{{slot "content"}}`)},
+			"t/page.html":   {Data: []byte(`p`)},
+		}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	master := collage.NewFragment("master", "layout.html").Build()
+	auth := collage.NewFragment("auth", "layout.html").Build()
+	for _, name := range []string{"a", "b"} {
+		if err := app.RegisterPage(collage.NewPage(name).WithLayouts(master, auth).
+			WithContent(collage.NewFragment(name, "page.html").Build()).WithPath("en", "/"+name).Build()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := map[string]int{}
+	for _, f := range app.Inspect().Fragments {
+		count[f.Name]++
+	}
+	if count["master"] != 1 || count["auth"] != 1 {
+		t.Errorf("fragment counts = %v, want master and auth once each", count)
 	}
 }

@@ -263,8 +263,8 @@ func TestGuardSkippedOnFallbackRender(t *testing.T) {
 // reader actually asked for.
 func TestGuardSeesLocalePrefixedPath(t *testing.T) {
 	app, err := collage.New(&collage.Config{
-		Server:   collage.ServerConfig{Host: "localhost", Port: 0},
-		Locale:   collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}, PrefixDefault: true},
+		Server: collage.ServerConfig{Host: "localhost", Port: 0},
+		Locale: collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}, PrefixDefault: true},
 		Template: collage.TemplateConfig{
 			FS:   fstest.MapFS{"templates/layouts/p.html": {Data: []byte(`{{slot "content"}}`)}},
 			Root: "templates",
