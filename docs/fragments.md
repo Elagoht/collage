@@ -154,6 +154,43 @@ recorded one, naming the page, before it serves a request; `RegisterDocument` do
 the same for a document. Check it anyway when the builder's inputs are not known to
 be well-formed ahead of time, to report the mistake where it was made.
 
+### Inline templates
+
+A small fragment can carry its template itself instead of naming a file:
+
+```go
+row := collage.NewInlineFragment("post-row", `
+  <tr>
+    <td>{{.Title}}</td>
+    <td>{{template "partials/date.html" .Date}}</td>
+  </tr>`).
+	WithDataHandler(loadRow).
+	Build()
+```
+
+It renders as a file template does — slots, `hoist`, every template function,
+`{{template}}` calls into the template directory — and registration parses and
+checks it like one: a parse error or a slot it never calls stops startup, naming
+the page and the fragment. Two fragments may share a name and still carry
+different templates; each renders its own.
+
+Use it for the parts of a page that are a few lines of markup next to the handler
+that feeds them. Layouts and whole pages read better as files. Three limits come
+with it:
+
+- A Go raw string cannot hold a backtick, so a template with a JavaScript template
+  literal stays in a file.
+- An inline template cannot `{{define}}` or `{{block}}` templates of its own
+  (`collage.ErrSourceConflict` at registration): a definition would replace a file
+  template of that name for every page.
+- A file template cannot `{{template}}` an inline one; its name in the template set
+  is internal.
+
+A fragment names a file or carries a template, never both
+(`collage.ErrConflictingTemplate`), and `NewInlineFragment` with an empty template
+records `collage.ErrEmptyTemplatePath`. `collage inspect` marks an inline fragment
+with `"inline": true`.
+
 ## Slots
 
 A slot is a named position inside a fragment's template, written `{{slot "name"}}`.

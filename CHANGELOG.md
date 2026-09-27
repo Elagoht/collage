@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`NewInlineFragment(name, html)`**: a fragment whose template is a string
+  rather than a file, rendered and checked at registration exactly like a file
+  template — slots, hoist, template functions, `{{template}}` calls into partials.
+  An inline template cannot `{{define}}` templates of its own
+  (`ErrSourceConflict`). `ErrConflictingTemplate` refuses a fragment naming both a
+  file and an inline template. `collage inspect` reports `inline: true` for one.
+
 ## v0.28.0
 
 ### Added
