@@ -147,3 +147,14 @@ var ErrNoActionHandler = errors.New("collage: action has no handler")
 // guessed about — the alternative, for a redirect with nowhere to go, is
 // serving the content the guard was put there to keep from the reader.
 var ErrInvalidGuardDecision = errors.New("collage: invalid guard decision")
+
+// ErrMissingLayout is recorded when WithLayouts is called with no layouts at
+// all. A page wanting no layout simply does not call it; a call that names
+// none is a chain somebody forgot to finish.
+var ErrMissingLayout = errors.New("collage: missing layout")
+
+// ErrConflictingLayout is recorded when WithLayouts is called a second time on
+// one builder. Whether the second call meant to replace or to extend the chain
+// is not something the builder can tell, and guessing silently reorders what a
+// page is wrapped in.
+var ErrConflictingLayout = errors.New("collage: layout chain already declared")

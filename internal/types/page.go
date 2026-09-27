@@ -64,6 +64,13 @@ type Page struct {
 	// root. The content fragment is bound to the layout's DefaultContentSlot slot by
 	// the registration path; Page itself never mutates its fragments.
 	LayoutFragment *Fragment
+	// LayoutChain holds the page's layouts outermost-first, as the builder
+	// declared them. Registration folds the chain into LayoutFragment — a
+	// per-page copy of each layout, the content fragment bound into the
+	// innermost and each layout into the next outer one — and leaves this
+	// field pointing at the originals, which is where a guard or an inspection
+	// reads the spine from. Empty for a page with no layout.
+	LayoutChain []*Fragment
 	// ContentFragment is the page's primary content fragment. It is required.
 	ContentFragment *Fragment
 	// Paths maps locale to the path pattern that reaches this page in that locale.
@@ -147,6 +154,23 @@ func (p *Page) PathFor(locale string) (string, bool) {
 // fragment is bound to when the page has a layout fragment.
 func (p *Page) ContentSlotName() string {
 	return DefaultContentSlot
+}
+
+// Guards returns the guards on the page's spine: each layout in LayoutChain,
+// outermost first, then the content fragment. A nil guard — the common
+// fragment — is skipped rather than represented. The first guard in this
+// order is the first asked; see the httpx dispatch for what a decision does.
+func (p *Page) Guards() []GuardFunc {
+	var out []GuardFunc
+	for _, f := range p.LayoutChain {
+		if f != nil && f.Guard != nil {
+			out = append(out, f.Guard)
+		}
+	}
+	if p.ContentFragment != nil && p.ContentFragment.Guard != nil {
+		out = append(out, p.ContentFragment.Guard)
+	}
+	return out
 }
 
 // Validate reports whether p is well-formed: Name is non-empty (ErrEmptyName),

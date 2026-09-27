@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"testing"
 	"time"
 )
@@ -276,5 +277,99 @@ func TestPageBuilder_CacheParamsDefaultToNil(t *testing.T) {
 
 	if page.CacheParams != nil {
 		t.Fatalf("CacheParams = %v, want nil — the default keeps every query parameter", page.CacheParams)
+	}
+}
+
+// buildOK builds the page and fails the test when its builder recorded
+// anything, so every test below reads one pattern.
+func buildOK(t *testing.T, b *PageBuilder) *Page {
+	t.Helper()
+	p := b.Build()
+	if err := b.BuildErr(); err != nil {
+		t.Fatalf("BuildErr() = %v, want nil", err)
+	}
+	return p
+}
+
+func TestWithLayoutsStoresChain(t *testing.T) {
+	outer := NewFragment("outer", "layouts/outer.html").Build()
+	inner := NewFragment("inner", "layouts/inner.html").Build()
+	content := NewFragment("home", "pages/home.html").Build()
+	p := buildOK(t, NewPage("home").WithLayouts(outer, inner).WithContent(content).WithPath("en", "/"))
+	if len(p.LayoutChain) != 2 || p.LayoutChain[0] != outer || p.LayoutChain[1] != inner {
+		t.Fatalf("LayoutChain = %v, want [outer inner]", p.LayoutChain)
+	}
+}
+
+func TestWithLayoutsEmpty(t *testing.T) {
+	b := NewPage("home").WithLayouts().WithContent(NewFragment("home", "pages/home.html").Build())
+	b.Build()
+	if err := b.BuildErr(); err == nil {
+		t.Fatal("WithLayouts() with no arguments recorded no error")
+	} else if !errors.Is(err, ErrMissingLayout) {
+		t.Fatalf("err = %v, want ErrMissingLayout", err)
+	}
+}
+
+func TestWithLayoutsNilEntry(t *testing.T) {
+	b := NewPage("home").WithLayouts(NewFragment("outer", "layouts/outer.html").Build(), nil).
+		WithContent(NewFragment("home", "pages/home.html").Build())
+	b.Build()
+	if err := b.BuildErr(); err == nil {
+		t.Fatal("WithLayouts with a nil entry recorded no error")
+	} else if !errors.Is(err, ErrNilFragment) {
+		t.Fatalf("err = %v, want ErrNilFragment", err)
+	}
+}
+
+func TestWithLayoutsDuplicate(t *testing.T) {
+	layout := NewFragment("outer", "layouts/outer.html").Build()
+	b := NewPage("home").WithLayouts(layout, layout).
+		WithContent(NewFragment("home", "pages/home.html").Build())
+	b.Build()
+	if err := b.BuildErr(); err == nil {
+		t.Fatal("WithLayouts with a duplicate layout recorded no error")
+	} else if !errors.Is(err, ErrFragmentCycle) {
+		t.Fatalf("err = %v, want ErrFragmentCycle", err)
+	}
+}
+
+func TestWithLayoutsTwice(t *testing.T) {
+	first := NewFragment("a", "layouts/a.html").Build()
+	second := NewFragment("b", "layouts/b.html").Build()
+	b := NewPage("home").WithLayouts(first).WithLayouts(second).
+		WithContent(NewFragment("home", "pages/home.html").Build())
+	b.Build()
+	if err := b.BuildErr(); err == nil {
+		t.Fatal("a second WithLayouts recorded no error")
+	} else if !errors.Is(err, ErrConflictingLayout) {
+		t.Fatalf("err = %v, want ErrConflictingLayout", err)
+	}
+}
+
+func TestPageGuardsOrder(t *testing.T) {
+	var order []string
+	g := func(name string) GuardFunc {
+		return func(ctx context.Context, r *http.Request) (*GuardDecision, error) {
+			order = append(order, name)
+			return nil, nil
+		}
+	}
+	outer := NewFragment("outer", "layouts/outer.html").WithGuard(g("outer")).Build()
+	inner := NewFragment("inner", "layouts/inner.html").WithGuard(g("inner")).Build()
+	content := NewFragment("home", "pages/home.html").WithGuard(g("content")).Build()
+	middle := NewFragment("middle", "layouts/middle.html").Build() // no guard: skipped, not an error
+	p := NewPage("home").WithLayouts(outer, middle, inner).WithContent(content).Build()
+	guards := p.Guards()
+	if len(guards) != 3 {
+		t.Fatalf("Guards() has %d guards, want 3", len(guards))
+	}
+	for _, guard := range guards {
+		if _, err := guard(context.Background(), nil); err != nil {
+			t.Fatalf("guard: %v", err)
+		}
+	}
+	if len(order) != 3 || order[0] != "outer" || order[1] != "inner" || order[2] != "content" {
+		t.Fatalf("guard order = %v, want [outer inner content]", order)
 	}
 }

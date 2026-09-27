@@ -164,3 +164,10 @@ var ErrNotFound = types.ErrNotFound
 // ErrInvalidGuardDecision is returned when a guard's decision cannot be
 // written as an answer.
 var ErrInvalidGuardDecision = types.ErrInvalidGuardDecision
+
+// ErrMissingLayout is recorded when WithLayouts is called with no layouts.
+var ErrMissingLayout = types.ErrMissingLayout
+
+// ErrConflictingLayout is recorded when WithLayouts is called a second time on
+// one builder.
+var ErrConflictingLayout = types.ErrConflictingLayout

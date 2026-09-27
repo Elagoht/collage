@@ -2,6 +2,7 @@ package collage
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -29,9 +30,64 @@ func NewPage(name string) *PageBuilder {
 	}
 }
 
-// WithLayout sets the fragment that wraps the page's content fragment.
+// WithLayouts sets the page's layout chain, outermost first: the first
+// fragment wraps the second, the last wraps the page's content. Registration
+// does the wrapping — each layout's "content" slot is filled by the builder,
+// never by hand:
+//
+//	collage.NewPage("login").
+//		WithLayouts(layouts.Master(), layouts.Auth()).
+//		WithContent(login).
+//		WithPath("en", "/login")
+//
+// Every layout in the chain renders the one inside it through
+// {{slot "content"}}, the same convention a single layout follows. Each page
+// gets its own copy of every layout's slot table at registration, so one
+// layout value can be shared by every page in the application.
+//
+// A nil entry records ErrNilFragment, the same fragment twice records
+// ErrFragmentCycle, a second call records ErrConflictingLayout, and no layouts
+// at all records ErrMissingLayout — each retrievable via BuildErr and refused
+// at registration.
+func (b *PageBuilder) WithLayouts(outermost ...*Fragment) *PageBuilder {
+	return b.setLayouts(outermost)
+}
+
+// WithLayout sets a page's single layout: the one-fragment chain. See
+// WithLayouts. [REMOVED IN TASK 4 — this method only bridges the migration.]
 func (b *PageBuilder) WithLayout(f *Fragment) *PageBuilder {
-	b.page.LayoutFragment = f
+	return b.setLayouts([]*Fragment{f})
+}
+
+// setLayouts is what both layout methods write through. It sets LayoutChain,
+// the field registration folds, and LayoutFragment — the chain's outermost
+// original — so a caller reading the page before registration still finds its
+// root; folding replaces it with the bound copy. (Interim: until registration
+// learns the chain, LayoutFragment is also what the old single-layout binding
+// path reads, and a single-layout chain leaves it exactly what it always was.)
+func (b *PageBuilder) setLayouts(chain []*Fragment) *PageBuilder {
+	if len(b.page.LayoutChain) > 0 {
+		b.errs = append(b.errs, fmt.Errorf("%w: page %q", ErrConflictingLayout, b.page.Name))
+		return b
+	}
+	if len(chain) == 0 {
+		b.errs = append(b.errs, fmt.Errorf("%w: page %q declared no layouts", ErrMissingLayout, b.page.Name))
+		return b
+	}
+	seen := make(map[*Fragment]bool, len(chain))
+	for i, f := range chain {
+		if f == nil {
+			b.errs = append(b.errs, fmt.Errorf("%w: page %q layout %d", ErrNilFragment, b.page.Name, i))
+			return b
+		}
+		if seen[f] {
+			b.errs = append(b.errs, fmt.Errorf("%w: page %q wraps layout %q twice", ErrFragmentCycle, b.page.Name, f.Name))
+			return b
+		}
+		seen[f] = true
+	}
+	b.page.LayoutChain = append([]*Fragment(nil), chain...)
+	b.page.LayoutFragment = b.page.LayoutChain[0]
 	return b
 }
 
