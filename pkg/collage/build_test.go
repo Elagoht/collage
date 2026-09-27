@@ -3,6 +3,7 @@ package collage
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -153,5 +154,50 @@ func TestBuildReport_FieldsAlignWithInternalBuild(t *testing.T) {
 	}
 	if duration <= 0 {
 		t.Error("Duration = 0, want a positive elapsed time")
+	}
+}
+
+// A static build renders without a request, so it has no reader to ask a guard
+// about: a guarded page written to disk is served by the static host to anyone.
+// It is skipped and reported, never written.
+func TestBuild_SkipsGuardedPages(t *testing.T) {
+	app, err := New(&Config{
+		Server:   ServerConfig{Host: "localhost", Port: 3000},
+		Template: TemplateConfig{Root: templateRoot(t)},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	private := NewFragment("private", "layouts/default.html").
+		WithGuard(func(ctx context.Context, r *http.Request) (*GuardDecision, error) {
+			return &GuardDecision{Status: http.StatusSeeOther, Location: "/login"}, nil
+		}).
+		Build()
+	page := NewPage("dashboard").WithLayouts(private).
+		WithContent(NewFragment("home-content", "pages/home.html").Build()).
+		WithPath("en", "/dashboard").Static().Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	outDir := t.TempDir()
+	builder, err := NewBuilder(app, BuildOptions{OutDir: outDir})
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+	report, err := builder.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outDir, "dashboard", "index.html")); !os.IsNotExist(err) {
+		t.Fatalf("guarded page was written to the build output (stat err = %v)", err)
+	}
+	found := false
+	for _, skip := range report.Skipped {
+		if skip.Page == "dashboard" && errors.Is(skip.Err, ErrGuarded) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Skipped = %+v, want dashboard with ErrGuarded", report.Skipped)
 	}
 }

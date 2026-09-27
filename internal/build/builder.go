@@ -106,6 +106,11 @@ var ErrEmptyRender = types.ErrEmptyRender
 // is Dynamic(), which says it must not be stored — and a file is stored.
 var ErrNotStatic = errors.New("collage: a Dynamic() route cannot be built statically")
 
+// ErrGuarded is a SkipRecord's Err for a page with a guard on its spine. A build
+// renders without a request, so there is no reader to ask the guard about, and a
+// file on a static host is served to anyone who asks for it.
+var ErrGuarded = errors.New("collage: a guarded page cannot be built statically")
+
 // ErrUnresolvedToken is the SkipRecord's Err for a page rendered for a static build
 // that contains a request-forgery token placeholder, and is recorded in
 // Report.Errors when that page is the not-found page.
@@ -648,6 +653,14 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 				Page:   page.Name,
 				Reason: fmt.Sprintf("page uses the %s render strategy, which cannot be built statically", page.Strategy),
 				Err:    ErrNotStatic,
+			})
+			continue
+		}
+		if page.Guarded() {
+			skipped = append(skipped, SkipRecord{
+				Page:   page.Name,
+				Reason: "page has a guard, and a file on a static host has no guard in front of it",
+				Err:    ErrGuarded,
 			})
 			continue
 		}

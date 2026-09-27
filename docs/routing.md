@@ -237,6 +237,10 @@ registered on its own URL has no page, so no guards. Error and not-found pages
 render without guards — a private error page would otherwise redirect the reader
 who hit the error.
 
+A static build renders without a request, so there is no reader to ask the guard
+about. It does not write a guarded page: the build report lists it as skipped
+with `collage.ErrGuarded`, and the page is served only by the running server.
+
 What a guard *checks* is not the framework's to know. The function above is one
 policy; a plugin can ship another, and `collage inspect` lists which of a page's
 fragments carry one.

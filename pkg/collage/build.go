@@ -129,3 +129,8 @@ func NewBuilder(app *App, opts BuildOptions) (*Builder, error) {
 // ErrNotStatic is a SkipRecord's Err for a page or document declared Dynamic(),
 // which a static build does not write.
 var ErrNotStatic = build.ErrNotStatic
+
+// ErrGuarded is a SkipRecord's Err for a page whose layout chain or content
+// fragment carries a guard, which a static build does not write: a file on a
+// static host has no guard in front of it.
+var ErrGuarded = build.ErrGuarded
