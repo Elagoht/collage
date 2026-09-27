@@ -69,6 +69,9 @@ type InspectedFragment struct {
 	Handler bool     `json:"handler,omitempty"`
 	Static  bool     `json:"static,omitempty"`
 	Shared  bool     `json:"shared,omitempty"`
+	// Inline reports a template given as text with NewInlineFragment; Template
+	// is then empty.
+	Inline bool `json:"inline,omitempty"`
 }
 
 // InspectedDocument is one registered document.
@@ -168,7 +171,7 @@ func (a *App) Inspect() Inspection {
 	addFragment := func(f *types.Fragment) error {
 		slots := slices.Sorted(maps.Keys(f.Slots))
 		out.Fragments = append(out.Fragments, InspectedFragment{
-			Name: f.Name, Template: f.TemplatePath, Slots: slots,
+			Name: f.Name, Template: f.TemplatePath, Inline: types.IsInline(f), Slots: slots,
 			Handler: f.DataHandler != nil, Static: f.Static, Shared: f.Shared,
 		})
 		return nil

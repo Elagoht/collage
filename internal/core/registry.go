@@ -314,6 +314,15 @@ func copyLayout(f *types.Fragment) *types.Fragment {
 	return &copied
 }
 
+// describeTemplate names f's template for a person: its path, or for an inline
+// fragment what it is, since the engine's synthetic name means nothing to anyone.
+func describeTemplate(f *types.Fragment) string {
+	if types.IsInline(f) {
+		return fmt.Sprintf("the inline template of fragment %q", f.Name)
+	}
+	return fmt.Sprintf("template %q", f.TemplatePath)
+}
+
 // checkTemplates reports ErrTemplateNotFound for the first fragment of p whose
 // TemplatePath the engine has not loaded, naming the page, the fragment, and the
 // path — and types.ErrUnknownSlot for the first with something bound into a slot
@@ -327,24 +336,35 @@ func copyLayout(f *types.Fragment) *types.Fragment {
 func (a *App) checkTemplates(p *types.Page) error {
 	visited := make(map[*types.Fragment]bool)
 	visit := func(f *types.Fragment) error {
-		if !a.tmpl.Lookup(f.TemplatePath) {
-			return fmt.Errorf("%w: page %q fragment %q references %q",
-				ErrTemplateNotFound, p.Name, f.Name, f.TemplatePath)
+		// An inline fragment's template reaches the engine here, so everything
+		// below checks it exactly as it checks a file.
+		name := types.TemplateName(f)
+		if types.IsInline(f) {
+			if err := a.tmpl.AddSource(name, f.Source); err != nil {
+				return fmt.Errorf("collage: page %q: inline template of fragment %q: %w", p.Name, f.Name, err)
+			}
+		}
+		// An empty name would find the template set's own unnamed root and pass;
+		// a fragment with no template at all is Validate's to report, and this
+		// check must not stand in for it by accident.
+		if name == "" || !a.tmpl.Lookup(name) {
+			return fmt.Errorf("%w: page %q fragment %q references %s",
+				ErrTemplateNotFound, p.Name, f.Name, describeTemplate(f))
 		}
 		// A slot with something bound into it that the template never calls
 		// renders nothing, every time. A template calling a slot by a name it
 		// works out as it renders may call any of them, so it is not checked.
-		calls, dynamic := a.tmpl.SlotCalls(f.TemplatePath)
+		calls, dynamic := a.tmpl.SlotCalls(name)
 		if dynamic {
 			return nil
 		}
-		for _, name := range f.SlotNames() {
-			slot := f.Slots[name]
-			if slot == nil || (len(slot.Fill) == 0 && slot.Resolve == nil) || slices.Contains(calls, name) {
+		for _, slotName := range f.SlotNames() {
+			slot := f.Slots[slotName]
+			if slot == nil || (len(slot.Fill) == 0 && slot.Resolve == nil) || slices.Contains(calls, slotName) {
 				continue
 			}
-			return fmt.Errorf("%w: page %q fragment %q binds into slot %q, but template %q never calls it; it calls %v",
-				types.ErrUnknownSlot, p.Name, f.Name, name, f.TemplatePath, calls)
+			return fmt.Errorf("%w: page %q fragment %q binds into slot %q, but %s never calls it; it calls %v",
+				types.ErrUnknownSlot, p.Name, f.Name, slotName, describeTemplate(f), calls)
 		}
 		return nil
 	}

@@ -52,6 +52,10 @@ var ErrNoMountForAsset = core.ErrNoMountForAsset
 // outside Template.Root.
 var ErrTemplateEscapesRoot = template.ErrTemplateEscapesRoot
 
+// ErrSourceConflict is returned at registration for an inline template that
+// defines a template of its own, which would replace a file template of that name.
+var ErrSourceConflict = template.ErrSourceConflict
+
 // Mistakes in a {{dict}} call.
 var (
 	// ErrDictOddArgs reports {{dict}} given a key with no value.

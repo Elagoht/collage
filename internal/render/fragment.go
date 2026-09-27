@@ -292,6 +292,20 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	started := e.prefetchChildren(rc, f, state, fills)
 	defer release(started)
 
+	name := types.TemplateName(f)
+	label := "template " + f.TemplatePath
+	if types.IsInline(f) {
+		label = "inline template"
+		// A fragment a slot resolver returned is not seen at registration; its
+		// source reaches the engine here, the first time it renders. Before the
+		// timer, so parsing is not billed as template time.
+		if !e.tmpl.Lookup(name) {
+			if err := e.tmpl.AddSource(name, f.Source); err != nil {
+				return nil, wrapFragment(label, f.Name, err)
+			}
+		}
+	}
+
 	var buf bytes.Buffer
 	childTotalBefore := state.childTotal
 	renderStarted := time.Now()
@@ -301,11 +315,11 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	// the part that talks to the outside world — but the render's context still
 	// applies.
 	err = Execute(rc.Context(), 0, func(ctx context.Context) error {
-		return e.tmpl.RenderWithFuncs(ctx, &buf, f.TemplatePath, data, e.slotFuncs(rc, f, state, started, fills))
+		return e.tmpl.RenderWithFuncs(ctx, &buf, name, data, e.slotFuncs(rc, f, state, started, fills))
 	})
 	state.templateTime += time.Since(renderStarted) - (state.childTotal - childTotalBefore)
 	if err != nil {
-		return nil, wrapFragment("template "+f.TemplatePath, f.Name, err)
+		return nil, wrapFragment(label, f.Name, err)
 	}
 	return buf.Bytes(), nil
 }
