@@ -262,6 +262,43 @@ not appear on that page.
 
 A page with no layout renders its content fragment as the root.
 
+### Layout chains
+
+A page wraps its content in as many layouts as it has, outermost first.
+Registration fills every `content` slot in the chain — the content fragment into
+the innermost layout, each layout into the one outside it — so a layout with a
+hole is a finished fragment, not a builder a page has to finish:
+
+```go
+func Master() *collage.Fragment {
+	return collage.NewFragment("layout", "layouts/default.html").WithTitle("My site").Build()
+}
+
+func Auth() *collage.Fragment {
+	return collage.NewFragment("auth-layout", "layouts/auth.html").Build()
+}
+
+page := collage.NewPage("login").
+	WithLayouts(layouts.Master(), layouts.Auth()).
+	WithContent(login).
+	WithPath("en", "/login").
+	Build()
+```
+
+Every layout in the chain renders the one inside it with `{{slot "content"}}`.
+Every page still gets its own copy of every layout's slot table, so one layout
+value serves the whole application. A layout in a chain must not arrive with its
+`content` slot filled — `collage.ErrSlotOccupied` at registration — except the
+innermost holding exactly the page's content fragment, the hand-bound escape
+hatch a single layout has always had.
+
+`WithLayouts` records `collage.ErrMissingLayout` when called with no layouts,
+`collage.ErrNilFragment` for a nil one, `collage.ErrFragmentCycle` for the same
+layout twice, and `collage.ErrConflictingLayout` when called a second time.
+
+A layout can also say who may see the pages it wraps; see
+[Guards](routing.md#guards).
+
 ## Data handlers
 
 ```go

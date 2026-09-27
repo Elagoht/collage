@@ -237,7 +237,7 @@ mutation obvious. Where mutation *is* intended it is explicit —
 
 | Interface | Method | Fires | May change |
 | --- | --- | --- | --- |
-| `PageResolvedHook` | `OnPageResolved` | After routing, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch four hooks, not seven" below) | nothing |
+| `PageResolvedHook` | `OnPageResolved` | After routing and the page's guards, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch four hooks, not seven" below), and never a request a guard blocked: it never reached the page | nothing |
 | `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** — including an error page, and a page an action answers with | nothing |
 | `RequestHook` | `OnRequest` | First, before collage's request span, middleware and routing; returns the context to serve under and a function told the final status | the request's context |
 | `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure) and `ev.DependencyTags`. **Pages only**, on the same terms | `ev.HTML`, `ev.Hoist(area, key, html)`; reports with `ev.Warn`, `ev.Error` |
@@ -377,7 +377,8 @@ one sentinel for every such status), `collage.ErrMaxDepthExceeded`,
 `collage.PanicError` through `errors.As`.
 
 `ErrorEvent.Stage` names where in the pipeline the failure happened (`"route"`,
-`"not_found"`, `"page_resolved"`, `"before_render"`, `"render"`,
+`"not_found"`, `"guard"` (a guard that failed or answered with a decision it
+cannot write), `"page_resolved"`, `"before_render"`, `"render"`,
 `"after_render"`, `"cache_write"`, `"error_page"`, `"panic"`, `"asset"`, and
 `"handler"` for a handler mounted with `app.Handle` answering 5xx). It is
 caller-defined rather than an enum. `"error_page"` is the one worth alerting on:

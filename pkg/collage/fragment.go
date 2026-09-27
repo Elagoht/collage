@@ -81,7 +81,7 @@ func (b *FragmentBuilder) WithTitle(title string) *FragmentBuilder {
 // URL alike — which is how a section of a site says it is private:
 //
 //	private := collage.NewFragment("private", "layouts/private.html").
-//		WithGuard(session.RequireUser("/login")).
+//		WithGuard(requireUser). // a GuardFunc: nil to allow, a decision to block
 //		Build()
 //
 //	collage.NewPage("dashboard").

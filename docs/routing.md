@@ -171,6 +171,70 @@ The response is written by hand rather than through `http.Redirect`: a `Location
 header and the status, with no body. A redirect carries its destination in the
 header, and a body only makes `GET` and `HEAD` behave differently for no benefit.
 
+## Guards
+
+A guard decides whether a request may reach a page, and it is declared where the
+page's structure is — on a layout, or on the content fragment:
+
+```go
+func requireUser(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
+	if session.FromContext(ctx).Get("user") != "" {
+		return nil, nil // allowed
+	}
+	return &collage.GuardDecision{
+		Status:   http.StatusSeeOther,
+		Location: "/login?next=" + url.QueryEscape(r.URL.RequestURI()),
+	}, nil
+}
+
+private := collage.NewFragment("private", "layouts/private.html").
+	WithGuard(requireUser).
+	Build()
+
+page := collage.NewPage("dashboard").
+	WithLayouts(layouts.Master(), private).
+	WithContent(dashboard).
+	WithPath("en", "/dashboard").
+	Build()
+```
+
+Every page whose spine carries the layout — its layout chain and its content
+fragment — asks the guard first, for its renders and for the actions on its own
+URL alike: a page a reader may not see is a page whose form the reader may not
+submit. There is no list of protected paths to keep in step with the routes; the
+pattern, the locale prefix and the trailing slash are already the router's.
+
+The guard runs after the router resolves the request and **before the page's
+cache is read**, and before `PageResolvedHook` fires. A blocked reader never
+reaches a cached render, so a private page may be `Static()`. Allowed readers
+share the page's cache: a page whose content differs per reader is a
+personalisation question, not a guard question.
+
+A guard answers in one of three ways:
+
+- a nil decision allows the request;
+- a `3xx` status with a `Location` redirects — a zero status with a location is
+  `303 See Other`. A request marked with the `Collage-Fetch` header gets `204`
+  and the destination in `Collage-Location`, as an action's redirect does;
+- a `4xx` or `5xx` status with no location refuses, with no body.
+
+Any other decision — a redirect with nowhere to go, a `200` — is
+`collage.ErrInvalidGuardDecision` and fails the request with a `500`, as a guard
+that returns an error does. Guards run outermost layout first, then inwards, the
+content fragment last, and the first that answers decides.
+
+Guards on other fragments — slot children, a resolver's fragments, fallbacks —
+are ignored: access policy belongs to routes, not to the parts a page is drawn
+from. A **fragment path** is a route of its own: the fragment's own guard is its
+whole policy, and it inherits nothing from the page that declared it. An action
+registered on its own URL has no page, so no guards. Error and not-found pages
+render without guards — a private error page would otherwise redirect the reader
+who hit the error.
+
+What a guard *checks* is not the framework's to know. The function above is one
+policy; a plugin can ship another, and `collage inspect` lists which of a page's
+fragments carry one.
+
 ## Error pages
 
 Error pages are a *page* mechanism. A [document](documents.md) answers a failure

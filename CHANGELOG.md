@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`WithLayouts`**: a page's layout chain, outermost first. Registration folds
+  the chain — the content fragment into the innermost layout, each layout into
+  the next outer one — so a layout with a hole is a finished fragment, and
+  nesting layouts is a list rather than nested builders.
+- **`WithGuard`** on fragments (`collage.GuardFunc`, `collage.GuardDecision`): a
+  guard runs for every page whose spine the fragment is on — its layout chain
+  and its content fragment — after routing, before the page's cache is read and
+  before `PageResolved`, and it covers the actions on the page's own URL. A
+  fragment path runs its fragment's own guard and inherits nothing; standalone
+  actions and error pages run none. A failing guard is reported at the new
+  `"guard"` error stage.
+- `collage inspect` reports `layouts` (outermost first) and `guards` per page.
+
+### Changed
+
+- **Breaking:** `WithLayout` is removed; a single layout is `WithLayouts(layout)`.
+  `InspectedPage.Layout` is replaced by `Layouts`.
+- Registration refuses a layout chain whose outer layouts arrive with a filled
+  `content` slot (`ErrSlotOccupied`).
+- `collage inspect` lists a layout shared by several pages once, rather than once
+  per page.
+
 ## v0.27.0
 
 ### Added
