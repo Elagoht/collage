@@ -26,6 +26,28 @@ func TestTemplateName(t *testing.T) {
 	}
 }
 
+func TestHumanizeTemplateNames(t *testing.T) {
+	name := TemplateName(&Fragment{Name: "row", Source: "<tr/>"})
+	cases := map[string]string{
+		"template: " + name + ":1:5: executing \"" + name + "\" at <.X>": `template: inline template of fragment "row":1:5: executing inline template of fragment "row" at <.X>`,
+		"template: pages/home.html:2: unclosed action":                   "template: pages/home.html:2: unclosed action",
+		"inline: not a template name":                                    "inline: not a template name",
+		"inline:row#nothex":                                              "inline:row#nothex",
+	}
+	for in, want := range cases {
+		if got := HumanizeTemplateNames(in); got != want {
+			t.Errorf("HumanizeTemplateNames(%q) = %q, want %q", in, got, want)
+		}
+	}
+	wrapped := HumanizeTemplateError(ErrNotFound)
+	if !errors.Is(wrapped, ErrNotFound) {
+		t.Fatal("HumanizeTemplateError lost the error it wraps")
+	}
+	if HumanizeTemplateError(nil) != nil {
+		t.Fatal("HumanizeTemplateError(nil) is not nil")
+	}
+}
+
 func TestValidateTemplateSource(t *testing.T) {
 	if err := (&Fragment{Name: "x"}).Validate(); !errors.Is(err, ErrEmptyTemplatePath) {
 		t.Fatalf("no path, no source: %v, want ErrEmptyTemplatePath", err)

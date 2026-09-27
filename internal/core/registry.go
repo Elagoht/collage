@@ -341,7 +341,9 @@ func (a *App) checkTemplates(p *types.Page) error {
 		name := types.TemplateName(f)
 		if types.IsInline(f) {
 			if err := a.tmpl.AddSource(name, f.Source); err != nil {
-				return fmt.Errorf("collage: page %q: inline template of fragment %q: %w", p.Name, f.Name, err)
+				// The engine's error already says where — the inline template of
+				// this fragment, once its synthetic name is humanized.
+				return fmt.Errorf("collage: page %q: %w", p.Name, types.HumanizeTemplateError(err))
 			}
 		}
 		// An empty name would find the template set's own unnamed root and pass;

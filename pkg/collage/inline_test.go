@@ -108,6 +108,28 @@ func TestInlineFragment_ParseErrorNamesPageAndFragment(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `page "list"`) || !strings.Contains(err.Error(), `fragment "broken-row"`) {
 		t.Fatalf("RegisterPage = %v, want an error naming page and fragment", err)
 	}
+	if strings.Contains(err.Error(), "inline:broken-row#") {
+		t.Fatalf("RegisterPage = %v, want no engine-internal template name in it", err)
+	}
+}
+
+// The development overlay leads with where a template failed; for an inline
+// template that is the fragment, not a hash nobody wrote.
+func TestInlineFragment_DevOverlayNamesTheFragment(t *testing.T) {
+	app := inlineApp(t, true)
+	bad := collage.NewInlineFragment("bad", `<p>{{.Nope.X}}</p>`).WithData("s").Build()
+	if err := app.RegisterPage(collage.NewPage("b").WithContent(bad).WithPath("en", "/b").Build()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/b", nil))
+	page := w.Body.String()
+	if !strings.Contains(page, "collage-dev-overlay") {
+		t.Fatalf("no dev overlay in %q", page)
+	}
+	if strings.Contains(page, "inline:bad#") || !strings.Contains(page, "inline template of fragment") {
+		t.Fatalf("overlay = %q, want the fragment named and no engine-internal template name", page)
+	}
 }
 
 func TestInlineFragment_UnknownSlot(t *testing.T) {

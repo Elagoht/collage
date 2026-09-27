@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"text/template"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // devCause picks out of err what a development page should lead with: the error
@@ -36,12 +38,15 @@ func devCause(err error) (cause, where string, ok bool) {
 	// first field after the prefix, and has no ": " in it.
 	message := strings.TrimPrefix(innermost.Error(), "template: ")
 	where, rest, _ := strings.Cut(message, ": ")
+	// An inline template's engine name is a hash nobody wrote; the page names
+	// the fragment instead.
+	where = types.HumanizeTemplateNames(where)
 
 	// A failed call is wrapped as "error calling slot: <what it returned>"; a
 	// template's own mistake, a missing field, has nothing beneath it and is
 	// its own cause.
 	if returned := errors.Unwrap(innermost.Err); returned != nil {
-		return returned.Error(), where, true
+		return types.HumanizeTemplateNames(returned.Error()), where, true
 	}
-	return rest, where, true
+	return types.HumanizeTemplateNames(rest), where, true
 }

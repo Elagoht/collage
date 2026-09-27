@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -118,7 +119,75 @@ func TemplateName(f *Fragment) string {
 		return f.TemplatePath
 	}
 	sum := sha256.Sum256([]byte(f.Source))
-	return "inline:" + f.Name + "#" + hex.EncodeToString(sum[:8])
+	return inlinePrefix + f.Name + "#" + hex.EncodeToString(sum[:8])
+}
+
+// inlinePrefix begins every inline template's name; TemplateName writes it and
+// HumanizeTemplateNames reads it back.
+const inlinePrefix = "inline:"
+
+// HumanizeTemplateNames rewrites every inline template name in s — what the
+// template engine prints in its own errors — as `inline template of fragment
+// "name"`, so a message names the fragment someone wrote rather than a hash
+// nobody did. Anything that is not an inline name is left as it is.
+func HumanizeTemplateNames(s string) string {
+	var b strings.Builder
+	for {
+		start := strings.Index(s, inlinePrefix)
+		if start < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		end, name, ok := inlineNameAt(s, start)
+		if !ok {
+			b.WriteString(s[:start+len(inlinePrefix)])
+			s = s[start+len(inlinePrefix):]
+			continue
+		}
+		// A name the engine quoted is replaced quotes and all, so the result
+		// does not nest one pair of quotes inside another.
+		if start > 0 && s[start-1] == '"' && end < len(s) && s[end] == '"' {
+			start--
+			end++
+		}
+		b.WriteString(s[:start])
+		b.WriteString(`inline template of fragment "` + name + `"`)
+		s = s[end:]
+	}
+}
+
+// inlineNameAt reads the inline template name starting at s[start]: the prefix,
+// the fragment name, "#" and the sixteen hex digits TemplateName writes. It
+// reports the end of the name and the fragment name.
+func inlineNameAt(s string, start int) (end int, name string, ok bool) {
+	rest := s[start+len(inlinePrefix):]
+	hash := strings.IndexByte(rest, '#')
+	if hash < 0 || len(rest) < hash+1+16 {
+		return 0, "", false
+	}
+	for _, c := range rest[hash+1 : hash+1+16] {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return 0, "", false
+		}
+	}
+	return start + len(inlinePrefix) + hash + 1 + 16, rest[:hash], true
+}
+
+// humanizedError is an error whose message has had its inline template names
+// rewritten, and which still unwraps to what it was built from.
+type humanizedError struct{ err error }
+
+func (h humanizedError) Error() string { return HumanizeTemplateNames(h.err.Error()) }
+func (h humanizedError) Unwrap() error { return h.err }
+
+// HumanizeTemplateError wraps err so its message names inline templates by their
+// fragments (see HumanizeTemplateNames), keeping err reachable through
+// errors.Is and errors.As. A nil err stays nil.
+func HumanizeTemplateError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return humanizedError{err: err}
 }
 
 // Slot looks up the slot named name on f. It is nil-safe: a nil receiver or a

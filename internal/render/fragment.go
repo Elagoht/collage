@@ -301,7 +301,7 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		// timer, so parsing is not billed as template time.
 		if !e.tmpl.Lookup(name) {
 			if err := e.tmpl.AddSource(name, f.Source); err != nil {
-				return nil, wrapFragment(label, f.Name, err)
+				return nil, wrapFragment(label, f.Name, types.HumanizeTemplateError(err))
 			}
 		}
 	}
@@ -319,6 +319,9 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	})
 	state.templateTime += time.Since(renderStarted) - (state.childTotal - childTotalBefore)
 	if err != nil {
+		if types.IsInline(f) {
+			err = types.HumanizeTemplateError(err)
+		}
 		return nil, wrapFragment(label, f.Name, err)
 	}
 	return buf.Bytes(), nil

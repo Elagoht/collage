@@ -263,7 +263,7 @@ func addSource(set *template.Template, name, src string) error {
 		trees[t.Name()] = t.Tree
 	}
 	if _, err := set.New(name).Parse(src); err != nil {
-		return fmt.Errorf("collage: parse inline template %s: %w", name, err)
+		return err // html/template's own message already names the template and line
 	}
 	for _, t := range set.Templates() {
 		if t.Name() == name {
