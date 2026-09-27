@@ -140,3 +140,10 @@ var ErrEmptyRender = errors.New("collage: page rendered no markup")
 // ErrNoActionHandler reports an action with nothing to run. One sentinel for
 // registration and for a request, so an error hook matches it either way.
 var ErrNoActionHandler = errors.New("collage: action has no handler")
+
+// ErrInvalidGuardDecision is returned when a guard's decision cannot be
+// written: a redirect status without a location, a success status, or an empty
+// decision. A guard that cannot say what it means is failed rather than
+// guessed about — the alternative, for a redirect with nowhere to go, is
+// serving the content the guard was put there to keep from the reader.
+var ErrInvalidGuardDecision = errors.New("collage: invalid guard decision")

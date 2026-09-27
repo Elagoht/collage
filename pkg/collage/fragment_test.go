@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/Elagoht/collage/internal/types"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // TestFragmentBuilder_MinimalApp builds the fragments of an application modelled
@@ -318,5 +321,26 @@ func TestGet(t *testing.T) {
 	}
 	if _, ok := Get[int](rc, "missing"); ok {
 		t.Error("Get of a missing key reported ok")
+	}
+}
+
+func TestWithGuard(t *testing.T) {
+	guard := func(ctx context.Context, r *http.Request) (*GuardDecision, error) {
+		return &GuardDecision{Status: http.StatusSeeOther, Location: "/login"}, nil
+	}
+	f := NewFragment("private", "layouts/private.html").WithGuard(guard).Build()
+	if f.Guard == nil {
+		t.Fatal("WithGuard left Fragment.Guard nil")
+	}
+	d, err := f.Guard(context.Background(), httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil || d == nil || d.Location != "/login" {
+		t.Fatalf("Guard() = %v, %v; want /login, nil", d, err)
+	}
+}
+
+func TestWithGuardNil(t *testing.T) {
+	b := NewFragment("private", "layouts/private.html").WithGuard(nil)
+	if err := b.BuildErr(); err == nil {
+		t.Fatal("WithGuard(nil) recorded no error")
 	}
 }

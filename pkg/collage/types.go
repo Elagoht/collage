@@ -51,6 +51,14 @@ type SlotResolverFunc = types.SlotResolverFunc
 // paths, each of which is a render of its own that Once cannot reach across.
 type DataHandlerFunc = types.DataHandlerFunc
 
+// GuardFunc decides whether a request may reach what it guards. See
+// FragmentBuilder.WithGuard.
+type GuardFunc = types.GuardFunc
+
+// GuardDecision is a guard's answer about one request: a redirect (3xx status
+// with a location) or a bare refusal status.
+type GuardDecision = types.GuardDecision
+
 // Page is a render configuration: the fragments to compose, the paths that reach it,
 // and how its output is cached.
 type Page = types.Page
@@ -152,3 +160,7 @@ var ErrInvalidPath = types.ErrInvalidPath
 // NotFoundPage with a 404 instead of its ErrorPage with a 500. Without wrapping
 // it, every missing record is a 500 and a page-specific 404 page is unreachable.
 var ErrNotFound = types.ErrNotFound
+
+// ErrInvalidGuardDecision is returned when a guard's decision cannot be
+// written as an answer.
+var ErrInvalidGuardDecision = types.ErrInvalidGuardDecision

@@ -76,6 +76,31 @@ func (b *FragmentBuilder) WithTitle(title string) *FragmentBuilder {
 	return b
 }
 
+// WithGuard sets the guard this fragment carries. A layout with a guard makes
+// every page it wraps guarded — the page's renders and the actions on its own
+// URL alike — which is how a section of a site says it is private:
+//
+//	private := collage.NewFragment("private", "layouts/private.html").
+//		WithGuard(session.RequireUser("/login")).
+//		Build()
+//
+//	collage.NewPage("dashboard").
+//		WithLayouts(layouts.Master(), private).
+//		WithContent(dashboard).
+//		WithPath("en", "/dashboard")
+//
+// The guard runs after routing resolves the request and before the page's
+// cache is read, so a blocked reader never reaches a cached render of what it
+// is blocked from. A nil g records an error retrievable via BuildErr.
+func (b *FragmentBuilder) WithGuard(g GuardFunc) *FragmentBuilder {
+	if g == nil {
+		b.errs = append(b.errs, fmt.Errorf("collage: nil guard on fragment %q", b.fragment.Name))
+		return b
+	}
+	b.fragment.Guard = g
+	return b
+}
+
 // DataHandler adapts a data handler that returns a concrete type to
 // DataHandlerFunc, so an application's handlers can be written against its own
 // view types rather than against any:

@@ -55,6 +55,15 @@ type Fragment struct {
 	// hoists a title of its own replaces it. Like Data, it is fixed, and does not
 	// make a page dynamic.
 	Title string
+	// Guard, when set, is asked whether a request may reach this fragment
+	// before anything is served: before the page's cache is read, before its
+	// render, before an action on the page's own URL runs. It runs for every
+	// page whose spine this fragment is on — a layout in the page's layout
+	// chain, or the page's content fragment — and for a fragment path opened
+	// on this fragment's own URL, where it is the fragment's whole policy.
+	// On any other fragment it is ignored: access policy belongs to routes,
+	// not to rendering parts. See GuardFunc.
+	Guard GuardFunc
 	// Static states that the fragment's DataHandler returns the same for every
 	// request to one URL: what it renders depends on the path's parameters and the
 	// locale, which are part of a cache key, and on nothing a request carries
