@@ -210,6 +210,12 @@ reaches a cached render, so a private page may be `Static()`. Allowed readers
 share the page's cache: a page whose content differs per reader is a
 personalisation question, not a guard question.
 
+That cache is the server's own. A CDN or proxy in front of the server runs no
+guard, so a guarded page is sent with `Cache-Control: private, no-cache`,
+whatever its strategy would otherwise say. The reader's browser may keep it and
+revalidate with its ETag, and a revalidation is a request that meets the guard.
+A static build does not write guarded pages; see below.
+
 A guard answers in one of three ways:
 
 - a nil decision allows the request;

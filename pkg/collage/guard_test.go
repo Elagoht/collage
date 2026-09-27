@@ -412,3 +412,18 @@ func TestFragmentPathMalformedDecisionFails(t *testing.T) {
 		t.Fatalf("status = %d, want 500, not the fragment's render", w.Code)
 	}
 }
+
+// A guarded page must not be marked cacheable by shared caches: a CDN that stored
+// an allowed reader's 200 would serve it to blocked readers without ever asking
+// the guard. Checked on the fresh render and on the server-side cache hit.
+func TestGuardedPageIsPrivateToSharedCaches(t *testing.T) {
+	app, _ := guardedApp(t, func(b *collage.PageBuilder) { b.Incremental(time.Minute) }, true)
+	h := app.Handler()
+	for _, attempt := range []string{"fresh", "cached"} {
+		w := get(h, "/panel", "1")
+		cc := w.Header().Get("Cache-Control")
+		if w.Code != http.StatusOK || !strings.Contains(cc, "private") || strings.Contains(cc, "public") {
+			t.Fatalf("%s: status = %d Cache-Control = %q, want private and not public", attempt, w.Code, cc)
+		}
+	}
+}

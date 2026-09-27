@@ -156,6 +156,18 @@ func (p *Page) ContentSlotName() string {
 	return DefaultContentSlot
 }
 
+// Guarded reports whether any fragment on the page's spine carries a guard. It
+// is the one question every path that serves a page outside a guarded request —
+// response cache headers, a static build — asks before handing it out.
+func (p *Page) Guarded() bool {
+	for _, f := range p.LayoutChain {
+		if f != nil && f.Guard != nil {
+			return true
+		}
+	}
+	return p.ContentFragment != nil && p.ContentFragment.Guard != nil
+}
+
 // Guards returns the guards on the page's spine: each layout in LayoutChain,
 // outermost first, then the content fragment. A nil guard — the common
 // fragment — is skipped rather than represented. The first guard in this

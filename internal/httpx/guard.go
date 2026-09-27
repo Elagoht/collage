@@ -54,3 +54,15 @@ func (h *Handler) checkGuards(w http.ResponseWriter, r *http.Request, route *rou
 	w.WriteHeader(decision.Status)
 	return decision.Status, false
 }
+
+// guardedCacheControl keeps a guarded page out of shared caches. The server's own
+// cache stays shared by every allowed reader, because the guard runs before it is
+// read; a CDN or a proxy in front of the server runs no guard, and a public entry
+// there would hand an allowed reader's page to every blocked one. "private,
+// no-cache" still lets the reader's own browser keep the page and revalidate it
+// with its ETag — a revalidation is a request, and a request meets the guard.
+func guardedCacheControl(header http.Header, page *types.Page) {
+	if page.Guarded() {
+		header.Set("Cache-Control", "private, no-cache")
+	}
+}

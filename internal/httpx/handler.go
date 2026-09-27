@@ -710,6 +710,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	header.Set("Content-Type", contentTypeHTML)
 	header.Set("ETag", etag)
 	h.setCacheHeaders(header, r, page.Strategy, page.CacheTTL)
+	guardedCacheControl(header, page)
 	// After setCacheHeaders, so it overrides whatever the page's strategy declared.
 	// The body that goes on the wire carries this reader's token, whatever the
 	// shared one behind it may be cached as.
@@ -952,6 +953,7 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 	header := w.Header()
 	header.Set("ETag", etag)
 	h.setCacheHeaders(header, r, page.Strategy, page.CacheTTL)
+	guardedCacheControl(header, page)
 	if personal {
 		header.Set("Cache-Control", "private, no-store")
 	}
