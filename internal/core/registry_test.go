@@ -1133,3 +1133,44 @@ func TestRegisterPageInnermostHandBoundStillCopies(t *testing.T) {
 		t.Fatalf("hand-bound fill = %v, want the original content once", slot.Fill)
 	}
 }
+
+// A page built by hand — a plugin through Host.RegisterPage, or a Page literal —
+// with only LayoutFragment set is the one-layout chain it looks like, not a page
+// whose layout silently renders without its content.
+func TestRegisterPageLoneLayoutFragmentIsAChain(t *testing.T) {
+	app := newTestApp(t, nil)
+	page := newHomePage()
+	layout := page.LayoutChain[0]
+	page.LayoutChain = nil
+	page.LayoutFragment = layout
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if got := strings.Count(get(app.Handler(), "/").Body.String(), "Welcome Home"); got != 1 {
+		t.Fatalf("rendered content appears %d times, want once", got)
+	}
+}
+
+// A nil entry in a hand-built chain is a registration error, not a panic.
+func TestRegisterPageNilChainEntryRejected(t *testing.T) {
+	app := newTestApp(t, nil)
+	page := newHomePage()
+	page.LayoutChain = append(page.LayoutChain, nil)
+	err := app.RegisterPage(page)
+	if !errors.Is(err, types.ErrNilFragment) {
+		t.Fatalf("RegisterPage = %v, want ErrNilFragment", err)
+	}
+}
+
+// A LayoutFragment that disagrees with the chain it is supposed to be the root
+// of says two different things about one page; registration refuses rather than
+// silently keeping one.
+func TestRegisterPageConflictingLayoutFragmentRejected(t *testing.T) {
+	app := newTestApp(t, nil)
+	page := newHomePage()
+	page.LayoutFragment = newLayout("another-layout")
+	err := app.RegisterPage(page)
+	if !errors.Is(err, types.ErrConflictingLayout) {
+		t.Fatalf("RegisterPage = %v, want ErrConflictingLayout", err)
+	}
+}

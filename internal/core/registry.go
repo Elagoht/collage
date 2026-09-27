@@ -194,14 +194,17 @@ func (a *App) remember(p *types.Page) {
 // Binding also happens exactly once per page; the "already done" test is
 // a.bound, as it has always been. It must be called with a.mu held.
 func (a *App) bindContent(p *types.Page) error {
+	if a.bound[p] {
+		return nil
+	}
+	if err := normalizeChain(p); err != nil {
+		return err
+	}
 	if len(p.LayoutChain) == 0 {
 		return nil
 	}
 	if p.ContentFragment == nil {
 		return fmt.Errorf("collage: page %q: %w", p.Name, types.ErrMissingContent)
-	}
-	if a.bound[p] {
-		return nil
 	}
 
 	copies := make([]*types.Fragment, len(p.LayoutChain))
@@ -235,6 +238,32 @@ func (a *App) bindContent(p *types.Page) error {
 
 	p.LayoutFragment = copies[0]
 	a.bound[p] = true
+	return nil
+}
+
+// normalizeChain reconciles the two layout fields of a page that did not come
+// from the builder — a plugin's page through Host.RegisterPage, a Page literal —
+// before folding reads them. The builder keeps them agreeing: LayoutChain is the
+// chain and LayoutFragment its outermost entry. A page with only LayoutFragment
+// is the one-layout chain it looks like; one whose LayoutFragment is some other
+// fragment says two things about what wraps it, and a nil chain entry is a
+// fragment that is not there — both are refused rather than guessed at.
+func normalizeChain(p *types.Page) error {
+	if len(p.LayoutChain) == 0 {
+		if p.LayoutFragment != nil {
+			p.LayoutChain = []*types.Fragment{p.LayoutFragment}
+		}
+		return nil
+	}
+	for i, f := range p.LayoutChain {
+		if f == nil {
+			return fmt.Errorf("collage: page %q: layout %d: %w", p.Name, i, types.ErrNilFragment)
+		}
+	}
+	if p.LayoutFragment != nil && p.LayoutFragment != p.LayoutChain[0] {
+		return fmt.Errorf("collage: page %q: LayoutFragment %q is not the chain's outermost layout %q (set LayoutChain, or use WithLayouts): %w",
+			p.Name, p.LayoutFragment.Name, p.LayoutChain[0].Name, types.ErrConflictingLayout)
+	}
 	return nil
 }
 
