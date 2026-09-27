@@ -175,8 +175,16 @@ the page and the fragment. Two fragments may share a name and still carry
 different templates; each renders its own.
 
 Use it for the parts of a page that are a few lines of markup next to the handler
-that feeds them. Layouts and whole pages read better as files. Three limits come
-with it:
+that feeds them. Layouts and whole pages read better as files.
+
+The template is code, so it must be a constant. Never build it from data —
+`NewInlineFragment("row", "<p>"+post.Title+"</p>")` runs whatever `{{…}}` the
+title holds, and each distinct string becomes a template the program keeps until
+it exits. This matters most in a slot resolver, which builds fragments per
+request: its fragments can be inline, but their templates are fixed, and the data
+reaches them through `WithData` or a data handler.
+
+Three limits come with it:
 
 - A Go raw string cannot hold a backtick, so a template with a JavaScript template
   literal stays in a file.

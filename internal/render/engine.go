@@ -11,6 +11,7 @@ package render
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Elagoht/collage/internal/observability"
@@ -185,7 +186,12 @@ type Options struct {
 // fragment tree. It holds no per-render state, so one SlotEngine is safe for
 // concurrent use by as many renders as the caller likes.
 type SlotEngine struct {
-	tmpl           template.Engine
+	tmpl template.Engine
+	// failedSources remembers, by engine name, the inline sources a render found
+	// and could not parse, with the error. A source is Go code and cannot change
+	// while the program runs, so parsing it again is only a write lock and a
+	// clone of the whole template set, per render, to fail the same way.
+	failedSources  sync.Map
 	maxDepth       int
 	defaultTimeout time.Duration
 	metrics        observability.Metrics

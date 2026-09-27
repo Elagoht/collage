@@ -51,6 +51,11 @@ func NewFragment(name, templatePath string) *FragmentBuilder {
 // Registration parses it and checks it like one. A Go raw string cannot hold a
 // backtick, so a template with a JavaScript template literal stays in a file.
 // An empty html records ErrEmptyTemplatePath, retrievable via BuildErr.
+//
+// html is template code, so it must be a constant. Never build it from data — a
+// title, a user's input, a CMS field: whatever {{…}} such text holds would
+// execute, and every distinct string becomes a template kept for the life of the
+// program. Data goes in WithData or a data handler, and the template reads it.
 func NewInlineFragment(name, html string) *FragmentBuilder {
 	b := &FragmentBuilder{
 		fragment: &Fragment{

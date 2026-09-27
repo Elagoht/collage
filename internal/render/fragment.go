@@ -300,8 +300,13 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		// source reaches the engine here, the first time it renders. Before the
 		// timer, so parsing is not billed as template time.
 		if !e.tmpl.Lookup(name) {
+			if failed, ok := e.failedSources.Load(name); ok {
+				return nil, wrapFragment(label, f.Name, failed.(error))
+			}
 			if err := e.tmpl.AddSource(name, f.Source); err != nil {
-				return nil, wrapFragment(label, f.Name, types.HumanizeTemplateError(err))
+				err = types.HumanizeTemplateError(err)
+				e.failedSources.Store(name, err)
+				return nil, wrapFragment(label, f.Name, err)
 			}
 		}
 	}
