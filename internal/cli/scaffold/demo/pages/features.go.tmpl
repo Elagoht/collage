@@ -16,7 +16,7 @@ func FeaturesPage() *collage.Page {
 		Build()
 
 	return collage.NewPage("features").
-		WithLayout(layouts.Layout()).
+		WithLayouts(layouts.Layout()).
 		WithContent(content).
 		WithPath("en", "/features").
 		WithFragmentPath("en", "/fragments/clock", clock).

@@ -24,7 +24,7 @@ func HelloPage() *collage.Page {
 
 	var page *collage.Page
 	page = collage.NewPage("hello").
-		WithLayout(layouts.Layout()).
+		WithLayouts(layouts.Layout()).
 		WithContent(content).
 		WithPath("en", "/hello").
 		WithAction("POST", func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {

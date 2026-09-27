@@ -18,7 +18,7 @@ func HomePage() *collage.Page {
 
 	// No Static() needed: nothing here fetches per render, so the page is static.
 	return collage.NewPage("home").
-		WithLayout(layouts.Layout()).
+		WithLayouts(layouts.Layout()).
 		WithContent(content).
 		WithPath("en", "/").
 		Build()
