@@ -315,17 +315,17 @@ func TestMount_PlainTextErrorCarriesTheSameHeadersAsADocumentError(t *testing.T)
 // /etc/mime.types, where even ".bak" has a type.
 func TestMount_DoesNotSniff(t *testing.T) {
 	m, err := New("/uploads/", fstest.MapFS{
-		"avatar":     {Data: []byte("<html><script>alert(1)</script>")},
-		"a.txt.collage-unknown":  {Data: []byte("<html><script>alert(1)</script>")},
-		"styles.css": {Data: []byte("body{}")},
+		"avatar":                {Data: []byte("<html><script>alert(1)</script>")},
+		"a.txt.collage-unknown": {Data: []byte("<html><script>alert(1)</script>")},
+		"styles.css":            {Data: []byte("body{}")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{
-		"avatar":     "application/octet-stream",
-		"a.txt.collage-unknown":  "application/octet-stream",
-		"styles.css": "text/css",
+		"avatar":                "application/octet-stream",
+		"a.txt.collage-unknown": "application/octet-stream",
+		"styles.css":            "text/css",
 	} {
 		rec := httptest.NewRecorder()
 		m.ServeHTTP(rec, httptest.NewRequest("GET", "/uploads/"+name, nil))
