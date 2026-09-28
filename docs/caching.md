@@ -124,11 +124,31 @@ The key is the SHA-256 of an unambiguous, length-prefixed serialisation of:
 - the raw query string — or only the parameters the page named with
   `WithCacheParams`, when it named any (see
   [below](#which-query-parameters-are-part-of-the-key)),
-- any values middleware declared with `collage.Vary` (see [`Vary`](#vary)).
+- any values middleware declared with `collage.Vary` (see [`Vary`](#vary)),
+- the request's host.
 
 Every field is self-delimiting, so no two distinct inputs can collide by
-concatenation, and the whole key is prefixed `v1:` so the scheme can change later
+concatenation, and the whole key is prefixed `v2:` so the scheme can change later
 without colliding with keys made by this one.
+
+The host is there because a render may build an absolute URL from `r.Host` — a
+canonical link, an `og:url` — and one request naming another host would otherwise
+write that into the entry every reader is served.
+
+## What a shared render sees
+
+A render stored in the cache is served to every reader whose request has its key,
+so it is handed only what the key holds: the path, the host, the query parameters
+in the key, and the headers middleware declared with `collage.Vary`. Not the
+reader's cookies, `Authorization`, address or client certificate, and not a query
+parameter `WithCacheParams` left out. A handler on a cacheable page that reads a
+cookie finds none — where it used to find the first reader's, and write it into
+the copy everyone after got. The context is passed whole, so a value middleware
+put there still reaches the render; one that differs between readers belongs in
+`collage.Vary` too.
+
+A page that needs the reader's own request is dynamic, and a dynamic page sees all
+of it. The same holds for a cacheable document.
 
 Including the raw query string is a correctness decision with a cost: a data
 handler receives the whole `*http.Request` and may legitimately render from

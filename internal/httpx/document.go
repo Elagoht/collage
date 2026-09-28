@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -64,6 +65,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			Params:  match.PathParams,
 			Vary:    queryVary(r.URL, doc.CacheParams),
 			Request: requestVary(r),
+			Host:    ascii.LowerString(r.Host),
 		})
 		lookupStart := time.Now()
 		if content, etag, found := h.cacheGet(ctx, key); found {
@@ -82,7 +84,13 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			return failed(route.failure(http.StatusInternalServerError, stageRender, err))
 		}
 
-		rc := types.NewRenderContext(ctx, r, nil, match.Locale, match.PathParams)
+		// A document one render of serves every reader sees only what its key
+		// holds, as a page does: see sharedRequest.
+		req := r
+		if key != "" {
+			req = sharedRequest(r, doc.CacheParams)
+		}
+		rc := types.NewRenderContext(ctx, req, nil, match.Locale, match.PathParams)
 		if skipsCache(r) {
 			types.SkipDataCache(rc)
 		}

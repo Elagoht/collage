@@ -342,5 +342,6 @@ func flightKeyFor(t *testing.T, env *testEnv, path string) string {
 		Locale: match.Locale,
 		Params: match.PathParams,
 		Vary:   queryVary(req.URL, match.Page.CacheParams),
+		Host:   req.Host,
 	})
 }

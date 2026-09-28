@@ -43,9 +43,9 @@ func TestKey_DeterministicRegardlessOfMapInsertionOrder(t *testing.T) {
 	}
 }
 
-func TestKey_HasV1Prefix(t *testing.T) {
+func TestKey_HasV2Prefix(t *testing.T) {
 	got := Key(KeyInput{Path: "/"})
-	const want = "v1:"
+	const want = "v2:"
 	if len(got) < len(want) || got[:len(want)] != want {
 		t.Fatalf("Key(...) = %q, want prefix %q", got, want)
 	}
@@ -155,5 +155,12 @@ func TestETagMatch(t *testing.T) {
 				t.Errorf("ETagMatch(%q, %q) = %v, want %v", tt.ifNoneMatch, tt.etag, got, tt.want)
 			}
 		})
+	}
+}
+
+// Two hosts are two entries: a render may build a URL from its host.
+func TestKey_TheHostDiscriminates(t *testing.T) {
+	if Key(KeyInput{Path: "/", Host: "site.example"}) == Key(KeyInput{Path: "/", Host: "evil.example"}) {
+		t.Fatal("two hosts share a key")
 	}
 }

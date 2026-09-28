@@ -30,11 +30,15 @@ type KeyInput struct {
 	// because Vary carries the raw query — and a query is chosen by whoever sent
 	// the request, so sharing a section would let one spell another's key.
 	Request []string
+	// Host is the host the request named. A render may build an absolute URL
+	// from it — a canonical link, an og:url — and a request carrying another
+	// Host would otherwise write that render into the entry everyone is served.
+	Host string
 }
 
 // Key returns the canonical cache key for in: the hex-encoded SHA-256 of a
 // length-prefixed, unambiguous serialisation of Path, Locale, Params (sorted by
-// key), Vary (sorted) and Request (sorted), prefixed "v1:" so the scheme can be changed later
+// key), Vary (sorted), Request (sorted) and Host, prefixed "v2:" so the scheme can be changed later
 // without colliding with keys produced by this one.
 //
 // Every string field is written as its own decimal byte length followed by ':' and
@@ -78,7 +82,9 @@ func Key(in KeyInput) string {
 		writeField(h, v)
 	}
 
-	return "v1:" + hex.EncodeToString(h.Sum(nil))
+	writeField(h, in.Host)
+
+	return "v2:" + hex.EncodeToString(h.Sum(nil))
 }
 
 // writeField writes s to h as its own decimal byte length, ':', then s, making the

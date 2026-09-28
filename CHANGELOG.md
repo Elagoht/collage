@@ -17,6 +17,13 @@ A security release. Every collage site should take it.
   `/` in a single segment's value; a value that is a path belongs in a
   catch-all, `{rest...}`. This also stops a static build slug of `../about`
   writing over another page.
+- **A cacheable page or document renders from only what its cache key holds**:
+  the path, the host, the query parameters in the key, and the headers declared
+  with `collage.Vary`. A handler on one no longer sees the reader's cookies,
+  `Authorization`, address or client certificate, or a query parameter
+  `WithCacheParams` left out — it used to see the first reader's, and could write
+  them into the copy every later reader was served. A page that reads them is
+  dynamic. The host is now part of the cache key, whose prefix is `v2:`.
 - **A request the browser marks as cross-origin is refused** by the forgery
   check, even with a valid token: `Sec-Fetch-Site`, or `Origin` against `Host`.
   A form on another origin that posts here is named in the new

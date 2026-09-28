@@ -655,6 +655,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			Params:  match.PathParams,
 			Vary:    queryVary(r.URL, page.CacheParams),
 			Request: requestVary(r),
+			Host:    ascii.LowerString(r.Host),
 		})
 		lookupStart := time.Now()
 		// Never read from the cache in development.
@@ -698,8 +699,9 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// the trace, the locale — and the render stays bounded by its fragments'
 		// own timeouts.
 		renderCtx := context.WithoutCancel(ctx)
+		shareable := sharedRequest(r, page.CacheParams)
 		out, shared = h.flight.do(ctx, key, func() *outcome {
-			return h.renderPage(renderCtx, r, page, match, key, cacheable)
+			return h.renderPage(renderCtx, shareable, page, match, key, cacheable)
 		})
 	} else {
 		out = h.renderPage(ctx, r, page, match, key, cacheable)
