@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.31.0
+
+### Added
+
+- **`BeforeActionHook`**: `OnBeforeAction` runs before an action's handler, after
+  the page's guards, the action's body limit and the forgery check. A plugin
+  checking a submission — a spam filter — reads it through the action's own limit
+  with `ev.Form()`, which leaves it parsed for the handler, and answers in the
+  handler's place by setting `ev.Result`. An error fails the request with `413`
+  when it wraps `*http.MaxBytesError`, and `500` otherwise; the stage is
+  `"before_action"`.
+
 ## v0.30.1
 
 ### Fixed

@@ -180,6 +180,14 @@ type PageResolvedEvent = plugin.PageResolvedEvent
 // BeforeRenderEvent describes a render about to start.
 type BeforeRenderEvent = plugin.BeforeRenderEvent
 
+// BeforeActionHook is implemented by a plugin that checks a submission before an
+// action's handler sees it: after the page's guards, the action's body limit and
+// the forgery check.
+type BeforeActionHook = plugin.BeforeActionHook
+
+// BeforeActionEvent describes an action request about to reach its handler.
+type BeforeActionEvent = plugin.BeforeActionEvent
+
 // AfterRenderEvent describes a render that just completed. A plugin may replace its
 // HTML field to post-process the page.
 type AfterRenderEvent = plugin.AfterRenderEvent

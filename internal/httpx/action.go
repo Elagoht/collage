@@ -106,6 +106,17 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		types.SkipDataCache(rc)
 	}
 
+	// After the limit and the forgery check, so a plugin reads the body as the
+	// handler would; before the handler, so a refusal changes nothing.
+	before := &plugin.BeforeActionEvent{Action: action, Page: match.Page, Locale: match.Locale, Request: r}
+	if err := h.plugins.BeforeAction(ctx, before); err != nil {
+		return h.serveFailure(w, r, route.failure(actionErrorStatus(err), stageBeforeAction,
+			fmt.Errorf("collage: action %q: %w", action.Name, err)))
+	}
+	if before.Result != nil {
+		return h.writeActionResult(w, r, rc, match, before.Result, route)
+	}
+
 	result, err := action.Handler(ctx, rc)
 	if err != nil {
 		return h.serveFailure(w, r, route.failure(actionErrorStatus(err), stageRender,

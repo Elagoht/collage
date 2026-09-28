@@ -239,6 +239,7 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | --- | --- | --- | --- |
 | `PageResolvedHook` | `OnPageResolved` | After routing and the page's guards, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch four hooks, not seven" below), and never a request a guard blocked: it never reached the page | nothing |
 | `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** — including an error page, and a page an action answers with | nothing |
+| `BeforeActionHook` | `OnBeforeAction` | Before an action's handler: after the page's guards, the action's body limit and the forgery check. **Actions only**. `ev.Form()` parses the submission through the action's limit, once, for the handler too | `ev.Result`, which answers in the handler's place and stops dispatch |
 | `RequestHook` | `OnRequest` | First, before collage's request span, middleware and routing; returns the context to serve under and a function told the final status | the request's context |
 | `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure) and `ev.DependencyTags`. **Pages only**, on the same terms | `ev.HTML`, `ev.Hoist(area, key, html)`; reports with `ev.Warn`, `ev.Error` |
 | `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
@@ -378,7 +379,7 @@ one sentinel for every such status), `collage.ErrMaxDepthExceeded`,
 
 `ErrorEvent.Stage` names where in the pipeline the failure happened (`"route"`,
 `"not_found"`, `"guard"` (a guard that failed or answered with a decision it
-cannot write), `"page_resolved"`, `"before_render"`, `"render"`,
+cannot write), `"page_resolved"`, `"before_action"`, `"before_render"`, `"render"`,
 `"after_render"`, `"cache_write"`, `"error_page"`, `"panic"`, `"asset"`, and
 `"handler"` for a handler mounted with `app.Handle` answering 5xx). It is
 caller-defined rather than an enum. `"error_page"` is the one worth alerting on:
@@ -393,6 +394,10 @@ process down.
 
 - `OnPageResolved`, `OnBeforeRender`, `OnAfterRender`, `OnDocumentRendered` — the
   first error stops dispatch and fails the request with a 500.
+- `OnBeforeAction` — the first error stops dispatch and fails the request: `413`
+  when it wraps `*http.MaxBytesError`, as a body past the action's limit read
+  through `ev.Form()` does, and `500` otherwise. The first plugin to set
+  `ev.Result` is the last one asked, and the handler never runs.
 - `OnCacheWrite` — an error (or `ev.Skip`) suppresses the cache write, and the
   request still succeeds. The page has already rendered; serving it uncached beats
   turning a cache problem into a 500.

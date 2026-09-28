@@ -3,8 +3,10 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"errors"
 	"html/template"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -25,6 +27,21 @@ type BeforeRenderHook interface {
 	// page. Unlike OnPageResolved, it does not fire when a cached render is served
 	// instead of a fresh one.
 	OnBeforeRender(ctx context.Context, ev *BeforeRenderEvent) error
+}
+
+// BeforeActionHook is implemented by a plugin that checks a submission before an
+// action's handler sees it: a spam filter, a quota.
+//
+// It runs after the page's guards, after the action's body limit is in place and
+// after the forgery check, so a plugin reading the form reads it through the
+// same limit the handler would, and never twice: the request's parsed form is
+// kept for the handler.
+type BeforeActionHook interface {
+	// OnBeforeAction is called once per action request, immediately before the
+	// handler. Setting ev.Result answers the request with it instead, and no
+	// later plugin and no handler runs. An error fails the request: 413 when it
+	// wraps *http.MaxBytesError, 500 otherwise.
+	OnBeforeAction(ctx context.Context, ev *BeforeActionEvent) error
 }
 
 // AfterRenderHook is implemented by a plugin that wants to observe, or post-process,
@@ -295,6 +312,47 @@ type BeforeRenderEvent struct {
 	// than for a request; see AfterRenderEvent.Static.
 	Static bool
 }
+
+// BeforeActionEvent describes an action request about to reach its handler.
+type BeforeActionEvent struct {
+	// Action is the action matched. Not copied for this event, and not defended
+	// against mutation.
+	Action *types.Action
+	// Page is the page whose URL the action answers on, or nil for an action on
+	// a path of its own.
+	Page *types.Page
+	// Locale is the locale the request was matched in.
+	Locale string
+	// Request is the request. Its body is bounded by the action's limit, and a
+	// form parsed from it — ParseMultipartForm, FormValue — stays parsed for the
+	// handler.
+	Request *http.Request
+	// Result, when a plugin sets it, is what the request is answered with in
+	// place of the handler's result: a refusal, a redirect.
+	Result *types.ActionResult
+}
+
+// Form parses the submitted form, URL-encoded or multipart, and returns its body's
+// fields. What it parsed stays parsed for the handler.
+//
+// Use it rather than ParseMultipartForm alone: for a URL-encoded body that one
+// discards the error of reading it, a body past the limit among them, and
+// reports only that the body is not multipart. An error wrapping
+// *http.MaxBytesError, returned from the hook, answers 413.
+func (ev *BeforeActionEvent) Form() (url.Values, error) {
+	r := ev.Request
+	if err := r.ParseForm(); err != nil {
+		return nil, err
+	}
+	if err := r.ParseMultipartForm(formMemory); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		return nil, err
+	}
+	return r.PostForm, nil
+}
+
+// formMemory is how much of a multipart form Form keeps in memory; the rest of
+// its files go to temporary files, as net/http's own FormValue does.
+const formMemory = 32 << 20
 
 // AfterRenderEvent describes a render that just completed.
 //

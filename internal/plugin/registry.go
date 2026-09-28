@@ -229,6 +229,27 @@ func (r *Registry) BeforeRender(ctx context.Context, ev *BeforeRenderEvent) erro
 	return nil
 }
 
+// BeforeAction dispatches ev to every registered plugin implementing
+// BeforeActionHook, in registration order, and stops at the first that sets
+// ev.Result. It stops and returns a wrapped error at the first hook failure,
+// including a contained panic. A nil Registry, or a registry with no plugin
+// implementing the hook, is a no-op that returns nil.
+func (r *Registry) BeforeAction(ctx context.Context, ev *BeforeActionEvent) error {
+	for _, p := range r.snapshot() {
+		hook, ok := p.(BeforeActionHook)
+		if !ok {
+			continue
+		}
+		if err := runHook(p.Name(), "OnBeforeAction", func() error { return hook.OnBeforeAction(ctx, ev) }); err != nil {
+			return err
+		}
+		if ev.Result != nil {
+			return nil
+		}
+	}
+	return nil
+}
+
 // AfterRender dispatches ev to every registered plugin implementing
 // AfterRenderHook, in registration order. A plugin may replace ev.HTML; later
 // plugins in the dispatch order see the replacement made by earlier ones, and the

@@ -91,6 +91,7 @@ const (
 	stageGuard        = "guard"
 	stagePageResolved = "page_resolved"
 	stageBeforeRender = "before_render"
+	stageBeforeAction = "before_action"
 	stageRender       = "render"
 	stageAfterRender  = "after_render"
 	stageCacheWrite   = "cache_write"
