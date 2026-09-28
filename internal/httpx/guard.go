@@ -44,6 +44,11 @@ func (h *Handler) checkGuards(w http.ResponseWriter, r *http.Request, route *rou
 		f.locale = locale
 		return h.serveFailure(w, r, f), false
 	}
+	// A decision about this reader — sent to log in, refused — which a cache
+	// between the server and the next reader must not keep. A CDN that stores
+	// a 404 or a 308 by default would otherwise hand a logged-out reader's
+	// answer to everyone who comes after.
+	w.Header().Set("Cache-Control", "no-store")
 	if decision.Location != "" {
 		status := decision.Status
 		if status == 0 {

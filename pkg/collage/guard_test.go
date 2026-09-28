@@ -359,36 +359,54 @@ func TestGuardSkipsStandaloneAction(t *testing.T) {
 	}
 }
 
-// A fragment path is its own route: its fragment's guard is its whole policy,
-// and nothing flows down from the page that declared it.
-func TestFragmentPathOwnGuard(t *testing.T) {
+// A fragment path is a part of the page that opened it: the page's guards run
+// first, outermost layout inwards, then the fragment's own. A guarded layout
+// whose content is opened at a URL of its own must not serve that content to a
+// reader the layout refuses.
+func TestFragmentPathRunsThePagesGuards(t *testing.T) {
 	app, _ := guardedApp(t, nil, false)
 	frag := collage.NewFragment("results", "layouts/private.html").
 		WithGuard(func(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
-			if r.Header.Get("X-Logged-In") != "" {
+			if r.Header.Get("X-Logged-In") == "admin" {
 				return nil, nil
 			}
-			return &collage.GuardDecision{Status: http.StatusUnauthorized}, nil
+			return &collage.GuardDecision{Status: http.StatusForbidden}, nil
 		}).
 		Build()
+	content := collage.NewFragment("c", "layouts/private.html").Build()
 	page := collage.NewPage("search").
 		WithLayouts(collage.NewFragment("private", "layouts/private.html").
 			WithGuard(func(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
-				t.Fatal("the declaring page's guard ran for a fragment path")
-				return nil, nil
+				if r.Header.Get("X-Logged-In") != "" {
+					return nil, nil
+				}
+				return &collage.GuardDecision{Location: "/login"}, nil
 			}).Build()).
-		WithContent(collage.NewFragment("c", "layouts/private.html").Build()).
+		WithContent(content).
 		WithPath("en", "/search").
 		WithFragmentPath("en", "/search/results", frag).
+		WithFragmentPath("en", "/search/content", content).
 		Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
-	if w := get(app.Handler(), "/search/results", ""); w.Code != http.StatusUnauthorized {
-		t.Fatalf("status = %d, want 401", w.Code)
-	}
-	if w := get(app.Handler(), "/search/results", "1"); w.Code != http.StatusOK {
-		t.Fatalf("allowed: status = %d, want 200", w.Code)
+	for _, tc := range []struct {
+		target, header string
+		status         int
+	}{
+		{"/search/results", "", http.StatusSeeOther},
+		{"/search/results", "1", http.StatusForbidden},
+		{"/search/results", "admin", http.StatusOK},
+		{"/search/content", "", http.StatusSeeOther},
+		{"/search/content", "1", http.StatusOK},
+	} {
+		w := get(app.Handler(), tc.target, tc.header)
+		if w.Code != tc.status {
+			t.Errorf("GET %s as %q: status = %d, want %d", tc.target, tc.header, w.Code, tc.status)
+		}
+		if tc.status != http.StatusOK && w.Header().Get("Cache-Control") != "no-store" {
+			t.Errorf("GET %s as %q: Cache-Control = %q, want no-store on a refusal", tc.target, tc.header, w.Header().Get("Cache-Control"))
+		}
 	}
 }
 

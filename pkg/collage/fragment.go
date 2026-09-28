@@ -121,8 +121,9 @@ func (b *FragmentBuilder) WithTitle(title string) *FragmentBuilder {
 }
 
 // WithGuard sets the guard this fragment carries. A layout with a guard makes
-// every page it wraps guarded — the page's renders and the actions on its own
-// URL alike — which is how a section of a site says it is private:
+// every page it wraps guarded — the page's renders, the actions on its own
+// URL and the fragment paths it opens alike — which is how a section of a site
+// says it is private:
 //
 //	private := collage.NewFragment("private", "layouts/private.html").
 //		WithGuard(requireUser). // a GuardFunc: nil to allow, a decision to block

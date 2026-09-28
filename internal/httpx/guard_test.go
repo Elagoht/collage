@@ -61,3 +61,28 @@ func TestWriteRedirectFetchConvention(t *testing.T) {
 		t.Fatalf("Collage-Location = %q, want /login", got)
 	}
 }
+
+// A guard's answer is about one reader. Kept by a CDN that caches a 404 or a 308
+// by default, a logged-out reader's refusal would be served to everyone after.
+func TestCheckGuards_AnswerIsNotStored(t *testing.T) {
+	h := &Handler{}
+	for _, d := range []*types.GuardDecision{
+		{Status: http.StatusNotFound},
+		{Status: http.StatusPermanentRedirect, Location: "/login"},
+	} {
+		for _, fetch := range []bool{false, true} {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/private", nil)
+			if fetch {
+				r.Header.Set(FetchHeader, "1")
+			}
+			guard := func(context.Context, *http.Request) (*types.GuardDecision, error) { return d, nil }
+			if _, allowed := h.checkGuards(w, r, &routeRef{}, "en", []types.GuardFunc{guard}); allowed {
+				t.Fatal("checkGuards allowed a refused request")
+			}
+			if got := w.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("%d (fetch %v): Cache-Control = %q, want no-store", d.Status, fetch, got)
+			}
+		}
+	}
+}

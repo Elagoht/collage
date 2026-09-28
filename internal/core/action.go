@@ -144,18 +144,20 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 				Paths:   map[string]string{locale: pattern},
 				Methods: []string{"GET"},
 				Handler: func(ctx context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
-					// A fragment path is its own route; its fragment's guard
-					// is its whole policy, and nothing flows down from the
-					// page that declared it. The decision is validated before
-					// it becomes a result: a redirect with no Location would
+					// The page's guards and the fragment's own: see
+					// fragmentGuard. The decision is validated before it
+					// becomes a result: a redirect with no Location would
 					// fall through the result's own switch — Location, then
 					// Fragment — and render the fragment the guard refused.
-					decision, err := fragmentGuard(ctx, rc.Request, target)
+					decision, err := fragmentGuard(ctx, rc.Request, page, target)
 					if err != nil {
 						return nil, err
 					}
 					if decision != nil {
-						return &types.ActionResult{Status: decision.Status, Location: decision.Location}, nil
+						// A decision about this reader, which nothing between
+						// the server and the next reader may keep.
+						header := http.Header{"Cache-Control": []string{"no-store"}}
+						return &types.ActionResult{Status: decision.Status, Location: decision.Location, Header: header}, nil
 					}
 					return &types.ActionResult{Fragment: target}, nil
 				},
@@ -177,25 +179,36 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 	return nil
 }
 
-// fragmentGuard asks f's own guard about r: the whole policy of a fragment path,
-// over HTTP and through RenderFragment alike. A nil decision allows. A decision
-// comes back validated, so no caller can turn a redirect with nowhere to go into
-// the render the guard refused.
-func fragmentGuard(ctx context.Context, r *http.Request, f *types.Fragment) (*types.GuardDecision, error) {
-	if f.Guard == nil {
-		return nil, nil
+// fragmentGuard asks the guards of a fragment path about r, over HTTP and through
+// RenderFragment alike: the guards of the page that opened it, outermost layout
+// first, then the fragment's own. A nil decision allows. A decision comes back
+// validated, so no caller can turn a redirect with nowhere to go into the render
+// the guard refused.
+//
+// The page's too, because a fragment path is a part of the page, and a part of a
+// page a reader may not see is a part they may not see either. It used to be the
+// fragment's own guard alone, and the natural way to write a private area — a
+// guarded layout, its content opened at a URL of its own for a script to
+// refresh — served that content to anyone who asked the second URL.
+func fragmentGuard(ctx context.Context, r *http.Request, page *types.Page, f *types.Fragment) (*types.GuardDecision, error) {
+	guards := page.Guards()
+	if f != page.ContentFragment && f.Guard != nil {
+		guards = append(guards, f.Guard)
 	}
-	decision, err := f.Guard(ctx, r)
-	if err != nil {
-		return nil, fmt.Errorf("collage: fragment %q: %w", f.Name, err)
+	for _, guard := range guards {
+		decision, err := guard(ctx, r)
+		if err != nil {
+			return nil, fmt.Errorf("collage: fragment %q: %w", f.Name, err)
+		}
+		if decision == nil {
+			continue
+		}
+		if err := decision.Validate(); err != nil {
+			return nil, fmt.Errorf("collage: fragment %q: %w", f.Name, err)
+		}
+		return decision, nil
 	}
-	if decision == nil {
-		return nil, nil
-	}
-	if err := decision.Validate(); err != nil {
-		return nil, fmt.Errorf("collage: fragment %q: %w", f.Name, err)
-	}
-	return decision, nil
+	return nil, nil
 }
 
 // fragmentPath is what a fragment path's action renders: which fragment of which

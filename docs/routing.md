@@ -231,8 +231,10 @@ content fragment last, and the first that answers decides.
 
 Guards on other fragments — slot children, a resolver's fragments, fallbacks —
 are ignored: access policy belongs to routes, not to the parts a page is drawn
-from. A **fragment path** is a route of its own: the fragment's own guard is its
-whole policy, and it inherits nothing from the page that declared it. An action
+from. A **fragment path** is a part of the page that opened it, and meets the
+page's guards first — outermost layout inwards, then the content fragment's —
+and then the fragment's own. A guarded layout whose content a script refreshes
+from a URL of its own refuses that URL to the same readers. An action
 registered on its own URL has no page, so no guards. Error and not-found pages
 render without guards — a private error page would otherwise redirect the reader
 who hit the error.
