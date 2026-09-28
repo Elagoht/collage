@@ -98,3 +98,24 @@ func TestHandler_SuppliesATimeWhenTheRecordHasNone(t *testing.T) {
 		t.Errorf("first field = %q, want a time", first)
 	}
 }
+
+// An attribute is often the request's own: a path, decoded, carries whatever the
+// client percent-encoded into it. Written raw, "%0A" starts a forged log line
+// and "%1B[2J" clears the reader's terminal. A value holding anything that does
+// not print is quoted, escapes and all, as slog's own text handler does.
+func TestHandler_AnAttributeCannotWriteToTheTerminal(t *testing.T) {
+	out := logged(t, func(l *slog.Logger) {
+		l.Error("request failed", "path", "/x\n12:00:00 x admin password reset\x1b[2J", "ok", "/plain path", "bidi", "rtl\u202eevil")
+	})
+	if lines := strings.Count(out, "\n"); lines != 1 {
+		t.Errorf("output is %d lines, want one: %q", lines, out)
+	}
+	if strings.Contains(out, "\x1b") || strings.Contains(out, "\u202e") {
+		t.Errorf("output carries a control character: %q", out)
+	}
+	for _, want := range []string{`path="/x\n12:00:00`, "ok=/plain path", `bidi="rtl\u202eevil"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output = %q, want it to contain %q", out, want)
+		}
+	}
+}

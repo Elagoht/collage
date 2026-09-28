@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -127,5 +128,17 @@ func (h *Handler) appendAttr(out *strings.Builder, attr slog.Attr) {
 	if len(h.groups) > 0 {
 		key = strings.Join(h.groups, ".") + "." + key
 	}
-	fmt.Fprintf(out, "  %s=%v", key, attr.Value.Any()) // any: slog.Value's own accessor
+	fmt.Fprintf(out, "  %s=%s", printable(key), printable(fmt.Sprint(attr.Value.Any()))) // any: slog.Value's own accessor
+}
+
+// printable returns s as it is when every rune of it prints, and quoted
+// otherwise. An attribute is often the request's own — a path is decoded, so it
+// carries whatever the client percent-encoded into it — and written raw, a
+// newline starts a log line the client wrote and an escape sequence rewrites the
+// terminal it is read in.
+func printable(s string) string {
+	if strings.ContainsFunc(s, func(r rune) bool { return !strconv.IsPrint(r) && r != ' ' }) {
+		return strconv.Quote(s)
+	}
+	return s
 }
