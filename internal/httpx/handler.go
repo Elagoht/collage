@@ -1055,16 +1055,25 @@ func cleanPath(p string) (string, bool) {
 // net/http's ServeMux does: 301 for a read, 308 for anything that carries a body,
 // so a form is posted again rather than turned into a GET.
 func redirectClean(w http.ResponseWriter, r *http.Request, cleaned string) {
-	target := cleaned
-	if r.URL.RawQuery != "" {
-		target += "?" + r.URL.RawQuery
-	}
 	status := http.StatusPermanentRedirect
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		status = http.StatusMovedPermanently
 	}
-	w.Header().Set("Location", target)
+	w.Header().Set("Location", cleanLocation(cleaned, r.URL.RawQuery))
 	w.WriteHeader(status)
+}
+
+// cleanLocation spells the clean path as a Location, escaped. The path was
+// cleaned decoded, so written as it is it would be read again: "/./%5Cevil.com"
+// cleans to "/\evil.com", which a browser takes for "//evil.com", another site,
+// and "%3F" would come back as the "?" that starts a query. Escaped, what the
+// browser asks for next is the path that was cleaned.
+func cleanLocation(cleaned, rawQuery string) string {
+	target := (&url.URL{Path: cleaned}).EscapedPath()
+	if rawQuery != "" {
+		target += "?" + rawQuery
+	}
+	return target
 }
 
 // withPathTag adds to tags the one naming the URL path an entry was rendered for:

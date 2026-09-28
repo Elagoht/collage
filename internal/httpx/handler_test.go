@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -2105,4 +2106,69 @@ func TestCleanPath_RedirectsBeforeMiddleware(t *testing.T) {
 	if post.Code != http.StatusPermanentRedirect || post.Header().Get("Location") != "/a/b" {
 		t.Errorf("POST = %d %q", post.Code, post.Header().Get("Location"))
 	}
+}
+
+// The clean spelling is sent back escaped. r.URL.Path is decoded, and a browser
+// reads a backslash as a slash: "/./%5Cevil.com" cleaned to "/\evil.com" and
+// written as it was is "//evil.com" to the browser, another site.
+func TestCleanPath_RedirectStaysOnSite(t *testing.T) {
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyDynamic)})
+	cases := []struct{ target, location string }{
+		{"/./%5Cevil.com", "/%5Cevil.com"},
+		{"//%5Cevil.com", "/%5Cevil.com"},
+		{"/.//evil.com/", "/evil.com/"},
+		{"/a/./b%3Fc", "/a/b%3Fc"},
+		{"/a/./%09/evil.com", "/a/%09/evil.com"},
+	}
+	for _, tc := range cases {
+		rec := env.get(tc.target)
+		if got := rec.Header().Get("Location"); got != tc.location {
+			t.Errorf("GET %s: Location = %q, want %q", tc.target, got, tc.location)
+		}
+		if !sameSite(rec.Header().Get("Location")) {
+			t.Errorf("GET %s: Location %q leaves the site", tc.target, rec.Header().Get("Location"))
+		}
+	}
+}
+
+// sameSite reports whether a browser following location stays on the origin
+// that sent it. The browser's reading, not url.Parse's: it drops tabs and
+// newlines and takes a backslash for a slash before resolving.
+func sameSite(location string) bool {
+	loc := strings.Map(func(r rune) rune {
+		switch r {
+		case '\t', '\n', '\r':
+			return -1
+		case '\\':
+			return '/'
+		}
+		return r
+	}, location)
+	base, _ := url.Parse("http://site.test/start")
+	ref, err := url.Parse(loc)
+	if err != nil {
+		return false
+	}
+	return base.ResolveReference(ref).Host == "site.test"
+}
+
+func FuzzCleanPath_RedirectStaysOnSite(f *testing.F) {
+	for _, seed := range []string{"/./\\evil.com", "//\\x", "/..//x", "/a/./b", "/\t/x/."} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, p string) {
+		if !strings.HasPrefix(p, "/") {
+			return
+		}
+		cleaned, dirty := cleanPath(p)
+		if !dirty {
+			return
+		}
+		if loc := cleanLocation(cleaned, ""); !sameSite(loc) {
+			t.Fatalf("cleanPath(%q) redirects to %q, off the site", p, loc)
+		}
+		if again, dirty := cleanPath(cleaned); dirty {
+			t.Fatalf("cleanPath(%q) = %q, itself dirty (%q): a redirect loop", p, cleaned, again)
+		}
+	})
 }
