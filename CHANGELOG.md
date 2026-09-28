@@ -1,5 +1,53 @@
 # Changelog
 
+## v0.34.0
+
+A security release. Every collage site should take it.
+
+### Breaking
+
+- **A fragment path meets the guards of the page that opened it**, outermost
+  layout inwards, then the fragment's own — over HTTP and through
+  `RenderFragment`. It ran the fragment's own guard alone, so a guarded layout
+  whose content was opened at a URL of its own served that content to anyone.
+- **An encoded slash (`%2F`) in a path reaches no route**: it is a 404.
+  Middleware reads the decoded `r.URL.Path`, where `/public%2Fsecret` is two
+  segments, and the router read one, so a middleware letting `/public/` through
+  let the request through to `/{slug}`. `BuildPath` and `{{pageURL}}` refuse a
+  `/` in a single segment's value; a value that is a path belongs in a
+  catch-all, `{rest...}`. This also stops a static build slug of `../about`
+  writing over another page.
+- **A request the browser marks as cross-origin is refused** by the forgery
+  check, even with a valid token: `Sec-Fetch-Site`, or `Origin` against `Host`.
+  A form on another origin that posts here is named in the new
+  `Security.CSRFTrustedOrigins`.
+
+### Fixed
+
+- **Open redirect**: `GET /./%5Cevil.com` answered `301 Location: /\evil.com`,
+  which a browser follows to `evil.com`. The clean-path redirect writes its path
+  escaped. A locale redirect no longer begins with `//` either.
+- **Forgery tokens could be harvested**: an error page served the raw token
+  marker, which was replaced wherever it occurred — planted in a reader's comment,
+  it came back as each reader's token. Error pages are personalised like any page,
+  and only the value `{{csrfToken}}` renders is replaced.
+- **Disk exhaustion**: a multipart body's temporary files were never removed —
+  accepted or refused, and a refusal needed no token. They are removed after
+  the action answers, and a cookie the guard never signed is refused before the
+  body is read.
+- A `Cached` fetch that panicked held its key until a restart, and one that
+  failed because its first caller went away failed every caller sharing it.
+- A guard's answer carries `Cache-Control: no-store`, so a CDN does not serve
+  one reader's refusal or login redirect to the next.
+- A mounted file with no known extension is `application/octet-stream`, not
+  sniffed, and every mounted file carries `X-Content-Type-Options: nosniff`.
+  Dotfiles other than `.well-known` are neither served nor built.
+- `collage dev` answers only a `Host` naming this machine — `localhost`, an IP
+  address, or its `HOST` — against DNS rebinding.
+- The terminal log handler quotes an attribute holding a control character, so a
+  request path cannot forge a log line or rewrite the terminal.
+- The scaffold's `.gitignore` covers every `.env.*` but `.env.example`.
+
 ## v0.33.0
 
 ### Added

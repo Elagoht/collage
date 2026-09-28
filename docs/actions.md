@@ -193,6 +193,20 @@ under `Security.CSRFKey`, and the same value goes in a cookie and in the form.
 Verifying needs the key and nothing else — no session table, no store to configure,
 nothing shared between instances.
 
+A signed token is not a secret from an attacker, though: any page with a form hands
+one to whoever loads it. Someone who can write a cookie for the domain — a sibling
+subdomain, a man-in-the-middle on plain http — could plant their own token in a
+visitor's browser and submit it. So the pair is not checked alone. The browser says
+where a request came from, in `Sec-Fetch-Site` (or `Origin`, compared with `Host`,
+from an older browser), and a request it marks as coming from another origin is
+refused with `403` whatever it carries — a sibling subdomain included. A request
+with neither header is not from a browser, and passes to the token check. An
+admin panel on its own origin that posts here is named in
+`Security.CSRFTrustedOrigins`, each as `scheme://host[:port]`.
+
+A multipart body over the 32 MiB the parser holds in memory spills its files to
+disk; they are removed when the action has answered, accepted or refused.
+
 **Set `Security.CSRFKey`.** An empty one is generated and logged — as a warning,
 except in development — which is right for a first run and wrong to deploy: a
 generated key differs in every process, so a token issued before a restart is refused
