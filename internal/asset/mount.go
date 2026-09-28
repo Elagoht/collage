@@ -4,7 +4,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"mime"
 	"net/http"
 	"path"
 	"strconv"
@@ -157,15 +156,8 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if tag, err := m.tag(name); err == nil {
 		w.Header().Set("ETag", tag)
 	}
-	// The extension's type or none at all, never a guess. ServeContent sniffs a
-	// file whose name says nothing, and a mount often serves what readers
-	// uploaded: "<html><script>" under a bare name was served as text/html,
-	// from this site's origin. nosniff keeps the browser from guessing too.
-	ctype := mime.TypeByExtension(path.Ext(name))
-	if ctype == "" {
-		ctype = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", ctype)
+	// Never text/html for a file whose name does not say so: see ContentType.
+	w.Header().Set("Content-Type", ContentType(name, seeker))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// A fingerprinted name was minted from these exact bytes and verified against
 	// them above, so it can never describe anything else: there is nothing for a

@@ -1,6 +1,7 @@
 package asset
 
 import (
+	"bytes"
 	"io"
 	"io/fs"
 	"net/http"
@@ -306,25 +307,31 @@ func TestMount_PlainTextErrorCarriesTheSameHeadersAsADocumentError(t *testing.T)
 	}
 }
 
-// A mount often serves what readers uploaded. A file whose name says nothing
-// about its type is not sniffed into one: sniffed, "<html><script>" under a bare
-// name is served as text/html from the site's own origin. And nothing a mount
-// sends is to be sniffed by the browser either.
+// A mount often serves what readers uploaded, often with no extension. Such a
+// file is typed from its content — an image plugin and a browser both need to
+// be told an extensionless logo is an image — but never into anything that
+// runs: "<html><script>" under a bare name is text/plain, not text/html on the
+// site's own origin. And nothing a mount sends is to be sniffed by the browser.
 //
 // The unknown extension is one no system's mime.types names. On Linux, Go reads
 // /etc/mime.types, where even ".bak" has a type.
-func TestMount_DoesNotSniff(t *testing.T) {
+func TestMount_SniffsOnlyIntoWhatCannotRun(t *testing.T) {
+	png := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
 	m, err := New("/uploads/", fstest.MapFS{
 		"avatar":                {Data: []byte("<html><script>alert(1)</script>")},
+		"feed":                  {Data: []byte(`<?xml version="1.0"?><x/>`)},
 		"a.txt.collage-unknown": {Data: []byte("<html><script>alert(1)</script>")},
+		"logo":                  {Data: png},
 		"styles.css":            {Data: []byte("body{}")},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, want := range map[string]string{
-		"avatar":                "application/octet-stream",
-		"a.txt.collage-unknown": "application/octet-stream",
+		"avatar":                "text/plain",
+		"feed":                  "text/plain",
+		"a.txt.collage-unknown": "text/plain",
+		"logo":                  "image/png",
 		"styles.css":            "text/css",
 	} {
 		rec := httptest.NewRecorder()
@@ -334,6 +341,9 @@ func TestMount_DoesNotSniff(t *testing.T) {
 		}
 		if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", name, got)
+		}
+		if name == "logo" && !bytes.Equal(rec.Body.Bytes(), png) {
+			t.Errorf("logo: body = %q, want the whole file after sniffing its start", rec.Body.Bytes())
 		}
 	}
 }

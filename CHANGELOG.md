@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.34.2
+
+### Fixed
+
+- **A mounted file with no extension is typed from its content again**, as it was
+  before v0.34.0 — an image uploaded as `/uploads/logo` is `image/png`, which
+  elagoht/opti-image needs to convert it — but never into a type that runs: one
+  that looks like HTML or XML is `text/plain`. v0.34.0 served every such file as
+  `application/octet-stream`. The same holds in `collage serve`. `nosniff` is
+  still sent with every mounted file.
+
 ## v0.34.1
 
 ### Added

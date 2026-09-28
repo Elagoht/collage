@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -203,14 +202,6 @@ func (s *staticSite) open(name string) (fs.File, bool) {
 func (s *staticSite) write(w http.ResponseWriter, r *http.Request, name string, file fs.File) {
 	defer file.Close()
 
-	// The extension's type or none, never a guess, as a running site's mounts
-	// answer: an upload with no extension holding markup is not a page.
-	ctype := mime.TypeByExtension(path.Ext(name))
-	if ctype == "" {
-		ctype = "application/octet-stream"
-	}
-	w.Header().Set("Content-Type", ctype)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
 	info, err := file.Stat()
 	if err != nil {
 		http.Error(w, "cannot stat", http.StatusInternalServerError)
@@ -221,6 +212,10 @@ func (s *staticSite) write(w http.ResponseWriter, r *http.Request, name string, 
 		http.Error(w, "not seekable", http.StatusInternalServerError)
 		return
 	}
+	// As a running site's mounts answer: an upload with no extension holding
+	// markup is not a page. See asset.ContentType.
+	w.Header().Set("Content-Type", asset.ContentType(name, seeker))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	http.ServeContent(w, r, name, info.ModTime(), seeker)
 }
 
