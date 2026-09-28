@@ -3,6 +3,8 @@ package router
 import (
 	"net/url"
 	"strings"
+
+	"github.com/Elagoht/collage/internal/ascii"
 )
 
 // LocaleOptions configures locale resolution: the default locale, the supported
@@ -45,7 +47,7 @@ func (opts LocaleOptions) supportedLocales() []string {
 // case-insensitive comparison, and whether one was found.
 func matchSupported(supported []string, tag string) (string, bool) {
 	for _, s := range supported {
-		if strings.EqualFold(s, tag) {
+		if ascii.EqualFold(s, tag) {
 			return s, true
 		}
 	}

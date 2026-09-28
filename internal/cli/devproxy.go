@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/term"
 )
 
@@ -197,7 +198,7 @@ func (p *devProxy) allowedHost(host string) bool {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		name = h
 	}
-	name = lowerASCII(strings.TrimSuffix(strings.Trim(name, "[]"), "."))
+	name = ascii.LowerString(strings.TrimSuffix(strings.Trim(name, "[]"), "."))
 	if name == "" {
 		return false
 	}
@@ -208,20 +209,7 @@ func (p *devProxy) allowedHost(host string) bool {
 	if err != nil {
 		public = p.public
 	}
-	return name == lowerASCII(strings.TrimSuffix(public, "."))
-}
-
-// lowerASCII lowercases only s's ASCII letters. strings.ToLower folds the
-// Kelvin sign to "k", and a check on a name the client sent has no business
-// treating two different names as one.
-func lowerASCII(s string) string {
-	b := []byte(s)
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			b[i] = c + 'a' - 'A'
-		}
-	}
-	return string(b)
+	return name == ascii.LowerString(strings.TrimSuffix(public, "."))
 }
 
 // proxyFailed answers a request the program did not. That is almost always a

@@ -35,6 +35,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/Elagoht/collage/internal/ascii"
 )
 
 // ErrMissing reports a request that carried no token at all.
@@ -191,7 +193,7 @@ func (g *Guard) Cookie(r *http.Request, token string) *http.Cookie {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
+		Secure:   r.TLS != nil || ascii.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
 	}
 }
 

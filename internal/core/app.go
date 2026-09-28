@@ -30,6 +30,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/csrf"
@@ -1331,7 +1332,7 @@ func (a *App) localePath(path, locale string) string {
 	}
 	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
 	for _, supported := range a.cfg.Locale.Supported {
-		if strings.EqualFold(first, supported) {
+		if ascii.EqualFold(first, supported) {
 			return path
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -155,7 +156,7 @@ func (ev *AfterRenderEvent) Hoist(area, key string, html template.HTML) bool {
 		if area != "head" {
 			return false
 		}
-		at = bytes.Index(lowerASCII(ev.HTML), []byte("</head>"))
+		at = bytes.Index(ascii.Lower(ev.HTML), []byte("</head>"))
 		if at < 0 {
 			return false
 		}
@@ -458,18 +459,4 @@ type ErrorEvent struct {
 	// "render" or "cache_write". It is caller-defined, not an exhaustive enum,
 	// and this event's own copy.
 	Stage string
-}
-
-// lowerASCII returns a copy of b with only its ASCII letters lowercased, so every
-// index into it is an index into b. bytes.ToLower does not keep lengths: Turkish İ
-// is two bytes and lowercases to i, one, and would move where "head" lands.
-func lowerASCII(b []byte) []byte {
-	out := make([]byte, len(b))
-	for i, c := range b {
-		if 'A' <= c && c <= 'Z' {
-			c += 'a' - 'A'
-		}
-		out[i] = c
-	}
-	return out
 }
