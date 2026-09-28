@@ -135,3 +135,101 @@ func TestStore_EvictsTheLeastRecentlyUsed(t *testing.T) {
 		t.Errorf("fetches = %d, want 4: a, b, c, then b again", calls.Load())
 	}
 }
+
+// A fetch that panics must not leave its key behind as a fetch forever running:
+// every later load of the key would wait on it, and none would fetch again.
+func TestStore_APanickingFetchDoesNotHoldTheKey(t *testing.T) {
+	s := New(0)
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("the panic did not reach the caller whose fetch it was")
+			}
+		}()
+		_, _ = s.Load(context.Background(), "k", 0, nil, func(context.Context) (any, error) { panic("upstream") })
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	got, err := s.Load(ctx, "k", 0, nil, func(context.Context) (any, error) { return "ok", nil })
+	if err != nil || got != "ok" {
+		t.Fatalf("Load() after a panic = %v, %v; want a fresh fetch", got, err)
+	}
+}
+
+// A waiter on a panicking fetch is told it failed, not left waiting.
+func TestStore_AWaiterOnAPanickingFetchIsAnswered(t *testing.T) {
+	s := New(0)
+	release := make(chan struct{})
+	go func() {
+		defer func() { _ = recover() }()
+		_, _ = s.Load(context.Background(), "k", 0, nil, func(context.Context) (any, error) {
+			<-release
+			panic("upstream")
+		})
+	}()
+	waitInflight(t, s, "k")
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.Load(context.Background(), "k", 0, nil, func(context.Context) (any, error) { return "second", nil })
+		done <- err
+	}()
+	time.Sleep(20 * time.Millisecond) // the waiter joins the running fetch
+	close(release)
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrFetchPanicked) {
+			t.Fatalf("waiter's Load() = %v, want ErrFetchPanicked", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the waiter was never answered")
+	}
+}
+
+// The caller that started a fetch going away is its own business. A waiter whose
+// context is still live fetches again rather than failing with an error about a
+// request that was not its own — or one reader disconnecting on purpose fails
+// every reader who shared the fetch.
+func TestStore_AWaiterOutlivesTheCallerThatStartedTheFetch(t *testing.T) {
+	s := New(0)
+	first, cancel := context.WithCancel(context.Background())
+	go func() {
+		_, _ = s.Load(first, "k", 0, nil, func(ctx context.Context) (any, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		})
+	}()
+	waitInflight(t, s, "k")
+
+	done := make(chan struct{})
+	var got string
+	var err error
+	go func() {
+		defer close(done)
+		var value any // any: Load's own return type
+		value, err = s.Load(context.Background(), "k", 0, nil, func(context.Context) (any, error) { return "mine", nil })
+		got, _ = value.(string)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	<-done
+	if err != nil || got != "mine" {
+		t.Fatalf("waiter's Load() = %v, %v; want its own fetch", got, err)
+	}
+}
+
+func waitInflight(t *testing.T, s *Store, key string) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		_, ok := s.inflight[key]
+		s.mu.Unlock()
+		if ok {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("no fetch of %q started", key)
+}

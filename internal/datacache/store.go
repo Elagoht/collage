@@ -10,9 +10,14 @@ package datacache
 import (
 	"container/list"
 	"context"
+	"errors"
 	"sync"
 	"time"
 )
+
+// ErrFetchPanicked is what a caller waiting on a fetch is told when the fetch
+// panicked. The panic itself goes to the caller whose fetch it was.
+var ErrFetchPanicked = errors.New("collage: data fetch panicked")
 
 // DefaultMaxEntries bounds a store given no bound of its own.
 const DefaultMaxEntries = 10000
@@ -44,6 +49,9 @@ type call struct {
 	done  chan struct{}
 	value any // any: see entry.value
 	err   error
+	// abandoned reports a fetch that failed because the caller that started it
+	// went away: an answer about that caller, not about the key.
+	abandoned bool
 }
 
 // New returns a store holding at most maxEntries values: 0 means DefaultMaxEntries
@@ -68,15 +76,27 @@ func New(maxEntries int) *Store {
 // every caller waiting on that fetch and never stored.
 //
 // The fetch runs under the context of the caller that started it. A caller whose own
-// context ends while it waits stops waiting.
+// context ends while it waits stops waiting; one whose context outlives the
+// starter's, when the fetch failed because the starter went away, fetches again.
 func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (any, error)) (any, error) { // any: see entry.value
+	for {
+		value, err, again := s.load(ctx, key, ttl, tags, fetch)
+		if !again {
+			return value, err
+		}
+	}
+}
+
+// load is one attempt at Load. again reports that it waited on a fetch its
+// starter abandoned, and the caller should try once more.
+func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (any, error)) (value any, err error, again bool) { // any: see entry.value
 	s.mu.Lock()
 	if element, ok := s.entries[key]; ok {
 		stored := element.Value.(*entry)
 		if stored.expires.IsZero() || s.now().Before(stored.expires) {
 			s.order.MoveToFront(element)
 			s.mu.Unlock()
-			return stored.value, nil
+			return stored.value, nil, false
 		}
 		s.remove(element)
 	}
@@ -84,9 +104,14 @@ func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []
 		s.mu.Unlock()
 		select {
 		case <-running.done:
-			return running.value, running.err
+			// Not the starter's cancellation: one reader disconnecting, on
+			// purpose or not, would fail every reader who shared its fetch.
+			if running.abandoned && ctx.Err() == nil {
+				return nil, nil, true
+			}
+			return running.value, running.err, false
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, ctx.Err(), false
 		}
 	}
 	started := &call{done: make(chan struct{})}
@@ -94,8 +119,24 @@ func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []
 	epoch := s.epoch
 	s.mu.Unlock()
 
-	value, err := fetch(ctx)
+	// A fetch that panics still gives the key up and answers its waiters. The
+	// render recovers the panic further up, and without this the key would
+	// stay in flight for good: every later load waits on it and none fetches.
+	finished := false
+	defer func() {
+		if finished {
+			return
+		}
+		started.err = ErrFetchPanicked
+		s.mu.Lock()
+		delete(s.inflight, key)
+		s.mu.Unlock()
+		close(started.done)
+	}()
+	value, err = fetch(ctx)
+	finished = true
 	started.value, started.err = value, err
+	started.abandoned = err != nil && ctx.Err() != nil
 
 	s.mu.Lock()
 	delete(s.inflight, key)
@@ -104,7 +145,7 @@ func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []
 	}
 	s.mu.Unlock()
 	close(started.done)
-	return value, err
+	return value, err, false
 }
 
 // Invalidate drops every value stored under any of tags and returns how many it
