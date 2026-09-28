@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -597,5 +598,40 @@ func TestAddressRewriter(t *testing.T) {
 	a.Flush()
 	if got, want := out.String(), "addr=localhost:6060 next\nends with 12"; got != want {
 		t.Errorf("after Flush = %q, want %q", got, want)
+	}
+}
+
+// A page on another site can make its own name resolve to 127.0.0.1 — DNS
+// rebinding — and is then same-origin with collage dev: it reads every page, the
+// dev error pages with their stacks, and the program's output. What it cannot
+// change is the Host it sent, which is its own name. collage dev answers only a
+// Host that names this machine or an address, or the HOST it was told.
+func TestDevProxy_RefusesAHostItWasNotStartedFor(t *testing.T) {
+	p := newDevProxy("dev.example.test:6060", "127.0.0.1:1")
+	p.down("SECRET program output")
+
+	for host, allowed := range map[string]bool{
+		"localhost:6060":            true,
+		"app.localhost:6060":        true,
+		"127.0.0.1:6060":            true,
+		"[::1]:6060":                true,
+		"192.168.1.20:6060":         true,
+		"dev.example.test:6060":     true,
+		"DEV.example.test:6060":     true,
+		"rebind.attacker.test:6060": false,
+		"localhost.attacker.test":   false,
+		"":                          false,
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		p.ServeHTTP(w, r)
+		leaked := strings.Contains(w.Body.String(), "SECRET")
+		if allowed && (w.Code != http.StatusServiceUnavailable || !leaked) {
+			t.Errorf("Host %q: %d, want the down page", host, w.Code)
+		}
+		if !allowed && (w.Code != http.StatusForbidden || leaked) {
+			t.Errorf("Host %q: %d (output shown %v), want 403 and nothing of the program's", host, w.Code, leaked)
+		}
 	}
 }

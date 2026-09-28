@@ -141,6 +141,14 @@ func (p *devProxy) started() bool {
 }
 
 func (p *devProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !p.allowedHost(r.Host) {
+		header := w.Header()
+		header.Set("Content-Type", "text/plain; charset=utf-8")
+		header.Set("X-Content-Type-Options", "nosniff")
+		w.WriteHeader(http.StatusForbidden)
+		fmt.Fprintf(w, "collage: dev: %q is not this machine's name. To reach collage dev by it, start it with HOST set to it.\n", r.Host)
+		return
+	}
 	// A build takes as long as it takes, so only a program already started is
 	// timed: one that never listens where it was told would otherwise hold the
 	// page forever. The reload stream is not timed at all — waiting is its job.
@@ -173,6 +181,47 @@ func (p *devProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// allowedHost reports whether host, a request's Host header, names this machine:
+// localhost or a name under it, an IP address, or the HOST collage dev was
+// started with.
+//
+// Anything else is a page on another site that made its own name resolve here
+// — DNS rebinding — and is then same-origin with collage dev: it could read
+// every page, the dev error pages with their stacks, and the program's output,
+// and post the program's forms with a token it read. The Host header is the one
+// thing it cannot choose; it is the attacker's own name.
+func (p *devProxy) allowedHost(host string) bool {
+	name := host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		name = h
+	}
+	name = lowerASCII(strings.TrimSuffix(strings.Trim(name, "[]"), "."))
+	if name == "" {
+		return false
+	}
+	if name == "localhost" || strings.HasSuffix(name, ".localhost") || net.ParseIP(name) != nil {
+		return true
+	}
+	public, _, err := net.SplitHostPort(p.public)
+	if err != nil {
+		public = p.public
+	}
+	return name == lowerASCII(strings.TrimSuffix(public, "."))
+}
+
+// lowerASCII lowercases only s's ASCII letters. strings.ToLower folds the
+// Kelvin sign to "k", and a check on a name the client sent has no business
+// treating two different names as one.
+func lowerASCII(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 // proxyFailed answers a request the program did not. That is almost always a
