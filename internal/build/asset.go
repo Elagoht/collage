@@ -6,6 +6,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/Elagoht/collage/internal/asset"
 )
 
 // copyAssets copies every mount the application reports through Renderer.Mounts
@@ -39,6 +41,15 @@ func (b *Builder) copyAssets(outDirResolved string) ([]string, []error) {
 		walkErr := fs.WalkDir(fsys, ".", func(name string, d fs.DirEntry, err error) error {
 			if err != nil {
 				errs = append(errs, fmt.Errorf("collage: mount %q: walk %q: %w", mount.Prefix(), name, err))
+				return nil
+			}
+			// Not published by the server, so not by the build: see
+			// asset.Hidden. A name that is not a valid path at all is left to
+			// the containment check below, which refuses it out loud.
+			if name != "." && fs.ValidPath(name) && asset.Hidden(name) {
+				if d.IsDir() {
+					return fs.SkipDir
+				}
 				return nil
 			}
 			if d.IsDir() {

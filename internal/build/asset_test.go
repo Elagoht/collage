@@ -398,3 +398,31 @@ func TestBuild_WarnsAboutAPageThatReadsTheQuery(t *testing.T) {
 		t.Errorf("Warnings = %+v, want one for blogs naming its parameters", report.Warnings)
 	}
 }
+
+// What the mount does not serve, the build does not publish: a dotfile, other
+// than .well-known, is left out of the output.
+func TestBuild_LeavesDotfilesOut(t *testing.T) {
+	out := resolvedTempDir(t)
+	mount, err := asset.New("/static/", fstest.MapFS{
+		"app.css":                  {Data: []byte("body{}")},
+		".env":                     {Data: []byte("SECRET=1")},
+		".git/config":              {Data: []byte("[core]")},
+		".well-known/security.txt": {Data: []byte("Contact: x")},
+	})
+	if err != nil {
+		t.Fatalf("asset.New: %v", err)
+	}
+	b, err := New(&fakeRenderer{mounts: []*asset.Mount{mount}}, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := b.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for name, want := range map[string]bool{"app.css": true, ".env": false, ".git/config": false, ".well-known/security.txt": true} {
+		_, statErr := os.Stat(filepath.Join(out, "static", filepath.FromSlash(name)))
+		if got := statErr == nil; got != want {
+			t.Errorf("%s written = %v, want %v", name, got, want)
+		}
+	}
+}

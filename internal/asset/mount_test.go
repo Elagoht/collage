@@ -305,3 +305,62 @@ func TestMount_PlainTextErrorCarriesTheSameHeadersAsADocumentError(t *testing.T)
 		}
 	}
 }
+
+// A mount often serves what readers uploaded. A file whose name says nothing
+// about its type is not sniffed into one: sniffed, "<html><script>" under a
+// bare name is served as text/html from the site's own origin. And nothing a
+// mount sends is to be sniffed by the browser either.
+func TestMount_DoesNotSniff(t *testing.T) {
+	m, err := New("/uploads/", fstest.MapFS{
+		"avatar":     {Data: []byte("<html><script>alert(1)</script>")},
+		"a.txt.bak":  {Data: []byte("<html><script>alert(1)</script>")},
+		"styles.css": {Data: []byte("body{}")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, want := range map[string]string{
+		"avatar":     "application/octet-stream",
+		"a.txt.bak":  "application/octet-stream",
+		"styles.css": "text/css",
+	} {
+		rec := httptest.NewRecorder()
+		m.ServeHTTP(rec, httptest.NewRequest("GET", "/uploads/"+name, nil))
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, want) {
+			t.Errorf("%s: Content-Type = %q, want %s", name, ct, want)
+		}
+		if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q, want nosniff", name, got)
+		}
+	}
+}
+
+// A file or directory whose name starts with a dot is not published: .env,
+// .git, an editor's swap file, .DS_Store — what nobody meant to put on the
+// site but a directory embedded whole carries. .well-known is the exception,
+// being the one meant to be.
+func TestMount_DoesNotServeDotfiles(t *testing.T) {
+	m, err := New("/static/", fstest.MapFS{
+		".env":                     {Data: []byte("SECRET=1")},
+		".git/config":              {Data: []byte("[core]")},
+		"css/.app.css.swp":         {Data: []byte("swap")},
+		".well-known/security.txt": {Data: []byte("Contact: x")},
+		"css/app.css":              {Data: []byte("body{}")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for target, status := range map[string]int{
+		"/static/.env":                     http.StatusNotFound,
+		"/static/.git/config":              http.StatusNotFound,
+		"/static/css/.app.css.swp":         http.StatusNotFound,
+		"/static/.well-known/security.txt": http.StatusOK,
+		"/static/css/app.css":              http.StatusOK,
+	} {
+		rec := httptest.NewRecorder()
+		m.ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
+		if rec.Code != status {
+			t.Errorf("GET %s = %d, want %d", target, rec.Code, status)
+		}
+	}
+}

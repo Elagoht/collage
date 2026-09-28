@@ -157,9 +157,16 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if tag, err := m.tag(name); err == nil {
 		w.Header().Set("ETag", tag)
 	}
-	if ctype := mime.TypeByExtension(path.Ext(name)); ctype != "" {
-		w.Header().Set("Content-Type", ctype)
+	// The extension's type or none at all, never a guess. ServeContent sniffs a
+	// file whose name says nothing, and a mount often serves what readers
+	// uploaded: "<html><script>" under a bare name was served as text/html,
+	// from this site's origin. nosniff keeps the browser from guessing too.
+	ctype := mime.TypeByExtension(path.Ext(name))
+	if ctype == "" {
+		ctype = "application/octet-stream"
 	}
+	w.Header().Set("Content-Type", ctype)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// A fingerprinted name was minted from these exact bytes and verified against
 	// them above, so it can never describe anything else: there is nothing for a
 	// client to revalidate and no way for the answer to go stale. Everything else
@@ -180,6 +187,20 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, name, info.ModTime(), seeker)
 }
 
+// Hidden reports whether any element of name, a slash-separated path within a
+// mount, starts with a dot, other than .well-known. A dotfile is what nobody
+// meant to publish — .env, .git, an editor's swap file, .DS_Store — and what a
+// directory embedded whole, with "all:", carries along; .well-known is the one
+// meant to be found. A mount neither serves one nor has a build copy it.
+func Hidden(name string) bool {
+	for element := range strings.SplitSeq(name, "/") {
+		if strings.HasPrefix(element, ".") && element != ".well-known" {
+			return true
+		}
+	}
+	return false
+}
+
 // resolve turns a request path into a path within the mount's file system, or
 // reports that it is not servable. Containment is not a string problem: the
 // cleaned path must still be a valid fs path, which fs.ValidPath enforces by
@@ -196,6 +217,9 @@ func (m *Mount) resolve(urlPath string) (name string, fingerprinted bool, ok boo
 		return "", false, false
 	}
 	if !fs.ValidPath(name) {
+		return "", false, false
+	}
+	if Hidden(name) {
 		return "", false, false
 	}
 
