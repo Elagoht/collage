@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.34.1
+
+### Added
+
+- `collage.ErrCSRFCrossOrigin`, the refusal of a submission the browser marked as
+  sent from another origin, and `collage.ErrCachedFetchPanicked`, what a `Cached`
+  call waiting on a fetch that panicked is told — so an error hook can tell them
+  apart with `errors.Is`. Both were added in v0.34.0 without a name outside the
+  framework.
+
+### Fixed
+
+- A mount test assumed `.bak` has no type; on Linux `/etc/mime.types` gives it
+  one, and CI failed on the v0.34.0 tag. The framework was not affected.
+
 ## v0.34.0
 
 A security release. Every collage site should take it.

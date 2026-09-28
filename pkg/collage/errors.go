@@ -36,6 +36,11 @@ var (
 	ErrCSRFMismatch = csrf.ErrMismatch
 	// ErrCSRFInvalid reports a token this application did not sign.
 	ErrCSRFInvalid = csrf.ErrInvalid
+	// ErrCSRFCrossOrigin reports a submission the browser marked as sent from
+	// another origin — by Sec-Fetch-Site, or by an Origin that is not the Host —
+	// refused whatever token it carried. An origin whose forms may post here is
+	// named in Security.CSRFTrustedOrigins.
+	ErrCSRFCrossOrigin = csrf.ErrCrossOrigin
 	// ErrCSRFDisabled is returned by {{csrfToken}} when forgery protection is off.
 	ErrCSRFDisabled = core.ErrCSRFDisabled
 )

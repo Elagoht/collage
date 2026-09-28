@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Elagoht/collage/internal/datacache"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -72,7 +73,9 @@ func Get[T any](rc *RenderContext, key string) (T, bool) {
 // when nothing invalidates it; zero keeps it until something does.
 //
 // Concurrent requests for one key share one fetch. An error is returned to
-// everyone waiting on it and never stored. Values are kept in this process, bounded
+// everyone waiting on it and never stored — except a fetch that failed because
+// the request that started it went away, which a waiter still being served
+// fetches again rather than failing with. Values are kept in this process, bounded
 // by Cache.MaxEntries, least recently used first to go.
 //
 // Where nothing is kept across renders — Cache.Enabled false, development, a
@@ -85,3 +88,8 @@ func Cached[T any](rc *RenderContext, key string, ttl time.Duration, tags []stri
 
 // ErrCachedTypeMismatch reports one Cached key asked for as two different types.
 var ErrCachedTypeMismatch = types.ErrCachedTypeMismatch
+
+// ErrCachedFetchPanicked is what a Cached call waiting on another's fetch is
+// told when that fetch panicked. The panic goes to the render whose fetch it
+// was, and the key is free: the next call fetches again.
+var ErrCachedFetchPanicked = datacache.ErrFetchPanicked
