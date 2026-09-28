@@ -91,7 +91,10 @@ func RenderFragment(f *Fragment) *ActionResult {
 
 // RenderPage answers with a whole page, which is the shape a validation failure
 // takes: the handler puts what went wrong into the render context's shared data and
-// hands back the form's own page, which reads it while rendering.
+// hands back the form's own page, which reads it while rendering. On the page's own
+// URL that page is rc.Page:
+//
+//	return collage.RenderPage(rc.Page), nil
 func RenderPage(p *Page) *ActionResult {
 	return &ActionResult{Page: p}
 }

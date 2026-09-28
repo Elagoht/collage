@@ -37,7 +37,8 @@ type ActionResult struct {
 	Fragment *Fragment
 	// Page renders a whole page as the body — the shape a validation failure takes:
 	// the handler puts what went wrong in SharedData and returns the form's own
-	// page, which reads it while rendering.
+	// page, which reads it while rendering. For an action on a page's URL that
+	// page is rc.Page.
 	Page *Page
 	// Body is written verbatim, with ContentType. It is what a webhook or a JSON
 	// endpoint answers with.

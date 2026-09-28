@@ -101,7 +101,12 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// whatever renders the response. That is what makes the ordinary validation
 	// flow work: the handler puts what went wrong into SharedData and returns the
 	// form's own page, which reads it while rendering.
-	rc := types.NewRenderContext(ctx, r, nil, match.Locale, match.PathParams)
+	//
+	// Its Page is the page whose URL the action answers on, so that return is
+	// Page: rc.Page. Without it a page's own action had to reach the page it
+	// belongs to through a variable declared before the page and filled after,
+	// because the handler is written while the page is still being built.
+	rc := types.NewRenderContext(ctx, r, match.Page, match.Locale, match.PathParams)
 	if skipsCache(r) {
 		types.SkipDataCache(rc)
 	}
@@ -243,11 +248,34 @@ func (h *Handler) writeActionResult(
 
 	default:
 		status := statusOr(result.Status, http.StatusNoContent)
+		h.warnBareRefusal(r, match, status)
 		header.Set("Content-Length", "0")
 		w.WriteHeader(status)
 		return status
 	}
 }
+
+// warnBareRefusal tells a developer about a form refused with nothing to show.
+//
+// A 422 with no body is a legitimate answer to a script, but to a browser's form
+// post it is a blank page, and the usual cause is a handler that answered with
+// Page: rc.Page on a URL no page is at — so rc.Page was nil and the result fell
+// through to a bare status. Dev mode only, and a warning rather than a failure,
+// because the response is the one the handler asked for.
+func (h *Handler) warnBareRefusal(r *http.Request, match *router.MatchResult, status int) {
+	if !h.devMode || status != http.StatusUnprocessableEntity || r.Header.Get(FetchHeader) != "" {
+		return
+	}
+	name := ""
+	if match.Action != nil {
+		name = match.Action.Name
+	}
+	h.logger.Warn(bareRefusalMessage, "action", name, "path", r.URL.Path)
+}
+
+// bareRefusalMessage is what warnBareRefusal logs.
+const bareRefusalMessage = "collage: action answered 422 with no body — a form post gets a blank page. " +
+	"rc.Page is set only for an action on a page's URL; elsewhere answer with the registered page itself"
 
 // writeActionPage renders a whole page as the response body: the shape a validation
 // failure takes, where the handler puts what went wrong in SharedData and hands back

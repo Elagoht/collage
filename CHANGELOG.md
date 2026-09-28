@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.33.0
+
+### Added
+
+- **`rc.Page` in an action's handler is the page whose URL it answers on**, so a
+  refused form answers with `Page: rc.Page`. A page's own action no longer needs
+  the `var page` declared before the page and captured by the handler — nor the
+  ordering that made it work. An action at a URL of its own has a `nil` `rc.Page`.
+  A fragment an action answers with is now rendered within that page too, so
+  `{{localeURL}}` works in it and its render metric is named `page/fragment`.
+- In dev mode, an action answering a form post with a bodiless 422 logs a
+  warning: to the reader it is a blank page. Requests carrying `Collage-Fetch` are
+  exempt.
+
+### Changed
+
+- The demo scaffold's `/hello` action is a plain function answering with
+  `rc.Page`.
+
 ## v0.32.0
 
 ### Changed

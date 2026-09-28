@@ -644,3 +644,84 @@ func TestAction_APageRunsAfterRender(t *testing.T) {
 		t.Errorf("status %d body %q, want 422 and the hook's HTML", res.Code, res.Body.String())
 	}
 }
+
+// A page's own action finds that page on rc.Page, so a refused form answers with
+// it without the handler having been handed the page it belongs to.
+func TestAction_RenderContextCarriesThePageItAnswersOn(t *testing.T) {
+	page := testPage("new", "/posts/new", types.StrategyDynamic)
+	var seen *types.Page
+	create := action("create", "/posts/new", []string{http.MethodPost},
+		func(_ context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
+			seen = rc.Page
+			return &types.ActionResult{Status: http.StatusUnprocessableEntity, Page: rc.Page}, nil
+		})
+
+	env := actionEnv(t, []*types.Page{page}, []*types.Action{create})
+	res := env.do(post("/posts/new", ""))
+
+	if seen != page {
+		t.Fatalf("rc.Page = %v, want the page at the action's URL", seen)
+	}
+	if res.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", res.Code)
+	}
+	if env.engine.pageCalls("new") != 1 {
+		t.Errorf("page renders = %d, want 1", env.engine.pageCalls("new"))
+	}
+}
+
+// An action at a URL of its own has no page there, and says so with a nil rc.Page
+// rather than a guess.
+func TestAction_RenderContextHasNoPageOffAPagesURL(t *testing.T) {
+	seen := &types.Page{}
+	hook := action("hook", "/hooks/in", []string{http.MethodPost},
+		func(_ context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
+			seen = rc.Page
+			return nil, nil
+		})
+
+	env := actionEnv(t, []*types.Page{testPage("home", "/", types.StrategyDynamic)}, []*types.Action{hook})
+	env.do(post("/hooks/in", ""))
+
+	if seen != nil {
+		t.Errorf("rc.Page = %v, want nil: no page is at /hooks/in", seen)
+	}
+}
+
+// A 422 with no body is a blank page to whoever posted the form, and usually a
+// Page: rc.Page on a URL no page is at. In dev mode that is said out loud; to a
+// script, which may well want a bare 422, and outside dev mode, it is not.
+func TestAction_BareRefusalIsWarnedInDevMode(t *testing.T) {
+	refuse := func() *types.Action {
+		return action("edit", "/posts/1/edit", []string{http.MethodPost},
+			func(_ context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
+				return &types.ActionResult{Status: http.StatusUnprocessableEntity, Page: rc.Page}, nil
+			})
+	}
+	pages := func() []*types.Page { return []*types.Page{testPage("home", "/", types.StrategyDynamic)} }
+
+	dev := actionEnv(t, pages(), []*types.Action{refuse()}, withDevMode())
+	if res := dev.do(post("/posts/1/edit", "")); res.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422: the warning changes nothing about the response", res.Code)
+	}
+	records := dev.logs.recordsFor(bareRefusalMessage)
+	if len(records) != 1 {
+		t.Fatalf("warnings = %d, want 1", len(records))
+	}
+	if records[0].level != slog.LevelWarn {
+		t.Errorf("level = %v, want warn", records[0].level)
+	}
+
+	fetched := post("/posts/1/edit", "")
+	fetched.Header.Set(FetchHeader, "1")
+	dev.do(fetched)
+	if n := len(dev.logs.recordsFor(bareRefusalMessage)); n != 1 {
+		t.Errorf("warnings = %d after a fetch, want still 1: a script may want a bare 422", n)
+	}
+
+	prod := actionEnv(t, pages(), []*types.Action{refuse()})
+	prod.do(post("/posts/1/edit", ""))
+	if n := len(prod.logs.recordsFor(bareRefusalMessage)); n != 0 {
+		t.Errorf("warnings = %d outside dev mode, want 0", n)
+	}
+}

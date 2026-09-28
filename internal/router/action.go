@@ -143,9 +143,10 @@ func allowedMethods(n *node) []string {
 // and the reader gets a page that looks like nothing happened.
 func resolve(n *node, method string) (page *types.Page, doc *types.Document, action *types.Action, allowed bool) {
 	if a, ok := n.actions[method]; ok {
-		// The page comes with the action when the action shares its URL: the
-		// handler never needs it, but a guard does — the page's spine is what
-		// a page-attached action inherits its protection from.
+		// The page comes with the action when the action shares its URL: a
+		// guard needs it — the page's spine is what a page-attached action
+		// inherits its protection from — and so does the handler, which
+		// answers a refused form with it as rc.Page.
 		return n.page, nil, a, true
 	}
 	if method == http.MethodHead {

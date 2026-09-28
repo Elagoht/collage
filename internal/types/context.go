@@ -17,7 +17,9 @@ type RenderContext struct {
 	Locale string
 	// PathParams holds the path parameters extracted from the matched route.
 	PathParams map[string]string
-	// Page is the page being rendered.
+	// Page is the page being rendered. In an action's handler it is the page whose
+	// URL the action answers on — the page a form posted to, which is what a
+	// validation failure answers with — and nil for an action at a URL of its own.
 	Page *Page
 	// SharedData lets fragments exchange arbitrary values within a single render.
 	//

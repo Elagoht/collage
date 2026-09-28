@@ -50,7 +50,7 @@ type MatchResult struct {
 	// Page is the matched page. It is nil when RedirectTo is set or IsNotFound is
 	// true. It is also set — alongside Action — when the action is one of a
 	// page's own, registered on the page's URL: the page is what a guard
-	// applies to, so it travels with the action the handler never reads.
+	// applies to, and what the handler reads as rc.Page.
 	Page *types.Page
 	// Document is the matched document. It is nil when a page matched, when
 	// RedirectTo is set, or when IsNotFound is true. Exactly one of Page,

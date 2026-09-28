@@ -22,25 +22,21 @@ func HelloPage() *collage.Page {
 		WithDataHandler(collage.Load(helloData)).
 		Build()
 
-	var page *collage.Page
-	page = collage.NewPage("hello").
+	return collage.NewPage("hello").
 		WithLayouts(layouts.Layout()).
 		WithContent(content).
 		WithPath("en", "/hello").
-		WithAction("POST", func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
-			return greet(rc, page), nil
-		}).
+		WithAction("POST", greet).
 		Dynamic().
 		Build()
-
-	return page
 }
 
-func greet(rc *collage.RenderContext, page *collage.Page) *collage.ActionResult {
+// greet answers the form with the page it was posted from, which is rc.Page.
+func greet(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
 	if name := strings.TrimSpace(rc.Request.PostFormValue("name")); name != "" {
 		rc.Set(nameKey, name)
 	}
-	return collage.RenderPage(page)
+	return collage.RenderPage(rc.Page), nil
 }
 
 func helloData(_ context.Context, rc *collage.RenderContext) (helloView, error) {

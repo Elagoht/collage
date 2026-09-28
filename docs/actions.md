@@ -59,17 +59,22 @@ there to be read:
 
 ```go
 rc.Set("error", "a title is required")
-result := collage.RenderPage(formPage)
-result.Status = http.StatusUnprocessableEntity
-return result, nil
+return &collage.ActionResult{Status: http.StatusUnprocessableEntity, Page: rc.Page}, nil
 ```
+
+`rc.Page` is the page whose URL the action answers on — the page the form was posted
+from. The handler does not need to be handed its page, so it needs no variable
+declared before the page and filled in after it. An action at a URL of its own has
+no page there, and its `rc.Page` is `nil`: it answers with the registered page
+itself. In dev mode a form post answered 422 with no body is logged as a warning,
+because to the reader it is a blank page, and a `nil` `rc.Page` is the usual cause.
 
 No session, no flash storage, no state smuggled through a query string: the handler
 and the render are one request. The page is rendered as a page — `OnBeforeRender` and
 `OnAfterRender` run for it, so whatever plugins do to a page, a minifier or a
 structured-data plugin, they do to the one a validation failure answers with.
 
-`formPage` has to be **the value you registered**. Registration is what puts a page's
+A page named in `Page` has to be **the value you registered** — which `rc.Page` always is. Registration is what puts a page's
 content into its layout, so a page built inside the handler renders as a layout
 around nothing; collage refuses it with `ErrUnregisteredPage`, naming the page, rather
 than serve a blank one.
@@ -96,7 +101,7 @@ well answer with the page it was sent from, carrying "thanks, we have your messa
 
 ```go
 rc.Set("sent", true)
-return collage.RenderPage(contactPage), nil
+return collage.RenderPage(rc.Page), nil
 ```
 
 What decides between them is not the framework but the browser. Answering a POST with
