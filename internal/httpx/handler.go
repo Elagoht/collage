@@ -299,6 +299,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// /_collage/", "protect /admin/" — never meets "/_collage/../admin" and lets
 	// it through to the page behind it.
 	if cleaned, dirty := cleanPath(r.URL.Path); dirty {
+		// A path made dirty by an encoded slash is not cleaned into another
+		// one: "/blog/%2Fhello" is not "/blog/hello", "/a%2F..%2Fb" is not
+		// "/b". An encoded slash reaches no route, and redirecting it to one
+		// would make it a separator after all. It is answered as not found,
+		// here, before a middleware reads the decoded path it spells.
+		if strings.Contains(ascii.LowerString(r.URL.EscapedPath()), "%2f") {
+			h.ServeStatus(w, r, http.StatusNotFound)
+			return
+		}
 		redirectClean(w, r, cleaned)
 		return
 	}
