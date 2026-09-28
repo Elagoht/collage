@@ -266,7 +266,7 @@ func withReloadScript(html []byte, version string) []byte {
 // insertBeforeBodyEnd returns html with insert placed before its closing body tag,
 // or at the end when it has none.
 func insertBeforeBodyEnd(html []byte, insert string) []byte {
-	i := bytes.LastIndex(bytes.ToLower(html), []byte("</body>"))
+	i := bytes.LastIndex(lowerASCII(html), []byte("</body>"))
 	if i < 0 {
 		i = len(html)
 	}
@@ -274,4 +274,19 @@ func insertBeforeBodyEnd(html []byte, insert string) []byte {
 	out = append(out, html[:i]...)
 	out = append(out, insert...)
 	return append(out, html[i:]...)
+}
+
+// lowerASCII returns a copy of b with only its ASCII letters lowercased, so every
+// index into it is an index into b. bytes.ToLower does not keep lengths: Turkish İ
+// is two bytes and lowercases to i, one, and each one on a page would put an
+// insertion a byte earlier, into the tag before </body>.
+func lowerASCII(b []byte) []byte {
+	out := make([]byte, len(b))
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		out[i] = c
+	}
+	return out
 }

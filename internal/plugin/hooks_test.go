@@ -244,3 +244,15 @@ func TestRegistry_HookDispatch_NilAndEmptyRegistryAreNoOps(t *testing.T) {
 		})
 	}
 }
+
+// Text before </head> whose lowercase is shorter than itself — Turkish İ is two
+// bytes, and its lowercase i is one — does not move where "head" lands.
+func TestHoist_HeadAfterNonASCIIText(t *testing.T) {
+	ev := &AfterRenderEvent{HTML: []byte("<html><head><title>İzmir İstanbul</title></head><body></body></html>")}
+	if !ev.Hoist("head", "k", `<link id="x">`) {
+		t.Fatal("not hoisted")
+	}
+	if want := `</title><link id="x"></head>`; !strings.Contains(string(ev.HTML), want) {
+		t.Errorf("want %q in %q", want, ev.HTML)
+	}
+}

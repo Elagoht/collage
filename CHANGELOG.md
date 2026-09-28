@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.30.1
+
+### Fixed
+
+- The development reload script and overlay, and a plugin's `Hoist("head", …)`
+  after the page was rewritten, no longer land in the middle of a tag on a page
+  with non-ASCII text before `</body>` or `</head>`. The tag was found in a
+  lowercased copy of the page, and `İ` (two bytes) lowercases to `i` (one), so
+  each one moved the insertion a byte early: `</main<script>…></body>`.
+
 ## v0.30.0
 
 ### Added

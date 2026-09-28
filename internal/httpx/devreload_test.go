@@ -23,6 +23,11 @@ func TestWithReloadScript(t *testing.T) {
 	if got := string(withReloadScript([]byte("<p>x</p>"), "abc-1")); got != "<p>x</p>"+script {
 		t.Errorf("script not appended to a page with no body tag: %q", got)
 	}
+	// Turkish İ is two bytes and lowercases to one: text before the tag must not
+	// move where the script lands.
+	if got := string(withReloadScript([]byte("<main>İzmir İstanbul</main></body>"), "abc-1")); got != "<main>İzmir İstanbul</main>"+script+"</body>" {
+		t.Errorf("script misplaced after non-ASCII text: %q", got)
+	}
 	if !strings.Contains(script, `const v="abc-1"`) {
 		t.Errorf("the page's version is not in the script: %q", script)
 	}
