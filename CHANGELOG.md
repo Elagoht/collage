@@ -48,6 +48,27 @@ A security release. Every collage site should take it.
   request path cannot forge a log line or rewrite the terminal.
 - The scaffold's `.gitignore` covers every `.env.*` but `.env.example`.
 
+Found by porting Next.js's own test suite, whose passing properties now stand as
+regression tests (`nextjs_*_test.go`):
+
+- **A request body is bounded before the middleware reads it**, at the limit of
+  the action it routes to. A middleware that read or parsed the body read it
+  unbounded, and left the action's own limit nothing to bound.
+- **A redirect's captured value cannot add a query parameter**: one substituted
+  after the destination's `?` is query-escaped, so `/login?next={slug}` cannot be
+  handed a second `next`. A registered redirect carries the request's query
+  string, and one to `//host` or `/\host` is refused at registration.
+- A path made dirty by an encoded slash is a 404, not cleaned into a route.
+- A reader who closes the connection is logged at debug and reported to no error
+  hook; a reader who left while waiting on another's render no longer panics.
+- A degraded render is `no-store`, pages and documents are `no-store` in
+  development, the framework's `Vary` is added beside a middleware's rather than
+  replacing it, and a redirect shaped by `Collage-Fetch` names it in `Vary`.
+- `CSRFTrustedOrigins` entries match whatever their case or default port, and a
+  wildcard is refused. The forgery cookie is `Secure` behind a proxy that sends
+  `X-Forwarded-Proto` as a list.
+- `collage serve` serves no dotfile and sniffs no type.
+
 ## v0.33.0
 
 ### Added
