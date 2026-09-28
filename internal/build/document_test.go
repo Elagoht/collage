@@ -189,8 +189,8 @@ func TestBuild_ADocumentPathCannotEscapeOutDir(t *testing.T) {
 	if buildErr == nil {
 		t.Fatal("Build succeeded for an escaping document path, want an error")
 	}
-	if !errors.Is(buildErr, ErrPathEscapesOutDir) {
-		t.Fatalf("err = %v, want ErrPathEscapesOutDir", buildErr)
+	if !errors.Is(buildErr, types.ErrRouteParams) {
+		t.Fatalf("err = %v, want ErrRouteParams: a single segment's value holds no \"/\"", buildErr)
 	}
 	if len(report.Written) != 0 {
 		t.Fatalf("Written = %v, want none", report.Written)

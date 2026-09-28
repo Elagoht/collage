@@ -294,7 +294,8 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 
 	segments, ok := decodeSegments(splitPath(remaining))
 	if !ok {
-		// Malformed percent-encoding from the wire is a 404, not a 500.
+		// Malformed percent-encoding from the wire is a 404, not a 500, and so
+		// is an encoded "/": see decodeSegments.
 		return &MatchResult{Locale: locale, IsNotFound: true}, nil
 	}
 
@@ -650,15 +651,20 @@ func (rt *router) ErrorPage() *types.Page {
 
 // decodeSegments percent-decodes each of raw's segments individually via
 // url.PathUnescape, returning the decoded segments and true, or nil and false if
-// any segment fails to decode. Decoding happens per segment, after splitting on
-// "/" — never on the joined path — so a percent-encoded "/" ("%2F") inside one
-// segment is decoded into a literal "/" within that segment's value rather than
-// being mistaken for a path separator during matching.
+// any segment fails to decode or decodes to one holding a "/".
+//
+// A "%2F" is refused rather than kept inside its segment, which it once was.
+// Everything in front of the router — a middleware, a mount, a proxy — reads
+// the decoded r.URL.Path, where "/public%2Fsecret" is "/public/secret", two
+// segments; the router would have read one. A middleware letting "/public/"
+// through without a login then let that request through to "/{slug}" with the
+// slug "public/secret". Two readings of one path is the bypass; the one both
+// sides agree on is the one where a "/" separates segments.
 func decodeSegments(raw []string) ([]string, bool) {
 	decoded := make([]string, len(raw))
 	for i, seg := range raw {
 		d, err := url.PathUnescape(seg)
-		if err != nil {
+		if err != nil || strings.Contains(d, "/") {
 			return nil, false
 		}
 		decoded[i] = d

@@ -100,10 +100,10 @@ func TestDecodeSegments_Success(t *testing.T) {
 }
 
 // TestRouter_PercentDecoding_EncodedSlashCannotTraverseSegments ensures a
-// percent-encoded "/" inside one segment (%2F) cannot be used to smuggle an
-// extra path separator: the segment "a%2Fb" must be treated as the single
-// literal segment "a/b", not as two segments "a" and "b", so it cannot reach a
-// route registered at a different depth.
+// percent-encoded "/" inside one segment (%2F) reaches no route at all: not the
+// route at the depth its decoded path has, which a middleware reading r.URL.Path
+// sees, nor the one-segment route the escaped path has. Either answer is a
+// request that means one thing to what runs before the router and another to it.
 func TestRouter_PercentDecoding_EncodedSlashCannotTraverseSegments(t *testing.T) {
 	r := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
 	// A two-segment static route that %2F-smuggling might wrongly reach.
@@ -111,15 +111,10 @@ func TestRouter_PercentDecoding_EncodedSlashCannotTraverseSegments(t *testing.T)
 	// A one-segment dynamic route matching the encoded request literally.
 	mustRegister(t, r, newTestPage("files-name", map[string]string{"en": "/files/{name}"}))
 
-	result := matchPath(t, r, "/files/a%2Fsecret")
-	if result.IsNotFound || result.Page == nil {
-		t.Fatalf("expected a match against the dynamic route, got %+v", result)
-	}
-	if result.Page.Name != "files-name" {
-		t.Fatalf("expected the %%2F-containing segment to stay within /files/{name}, got page %q", result.Page.Name)
-	}
-	if result.PathParams["name"] != "a/secret" {
-		t.Fatalf("PathParams[name] = %q, want the literal %q", result.PathParams["name"], "a/secret")
+	for _, p := range []string{"/files/a%2Fsecret", "/files%2Fsecret", "/files/a%2fsecret", "/files/%2F"} {
+		if result := matchPath(t, r, p); !result.IsNotFound {
+			t.Errorf("%s: matched %+v, want not found", p, result)
+		}
 	}
 }
 
@@ -461,7 +456,7 @@ func TestRouter_RouteTable(t *testing.T) {
 		{name: "not found en-only route under tr", path: "/tr/shop/items/abc123", wantNotFound: true, wantLocale: "tr"},
 		{name: "not found extra segment past a static leaf", path: "/about/extra", wantNotFound: true, wantLocale: "en"},
 		{name: "unsupported locale prefix falls through", path: "/fr/about", wantNotFound: true, wantLocale: "en"},
-		{name: "shop item with encoded slash stays one segment", path: "/shop/items/a%2Fb", wantPageName: "shop-item", wantLocale: "en", wantParams: map[string]string{"itemID": "a/b"}},
+		{name: "shop item with an encoded slash is not found", path: "/shop/items/a%2Fb", wantNotFound: true, wantLocale: "en"},
 	}
 
 	if len(cases) < 20 {
@@ -521,13 +516,6 @@ func TestRouter_Redirect_SubstitutedValueIsEscaped(t *testing.T) {
 		request string
 		want    string
 	}{
-		{
-			name:    "encoded slash cannot become protocol-relative",
-			from:    "/old/{slug}",
-			to:      "/{slug}",
-			request: "/old/%2Fevil.com",
-			want:    "/%2Fevil.com",
-		},
 		{
 			name:    "backslash cannot become protocol-relative",
 			from:    "/old/{slug}",
@@ -597,33 +585,25 @@ func TestRouter_Redirect_CatchAllKeepsSegmentBoundaries(t *testing.T) {
 	if got := matchPath(t, r, "/old-docs/a/b/c").RedirectTo; got != "/docs/a/b/c" {
 		t.Fatalf("RedirectTo = %q, want /docs/a/b/c", got)
 	}
-	// A catch-all captures the decoded segments rejoined with "/", so an encoded
-	// slash inside one of them is already indistinguishable from a real separator
-	// by the time substitution sees it — a known fidelity limit of catch-all
-	// capture, not of escaping. What must still hold is that the destination stays
-	// a single-slash-prefixed relative path.
-	got := matchPath(t, r, "/old-docs/a/b%2Fc").RedirectTo
-	if got != "/docs/a/b/c" {
-		t.Fatalf("RedirectTo = %q, want /docs/a/b/c", got)
-	}
-	if reason, unsafe := unsafeRedirectReason(got); unsafe {
-		t.Fatalf("RedirectTo %q is unsafe: %s", got, reason)
+	// An encoded slash reaches no route, a redirect's included: see
+	// decodeSegments. It used to be rejoined into the catch-all as a separator,
+	// and one leading the tail could turn a destination protocol-relative.
+	for _, p := range []string{"/old-docs/a/b%2Fc", "/old-docs/%2Fevil.com"} {
+		if result := matchPath(t, r, p); !result.IsNotFound || result.RedirectTo != "" {
+			t.Fatalf("%s: %+v, want not found", p, result)
+		}
 	}
 
-	// The leading "%2F" case is the one that matters: it must not be able to turn
-	// the destination protocol-relative.
-	if got := matchPath(t, r, "/old-docs/%2Fevil.com").RedirectTo; got != "/docs//evil.com" {
-		t.Fatalf("RedirectTo = %q, want /docs//evil.com", got)
-	}
-
-	// And when the catch-all is the whole destination, the rejoined tail can still
-	// begin with "/" — which is exactly what the match-time check refuses.
+	// When the catch-all is the whole destination, "/%2Fevil.com" was a tail
+	// beginning with "/", refused at match time as a 500 the request chose. It
+	// is now a request for no route.
 	root := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
 	mustRegister(t, root, newTestPageWithRedirects("root", map[string]string{"en": "/unrelated"}, []*types.Redirect{
 		{From: "/{rest...}", To: "/{rest}"},
 	}))
-	if _, err := root.Match(httptest.NewRequest(http.MethodGet, "/%2Fevil.com", nil)); !errors.Is(err, ErrUnsafeRedirectTarget) {
-		t.Fatalf("Match error = %v, want ErrUnsafeRedirectTarget", err)
+	result, err := root.Match(httptest.NewRequest(http.MethodGet, "/%2Fevil.com", nil))
+	if err != nil || !result.IsNotFound {
+		t.Fatalf("Match = %+v, %v; want not found", result, err)
 	}
 }
 

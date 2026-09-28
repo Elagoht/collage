@@ -52,6 +52,12 @@ func BuildPath(pattern string, params map[string]string) (string, error) {
 			if piece == "" {
 				return "", fmt.Errorf("%w: %q: %q has an empty segment", types.ErrRouteParams, pattern, segment.text)
 			}
+			// A "/" in a single segment's value would be escaped as "%2F",
+			// which the router refuses: see decodeSegments. A value that is a
+			// path is a catch-all's.
+			if segment.kind != segmentCatchAll && strings.Contains(piece, "/") {
+				return "", fmt.Errorf("%w: %q: %q holds a \"/\", which only a catch-all such as {%s...} can", types.ErrRouteParams, pattern, segment.text, segment.text)
+			}
 			if piece == "." || piece == ".." {
 				return "", fmt.Errorf("%w: %q: %q cannot be %q, which a browser resolves as a path step", types.ErrRouteParams, pattern, segment.text, piece)
 			}

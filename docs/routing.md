@@ -58,8 +58,12 @@ slug := rc.Param("slug")          // or rc.PathParams["slug"]
 ```
 
 Matching happens on the *escaped* path, split first and percent-decoded one
-segment at a time, so a `%2F` inside a segment cannot silently erase a segment
-boundary. A segment that fails to decode is a 404, not a 500.
+segment at a time. A segment that fails to decode is a 404, not a 500, and so is
+one holding an encoded slash (`%2F`): a middleware reads the decoded
+`r.URL.Path`, where `/public%2Fsecret` is two segments, and a router that read it
+as one would serve a request the middleware judged as something else. A value
+that is itself a path — `guide/intro` — belongs in a catch-all, `{rest...}`;
+`BuildPath` and `{{pageURL}}` refuse a `/` in a single segment's value.
 
 A page answers `GET` and `HEAD`. Any other method is a 405 carrying an `Allow`
 header, unless an [action](actions.md) claims it for that URL — which is how a form

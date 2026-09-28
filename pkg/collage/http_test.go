@@ -356,3 +356,42 @@ func TestVary_TooLateEvenOnADynamicPage(t *testing.T) {
 		t.Errorf("Vary = %v, SkipCache = %v; want ErrVaryTooLate from both", varyErr, skipErr)
 	}
 }
+
+// A middleware reads the decoded r.URL.Path, where "/public%2Fsecret" is
+// "/public/secret". A router that read the same request as the one segment
+// "public/secret" served "/{slug}" to a request the middleware let through as
+// public. An encoded slash reaches no route, so both read it one way.
+func TestHTTP_AnEncodedSlashCannotSlipPastAMiddleware(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{
+			FS:   fstest.MapFS{"templates/pages/doc.html": {Data: []byte(`<p>SECRET</p>`)}},
+			Root: "templates",
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	content := collage.NewFragment("doc", "pages/doc.html").Build()
+	if err := app.RegisterPage(collage.NewPage("doc").WithContent(content).WithPath("en", "/{slug}").Build()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	if err := app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/public/") || r.Header.Get("Cookie") != "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			w.WriteHeader(http.StatusUnauthorized)
+		})
+	}); err != nil {
+		t.Fatalf("Use: %v", err)
+	}
+
+	for _, target := range []string{"/public%2Fsecret", "/public%2fsecret"} {
+		rec := getWith(app.Handler(), target, "")
+		if strings.Contains(rec.Body.String(), "SECRET") {
+			t.Errorf("GET %s = %d with the page's body, past the middleware", target, rec.Code)
+		}
+	}
+}

@@ -488,9 +488,33 @@ func TestBuild_DynamicStrategySkipped(t *testing.T) {
 }
 
 // TestBuild_StaticParams_Escape is the required path-escape test: StaticParams is
-// user code, and a value whose path resolves outside OutDir after filepath.Clean
-// must be rejected, and nothing must be written outside OutDir.
+// user code — often a CMS's slugs — and a value that would put the page anywhere
+// but under its own pattern must be rejected: outside OutDir, or inside it over
+// another page ("../about" wrote OutDir/about/index.html, "a/../.." the home
+// page). A single segment's value holding a "/" is refused before any path is
+// resolved; the containment check behind it is the second line.
 func TestBuild_StaticParams_Escape(t *testing.T) {
+	for _, slug := range []string{"../../../etc/cron.d/evil", "../about", "a/../.."} {
+		out := resolvedTempDir(t)
+		page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/blog/{slug}"})
+		page.StaticParams = staticParams(map[string]string{"slug": slug})
+		app := &fakeRenderer{pages: []*types.Page{page}}
+
+		b, err := New(app, Options{OutDir: out})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		report, buildErr := b.Build(context.Background())
+		if !errors.Is(buildErr, types.ErrRouteParams) {
+			t.Fatalf("slug %q: err = %v, want ErrRouteParams", slug, buildErr)
+		}
+		if len(report.Written) != 0 {
+			t.Fatalf("slug %q: Written = %v, want none", slug, report.Written)
+		}
+	}
+}
+
+func TestBuild_StaticParams_EscapeWritesNothingOutside(t *testing.T) {
 	out := resolvedTempDir(t)
 	page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/blog/{slug}"})
 	page.StaticParams = staticParams(map[string]string{"slug": "../../../etc/cron.d/evil"})
@@ -503,9 +527,6 @@ func TestBuild_StaticParams_Escape(t *testing.T) {
 	report, buildErr := b.Build(context.Background())
 	if buildErr == nil {
 		t.Fatal("Build succeeded for an escaping path, want an error")
-	}
-	if !errors.Is(buildErr, ErrPathEscapesOutDir) {
-		t.Fatalf("err = %v, want ErrPathEscapesOutDir", buildErr)
 	}
 	if len(report.Written) != 0 {
 		t.Fatalf("Written = %v, want none", report.Written)

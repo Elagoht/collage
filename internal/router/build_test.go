@@ -16,7 +16,7 @@ func TestBuildPath(t *testing.T) {
 		{"/", nil, "/"},
 		{"/about", nil, "/about"},
 		{"/blog/{slug}", map[string]string{"slug": "hello"}, "/blog/hello"},
-		{"/blog/{slug}", map[string]string{"slug": "a/b c"}, "/blog/a%2Fb%20c"},
+		{"/blog/{slug}", map[string]string{"slug": "a b?c"}, "/blog/a%20b%3Fc"},
 		{"/docs/{rest...}", map[string]string{"rest": "guide/intro"}, "/docs/guide/intro"},
 		{"/u/{id}/posts/{post}", map[string]string{"id": "7", "post": "9"}, "/u/7/posts/9"},
 	} {
@@ -38,6 +38,8 @@ func TestBuildPath_Refusals(t *testing.T) {
 		{"/blog/{slug}", map[string]string{"slug": "x", "extra": "y"}},
 		{"/about", map[string]string{"slug": "x"}},
 		{"/blog/{slug}", map[string]string{"slug": ".."}},
+		{"/blog/{slug}", map[string]string{"slug": "a/b"}},
+		{"/blog/{slug}", map[string]string{"slug": "../about"}},
 		{"/docs/{rest...}", map[string]string{"rest": "a/../b"}},
 		{"/docs/{rest...}", map[string]string{"rest": "a//b"}},
 	} {
@@ -54,7 +56,7 @@ func TestBuildPath_RoundTripsThroughMatch(t *testing.T) {
 	if err := rt.Register(page); err != nil {
 		t.Fatal(err)
 	}
-	for _, slug := range []string{"hello", "a/b", "çay ?#%", "..."} {
+	for _, slug := range []string{"hello", "çay ?#%", "..."} {
 		path, err := BuildPath("/blog/{slug}", map[string]string{"slug": slug})
 		if err != nil {
 			t.Fatalf("BuildPath(%q) = %v", slug, err)
