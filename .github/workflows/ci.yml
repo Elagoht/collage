@@ -76,13 +76,46 @@ jobs:
     # and would tell us nothing; at a tag they answer the question that matters —
     # is this release one the published plugins can still build against.
     if: startsWith(github.ref, 'refs/tags/v')
+    # Every published plugin. A plugin added under github.com/Elagoht is added
+    # here too; one left out is one a release can break without anyone seeing.
     strategy:
       fail-fast: false
       matrix:
         plugin:
-          - collage-opti-image
+          - collage-accesslog
+          - collage-analytics
+          - collage-basicauth
+          - collage-bundle
+          - collage-cdnpurge
+          - collage-compress
+          - collage-devtoolbar
+          - collage-favicon
+          - collage-feed
+          - collage-flash
+          - collage-highlight
+          - collage-honeypot
+          - collage-htmlcheck
+          - collage-i18n
+          - collage-indexnow
           - collage-jsonld
+          - collage-live
+          - collage-markdown
+          - collage-meta
           - collage-minimizer
+          - collage-offline
+          - collage-opti-image
+          - collage-otel
+          - collage-prometheus
+          - collage-ratelimit
+          - collage-redirects
+          - collage-robots
+          - collage-search
+          - collage-secure
+          - collage-session
+          - collage-sitemap
+          - collage-toc
+          - collage-validate
+          - collage-websocket
     steps:
       - uses: actions/checkout@v4
         with:
