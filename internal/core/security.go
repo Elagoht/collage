@@ -28,6 +28,10 @@ type SecurityConfig struct {
 	CSRFFieldName string
 	// CSRFHeaderName overrides the header a token may be submitted in.
 	CSRFHeaderName string
+	// CSRFTrustedOrigins are other origins whose forms may post to this
+	// application, each "scheme://host[:port]". A request the browser marks as
+	// coming from any other origin is refused even with a valid token.
+	CSRFTrustedOrigins []string
 	// DisableCSRF turns forgery checking off for the whole application.
 	//
 	// It is for an application that has no browser-submitted forms at all — a pure
@@ -60,10 +64,11 @@ func buildCSRF(cfg SecurityConfig, logger *slog.Logger) (*csrf.Guard, error) {
 	}
 
 	return csrf.New(csrf.Config{
-		Key:        key,
-		CookieName: cfg.CSRFCookieName,
-		FieldName:  cfg.CSRFFieldName,
-		HeaderName: cfg.CSRFHeaderName,
+		Key:            key,
+		CookieName:     cfg.CSRFCookieName,
+		FieldName:      cfg.CSRFFieldName,
+		HeaderName:     cfg.CSRFHeaderName,
+		TrustedOrigins: cfg.CSRFTrustedOrigins,
 	})
 }
 

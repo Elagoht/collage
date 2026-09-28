@@ -8,7 +8,16 @@
 // Signed rather than a bare double submit, because a bare one trusts that nobody
 // else can set the cookie — and on a site with subdomains, or behind anything that
 // can write a cookie for the parent domain, somebody else can. A value they cannot
-// sign is a value they cannot use.
+// sign is a value they cannot invent.
+//
+// It is not a value they cannot obtain: any page with a form hands its reader a
+// signed token, and an attacker is a reader too. One who can write a cookie for
+// the domain plants their own token in the victim's browser and submits it, and
+// the pair matches. So the token is not checked alone. The browser says where a
+// request came from — Sec-Fetch-Site, or Origin when an older one sends only
+// that — and a request it marks as coming from another origin is refused whatever
+// it carries. A sibling subdomain is another origin: it is exactly who can write
+// the cookie.
 //
 // Stateless, and that is the point. Verifying a token needs the key and nothing
 // else: no session table, no store to configure, no shared state between instances.
@@ -22,6 +31,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -34,6 +44,9 @@ var ErrMismatch = errors.New("collage: csrf token does not match")
 
 // ErrInvalid reports a token whose signature does not hold.
 var ErrInvalid = errors.New("collage: csrf token is not valid")
+
+// ErrCrossOrigin reports a request the browser says was sent from another origin.
+var ErrCrossOrigin = errors.New("collage: cross-origin request")
 
 // DefaultCookieName is the cookie a token is carried in.
 const DefaultCookieName = "collage_csrf"
@@ -51,6 +64,7 @@ type Guard struct {
 	cookieName string
 	fieldName  string
 	headerName string
+	origin     *http.CrossOriginProtection
 }
 
 // Config configures a Guard. Every field has a default.
@@ -59,6 +73,9 @@ type Config struct {
 	CookieName string
 	FieldName  string
 	HeaderName string
+	// TrustedOrigins are other origins whose forms may post here, each spelled
+	// "scheme://host[:port]".
+	TrustedOrigins []string
 }
 
 // New returns a Guard. A nil or empty Key is a programming error the caller must
@@ -73,6 +90,12 @@ func New(cfg Config) (*Guard, error) {
 		cookieName: cfg.CookieName,
 		fieldName:  cfg.FieldName,
 		headerName: cfg.HeaderName,
+		origin:     http.NewCrossOriginProtection(),
+	}
+	for _, origin := range cfg.TrustedOrigins {
+		if err := g.origin.AddTrustedOrigin(origin); err != nil {
+			return nil, fmt.Errorf("collage: csrf trusted origin: %w", err)
+		}
 	}
 	if g.cookieName == "" {
 		g.cookieName = DefaultCookieName
@@ -156,9 +179,22 @@ func (g *Guard) Cookie(r *http.Request, token string) *http.Cookie {
 // The request's form is parsed here when it has not been already, which reads the
 // body — bounded by the caller before this runs.
 func (g *Guard) Verify(r *http.Request) error {
+	// First, and whatever the request carries: see the package comment. A
+	// request with neither header is not from a browser, and a forgery is
+	// something a browser is tricked into sending.
+	if err := g.origin.Check(r); err != nil {
+		return fmt.Errorf("%w: %w", ErrCrossOrigin, err)
+	}
+
 	cookie, err := r.Cookie(g.cookieName)
 	if err != nil || cookie.Value == "" {
 		return ErrMissing
+	}
+	// Before the body is read. A cookie this guard never signed matches no token
+	// worth checking, and reading a multipart body writes its files to disk — not
+	// something an anonymous caller gets for the price of a made-up cookie.
+	if !g.valid(cookie.Value) {
+		return ErrInvalid
 	}
 
 	submitted := r.Header.Get(g.headerName)

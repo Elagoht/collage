@@ -250,3 +250,93 @@ func TestVerify_ReadsAMultipartBody(t *testing.T) {
 		t.Errorf("title = %q after Verify read the body, want %q", got, "Hello")
 	}
 }
+
+// A token the guard signed for somebody else is still a valid token: anyone can
+// load a page with a form and take one. What a sibling subdomain or a
+// man-in-the-middle on plain http cannot do is make the browser say the form was
+// posted from this origin — so a request the browser marks as coming from
+// elsewhere is refused with the pair intact.
+func TestVerify_RefusesACrossOriginRequestWithAValidPair(t *testing.T) {
+	g := guard(t)
+	token, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+
+	cases := map[string]map[string]string{
+		"cross-site":             {"Sec-Fetch-Site": "cross-site"},
+		"a sibling subdomain":    {"Sec-Fetch-Site": "same-site"},
+		"an older browser":       {"Origin": "https://evil.example"},
+		"a lying Origin, marked": {"Sec-Fetch-Site": "cross-site", "Origin": "http://example.com"},
+	}
+	for name, headers := range cases {
+		req := postWith(t, token, token)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		if err := g.Verify(req); !errors.Is(err, ErrCrossOrigin) {
+			t.Errorf("%s: Verify() = %v, want ErrCrossOrigin", name, err)
+		}
+	}
+}
+
+func TestVerify_AcceptsASameOriginRequest(t *testing.T) {
+	g := guard(t)
+	token, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+
+	for name, headers := range map[string]map[string]string{
+		"marked same-origin":  {"Sec-Fetch-Site": "same-origin"},
+		"typed by the reader": {"Sec-Fetch-Site": "none"},
+		"an older browser":    {"Origin": "http://example.com"},
+		"not a browser":       {},
+	} {
+		req := postWith(t, token, token)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		if err := g.Verify(req); err != nil {
+			t.Errorf("%s: Verify() = %v, want nil", name, err)
+		}
+	}
+}
+
+func TestVerify_AcceptsATrustedOrigin(t *testing.T) {
+	g, err := New(Config{Key: []byte("a key of some length"), TrustedOrigins: []string{"https://admin.example.com"}})
+	if err != nil {
+		t.Fatalf("New() = %v", err)
+	}
+	token, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+	req := postWith(t, token, token)
+	req.Header.Set("Sec-Fetch-Site", "same-site")
+	req.Header.Set("Origin", "https://admin.example.com")
+	if err := g.Verify(req); err != nil {
+		t.Fatalf("Verify() = %v, want nil for a trusted origin", err)
+	}
+}
+
+func TestNew_RefusesAMalformedTrustedOrigin(t *testing.T) {
+	for _, origin := range []string{"admin.example.com", "https://admin.example.com/path", "*"} {
+		if _, err := New(Config{Key: []byte("k"), TrustedOrigins: []string{origin}}); err == nil {
+			t.Errorf("New() accepted trusted origin %q", origin)
+		}
+	}
+}
+
+// failingBody fails the test that reads it.
+type failingBody struct{ t *testing.T }
+
+func (b failingBody) Read([]byte) (int, error) {
+	b.t.Error("the body was read")
+	return 0, errors.New("read")
+}
+
+// A cookie the guard never signed cannot match any token worth checking, so the
+// body is not read for it: reading a multipart body means writing its files to
+// disk, and an anonymous caller does not get that for the price of a made-up
+// cookie.
+func TestVerify_DoesNotReadTheBodyForAnUnsignedCookie(t *testing.T) {
+	g := guard(t)
+	req := httptest.NewRequest(http.MethodPost, "/posts", failingBody{t})
+	req.Header.Set("Content-Type", "multipart/form-data; boundary=x")
+	req.AddCookie(&http.Cookie{Name: DefaultCookieName, Value: "x"})
+	if err := g.Verify(req); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("Verify() = %v, want ErrInvalid", err)
+	}
+}

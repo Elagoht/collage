@@ -176,6 +176,12 @@ type SecurityConfig struct {
 	// CSRFHeaderName overrides the header a token may be submitted in, which is
 	// how a fetch() sends one when there is no form to put a field in.
 	CSRFHeaderName string
+	// CSRFTrustedOrigins are other origins whose forms may post to this
+	// application, each spelled "scheme://host[:port]" — an admin panel on its own
+	// subdomain, say. Every other origin is refused even with a valid token: the
+	// browser's Sec-Fetch-Site, or Origin from an older one, says where a request
+	// came from, and a sibling subdomain is exactly who can plant a token cookie.
+	CSRFTrustedOrigins []string
 	// DisableCSRF turns forgery checking off for the whole application. It is for
 	// an application with no browser-submitted forms at all.
 	DisableCSRF bool
