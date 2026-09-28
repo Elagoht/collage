@@ -83,7 +83,13 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// handler has to remember is a limit the one handler that forgot does not
 	// have, and that handler is the one an anonymous caller will find.
 	if limit := h.bodyLimit(action); limit >= 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, limit)
+		// Already bounded before the middleware, as a rule; a middleware that
+		// read the body and dropped the error leaves it read past its bound,
+		// and the action answers for it. See boundBeforeMiddleware.
+		if boundBody(w, r, limit).tooLarge {
+			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
+				actionBodyTooLarge(action, limit)))
+		}
 	}
 
 	// Checked before the handler runs, and before anything it might change.
@@ -178,6 +184,11 @@ func (h *Handler) bodyLimit(action *types.Action) int64 {
 	if action.MaxBodyBytes != 0 {
 		return action.MaxBodyBytes
 	}
+	return h.appBodyLimit()
+}
+
+// appBodyLimit is the application's limit, or the default when it set none.
+func (h *Handler) appBodyLimit() int64 {
 	if h.maxBodyBytes != 0 {
 		return h.maxBodyBytes
 	}

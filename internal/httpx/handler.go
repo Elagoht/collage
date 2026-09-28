@@ -442,6 +442,7 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request, route *ro
 	if h.chain == nil {
 		return h.serve(w, r, route)
 	}
+	h.boundBeforeMiddleware(w, r)
 
 	// Through the middleware, which may answer the request itself — a 401, a
 	// redirect — without serve ever running. The status is then whatever it
