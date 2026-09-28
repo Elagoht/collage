@@ -91,6 +91,13 @@ func canonicalLocalePath(path string, opts LocaleOptions) (string, bool) {
 	if strings.HasSuffix(path, "/") && !strings.HasSuffix(target, "/") {
 		target += "/"
 	}
+	// Never "//": "/EN//evil.com" drops its prefix to "//evil.com", which a
+	// browser reads as another site. The handler sends a doubled slash to its
+	// clean spelling before routing, but Match is also asked by what runs
+	// after it — ServeStatus, a plugin — and a redirect it hands back is sent.
+	if strings.HasPrefix(target, "//") {
+		target = "/" + strings.TrimLeft(target, "/")
+	}
 	return target, true
 }
 

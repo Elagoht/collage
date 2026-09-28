@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -2144,12 +2143,9 @@ func sameSite(location string) bool {
 		}
 		return r
 	}, location)
-	base, _ := url.Parse("http://site.test/start")
-	ref, err := url.Parse(loc)
-	if err != nil {
-		return false
-	}
-	return base.ResolveReference(ref).Host == "site.test"
+	// A path: one slash, then anything but a second. Whatever follows — a
+	// query, a fragment, bytes url.Parse would refuse — stays on this origin.
+	return strings.HasPrefix(loc, "/") && !strings.HasPrefix(loc, "//")
 }
 
 func FuzzCleanPath_RedirectStaysOnSite(f *testing.F) {
