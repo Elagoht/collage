@@ -307,13 +307,16 @@ func TestMount_PlainTextErrorCarriesTheSameHeadersAsADocumentError(t *testing.T)
 }
 
 // A mount often serves what readers uploaded. A file whose name says nothing
-// about its type is not sniffed into one: sniffed, "<html><script>" under a
-// bare name is served as text/html from the site's own origin. And nothing a
-// mount sends is to be sniffed by the browser either.
+// about its type is not sniffed into one: sniffed, "<html><script>" under a bare
+// name is served as text/html from the site's own origin. And nothing a mount
+// sends is to be sniffed by the browser either.
+//
+// The unknown extension is one no system's mime.types names. On Linux, Go reads
+// /etc/mime.types, where even ".bak" has a type.
 func TestMount_DoesNotSniff(t *testing.T) {
 	m, err := New("/uploads/", fstest.MapFS{
 		"avatar":     {Data: []byte("<html><script>alert(1)</script>")},
-		"a.txt.bak":  {Data: []byte("<html><script>alert(1)</script>")},
+		"a.txt.collage-unknown":  {Data: []byte("<html><script>alert(1)</script>")},
 		"styles.css": {Data: []byte("body{}")},
 	})
 	if err != nil {
@@ -321,7 +324,7 @@ func TestMount_DoesNotSniff(t *testing.T) {
 	}
 	for name, want := range map[string]string{
 		"avatar":     "application/octet-stream",
-		"a.txt.bak":  "application/octet-stream",
+		"a.txt.collage-unknown":  "application/octet-stream",
 		"styles.css": "text/css",
 	} {
 		rec := httptest.NewRecorder()
