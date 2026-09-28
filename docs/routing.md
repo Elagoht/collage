@@ -170,6 +170,11 @@ page := collage.NewPage("blog-post").
   sharing the tree; it covers both.
 - Redirects are matched **before** pages and documents, and the redirect tree is
   shared across locales, since a `Redirect` carries no locale of its own.
+- A captured value is escaped for where it lands: as a path segment in the
+  path, as a query value after a `?` — so `/login?next={slug}` cannot be handed a
+  second `next` by a slug holding `&next=`.
+- The request's own query string is carried to the destination, after the
+  destination's query and before its fragment.
 
 The response is written by hand rather than through `http.Redirect`: a `Location`
 header and the status, with no body. A redirect carries its destination in the

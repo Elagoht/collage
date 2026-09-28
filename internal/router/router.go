@@ -300,7 +300,7 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 	}
 
 	if redirectNode, params, ok := rt.redirectTree.match(segments); ok {
-		destination := substitute(redirectNode.redirectTo, params, redirectNode.redirectCatchAll)
+		destination := withQuery(substitute(redirectNode.redirectTo, params, redirectNode.redirectCatchAll), req.URL.RawQuery)
 		if reason, unsafe := unsafeRedirectReason(destination); unsafe {
 			return nil, fmt.Errorf("%w: redirect to %q resolved to %q: %s", ErrUnsafeRedirectTarget, redirectNode.redirectTo, destination, reason)
 		}
@@ -709,8 +709,15 @@ func placeholderNames(s string) []string {
 // escaped. Every other parameter is escaped whole, separators included.
 func substitute(template string, params map[string]string, catchAll string) string {
 	var b strings.Builder
+	// Past a "?" a value is escaped for a query: url.PathEscape leaves "&" and
+	// "=" alone, so "/login?next={x}" with x = "a&next=//evil.example" handed
+	// the destination a second next of the request's choosing.
+	inQuery := false
 	for i := 0; i < len(template); {
 		if template[i] != '{' {
+			if template[i] == '?' || template[i] == '#' {
+				inQuery = true
+			}
 			b.WriteByte(template[i])
 			i++
 			continue
@@ -721,14 +728,34 @@ func substitute(template string, params map[string]string, catchAll string) stri
 			break
 		}
 		name := template[i+1 : i+end]
-		if catchAll != "" && name == catchAll {
+		switch {
+		case inQuery:
+			b.WriteString(url.QueryEscape(params[name]))
+		case catchAll != "" && name == catchAll:
 			b.WriteString(escapePathTail(params[name]))
-		} else {
+		default:
 			b.WriteString(url.PathEscape(params[name]))
 		}
 		i += end + 1
 	}
 	return b.String()
+}
+
+// withQuery returns destination with the request's query carried to it, after
+// the destination's own and before its fragment, as the router's other
+// redirects carry it: a link to an old address keeps what it asked for.
+func withQuery(destination, rawQuery string) string {
+	if rawQuery == "" {
+		return destination
+	}
+	fragment := ""
+	if at := strings.IndexByte(destination, '#'); at >= 0 {
+		destination, fragment = destination[:at], destination[at:]
+	}
+	if strings.Contains(destination, "?") {
+		return destination + "&" + rawQuery + fragment
+	}
+	return destination + "?" + rawQuery + fragment
 }
 
 // escapePathTail percent-escapes each "/"-separated piece of value and rejoins them

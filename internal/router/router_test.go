@@ -545,6 +545,13 @@ func TestRouter_Redirect_SubstitutedValueIsEscaped(t *testing.T) {
 			want:    "/blog/a%0D%0AX-Inj:%201",
 		},
 		{
+			name:    "a value in the query cannot add a parameter",
+			from:    "/old/{slug}",
+			to:      "/login?next={slug}",
+			request: "/old/a%26next=%252F%252Fevil.example",
+			want:    "/login?next=a%26next%3D%252F%252Fevil.example",
+		},
+		{
 			name:    "an ordinary slug is left alone",
 			from:    "/old/{slug}",
 			to:      "/blog/{slug}",

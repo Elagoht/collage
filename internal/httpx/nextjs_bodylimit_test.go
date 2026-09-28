@@ -58,4 +58,3 @@ func TestNextjs_MiddlewareParseSkipsTheActionLimit(t *testing.T) {
 		t.Errorf("status = %d (handler ran: %v), want 413 for a body 256x the action's limit", res.Code, ran)
 	}
 }
-
