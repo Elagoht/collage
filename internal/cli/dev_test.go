@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -198,6 +199,10 @@ func TestDev_BuildsAndRunsTheProgram(t *testing.T) {
 	}
 	if len(call.env) == 0 || call.env[len(call.env)-1] != "COLLAGE_DEV=1" {
 		t.Errorf("env = %v, want COLLAGE_DEV=1 last", call.env)
+	}
+	// Its stderr here is a buffer, not a terminal, so it is not told to colour.
+	if slices.Contains(call.env, "FORCE_COLOR=1") {
+		t.Errorf("env = %v, want no FORCE_COLOR when collage dev is not writing to a terminal", call.env)
 	}
 
 	if code := stop(); code != 0 {
@@ -552,4 +557,45 @@ func TestDev_AProgramThatNeverListensIsReported(t *testing.T) {
 		t.Errorf("GET = %d, want 503 naming %s:\n%s", status, target, body)
 	}
 	stop()
+}
+
+// The program reports the address it listens on, which is the proxy's target.
+// What reaches the terminal, and the error page, is the address to open.
+func TestDev_ReportsTheAddressToOpen(t *testing.T) {
+	runner := newDevRunner()
+	runner.setProgram(func(_ context.Context, env []string, stderr io.Writer) error {
+		fmt.Fprintf(stderr, "collage: listening addr=%s\n", net.JoinHostPort(envValue(env, "HOST"), envValue(env, "PORT")))
+		return errors.New("exit status 1")
+	})
+	_, stderr, stop := devSessionWith(t, map[string]string{"main.go": "package main"}, runner)
+	call := waitStarted(t, runner)
+	target := net.JoinHostPort(envValue(call.env, "HOST"), envValue(call.env, "PORT"))
+	public := net.JoinHostPort(os.Getenv("HOST"), os.Getenv("PORT"))
+
+	_, body := devGet(t, "/")
+	stop()
+	want := "listening addr=" + public
+	if out := stderr.String(); !strings.Contains(out, want) || strings.Contains(out, target) {
+		t.Errorf("stderr = %q, want %q and not the program's own %s", out, want, target)
+	}
+	if !strings.Contains(body, want) {
+		t.Errorf("error page = %q, want it to contain %q", body, want)
+	}
+}
+
+// An address split across two writes is still replaced, and text that only
+// looks like its start is passed on once it is clear it is not.
+func TestAddressRewriter(t *testing.T) {
+	var out bytes.Buffer
+	a := &addressRewriter{w: &out, from: "127.0.0.1:5000", to: "localhost:6060"}
+	for _, chunk := range []string{"addr=127.0", ".0.1:5000 next\n", "ends with 12"} {
+		a.Write([]byte(chunk))
+	}
+	if got, want := out.String(), "addr=localhost:6060 next\nends with "; got != want {
+		t.Errorf("before Flush = %q, want %q", got, want)
+	}
+	a.Flush()
+	if got, want := out.String(), "addr=localhost:6060 next\nends with 12"; got != want {
+		t.Errorf("after Flush = %q, want %q", got, want)
+	}
 }

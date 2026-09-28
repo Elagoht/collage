@@ -25,20 +25,20 @@ A collage project is a Go program, and what you put on a server is a compiled
 one — not the source, not the toolchain. This runs the go build somebody would
 otherwise have to remember:
 
-  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w"
+  CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"
 
 CGO off because collage and the standard library need no C, and a static binary
 is what can go into an image with nothing else in it. -trimpath so the binary
 does not carry the paths of the machine that built it. -s -w to drop the debug
 tables, which is most of the size.
 
-The default target is linux/amd64 rather than this machine: a binary built for
-a Mac does not run in a Linux container, and finding that out from "exec format
-error" on a server is the wrong place to learn it.
+The default target is this machine, so the binary it writes runs where it was
+built. A server is often something else: a binary built on a Mac does not run
+in a Linux container, so name the target there — "-os linux -arch amd64".
 
   -o path     where to write the binary (default "bin/<module name>")
-  -os name    target operating system (default "linux")
-  -arch name  target architecture (default "amd64")
+  -os name    target operating system (default: this machine's)
+  -arch name  target architecture (default: this machine's)
   -i          ask which extra files to write beside it — a Dockerfile, a
               systemd unit, written into the same directory as the binary.
               Without it, only the binary is written.
@@ -52,8 +52,8 @@ func (c *CLI) runBuild(ctx context.Context, args []string) int {
 	fs.SetOutput(c.stderr())
 	fs.Usage = func() { fmt.Fprint(c.stderr(), buildUsage) }
 	out := fs.String("o", "", `where to write the binary (default "bin/<module name>")`)
-	goos := fs.String("os", "linux", "target operating system")
-	goarch := fs.String("arch", "amd64", "target architecture")
+	goos := fs.String("os", runtime.GOOS, "target operating system")
+	goarch := fs.String("arch", runtime.GOARCH, "target architecture")
 	interactive := fs.Bool("i", false, "ask which extra files to write beside the binary")
 
 	if err := fs.Parse(args); err != nil {

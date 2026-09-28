@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -42,14 +43,12 @@ func runBuildIn(t *testing.T, args ...string) (*recordingRunner, string) {
 	return runner, out.String()
 }
 
-// The default target is not this machine. A binary built for a Mac does not run in
-// a Linux container, and "exec format error" on a server is the wrong place to find
-// that out.
-func TestBuild_DefaultsToLinuxAmd64(t *testing.T) {
+// The default target is this machine, so the binary runs where it was built.
+func TestBuild_DefaultsToThisMachine(t *testing.T) {
 	inProject(t, "example.com/shop")
 	runner, _ := runBuildIn(t)
 
-	want := map[string]bool{"CGO_ENABLED=0": true, "GOOS=linux": true, "GOARCH=amd64": true}
+	want := map[string]bool{"CGO_ENABLED=0": true, "GOOS=" + runtime.GOOS: true, "GOARCH=" + runtime.GOARCH: true}
 	for _, entry := range runner.env {
 		delete(want, entry)
 	}

@@ -6,14 +6,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Elagoht/collage/internal/term"
 )
 
 // CommandRunner runs an external command. dev and build go through this
@@ -57,7 +62,7 @@ Only "collage dev" reads these files. "collage build", "collage export" and the
 built binary take their environment from wherever they run.
 
 The browser talks to "collage dev" itself, at HOST and PORT as the program
-would read them (localhost:3000 by default), and each request is passed on to
+would read them (localhost:6060 by default), and each request is passed on to
 the program, which is started with HOST and PORT set to a loopback address of
 its own. A request made while the program is starting waits for it. When there
 is no program — it exited, or the first build failed — the page is its output,
@@ -115,16 +120,24 @@ func (c *CLI) runDev(ctx context.Context, args []string) int {
 	server := &http.Server{Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
 	go server.Serve(listener)
 	defer server.Close()
-	fmt.Fprintf(c.stderr(), "collage: dev: serving http://%s (the program itself listens on %s)\n", public, target)
+	// Its own lines in the shape the program's are, so the two read as one log.
+	log := slog.New(term.NewHandler(c.stderr(), slog.LevelInfo))
+	style := term.NewStyle(c.stderr())
+	log.Info("collage dev: serving " + style.Bold("http://"+public))
 
-	(&devLoop{cli: c, buildDir: buildDir, proxy: proxy}).run(ctx)
+	(&devLoop{cli: c, log: log, color: style.Rich(), buildDir: buildDir, proxy: proxy}).run(ctx)
 	return 0
 }
 
 // devLoop is one "collage dev" session: the program it is running, and how to
 // build the next one.
 type devLoop struct {
-	cli      *CLI
+	cli *CLI
+	log *slog.Logger
+	// color is whether the terminal "collage dev" writes to takes colour, and
+	// so whether the program is told to colour output it cannot see is going
+	// there: its stderr is a pipe, read for the error page on the way.
+	color    bool
 	buildDir string
 	builds   int
 	current  *devProcess
@@ -177,9 +190,8 @@ func (l *devLoop) run(ctx context.Context) {
 			}
 			// Stopped by itself: a crash, or a port already in use. Starting it
 			// again would only repeat that, so the next change is what does.
-			message := fmt.Sprintf("collage: dev: the program exited (%v); waiting for a change\n", exitReason(err))
-			fmt.Fprint(l.cli.stderr(), message)
-			l.proxy.down(exitedProcess.output.String() + message)
+			l.log.Warn("collage dev: the program exited; waiting for a change", "reason", exitReason(err))
+			l.proxy.down(exitedProcess.output.String() + fmt.Sprintf("collage: dev: the program exited (%v); waiting for a change\n", exitReason(err)))
 
 		case <-ticker.C:
 			next, err := snapshotSources(".")
@@ -201,7 +213,7 @@ func (l *devLoop) run(ctx context.Context) {
 				next = settled
 			}
 			snapshot = next
-			fmt.Fprintln(l.cli.stderr(), "collage: dev: change detected, rebuilding")
+			l.log.Info("collage dev: change detected, rebuilding")
 			l.restart(ctx)
 		}
 	}
@@ -210,8 +222,6 @@ func (l *devLoop) run(ctx context.Context) {
 // restart builds the program and, if the build succeeds, replaces the running
 // one with it. A failed build leaves the running one alone.
 func (l *devLoop) restart(ctx context.Context) {
-	stderr := l.cli.stderr()
-
 	// Read on every restart, so an edited environment file takes effect — it is
 	// watched for exactly that reason.
 	// With nothing serving, what follows is what the browser waits for.
@@ -221,33 +231,37 @@ func (l *devLoop) restart(ctx context.Context) {
 
 	env, loaded, err := loadDevEnv(".", os.LookupEnv)
 	if err != nil {
-		fmt.Fprintf(stderr, "collage: dev: %v\n", err)
+		l.log.Error("collage dev: " + err.Error())
 		if l.current == nil {
 			l.proxy.down(fmt.Sprintf("collage: dev: %v\n", err))
 		}
 		return
 	}
 	if loaded != "" && loaded != l.loaded {
-		fmt.Fprintf(stderr, "collage: dev: loaded %s\n", loaded)
+		l.log.Info("collage dev: loaded " + loaded)
 	}
 	l.loaded = loaded
 	// Last, so no file can turn development mode off, or move the program off
 	// the address the proxy passes requests to: a later duplicate wins in the
 	// started process's environment.
 	host, port, _ := net.SplitHostPort(l.proxy.target)
+	if l.color {
+		env = append(env, "FORCE_COLOR=1")
+	}
 	env = append(env, "HOST="+host, "PORT="+port, "COLLAGE_DEV=1")
 
 	l.builds++
 	binary := filepath.Join(l.buildDir, fmt.Sprintf("app-%d%s", l.builds, exeSuffix()))
 	buildOutput := &tailBuffer{}
+	stderr := l.cli.stderr()
 	if err := l.cli.runner().Run(ctx, "", nil, l.cli.stdout(), io.MultiWriter(stderr, buildOutput), "go", "build", "-o", binary, "."); err != nil {
 		if ctx.Err() != nil {
 			return
 		}
 		if l.current != nil {
-			fmt.Fprintln(stderr, "collage: dev: build failed; the last good build is still serving")
+			l.log.Error("collage dev: build failed; the last good build is still serving")
 		} else {
-			fmt.Fprintln(stderr, "collage: dev: build failed; waiting for a change")
+			l.log.Error("collage dev: build failed; waiting for a change")
 			l.proxy.down(buildOutput.String() + "collage: dev: build failed; waiting for a change\n")
 		}
 		return
@@ -259,8 +273,15 @@ func (l *devLoop) restart(ctx context.Context) {
 	process := &devProcess{binary: binary, stop: stop, done: make(chan error, 1), output: &tailBuffer{}}
 	l.proxy.starting(process)
 	go l.proxy.awaitListening(processCtx, process)
+	// The program reports the address it listens on, which is the proxy's
+	// target; the one to open is the proxy's own, so that is what it says.
+	stdout := &addressRewriter{w: l.cli.stdout(), from: l.proxy.target, to: l.proxy.public}
+	programErr := &addressRewriter{w: io.MultiWriter(stderr, process.output), from: l.proxy.target, to: l.proxy.public}
 	go func() {
-		process.done <- l.cli.runner().Run(processCtx, "", env, l.cli.stdout(), io.MultiWriter(stderr, process.output), binary)
+		err := l.cli.runner().Run(processCtx, "", env, stdout, programErr, binary)
+		stdout.Flush()
+		programErr.Flush()
+		process.done <- err
 	}()
 	l.current = process
 }
@@ -290,4 +311,46 @@ func exeSuffix() string {
 		return ".exe"
 	}
 	return ""
+}
+
+// addressRewriter passes output on with every occurrence of from replaced by to.
+//
+// It holds back only the end of a write that could be the start of from, so an
+// address split across two writes is still replaced, and output with no
+// address in it is passed on as it comes. Flush writes what is held back.
+type addressRewriter struct {
+	mu      sync.Mutex
+	w       io.Writer
+	from    string
+	to      string
+	pending []byte
+}
+
+func (a *addressRewriter) Write(b []byte) (int, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	text := strings.ReplaceAll(string(a.pending)+string(b), a.from, a.to)
+	a.pending = a.pending[:0]
+	// The longest suffix that is a proper prefix of from.
+	for keep := min(len(a.from)-1, len(text)); keep > 0; keep-- {
+		if strings.HasPrefix(a.from, text[len(text)-keep:]) {
+			a.pending = append(a.pending, text[len(text)-keep:]...)
+			text = text[:len(text)-keep]
+			break
+		}
+	}
+	if _, err := io.WriteString(a.w, text); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+// Flush writes whatever Write held back.
+func (a *addressRewriter) Flush() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if len(a.pending) > 0 {
+		a.w.Write(a.pending)
+		a.pending = a.pending[:0]
+	}
 }

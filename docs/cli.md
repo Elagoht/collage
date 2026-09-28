@@ -5,7 +5,7 @@ go install github.com/Elagoht/collage/cmd/collage@latest
 ```
 
 ```
-collage new <name> [--template demo|minimal] [--dir path] [--module path] [--force]
+collage new <name> [--template minimal|demo] [--dir path] [--module path] [--force]
 collage dev
 collage build [-o path] [-os name] [-arch name] [-i]
 collage export [-out dir] [-clean]
@@ -29,16 +29,17 @@ collage export    # -> dist/,      static files you put on a static host
 `collage build` runs the `go build` somebody would otherwise have to remember:
 
 ```
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w"
+CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"
 ```
 
 CGO off, because collage and the standard library need no C and a static binary is
 what can go into an image holding nothing else. `-trimpath`, so the binary does not
 carry the paths of the machine that built it. `-s -w`, which is most of the size.
 
-**The default target is linux/amd64, not this machine.** A binary built on a Mac
-does not run in a Linux container, and `exec format error` on a server is the wrong
-place to find that out. `-os` and `-arch` change it; `-o` changes where it lands.
+**The default target is this machine**, so the binary runs where it was built. A
+server is often something else — a binary built on a Mac does not run in a Linux
+container — so name the target there: `collage build -os linux -arch amd64`. `-o`
+changes where it lands.
 
 `collage build -i` asks whether to write a `Dockerfile` and a systemd unit **beside
 the binary**, in `bin/`. They are generated files, and the project root is for what
@@ -86,7 +87,7 @@ server is closer but is still not a static host. This one behaves like one:
 - **Nothing is cached.** The point is to look at what was just exported, and a
   browser holding the previous one is what stops that.
 
-Port 4000 rather than 3000, so this and a project under `collage dev` can be up at
+Port 4000 rather than 6060, so this and a project under `collage dev` can be up at
 once — which is exactly when somebody compares them. `-dir`, `-host` and `-port`
 change the rest.
 
@@ -137,7 +138,7 @@ An application that configures no `Logger` gets one shaped for a person when its
 output is a terminal:
 
 ```
-23:06:09 • collage: listening  addr=127.0.0.1:3000
+23:06:09 • collage: listening  addr=localhost:6060
 23:06:09 ▲ collage: no Security.CSRFKey set, so one was generated for this process  action=hello:POST
 23:06:10 ✗ collage: request failed  path=/about stage=render
 ```
@@ -146,6 +147,11 @@ One line per record, a coloured marker instead of the level spelled out, the tim
 without the date — it is the same date as the terminal it is being read in — and the
 attributes dimmed after the message.
 
+Under `collage dev` the program's output is a pipe — `collage dev` reads it for the
+error page on its way to the terminal — so on a colour terminal it runs the program
+with `FORCE_COLOR=1`, and its own lines take the same shape. `FORCE_COLOR` counts
+for a file or a pipe, never over `NO_COLOR`.
+
 Anywhere that is not a terminal it is `slog.Default()`, unchanged, so nothing that
 parses these logs has to learn a new format. And an application that called
 `slog.SetDefault` keeps the handler it chose: noticing a terminal is not a reason to
@@ -153,7 +159,7 @@ override a decision somebody made on purpose. Setting `Config.Logger` settles it
 either way — a JSON handler is what a program whose logs are read by a machine
 should pass.
 
-## What `collage new` gives you
+## What `collage new --template demo` gives you
 
 A home page and a page of live demos, split into the directories a real project
 grows into — `pages/`, `fragments/`, `actions/`, `documents/`, `store/` — with a
@@ -187,7 +193,7 @@ configuration and the static mount, a `routes.go` registering every route, the
 pages, fragments, action, document and their templates, the tests, a
 `.env.example`, a `.gitignore`, and a README.
 
-That is `--template demo`, the default. `--template minimal` is the least a
+That is `--template demo`. The default, `--template minimal`, is the least a
 project can be: the same `main.go`, `go.mod` and `routes.go`, and a layout around
 one page, `<h1>Hello from {{.Name}}</h1>` — the project's name, handed to the
 template by `WithData` — with a stylesheet that sets the background and text
@@ -200,8 +206,8 @@ a symlink planted inside the mounted directory escapes it, while an `os.Root` is
 enforced by the kernel. See [assets.md](assets.md).
 
 ```
-collage new myblog                       # into ./myblog, module "myblog"
-collage new myblog --template minimal    # one page, nothing to delete
+collage new myblog                       # into ./myblog, module "myblog", one page
+collage new myblog --template demo       # the demos, their tests, a README
 collage new myblog -module github.com/me/myblog
 collage new myblog -dir . -force         # into a non-empty directory
 ```
@@ -251,7 +257,7 @@ tool to install:
   missing — is not restarted in a loop; the next change is what starts it again.
 - **Errors are shown in the browser.** The browser talks to `collage dev`, not to
   the program: it listens on `HOST` and `PORT` as your program would read them
-  (`localhost:3000` by default), and passes each request on to the program, which
+  (`localhost:6060` by default), and passes each request on to the program, which
   it starts with `HOST` and `PORT` set to a loopback address of its own. A request
   made while the program starts waits for it. When there is no program — it
   exited, or the first build failed — the page is a 503 showing what the program or

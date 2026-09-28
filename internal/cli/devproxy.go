@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Elagoht/collage/internal/term"
 )
 
 // devReloadPath is the event stream a development page listens on for a reason
@@ -220,7 +222,7 @@ func (p *devProxy) serveDown(w http.ResponseWriter, output string) {
 	header.Set("Content-Type", "text/html; charset=utf-8")
 	header.Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusServiceUnavailable)
-	fmt.Fprintf(w, devDownPage, html.EscapeString(output), html.EscapeString(p.public), html.EscapeString(p.target))
+	fmt.Fprintf(w, devDownPage, html.EscapeString(term.StripEscapes(output)), html.EscapeString(p.public), html.EscapeString(p.target))
 }
 
 // devDownPage is the page served while there is no program: its output, and the
@@ -261,9 +263,9 @@ func devAddress(env []string, lookup func(string) (string, bool)) string {
 		}
 		return fallback
 	}
-	port := value("PORT", "3000")
+	port := value("PORT", "6060")
 	if _, err := strconv.Atoi(port); err != nil {
-		port = "3000"
+		port = "6060"
 	}
 	return net.JoinHostPort(value("HOST", "localhost"), port)
 }

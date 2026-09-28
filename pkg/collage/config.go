@@ -139,7 +139,7 @@ type Config struct {
 type ServerConfig struct {
 	// Host is the address the server listens on. Defaults to "localhost".
 	Host string
-	// Port is the TCP port the server listens on. Defaults to 3000.
+	// Port is the TCP port the server listens on. Defaults to 6060.
 	Port int
 	// ReadTimeout bounds how long reading a request may take. Defaults to 15s.
 	ReadTimeout time.Duration
@@ -376,7 +376,7 @@ func (c *Config) ApplyDefaults() {
 		c.Server.Host = "localhost"
 	}
 	if c.Server.Port == 0 {
-		c.Server.Port = 3000
+		c.Server.Port = 6060
 	}
 	if c.Server.ReadTimeout == 0 {
 		c.Server.ReadTimeout = 15 * time.Second

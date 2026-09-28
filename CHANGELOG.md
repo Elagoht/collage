@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.32.0
+
+### Changed
+
+- **`collage new` scaffolds the minimal template by default.** One layout, one
+  page, a stylesheet — nothing to delete before starting. The demos are
+  `--template demo`.
+- **`collage build` targets this machine by default**, not linux/amd64, so the
+  binary it writes runs where it was built. For a server, name the target:
+  `collage build -os linux -arch amd64`.
+- **The default port is 6060**, not 3000: `Config.Server.Port`'s default, the
+  scaffolded `main.go` and `.env.example`, and the address `collage dev` listens on
+  when nothing sets `PORT`. A project that sets `PORT` is unaffected.
+
+### Fixed
+
+- `collage dev` logs are readable again. Since it became a proxy, the program's
+  stderr has been a pipe — read for the error page — so the program logged in
+  slog's plain text format. On a colour terminal it now runs the program with
+  `FORCE_COLOR=1`, which the default logger honours, and its own lines take the
+  same shape: time, coloured marker, message, dimmed attributes. The error page
+  shows the output with the escape codes removed. `NO_COLOR` still turns it off.
+- Under `collage dev`, the program's `collage: listening` line names the address
+  to open — `collage dev`'s own — rather than the loopback address the program
+  was given behind it.
+
 ## v0.31.0
 
 ### Added

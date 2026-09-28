@@ -19,7 +19,7 @@ var scaffoldFS embed.FS
 // scaffoldRoot is the directory inside scaffoldFS the scaffold tree lives
 // under. It holds one layer every project gets, "common" — main.go and its CLI
 // contract, go.mod, the layout fragment and the home page's route — and one
-// directory per template: "demo", the default, and "minimal".
+// directory per template: "minimal", the default, and "demo".
 const scaffoldRoot = "scaffold"
 
 // Scaffold templates, the layer written over "common" — what "collage new

@@ -8,9 +8,9 @@ collage build
 ```
 
 `collage build` runs the `go build` somebody would otherwise have to remember —
-`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w"` — and
-defaults to linux/amd64 rather than this machine, because a binary built on a Mac
-does not run in a Linux container. `collage build -i` also offers to write a
+`CGO_ENABLED=0 go build -trimpath -ldflags="-s -w"` — for this machine by default.
+A binary built on a Mac does not run in a Linux container, so for a server name the
+target: `collage build -os linux -arch amd64`. `collage build -i` also offers to write a
 Dockerfile and a systemd unit into `bin/` beside it. See [the CLI](cli.md).
 
 There is no `collage start`, and there should not be. It could only shell out to
@@ -166,7 +166,7 @@ See [caching](caching.md).
 
 ## Health checks
 
-A project scaffolded with the demos (`collage new`, not `collage new --template minimal`)
+A project scaffolded with the demos (`collage new --template demo`)
 answers `/healthz` with JSON — `{"status": "ok", "date": "..."}`, the current time
 in UTC — from `documents/health.go`. It is a document rather than a page — bytes and
 a content type, no templates — so a health check cannot start failing because a

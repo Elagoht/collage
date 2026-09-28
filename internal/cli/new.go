@@ -22,18 +22,18 @@ var ErrUnknownTemplate = errors.New("collage: unknown template")
 var ErrTargetNotEmpty = errors.New("collage: target directory is not empty")
 
 // newUsage is "collage help new"'s own usage text.
-const newUsage = `Usage: collage new <name> [--template demo|minimal] [--dir path] [--module path] [--force]
+const newUsage = `Usage: collage new <name> [--template minimal|demo] [--dir path] [--module path] [--force]
 
 Scaffolds a new, runnable collage project named <name>.
 
-  demo      the default: a home page, a page of live demos (an API action, a
-            form, a fragment with its own URL, a JSON document), a not-found
-            page, their tests, a .env.example for "collage dev", a .gitignore
-            and a README
-  minimal   one layout around one page saying hello, and a stylesheet with a
-            dark mode — the same main.go, with nothing to delete before you start
+  minimal   the default: one layout around one page saying hello, and a
+            stylesheet with a dark mode — nothing to delete before you start
+  demo      the same main.go, with a home page, a page of live demos (an API
+            action, a form, a fragment with its own URL, a JSON document), a
+            not-found page, their tests, a .env.example for "collage dev", a
+            .gitignore and a README
 
-  --template name   the project to scaffold: demo or minimal (default: demo)
+  --template name   the project to scaffold: minimal or demo (default: minimal)
   --dir path        directory to scaffold into (default: ./<name>)
   --module path     the scaffolded go.mod's module path (default: <name>)
   --force           scaffold into a non-empty directory anyway
@@ -53,7 +53,7 @@ func (c *CLI) runNew(args []string) int {
 	dir := fs.String("dir", "", "directory to scaffold into")
 	module := fs.String("module", "", "the scaffolded go.mod's module path")
 	force := fs.Bool("force", false, "scaffold into a non-empty directory anyway")
-	template := fs.String("template", variantDemo, "the project to scaffold: demo or minimal")
+	template := fs.String("template", variantMinimal, "the project to scaffold: minimal or demo")
 
 	// The stdlib flag package stops parsing at the first non-flag argument, so
 	// a flag placed after <name> — which is exactly how newUsage documents
@@ -77,7 +77,7 @@ func (c *CLI) runNew(args []string) int {
 	name := positional[0]
 	variant := *template
 	if variant != variantDemo && variant != variantMinimal {
-		fmt.Fprintf(c.stderr(), "%v: %q; the templates are %q and %q\n", ErrUnknownTemplate, variant, variantDemo, variantMinimal)
+		fmt.Fprintf(c.stderr(), "%v: %q; the templates are %q and %q\n", ErrUnknownTemplate, variant, variantMinimal, variantDemo)
 		return 2
 	}
 

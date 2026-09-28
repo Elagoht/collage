@@ -128,7 +128,7 @@ func TestRun_New_ScaffoldsExpectedFiles(t *testing.T) {
 	c, _, errOut := testCLI()
 	target := filepath.Join(t.TempDir(), "proj")
 
-	code := c.Run(context.Background(), []string{"new", "demo", "-dir", target})
+	code := c.Run(context.Background(), []string{"new", "demo", "--template", "demo", "-dir", target})
 
 	if code != 0 {
 		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
@@ -185,7 +185,7 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	c, _, errOut := testCLI()
 	target := filepath.Join(t.TempDir(), "proj")
 
-	code := c.Run(context.Background(), []string{"new", "demo", "-dir", target, "-module", "collagescaffoldtest"})
+	code := c.Run(context.Background(), []string{"new", "demo", "--template", "demo", "-dir", target, "-module", "collagescaffoldtest"})
 	if code != 0 {
 		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
 	}
@@ -287,9 +287,9 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	}
 }
 
-// The minimal template is the least a project can be: a layout around one page
-// and a stylesheet, beside the main.go every project has. It builds, it exports,
-// and nothing else came with it.
+// The minimal template, the default, is the least a project can be: a layout
+// around one page and a stylesheet, beside the main.go every project has. It
+// builds, it exports, and nothing else came with it.
 func TestRun_New_Minimal(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
@@ -302,7 +302,7 @@ func TestRun_New_Minimal(t *testing.T) {
 
 	c, _, errOut := testCLI()
 	target := filepath.Join(t.TempDir(), "proj")
-	if code := c.Run(context.Background(), []string{"new", "site", "--template", "minimal", "--dir", target, "-module", "collageminimaltest"}); code != 0 {
+	if code := c.Run(context.Background(), []string{"new", "site", "--dir", target, "-module", "collageminimaltest"}); code != 0 {
 		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
 	}
 

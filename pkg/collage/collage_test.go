@@ -92,8 +92,8 @@ func TestNew_AppliesDefaults(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	if cfg.Server.Port != 3000 {
-		t.Fatalf("Server.Port = %d, want the default 3000", cfg.Server.Port)
+	if cfg.Server.Port != 6060 {
+		t.Fatalf("Server.Port = %d, want the default 6060", cfg.Server.Port)
 	}
 	if cfg.Locale.Default != "en" {
 		t.Fatalf("Locale.Default = %q, want the default en", cfg.Locale.Default)

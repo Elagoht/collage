@@ -45,7 +45,7 @@ func (c *CLI) runServe(ctx context.Context, args []string) int {
 	fs.Usage = func() { fmt.Fprint(c.stderr(), serveUsage) }
 	dir := fs.String("dir", "dist", "directory to serve")
 	host := fs.String("host", "localhost", "interface to listen on")
-	// 4000 rather than 3000, so this and a project running under "collage dev"
+	// 4000 rather than 6060, so this and a project running under "collage dev"
 	// can be up at the same time — which is exactly when somebody compares them.
 	port := fs.Int("port", 4000, "port to listen on")
 

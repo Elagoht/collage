@@ -56,7 +56,7 @@ func main() {
 	buildFlag := flag.Bool("collage-build", false, "render the app to static files instead of serving it")
 	outFlag := flag.String("out", "dist", "output directory for -collage-build")
 	cleanFlag := flag.Bool("clean", false, "remove -out's existing contents before building")
-	portFlag := flag.Int("port", envInt("PORT", 3000), "port to listen on (env PORT)")
+	portFlag := flag.Int("port", envInt("PORT", 6060), "port to listen on (env PORT)")
 	flag.Parse()
 
 	devMode := os.Getenv("COLLAGE_DEV") == "1"

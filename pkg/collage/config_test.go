@@ -15,7 +15,7 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 	want := Config{
 		Server: ServerConfig{
 			Host:            "localhost",
-			Port:            3000,
+			Port:            6060,
 			ReadTimeout:     15 * time.Second,
 			WriteTimeout:    30 * time.Second,
 			IdleTimeout:     60 * time.Second,
@@ -125,7 +125,7 @@ func TestConfig_MinimalAppExample(t *testing.T) {
 	cfg := &Config{
 		Server: ServerConfig{
 			Host: "localhost",
-			Port: 3000,
+			Port: 6060,
 		},
 		Template: TemplateConfig{
 			Root:      "./templates",

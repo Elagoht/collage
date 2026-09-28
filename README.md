@@ -30,13 +30,13 @@ Three commands and a site is running.
 ```
 go install github.com/Elagoht/collage/cmd/collage@latest
 
-collage new mysite
+collage new mysite --template demo
 cd mysite && go mod tidy
 cp .env.example .env.development
 collage dev
 ```
 
-http://localhost:3000 — a home page and a page of live demos: an API action, a form,
+http://localhost:6060 — a home page and a page of live demos: an API action, a form,
 a fragment with its own URL and a JSON document, with the tests that drive them.
 `collage dev` reads `.env.development`; `PORT=8080 collage dev` moves it. Go 1.26 is
 the only requirement; `go install` puts `collage` in `$(go env GOPATH)/bin`, which is on your `PATH` if you have
@@ -54,8 +54,8 @@ collage serve    # serves dist/ the way a static host would
 Under `collage dev`, saving a template reloads the page in the browser, and saving
 Go code rebuilds and restarts the program and then reloads the page — no external
 watcher, nothing to install. A change that does not compile leaves the last good
-build running. `collage new mysite --template minimal` starts from one page saying
-hello instead.
+build running. Plain `collage new mysite`, without `--template demo`, starts from
+one page saying hello instead — the default.
 
 Where to look next: `pages/` has one file per page, `fragments/` the layout and the
 demos, `actions/` the API endpoint; `routes.go` registers them, and `main.go` has the
@@ -87,7 +87,7 @@ func main() {
 	app, err := collage.New(&collage.Config{
 		Server: collage.ServerConfig{
 			Host: "localhost",
-			Port: 3000,
+			Port: 6060,
 		},
 		Template: collage.TemplateConfig{
 			Root:      "templates",
@@ -124,7 +124,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	log.Println("serving on http://localhost:3000")
+	log.Println("serving on http://localhost:6060")
 	if err := app.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
