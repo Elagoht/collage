@@ -28,6 +28,9 @@ type outcome struct {
 	// problems are the fragments that failed in a render that produced a page
 	// anyway, collected in development only, for the overlay.
 	problems []devProblem
+	// degraded reports a render served with a failed optional fragment, which
+	// no cache may keep.
+	degraded bool
 }
 
 // flight coalesces concurrent renders of the same cache key.

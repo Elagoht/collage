@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/csrf"
@@ -713,6 +714,12 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	header.Set("ETag", etag)
 	h.setCacheHeaders(header, r, page.Strategy, page.CacheTTL)
 	guardedCacheControl(header, page)
+	// Not written to this server's cache, so not to any cache in front of it:
+	// a public header would pin one request's fragment failure at a CDN for
+	// the whole TTL, which is what keeping it out of the cache was for.
+	if out.degraded {
+		header.Set("Cache-Control", "no-store")
+	}
 	// After setCacheHeaders, so it overrides whatever the page's strategy declared.
 	// The body that goes on the wire carries this reader's token, whatever the
 	// shared one behind it may be cached as.
@@ -899,7 +906,7 @@ func (h *Handler) renderPage(
 	}
 
 	problems := append(h.devProblems(result), h.devFindings(afterRender.Findings)...)
-	return &outcome{content: content, etag: etag, renderTime: renderTime, problems: problems}
+	return &outcome{content: content, etag: etag, renderTime: renderTime, problems: problems, degraded: result.Degraded()}
 }
 
 // cacheGet is the cache lookup, which never finds anything in development. See the
@@ -1119,18 +1126,46 @@ func (h *Handler) ttlFor(strategy types.RenderStrategy, cacheTTL time.Duration) 
 // see ttlFor for why it is parameterized rather than typed on either route kind.
 func (h *Handler) setCacheHeaders(header http.Header, r *http.Request, strategy types.RenderStrategy, cacheTTL time.Duration) {
 	control := h.cacheControl(strategy, cacheTTL)
-	if skipsCache(r) {
+	switch {
+	case skipsCache(r):
 		// A preview's page is one reader's, and must not be kept by anything
 		// between the server and them either.
 		control = "private, no-store"
+	case h.devMode:
+		// Development reads no cache of its own, so that the next request
+		// shows the next edit; a browser or a proxy keeping the page would
+		// undo that, and keep the dev overlay's error text besides.
+		control = "no-store"
 	}
 	header.Set("Cache-Control", control)
 
 	if !strings.HasPrefix(control, "public") {
 		return
 	}
-	if names := requestVaryHeaders(r); len(names) > 0 {
-		header.Set("Vary", strings.Join(names, ", "))
+	addVary(header, requestVaryHeaders(r)...)
+}
+
+// addVary adds names to header's Vary, beside what is already there. Set would
+// drop a Vary a middleware wrote — say for a header it answers by — and a CDN
+// would then serve one reader's copy to the next.
+func addVary(header http.Header, names ...string) {
+	var have []string
+	for _, value := range header.Values("Vary") {
+		for name := range strings.SplitSeq(value, ",") {
+			if name = strings.TrimSpace(name); name != "" {
+				have = append(have, name)
+			}
+		}
+	}
+	added := false
+	for _, name := range names {
+		if !slices.ContainsFunc(have, func(h string) bool { return h == "*" || ascii.EqualFold(h, name) }) {
+			have = append(have, name)
+			added = true
+		}
+	}
+	if added {
+		header.Set("Vary", strings.Join(have, ", "))
 	}
 }
 

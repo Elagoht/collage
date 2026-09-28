@@ -409,6 +409,9 @@ func (h *Handler) writeFragmentRead(w http.ResponseWriter, r *http.Request, html
 // destination than redirected to it, because fetch follows redirects itself
 // and the script would navigate to the page and have it rendered twice.
 func writeRedirect(w http.ResponseWriter, r *http.Request, status int, location string) int {
+	// The answer depends on FetchHeader, so a cache keying it on the URL alone
+	// would hand a script's 204 to a browser that asked to be redirected.
+	addVary(w.Header(), FetchHeader)
 	if r.Header.Get(FetchHeader) != "" {
 		w.Header().Set(LocationHeader, location)
 		w.WriteHeader(http.StatusNoContent)
