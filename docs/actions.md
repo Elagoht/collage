@@ -202,7 +202,10 @@ from an older browser), and a request it marks as coming from another origin is
 refused with `403` whatever it carries — a sibling subdomain included. A request
 with neither header is not from a browser, and passes to the token check. An
 admin panel on its own origin that posts here is named in
-`Security.CSRFTrustedOrigins`, each as `scheme://host[:port]`.
+`Security.CSRFTrustedOrigins`, each as `scheme://host[:port]` — case and a default
+port do not matter, and a wildcard is refused: name each origin. The token cookie is
+`SameSite=Lax`, so a trusted origin on another *site* never sends it; trusting one
+is for another origin of the same site, such as a subdomain.
 
 A multipart body over the 32 MiB the parser holds in memory spills its files to
 disk; they are removed when the action has answered, accepted or refused.

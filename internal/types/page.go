@@ -47,6 +47,11 @@ func (r *Redirect) Validate() error {
 	if r.To == "" || r.To[0] != '/' {
 		return fmt.Errorf("%w: redirect to %q must start with \"/\"", ErrInvalidPath, r.To)
 	}
+	// A browser reads "//host" and "/\host" as another site. Caught here, at
+	// registration, rather than as a 500 on the first request that matches.
+	if len(r.To) > 1 && (r.To[1] == '/' || r.To[1] == '\\') {
+		return fmt.Errorf("%w: redirect to %q leaves the site", ErrInvalidPath, r.To)
+	}
 	switch r.StatusCode {
 	case 0, 301, 302, 307, 308:
 	default:

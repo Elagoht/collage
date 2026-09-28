@@ -45,6 +45,8 @@ func TestRedirect_Validate(t *testing.T) {
 		{"empty to", &Redirect{From: "/a", To: ""}, ErrInvalidPath},
 		{"to missing leading slash", &Redirect{From: "/a", To: "b"}, ErrInvalidPath},
 		{"invalid status code", &Redirect{From: "/a", To: "/b", StatusCode: 404}, ErrInvalidRedirectStatus},
+		{"to another site", &Redirect{From: "/a", To: "//evil.example"}, ErrInvalidPath},
+		{"to another site by backslash", &Redirect{From: "/a", To: "/\\evil.example"}, ErrInvalidPath},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
