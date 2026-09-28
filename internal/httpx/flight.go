@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -95,7 +96,7 @@ func (f *flight) do(ctx context.Context, key string, fn func() *outcome) (*outco
 				// This request is over. Waiting out a leader that may have a
 				// longer deadline would hold the goroutine for a response
 				// nobody will read.
-				return &outcome{fail: &failure{err: ctx.Err(), stage: stageRender}}, true
+				return &outcome{fail: &failure{status: http.StatusServiceUnavailable, err: ctx.Err(), stage: stageRender}}, true
 			}
 
 			if !leaderWasCancelled(existing.out) {
@@ -104,7 +105,7 @@ func (f *flight) do(ctx context.Context, key string, fn func() *outcome) (*outco
 			// The leader's failure was its own request ending, which says
 			// nothing about whether this one can be served. Round again.
 			if err := ctx.Err(); err != nil {
-				return &outcome{fail: &failure{err: err, stage: stageRender}}, true
+				return &outcome{fail: &failure{status: http.StatusServiceUnavailable, err: err, stage: stageRender}}, true
 			}
 			continue
 		}

@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"html"
@@ -56,6 +57,14 @@ type failure struct {
 // picks the writer, so no caller can pick the wrong one. See routeKind for why
 // that is worth a type.
 func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure) int {
+	// A reader who went away is not a failure of the application's, and there
+	// is nobody to write an answer to. Reported as one, every closed tab on a
+	// slow page was an error-level log line and a call to every error hook —
+	// noise anyone can make as fast as they can open and drop connections.
+	if readerLeft(r, f.err) {
+		h.logger.Debug("collage: the reader left before the response", "path", r.URL.Path, "stage", f.stage)
+		return statusClientClosedRequest
+	}
 	h.reportError(r, f)
 
 	if f.kind.plainText() {
@@ -79,6 +88,17 @@ func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure
 
 	h.writeErrorResponse(w, r, f.status, builtinPage(f, h.devMode))
 	return f.status
+}
+
+// statusClientClosedRequest is the status recorded for a request whose reader
+// left before it was answered. Nothing is written with it; it is what the
+// metrics see, in nginx's spelling of it.
+const statusClientClosedRequest = 499
+
+// readerLeft reports whether err is r's own cancellation: the client closed the
+// connection, and what failed failed because of that.
+func readerLeft(r *http.Request, err error) bool {
+	return errors.Is(r.Context().Err(), context.Canceled) && errors.Is(err, context.Canceled)
 }
 
 // ServeStatus answers r with status and the page the application shows for it:
