@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Elagoht/collage/internal/csrf"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/types"
@@ -523,5 +524,32 @@ func TestEmptyErrorPageIsReportedToPlugins(t *testing.T) {
 	}
 	if !errors.Is(errs[1], ErrEmptyErrorPage) {
 		t.Errorf("empty error page reported as %v, want ErrEmptyErrorPage", errs[1])
+	}
+}
+
+// An error page's layout carries the site's forms like any page's does, and its
+// marker is replaced like any page's is. Served as it was, the marker is out: a
+// form nobody can submit, and a string that — planted where readers see it —
+// used to come back as each reader's own token.
+func TestErrorPageCarriesTheReadersToken(t *testing.T) {
+	option, guard := withCSRF(t)
+	marker := guard.Marker()
+	engine := newFakeEngine(fakeRender{html: "<p>home</p>"})
+	engine.set("global-404", fakeRender{html: `<form><input type="hidden" name="_csrf" value="` + marker + `"></form>`})
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyStatic)}, option,
+		func(d *Deps) { d.Renderer = engine })
+	if err := env.router.RegisterNotFound(errorOnlyPage("global-404")); err != nil {
+		t.Fatalf("RegisterNotFound() = %v", err)
+	}
+
+	res := env.get("/missing")
+	if res.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", res.Code)
+	}
+	if strings.Contains(res.Body.String(), marker) {
+		t.Error("the not-found page was served with the raw marker")
+	}
+	if !strings.Contains(res.Header().Get("Set-Cookie"), csrf.DefaultCookieName) {
+		t.Error("no token cookie went with the not-found page's form")
 	}
 }

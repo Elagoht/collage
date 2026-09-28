@@ -296,6 +296,10 @@ func (h *Handler) reportErrorPageFailure(r *http.Request, page *types.Page, err 
 // ETag is set, and Cache-Control is no-store: an error response is never cached, by
 // this handler or by anything between it and the client.
 func (h *Handler) writeErrorResponse(w http.ResponseWriter, r *http.Request, status int, content []byte) {
+	// The reader's token in place of the marker, as on any page: an error
+	// page's layout carries the site's forms too, and never stored, it has no
+	// ETag to recompute.
+	content, _, _ = h.personalise(w, r, content, "")
 	header := w.Header()
 	header.Set("Content-Type", contentTypeHTML)
 	header.Set("Cache-Control", "no-store")

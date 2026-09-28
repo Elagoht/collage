@@ -1,7 +1,6 @@
 package core
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -67,12 +66,12 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 		Shared: page.Strategy.Cacheable() || readerFree(fragment),
 	}
 	if a.csrf != nil {
-		if marker := []byte(a.csrf.Marker()); bytes.Contains(out.HTML, marker) {
+		if a.csrf.Carries(out.HTML) {
 			token, minted, err := a.csrf.TokenFor(r)
 			if err != nil {
 				return nil, fmt.Errorf("collage: could not issue a forgery token: %w", err)
 			}
-			out.HTML = bytes.ReplaceAll(out.HTML, marker, []byte(token))
+			out.HTML = a.csrf.Personalise(out.HTML, token)
 			out.Shared = false
 			if minted {
 				out.Cookie = a.csrf.Cookie(r, token)

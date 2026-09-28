@@ -762,8 +762,7 @@ func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []
 	if h.csrf == nil {
 		return content, etag, false
 	}
-	marker := []byte(h.csrf.Marker())
-	if !bytes.Contains(content, marker) {
+	if !h.csrf.Carries(content) {
 		return content, etag, false
 	}
 
@@ -776,7 +775,7 @@ func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []
 		return content, etag, false
 	}
 
-	personalised := bytes.ReplaceAll(content, marker, []byte(token))
+	personalised := h.csrf.Personalise(content, token)
 	http.SetCookie(w, h.csrf.Cookie(r, token))
 	// Recomputed, because this body is not the one the ETag was made from. An ETag
 	// that names a body nobody was sent is how a conditional request is answered

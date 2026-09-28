@@ -26,6 +26,7 @@
 package csrf
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -124,6 +125,30 @@ func New(cfg Config) (*Guard, error) {
 // chose. A value nobody can compute without the key cannot be planted.
 func (g *Guard) Marker() string {
 	return "collage-csrf-" + g.sign("marker")[:32]
+}
+
+// Carries reports whether content holds the field {{csrfToken}} renders, whose
+// value Personalise replaces.
+func (g *Guard) Carries(content []byte) bool {
+	return bytes.Contains(content, g.renderedValue())
+}
+
+// Personalise returns content with the value of the field {{csrfToken}} renders
+// set to token.
+//
+// The field's value attribute, not the marker wherever it occurs. A template
+// escapes the quote a reader's text carries, so value="…" around the marker is
+// something only {{csrfToken}} writes; the bare marker is something anyone who
+// has seen it can write — a comment linking to their own site with it in the
+// URL — and replacing it there hands them the token of everyone who reads the
+// comment.
+func (g *Guard) Personalise(content []byte, token string) []byte {
+	return bytes.ReplaceAll(content, g.renderedValue(), []byte(`value="`+token+`"`))
+}
+
+// renderedValue is the value attribute {{csrfToken}} renders.
+func (g *Guard) renderedValue() []byte {
+	return []byte(`value="` + g.Marker() + `"`)
 }
 
 // CookieName returns the cookie a token is carried in.

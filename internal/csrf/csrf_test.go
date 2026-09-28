@@ -340,3 +340,23 @@ func TestVerify_DoesNotReadTheBodyForAnUnsignedCookie(t *testing.T) {
 		t.Fatalf("Verify() = %v, want ErrInvalid", err)
 	}
 }
+
+// Only the value {{csrfToken}} renders is replaced. The marker anywhere else —
+// in a comment a reader posted, escaped by the template into text or into
+// another attribute — stays as it is: replaced, it would carry each reader's
+// token to wherever the comment's author pointed it.
+func TestPersonalise_ReplacesOnlyTheRenderedField(t *testing.T) {
+	g := guard(t)
+	m := g.Marker()
+	content := `<input type="hidden" name="_csrf" value="` + m + `">` +
+		`<a href="https://evil.example/?t=` + m + `">` + m + `</a>`
+	got := string(g.Personalise([]byte(content), "TOKEN"))
+	want := `<input type="hidden" name="_csrf" value="TOKEN">` +
+		`<a href="https://evil.example/?t=` + m + `">` + m + `</a>`
+	if got != want {
+		t.Errorf("Personalise() =\n%s\nwant\n%s", got, want)
+	}
+	if !g.Carries([]byte(content)) || g.Carries([]byte(`<p>`+m+`</p>`)) {
+		t.Error("Carries() must report the rendered field and only it")
+	}
+}
