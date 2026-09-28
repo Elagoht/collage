@@ -1,18 +1,20 @@
 package httpx
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"github.com/Elagoht/collage/internal/cache"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/csrf"
-
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -723,5 +725,48 @@ func TestAction_BareRefusalIsWarnedInDevMode(t *testing.T) {
 	prod.do(post("/posts/1/edit", ""))
 	if n := len(prod.logs.recordsFor(bareRefusalMessage)); n != 0 {
 		t.Errorf("warnings = %d outside dev mode, want 0", n)
+	}
+}
+
+// A multipart body larger than the parser keeps in memory spills its files to
+// disk. net/http removes them only for the request it made, and the forgery
+// check and the handler parse a copy — so they are removed here, whether the
+// handler ran or the check refused the request.
+func TestAction_MultipartFilesAreRemoved(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMPDIR", dir)
+
+	option, guard := withCSRF(t)
+	upload := action("upload", "/upload", []string{http.MethodPost},
+		func(_ context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
+			if _, _, err := rc.Request.FormFile("file"); err != nil {
+				t.Errorf("FormFile() = %v", err)
+			}
+			return nil, nil
+		})
+	upload.MaxBodyBytes = -1
+	env := actionEnv(t, nil, []*types.Action{upload}, option)
+	token, _, _ := guard.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+
+	for name, field := range map[string]string{"accepted": token, "refused": ""} {
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		if field != "" {
+			_ = mw.WriteField(csrf.DefaultFieldName, field)
+		}
+		part, _ := mw.CreateFormFile("file", "big.bin")
+		_, _ = part.Write(bytes.Repeat([]byte("x"), 33<<20))
+		_ = mw.Close()
+		req := httptest.NewRequest(http.MethodPost, "/upload", &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.AddCookie(&http.Cookie{Name: csrf.DefaultCookieName, Value: token})
+
+		res := env.do(req)
+		if name == "refused" && res.Code != http.StatusForbidden {
+			t.Fatalf("%s: status = %d, want 403", name, res.Code)
+		}
+		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+			t.Errorf("%s: %d files left in the temporary directory", name, len(entries))
+		}
 	}
 }

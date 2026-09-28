@@ -68,6 +68,17 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		}
 	}
 
+	// A multipart body over the parser's memory budget spills its files to disk,
+	// and net/http removes them only for the request it made — not for this one,
+	// a copy, which is the one the forgery check and the handler parse. Without
+	// this every large upload leaves its files behind, and so does every refused
+	// one.
+	defer func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+	}()
+
 	// Bounded before the handler sees it, not by the handler. A limit every
 	// handler has to remember is a limit the one handler that forgot does not
 	// have, and that handler is the one an anonymous caller will find.
