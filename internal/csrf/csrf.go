@@ -34,6 +34,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/Elagoht/collage/internal/ascii"
@@ -96,8 +97,12 @@ func New(cfg Config) (*Guard, error) {
 		origin:     http.NewCrossOriginProtection(),
 	}
 	for _, origin := range cfg.TrustedOrigins {
-		if err := g.origin.AddTrustedOrigin(origin); err != nil {
-			return nil, fmt.Errorf("collage: csrf trusted origin: %w", err)
+		canonical, err := canonicalOrigin(origin)
+		if err == nil {
+			err = g.origin.AddTrustedOrigin(canonical)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("collage: csrf trusted origin %q: %w", origin, err)
 		}
 	}
 	if g.cookieName == "" {
@@ -110,6 +115,41 @@ func New(cfg Config) (*Guard, error) {
 		g.headerName = DefaultHeaderName
 	}
 	return g, nil
+}
+
+// canonicalOrigin returns origin spelled as a browser sends it in the Origin
+// header, which is what a trusted origin is compared with, byte for byte: scheme
+// and host in lower case, no default port. "https://Admin.Example.com:443"
+// written as it is would match no request at all, and fail closed with nothing
+// to say why.
+//
+// A wildcard is refused rather than accepted: net/http would take
+// "https://*.example.com" as a host of its own and match nothing, and a list of
+// the origins meant is the policy anyway — a sibling subdomain is exactly who
+// this check does not trust by default.
+func canonicalOrigin(origin string) (string, error) {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return "", err
+	}
+	scheme := ascii.LowerString(u.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", errors.New(`want "http://" or "https://" and a host`)
+	}
+	if u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New(`want "scheme://host[:port]" and nothing else`)
+	}
+	if strings.Contains(u.Host, "*") {
+		return "", errors.New("wildcards are not supported; name each origin")
+	}
+	host := ascii.LowerString(u.Hostname())
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if port := u.Port(); port != "" && !(scheme == "https" && port == "443") && !(scheme == "http" && port == "80") {
+		host += ":" + port
+	}
+	return scheme + "://" + host, nil
 }
 
 // Marker is the placeholder a rendered page carries in place of a token.
