@@ -124,6 +124,12 @@ var ErrUnknownRoute = errors.New("collage: no page or document by that name")
 // document has no path in.
 var ErrNoPathInLocale = errors.New("collage: no path in that locale")
 
+// ErrLocaleUnreachable is returned for a locale no URL can carry: one that is
+// neither Locale.Default nor in Locale.Supported, or any locale but the default
+// when path locales are off. Registering a path in one is refused, since nothing
+// could ever request it; asking for a URL in one is refused for the same reason.
+var ErrLocaleUnreachable = errors.New("collage: no URL reaches that locale")
+
 // ErrUnknownFragmentPath is returned when a fragment's URL is asked for and the
 // page opened no fragment by that name with WithFragmentPath.
 var ErrUnknownFragmentPath = errors.New("collage: the page opened no fragment path by that name")

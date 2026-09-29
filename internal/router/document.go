@@ -24,6 +24,9 @@ func (rt *router) RegisterDocument(doc *types.Document) error {
 
 		normalized := normalizePattern(pattern)
 		owner := fmt.Sprintf("document %q", doc.Name)
+		if err := rt.localeOptions.checkReachable(owner, locale); err != nil {
+			return err
+		}
 		if err := rt.checkRedirectShadow(owner, pattern, locale, normalized); err != nil {
 			return err
 		}

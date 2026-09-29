@@ -73,7 +73,13 @@ func NewDocument(name, contentType string) *DocumentBuilder {
 	}
 }
 
-// WithPath registers the path pattern that reaches this document in locale.
+// WithPath registers the path pattern that reaches this document in locale.//
+// locale is not a label: it names the locale tree the path is written into, and
+// a request reaches that tree only when the locale is Config.Locale.Default (at
+// the bare path) or listed in Locale.Supported (under its prefix, "/tr/…").
+// Default is "en" when left unset, so a Turkish-only site writes
+// WithPath("tr", …) and sets Locale.Default to "tr". A path in a locale neither
+// names is refused at registration with ErrLocaleUnreachable.
 func (b *DocumentBuilder) WithPath(locale, pattern string) *DocumentBuilder {
 	b.document.Paths[locale] = pattern
 	return b

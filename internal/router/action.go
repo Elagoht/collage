@@ -38,6 +38,9 @@ func (rt *router) RegisterAction(action *types.Action) error {
 
 		normalized := normalizePattern(pattern)
 		owner := fmt.Sprintf("action %q", action.Name)
+		if err := rt.localeOptions.checkReachable(owner, locale); err != nil {
+			return err
+		}
 		if err := rt.checkRedirectShadow(owner, pattern, locale, normalized); err != nil {
 			return err
 		}

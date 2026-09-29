@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.35.0
+
+### Changed
+
+- **A path in a locale no URL reaches is refused at registration**, with
+  `collage.ErrLocaleUnreachable`. A locale is unreachable when it is neither
+  `Locale.Default` nor in `Locale.Supported`, and under `DisablePathLocale` every
+  locale but the default is. This applies to `RegisterPage`, `RegisterAction` and
+  `RegisterDocument`. Before, such a path went into a tree requests never reach.
+  A Turkish-only site that wrote `WithPath("tr", …)` and left `Default` at its
+  `"en"` default started without complaint, then answered 404 at every URL. It
+  now fails to start, and the error names the page and the locale config. The fix
+  is `Locale.Default: "tr"`. `WithPath` now documents that its locale must be one
+  of these.
+
 ## v0.34.2
 
 ### Fixed

@@ -25,7 +25,10 @@ var ErrAmbiguousFragmentPath = types.ErrAmbiguousFragmentPath
 // route's pattern exactly.
 var ErrRouteParams = types.ErrRouteParams
 
-// ErrLocaleUnreachable is returned by App.URL for a locale no URL can carry.
+// ErrLocaleUnreachable is returned by App.URL for a locale no URL can carry, and
+// by RegisterPage, RegisterAction and RegisterDocument for a path in one — a
+// WithPath("tr", …) on a site whose Locale config leaves "tr" out, which would
+// otherwise answer every request with 404.
 var ErrLocaleUnreachable = core.ErrLocaleUnreachable
 
 // ErrUnknownAsset is returned by rc.Asset, rc.HoistStylesheet, {{asset}} and

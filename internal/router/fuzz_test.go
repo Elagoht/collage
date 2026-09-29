@@ -47,9 +47,16 @@ func FuzzMatch(f *testing.F) {
 			return
 		}
 		rt := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr", "sk"}, PrefixDefault: prefixDefault, DisablePathLocale: disable})
+		// With path locales off nothing reaches "tr", and a path there is refused.
+		inTR := func(paths map[string]string) map[string]string {
+			if !disable {
+				paths["tr"] = paths["en"]
+			}
+			return paths
+		}
 		for _, page := range []*types.Page{
-			{Name: "home", Paths: map[string]string{"en": "/", "tr": "/"}},
-			{Name: "post", Paths: map[string]string{"en": "/blog/{slug}", "tr": "/blog/{slug}"}},
+			{Name: "home", Paths: inTR(map[string]string{"en": "/"})},
+			{Name: "post", Paths: inTR(map[string]string{"en": "/blog/{slug}"})},
 			{Name: "docs", Paths: map[string]string{"en": "/docs/{rest...}"}},
 			{Name: "admin", Paths: map[string]string{"en": "/admin"},
 				Redirects: []*types.Redirect{{From: "/old/{slug}", To: "/blog/{slug}"}, {From: "/legacy/{rest...}", To: "/docs/{rest}"}}},

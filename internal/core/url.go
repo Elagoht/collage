@@ -11,8 +11,8 @@ import (
 
 // ErrLocaleUnreachable is returned by URL for a locale no URL can reach: one the
 // application does not support, or any locale but the default when path locales
-// are off.
-var ErrLocaleUnreachable = fmt.Errorf("collage: no URL reaches that locale")
+// are off. Registering a path in one fails with it too.
+var ErrLocaleUnreachable = types.ErrLocaleUnreachable
 
 // URL returns the path of the page or document registered as name, in locale,
 // with params filling its pattern — the URL a reader follows to reach it, locale

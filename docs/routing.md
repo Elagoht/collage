@@ -103,6 +103,14 @@ query string is carried over.
 
 A path registered for one locale only is reachable only in that locale.
 
+**The locale in `WithPath(locale, …)` is not a label.** It names the tree the path
+goes into, and a request reaches that tree only if the locale is `Default` or in
+`Supported`. `Default` is `"en"` when left unset. So a site that writes only
+`WithPath("tr", …)` must also set `Default: "tr"`. Without it, every page would sit
+in a tree no URL reaches. Collage refuses such a path when it is registered, with
+`collage.ErrLocaleUnreachable`, rather than answer every request with 404. A path in
+any locale but `Default` is refused the same way under `DisablePathLocale`.
+
 Collage never assigns a locale from `Accept-Language` or a cookie. It used to, and
 the result was one URL with different content per reader — which is what caches,
 crawlers and shared links all get wrong — and a Turkish browser following a link to
@@ -342,6 +350,7 @@ client.
 | `collage.ErrUnregisteredErrorPage` | An error page referenced but never registered |
 | `collage.ErrAppStarted` | Registering after the handler was built |
 | `collage.ErrInvalidPattern` | A malformed path or redirect pattern |
+| `collage.ErrLocaleUnreachable` | A path in a locale that is neither `Locale.Default` nor in `Locale.Supported`, or any non-default locale under `DisablePathLocale` |
 | `collage.ErrDuplicateRoute` | Any two of {page, document} at one path, or two redirects at one source |
 | `collage.ErrAmbiguousParameterName` | Two parameter names at one position |
 | `collage.ErrRedirectShadowsPage` | A redirect source that is also a page or document path |

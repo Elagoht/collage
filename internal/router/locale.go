@@ -1,10 +1,13 @@
 package router
 
 import (
+	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/Elagoht/collage/internal/ascii"
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // LocaleOptions configures locale resolution: the default locale, the supported
@@ -30,6 +33,25 @@ type LocaleOptions struct {
 	// the address with it — except a document at the root (types.RootLocale),
 	// whose one address is the bare one. Ignored when DisablePathLocale is set.
 	PrefixDefault bool
+}
+
+// checkReachable refuses a path owner registers in a locale no request can
+// resolve to. Such a path goes into a tree Match never looks in, so the mistake —
+// a Turkish-only site writing WithPath("tr", …) and leaving Default at "en" —
+// would otherwise show only as a 404 at every URL.
+func (opts LocaleOptions) checkReachable(owner, locale string) error {
+	if locale == opts.Default {
+		return nil
+	}
+	if opts.DisablePathLocale {
+		return fmt.Errorf("%w: %s has a path in %q, but DisablePathLocale leaves every request in the default locale %q",
+			types.ErrLocaleUnreachable, owner, locale, opts.Default)
+	}
+	if slices.Contains(opts.Supported, locale) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s has a path in %q, but the default locale is %q and the supported ones are %v; set Locale.Default or add it to Locale.Supported",
+		types.ErrLocaleUnreachable, owner, locale, opts.Default, opts.supportedLocales())
 }
 
 // supportedLocales returns opts.Supported with opts.Default appended if it is not

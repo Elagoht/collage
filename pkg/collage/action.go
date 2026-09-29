@@ -35,7 +35,13 @@ func NewAction(name string) *ActionBuilder {
 	return &ActionBuilder{action: &Action{Name: name, Paths: map[string]string{}}}
 }
 
-// WithPath declares the URL pattern that reaches this action in locale.
+// WithPath declares the URL pattern that reaches this action in locale.//
+// locale is not a label: it names the locale tree the path is written into, and
+// a request reaches that tree only when the locale is Config.Locale.Default (at
+// the bare path) or listed in Locale.Supported (under its prefix, "/tr/…").
+// Default is "en" when left unset, so a Turkish-only site writes
+// WithPath("tr", …) and sets Locale.Default to "tr". A path in a locale neither
+// names is refused at registration with ErrLocaleUnreachable.
 func (b *ActionBuilder) WithPath(locale, pattern string) *ActionBuilder {
 	b.action.Paths[locale] = pattern
 	return b

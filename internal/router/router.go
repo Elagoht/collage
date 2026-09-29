@@ -440,6 +440,9 @@ func (rt *router) Register(page *types.Page) error {
 
 		normalized := normalizePattern(pattern)
 		owner := fmt.Sprintf("page %q", page.Name)
+		if err := rt.localeOptions.checkReachable(owner, locale); err != nil {
+			return err
+		}
 		if err := rt.checkRedirectShadow(owner, pattern, locale, normalized); err != nil {
 			return err
 		}
