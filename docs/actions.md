@@ -159,6 +159,11 @@ for one action, and a negative value for unbounded. A body past the limit is a 4
 with forgery protection on as well, where reading the token means reading the body:
 an oversized form is refused for its size, not reported as a forged one.
 
+A size rule of the action's own — a photo over 5 MB refused with a message on the
+form — is reached only under a limit above it: below, collage's 413 answers first
+and the message is never shown. Give the action room for the file and the rest of
+the form, `WithMaxBodyBytes(maxPhoto + 64<<10)`.
+
 A limit every handler has to remember is a limit the one handler that forgot does not
 have, and that handler is the one an anonymous caller will find.
 
