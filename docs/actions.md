@@ -68,6 +68,18 @@ destination does not submit the form again.
 return collage.SeeOther("/posts/" + slug), nil
 ```
 
+Or by name, so a renamed path cannot leave the redirect pointing at the old one.
+`rc.URL` builds in the request's locale and keeps a value inside its path
+segment; see [Links by name](fragments.md#links-by-name):
+
+```go
+target, err := rc.URL("post", map[string]string{"slug": slug})
+if err != nil {
+	return nil, err
+}
+return collage.SeeOther(target), nil
+```
+
 **`Fragment`** answers with one fragment's markup — the changed part, not the page.
 
 **`Page`** answers with a whole page, which is the shape a validation failure takes.

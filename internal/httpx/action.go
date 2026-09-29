@@ -124,6 +124,11 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// belongs to through a variable declared before the page and filled after,
 	// because the handler is written while the page is still being built.
 	rc := types.NewRenderContext(ctx, r, match.Page, match.Locale, match.PathParams)
+	// So the handler builds its redirect by name, without the application
+	// handed to it.
+	if h.routes.Page != nil {
+		types.BindRoutes(rc, h.routes)
+	}
 	if skipsCache(r) {
 		types.SkipDataCache(rc)
 	}

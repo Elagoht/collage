@@ -758,7 +758,10 @@ func (a *App) buildHandler() (http.Handler, error) {
 		Invalidator: func(ctx context.Context, tags []string) error {
 			return a.InvalidateTags(ctx, tags...)
 		},
-		CSRF: a.csrf,
+		// The URL builders alone, for the same reason: an action's handler
+		// builds its redirect by name through rc.URL.
+		Routes: types.Routes{Page: a.URL, Action: a.ActionURL, DefaultLocale: a.cfg.Locale.Default},
+		CSRF:   a.csrf,
 	})
 	if err != nil {
 		return a.buildFailed(err)

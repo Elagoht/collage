@@ -187,6 +187,10 @@ type Deps struct {
 	// Invalidator drops cache entries by tag, and is what backs
 	// ActionResult.InvalidateTags. Nil makes that field inert.
 	Invalidator Invalidator
+	// Routes builds page and action URLs, and is what backs rc.URL and
+	// rc.ActionURL in an action's handler. The zero value leaves them reporting
+	// that no routes are known.
+	Routes types.Routes
 	// CSRF verifies unsafe requests to actions and issues the tokens
 	// {{csrfToken}} renders. Nil turns forgery checking off entirely, which is
 	// what an application with no forms and no key gets.
@@ -213,6 +217,7 @@ type Handler struct {
 	pageReady    func(*types.Page) bool
 	maxBodyBytes int64
 	invalidator  Invalidator
+	routes       types.Routes
 	csrf         *csrf.Guard
 	// flight coalesces concurrent renders of one cache key, so an expiring
 	// popular page costs one render rather than one per request that arrives
@@ -256,6 +261,7 @@ func New(d Deps) (*Handler, error) {
 		pageReady:    d.PageReady,
 		maxBodyBytes: d.MaxBodyBytes,
 		invalidator:  d.Invalidator,
+		routes:       d.Routes,
 		csrf:         d.CSRF,
 		flight:       newFlight(),
 	}

@@ -594,12 +594,24 @@ and is empty for a language the page has not been translated into:
 {{with localeURL "tr"}}<a hreflang="tr" href="{{.}}">Türkçe</a>{{end}}
 ```
 
-From Go — an action redirecting to a named page — it is `app.URL`:
+From Go — a data handler, or an action redirecting to a named page — it is
+`rc.URL`, and `rc.ActionURL` for an action. Both build in the render's own
+locale and fall back to the default one as `pageURL` does, so nothing has to
+hand the application to the code that needs a link:
 
 ```go
-target, err := app.URL("blog-post", "tr", map[string]string{"slug": post.Slug})
-return collage.SeeOther(target), err
+target, err := rc.URL("blog-post", map[string]string{"slug": post.Slug})
+if err != nil {
+	return nil, err
+}
+return collage.SeeOther(target), nil
 ```
+
+A value, even one straight from the request, is one escaped path segment: one
+holding `/`, or being `.` or `..`, is `ErrRouteParams`, so it cannot turn the
+path into another site's URL. On a `RenderContext` collage did not make — one a
+test builds by hand — both return `ErrUnknownRoute`. For a locale other than the
+render's own, `app.URL(name, locale, params)` takes one explicitly.
 
 ### Adding your own
 

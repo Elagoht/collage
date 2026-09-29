@@ -57,6 +57,9 @@ type renderShared struct {
 	// assets resolves a mounted file's content-addressed URL, bound by the
 	// render engine; see BindAssets.
 	assets func(urlPath string) (string, error)
+	// routes builds page and action URLs, bound by collage to every render and
+	// action it runs; see BindRoutes.
+	routes *Routes
 	// data is the application's cross-render data cache, bound by the render
 	// engine; nil when there is none. See Cached.
 	data DataCache

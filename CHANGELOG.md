@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.37.0
+
+### Added
+
+- **`rc.URL(name, params)` and `rc.ActionURL(name, params)`**: a page's or an
+  action's URL by name from Go, in the render's own locale, falling back to the
+  default one as `{{pageURL}}` and `{{actionURL}}` do. They work in a data
+  handler and in an action's handler, so an action redirecting by name, or a
+  fragment building a canonical URL, no longer needs the `*App` passed to it.
+  They build through `App.URL`'s path builder: a value is one escaped path
+  segment, and one holding `/` or being `.` or `..` is `ErrRouteParams`, so a
+  value from the request cannot make the path another site's URL. On a
+  `RenderContext` collage did not make, both return `ErrUnknownRoute`.
+
 ## v0.36.0
 
 ### Added

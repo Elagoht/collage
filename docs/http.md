@@ -97,7 +97,7 @@ func startPreview(_ context.Context, rc *collage.RenderContext) (*collage.Action
 	if !hmac.Equal([]byte(query.Get("secret")), []byte(os.Getenv("PREVIEW_SECRET"))) {
 		return collage.NoContent(http.StatusUnauthorized), nil
 	}
-	target, err := app.URL("blog-post", "", map[string]string{"slug": query.Get("slug")})
+	target, err := rc.URL("blog-post", map[string]string{"slug": query.Get("slug")})
 	if err != nil {
 		return nil, err
 	}

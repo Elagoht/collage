@@ -521,10 +521,15 @@ func devComment(name string, err error) []byte {
 }
 
 // bindAssets gives rc's data handlers the resolver behind {{asset}}, so rc.Asset
-// and rc.HoistStylesheet work in Go too, and the store behind collage.Cached.
+// and rc.HoistStylesheet work in Go too, the builders behind {{pageURL}} and
+// {{actionURL}}, so rc.URL and rc.ActionURL do, and the store behind
+// collage.Cached.
 func (e *SlotEngine) bindAssets(rc *types.RenderContext) {
 	if e.assetURL != nil {
 		types.BindAssets(rc, e.assetURL)
+	}
+	if e.url != nil {
+		types.BindRoutes(rc, types.Routes{Page: e.url, Action: e.actionURL, DefaultLocale: e.defaultLocale})
 	}
 	if e.dataCache != nil {
 		types.BindDataCache(rc, e.dataCache)
