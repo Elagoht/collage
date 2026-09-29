@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	htmltemplate "html/template"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -205,8 +207,17 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 			}
 		}
 
-		if !propagate && len(out) == 0 && e.devMode {
-			out = devComment(f.Name, meta.Err)
+		if !propagate {
+			// Served anyway, so this is the only place the failure shows outside
+			// DevMode: a page missing a form still answers 200.
+			if e.logger != nil {
+				e.logger.WarnContext(rc.Context(), "collage: fragment failed; the page is served without it",
+					"page", state.page, "fragment", f.Name, "locale", rc.Locale,
+					"fallback", meta.UsedFallback, "error", meta.Err)
+			}
+			if len(out) == 0 && e.devMode {
+				out = devComment(f.Name, meta.Err)
+			}
 		}
 	}
 
@@ -359,6 +370,7 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 		"pageURL":   e.pageURLFunc(rc),
 		"pageURLIn": e.pageURLInFunc(),
 		"localeURL": e.localeURLFunc(rc),
+		"actionURL": e.actionURLFunc(rc),
 
 		"fragmentURL":   e.fragmentURLFunc(rc),
 		"fragmentURLIn": e.fragmentURLInFunc(),
@@ -543,8 +555,8 @@ func (e *SlotEngine) assetFunc() func(string) (string, error) {
 // {{pageURL "blog-post" "slug" .Slug}}: the route's path in the render's own
 // locale, or in the default locale when the route has none in this one — a
 // Turkish page linking a page that exists only in English links the English one.
-func (e *SlotEngine) pageURLFunc(rc *types.RenderContext) func(string, ...string) (string, error) {
-	return func(name string, pairs ...string) (string, error) {
+func (e *SlotEngine) pageURLFunc(rc *types.RenderContext) func(string, ...reflect.Value) (string, error) {
+	return func(name string, pairs ...reflect.Value) (string, error) {
 		params, err := routeParams(name, pairs)
 		if err != nil {
 			return "", err
@@ -559,13 +571,35 @@ func (e *SlotEngine) pageURLFunc(rc *types.RenderContext) func(string, ...string
 
 // pageURLInFunc is the per-render implementation of
 // {{pageURLIn "tr" "about"}}: the route's path in exactly that locale.
-func (e *SlotEngine) pageURLInFunc() func(string, string, ...string) (string, error) {
-	return func(locale, name string, pairs ...string) (string, error) {
+func (e *SlotEngine) pageURLInFunc() func(string, string, ...reflect.Value) (string, error) {
+	return func(locale, name string, pairs ...reflect.Value) (string, error) {
 		params, err := routeParams(name, pairs)
 		if err != nil {
 			return "", err
 		}
 		return e.buildURL(name, locale, params)
+	}
+}
+
+// actionURLFunc is the per-render implementation of
+// {{actionURL "logout"}}: the path of the action registered under that name, in
+// the render's locale, or in the default locale when it has none in this one —
+// the fallback {{pageURL}} makes. A page's own action is named as it was
+// registered, "story:POST" when WithAction gave it no name.
+func (e *SlotEngine) actionURLFunc(rc *types.RenderContext) func(string, ...reflect.Value) (string, error) {
+	return func(name string, pairs ...reflect.Value) (string, error) {
+		params, err := routeParams(name, pairs)
+		if err != nil {
+			return "", err
+		}
+		if e.actionURL == nil {
+			return "", fmt.Errorf("%w: %q: this engine knows no routes", types.ErrUnknownRoute, name)
+		}
+		built, err := e.actionURL(name, rc.Locale, params)
+		if errors.Is(err, types.ErrNoPathInLocale) && rc.Locale != e.defaultLocale {
+			return e.actionURL(name, e.defaultLocale, params)
+		}
+		return built, err
 	}
 }
 
@@ -594,8 +628,8 @@ func (e *SlotEngine) localeURLFunc(rc *types.RenderContext) func(string) (string
 // {{fragmentURL "home" "cpu-usage"}}: the path the page opened for that fragment,
 // in the render's locale, or in the default locale when it opened none in this
 // one — the same fallback {{pageURL}} makes.
-func (e *SlotEngine) fragmentURLFunc(rc *types.RenderContext) func(string, string, ...string) (string, error) {
-	return func(page, fragment string, pairs ...string) (string, error) {
+func (e *SlotEngine) fragmentURLFunc(rc *types.RenderContext) func(string, string, ...reflect.Value) (string, error) {
+	return func(page, fragment string, pairs ...reflect.Value) (string, error) {
 		params, err := routeParams(page+"/"+fragment, pairs)
 		if err != nil {
 			return "", err
@@ -610,8 +644,8 @@ func (e *SlotEngine) fragmentURLFunc(rc *types.RenderContext) func(string, strin
 
 // fragmentURLInFunc is the per-render implementation of
 // {{fragmentURLIn "tr" "home" "cpu-usage"}}: the path in exactly that locale.
-func (e *SlotEngine) fragmentURLInFunc() func(string, string, string, ...string) (string, error) {
-	return func(locale, page, fragment string, pairs ...string) (string, error) {
+func (e *SlotEngine) fragmentURLInFunc() func(string, string, string, ...reflect.Value) (string, error) {
+	return func(locale, page, fragment string, pairs ...reflect.Value) (string, error) {
 		params, err := routeParams(page+"/"+fragment, pairs)
 		if err != nil {
 			return "", err
@@ -637,7 +671,12 @@ func (e *SlotEngine) buildURL(name, locale string, params map[string]string) (st
 }
 
 // routeParams turns a template's "name" "value" pairs into a map.
-func routeParams(route string, pairs []string) (map[string]string, error) {
+//
+// The pairs arrive as reflect.Values because a view model's ID is an int64 far
+// more often than a string, and {{pageURL "story" "id" .ID}} is what a template
+// writes. Taking only strings failed that call as the template ran, and in an
+// optional fragment the failure was an empty slot on a page answering 200.
+func routeParams(route string, pairs []reflect.Value) (map[string]string, error) {
 	if len(pairs)%2 != 0 {
 		return nil, fmt.Errorf("%w: %q: parameters come in name and value pairs, got %d values", types.ErrRouteParams, route, len(pairs))
 	}
@@ -646,9 +685,54 @@ func routeParams(route string, pairs []string) (map[string]string, error) {
 	}
 	params := make(map[string]string, len(pairs)/2)
 	for i := 0; i < len(pairs); i += 2 {
-		params[pairs[i]] = pairs[i+1]
+		name, ok := pathSegment(pairs[i])
+		if !ok {
+			return nil, fmt.Errorf("%w: %q: parameter name %d is %s, not a string", types.ErrRouteParams, route, i/2+1, describe(pairs[i]))
+		}
+		value, ok := pathSegment(pairs[i+1])
+		if !ok {
+			return nil, fmt.Errorf("%w: %q: parameter %q is %s; pass a string, an integer or a fmt.Stringer", types.ErrRouteParams, route, name, describe(pairs[i+1]))
+		}
+		params[name] = value
 	}
 	return params, nil
+}
+
+var stringerType = reflect.TypeFor[fmt.Stringer]()
+
+// pathSegment spells v as a path parameter: a string as itself, an integer in
+// decimal, a fmt.Stringer through String. Anything else — a float, a bool, nil —
+// has no one obvious spelling in a URL, so it is refused rather than guessed.
+func pathSegment(v reflect.Value) (string, bool) {
+	for v.IsValid() && v.Kind() == reflect.Interface {
+		v = v.Elem()
+	}
+	if !v.IsValid() || (v.Kind() == reflect.Pointer && v.IsNil()) {
+		return "", false
+	}
+	if v.Type().Implements(stringerType) && v.CanInterface() {
+		return v.Interface().(fmt.Stringer).String(), true
+	}
+	switch v.Kind() {
+	case reflect.String:
+		return v.String(), true
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return strconv.FormatInt(v.Int(), 10), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return strconv.FormatUint(v.Uint(), 10), true
+	}
+	return "", false
+}
+
+// describe names v's type for an error message.
+func describe(v reflect.Value) string {
+	for v.IsValid() && v.Kind() == reflect.Interface {
+		v = v.Elem()
+	}
+	if !v.IsValid() {
+		return "nil"
+	}
+	return "a " + v.Type().String()
 }
 
 // csrfFunc is the per-render implementation of {{csrfToken}}. It returns the hidden

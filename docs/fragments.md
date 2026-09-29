@@ -507,7 +507,11 @@ sidebar := collage.NewFragment("sidebar", "partials/sidebar.html").
 
 In development mode a failed fragment emits an HTML comment naming the fragment
 and its error instead of nothing, so a failure looks like a failure rather than
-like a section nobody wrote.
+like a section nobody wrote. In every mode it is logged, since v0.36.0, as a
+warning through `Config.Logger`: `collage: fragment failed; the page is served
+without it`, with the page, the fragment, the locale, whether a fallback covered
+for it, and the error. The page still answers 200, so the log is where a missing
+form shows in production.
 
 Any of these makes the render *degraded*, and a degraded render is served but
 never cached.
@@ -550,6 +554,7 @@ Available in every template:
 | `pageURL "name" "param" value ...` | The URL of a page or document, in this render's locale — see below |
 | `pageURLIn "tr" "name" ...` | The same, in exactly the locale given |
 | `localeURL "tr"` | The page being rendered, in another locale; empty when it has no path there |
+| `actionURL "name" "param" value ...` | The URL of an action, in this render's locale — see [Linking one](actions.md#linking-an-action) |
 | `fragmentURL "page" "fragment" "param" value ...` | The path a page opened for one of its fragments with `WithFragmentPath`, in this render's locale — see [Fragment paths](actions.md#a-fragment-at-its-own-url) |
 | `fragmentURLIn "tr" "page" "fragment" ...` | The same, in exactly the locale given |
 | `asset "/static/app.css"` | A mounted file's content-addressed URL |
@@ -576,8 +581,10 @@ which locale it is in. Link by the name the page was registered under instead:
   pattern has no placeholder for fails the render: a link that cannot be built is
   a bug to find in development, not a 404 for a reader. Values are escaped, and a
   value of `.` or `..` — which a browser would resolve as a path step — is refused.
-- **Values are strings.** Pass a number through `printf`:
-  `{{pageURL "user" "id" (printf "%d" .ID)}}`.
+- **Values are strings, integers or `fmt.Stringer`s.** `{{pageURL "story" "id" .ID}}`
+  works for an `int64` `.ID`. A float, a bool or nil fails with
+  `collage.ErrRouteParams` naming its type, since none has one obvious spelling in
+  a URL. Before v0.36.0 only strings were taken.
 
 A language switcher is `localeURL`, which keeps the page's own path parameters
 and is empty for a language the page has not been translated into:

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"reflect"
 	"strings"
 	"time"
 	"unicode"
@@ -43,20 +44,25 @@ func DefaultFuncs() template.FuncMap {
 		"pageURL":    pageURLPlaceholder,
 		"pageURLIn":  pageURLInPlaceholder,
 		"localeURL":  localeURLPlaceholder,
+		"actionURL":  actionURLPlaceholder,
 
 		"fragmentURL":   fragmentURLPlaceholder,
 		"fragmentURLIn": fragmentURLInPlaceholder,
 	}
 }
 
-// pageURLPlaceholder, pageURLInPlaceholder and localeURLPlaceholder are the
-// parse-time stand-ins for the URL functions, which need the application's
-// routes and the render's locale and are bound per render.
-func pageURLPlaceholder(name string, _ ...string) (string, error) {
+// pageURLPlaceholder, pageURLInPlaceholder, actionURLPlaceholder and
+// localeURLPlaceholder are the parse-time stand-ins for the URL functions, which
+// need the application's routes and the render's locale and are bound per render.
+func pageURLPlaceholder(name string, _ ...reflect.Value) (string, error) {
 	return "", fmt.Errorf("%w: %q", ErrURLOutsideRender, name)
 }
 
-func pageURLInPlaceholder(locale, name string, _ ...string) (string, error) {
+func pageURLInPlaceholder(locale, name string, _ ...reflect.Value) (string, error) {
+	return "", fmt.Errorf("%w: %q", ErrURLOutsideRender, name)
+}
+
+func actionURLPlaceholder(name string, _ ...reflect.Value) (string, error) {
 	return "", fmt.Errorf("%w: %q", ErrURLOutsideRender, name)
 }
 
@@ -64,11 +70,11 @@ func localeURLPlaceholder(locale string) (string, error) {
 	return "", fmt.Errorf("%w: %q", ErrURLOutsideRender, locale)
 }
 
-func fragmentURLPlaceholder(page, fragment string, _ ...string) (string, error) {
+func fragmentURLPlaceholder(page, fragment string, _ ...reflect.Value) (string, error) {
 	return "", fmt.Errorf("%w: %q %q", ErrURLOutsideRender, page, fragment)
 }
 
-func fragmentURLInPlaceholder(locale, page, fragment string, _ ...string) (string, error) {
+func fragmentURLInPlaceholder(locale, page, fragment string, _ ...reflect.Value) (string, error) {
 	return "", fmt.Errorf("%w: %q %q", ErrURLOutsideRender, page, fragment)
 }
 

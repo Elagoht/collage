@@ -25,6 +25,23 @@ app.RegisterAction(collage.NewAction("stripe-webhook").
 	Build())
 ```
 
+### Linking an action
+
+A form posting to an action on its own URL names it with `actionURL` rather than
+writing the path, so moving the action cannot leave a form posting to the old one:
+
+```html
+<form method="post" action="{{actionURL "logout"}}">{{csrfToken}}…</form>
+<form method="post" action="{{actionURL "vote" "id" .ID}}">{{csrfToken}}…</form>
+```
+
+It takes parameters as `pageURL` does, uses the render's locale, and falls back to
+the default one when the action has no path in it. A page's own action is named as
+it was registered: `"new-post:POST"` for the `WithAction` above. From Go it is
+`app.ActionURL(name, locale, params)`. An unknown name is `collage.ErrUnknownRoute`.
+Actions have names of their own, apart from pages, because a `login` page and a
+`login` action are the usual pair.
+
 ## A method nothing answers is a 405
 
 A `POST` to a page with no action used to render the page. It is now a 405 carrying

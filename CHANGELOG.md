@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.36.0
+
+### Added
+
+- **`{{actionURL "logout"}}` and `App.ActionURL(name, locale, params)`**: an
+  action's URL by name, as `pageURL` and `App.URL` give a page's. A form posting
+  to an action on its own URL no longer writes the path. It takes parameters as
+  `pageURL` does and falls back to the default locale in a template. A page's own
+  action is under the name it was registered with, `"story:POST"` when
+  `WithAction` gave it none. Actions keep a namespace of their own, apart from
+  pages, because a `login` page and a `login` action are the usual pair.
+- **A contained fragment failure is logged**, as a warning through
+  `Config.Logger`, in every mode. Such a failure is in a fragment that is not
+  `Required`, with or without a fallback. The log line names the page, the
+  fragment, the locale, whether a fallback covered for it, and the error. Before,
+  outside dev mode, it showed only as a missing section on a page answering 200.
+
+### Changed
+
+- **`pageURL`, `pageURLIn`, `fragmentURL`, `fragmentURLIn` take integers and
+  `fmt.Stringer`s as parameters**, not only strings: `{{pageURL "story" "id"
+  .ID}}` works for an `int64` ID. Before, it failed as the template ran,
+  `expected string; got int64`. A float, a bool or nil is refused with
+  `ErrRouteParams`, naming its type.
+
 ## v0.35.0
 
 ### Changed

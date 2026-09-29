@@ -11,6 +11,7 @@ package render
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -167,6 +168,15 @@ type Options struct {
 	// locale, and is what backs {{pageURL}}, {{pageURLIn}} and {{localeURL}}.
 	// Nil leaves those functions reporting that no routes are known.
 	URL func(name, locale string, params map[string]string) (string, error)
+	// ActionURL builds the path of the action registered as name, in locale, and
+	// is what backs {{actionURL}}. Nil leaves it reporting that no routes are
+	// known.
+	ActionURL func(name, locale string, params map[string]string) (string, error)
+	// Logger receives a warning for every fragment whose failure the render
+	// contained: one that was not Required, whether or not a fallback covered
+	// for it. Such a page is still served, so without the warning the failure
+	// shows nowhere outside DevMode. Nil logs nothing.
+	Logger *slog.Logger
 	// FragmentURL builds the path a page opened for one of its fragments, in
 	// locale, and is what backs {{fragmentURL}} and {{fragmentURLIn}}. Nil leaves
 	// those functions reporting that no routes are known.
@@ -202,6 +212,8 @@ type SlotEngine struct {
 	csrfField      string
 	url            func(name, locale string, params map[string]string) (string, error)
 	fragmentURL    func(page, fragment, locale string, params map[string]string) (string, error)
+	actionURL      func(name, locale string, params map[string]string) (string, error)
+	logger         *slog.Logger
 	renderFuncs    map[string]func(*types.RenderContext) any // any: html/template.FuncMap's own value type
 	defaultLocale  string
 	dataCache      types.DataCache
@@ -230,6 +242,8 @@ func New(tmpl template.Engine, opts Options) *SlotEngine {
 		csrfField:      opts.CSRFField,
 		url:            opts.URL,
 		fragmentURL:    opts.FragmentURL,
+		actionURL:      opts.ActionURL,
+		logger:         opts.Logger,
 		renderFuncs:    opts.RenderFuncs,
 		defaultLocale:  opts.DefaultLocale,
 		dataCache:      opts.DataCache,

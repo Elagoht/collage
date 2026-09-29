@@ -226,8 +226,9 @@ type TemplateConfig struct {
 	// parse in New rather than at the first request.
 	//
 	// Overriding a per-render function — slot, hoist, asset, stylesheet,
-	// csrfToken, pageURL, pageURLIn, localeURL, fragmentURL, fragmentURLIn — is possible but pointless: each
-	// needs the render it runs in, so the render engine rebinds all of them on
+	// csrfToken, pageURL, pageURLIn, localeURL, actionURL, fragmentURL,
+	// fragmentURLIn — is possible but pointless: each needs the render it runs
+	// in, so the render engine rebinds all of them on
 	// every render, and whatever is registered here is never the implementation
 	// that runs.
 	Funcs template.FuncMap

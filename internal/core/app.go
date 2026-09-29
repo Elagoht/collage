@@ -552,6 +552,8 @@ func New(cfg Config) (*App, error) {
 		CSRFField:     cfg.Security.CSRFFieldName,
 		URL:           app.URL,
 		FragmentURL:   app.FragmentURL,
+		ActionURL:     app.ActionURL,
+		Logger:        logger,
 		RenderFuncs:   app.renderFuncs,
 		DefaultLocale: cfg.Locale.Default,
 		DataCache:     app.dataCacheFor(),

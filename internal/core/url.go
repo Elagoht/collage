@@ -81,6 +81,46 @@ func (a *App) URL(name, locale string, params map[string]string) (string, error)
 	return path, nil
 }
 
+// ActionURL returns the path of the action registered as name, in locale, with
+// params filling its pattern — what a form's action attribute holds:
+//
+//	app.ActionURL("logout", "tr", nil)                               // "/tr/cikis"
+//	app.ActionURL("vote", "", map[string]string{"id": "42"})         // "/stories/42/vote"
+//
+// It is URL's twin for actions, kept apart because an action is often named after
+// the page its form is on — a "login" page and a "login" action — and one
+// namespace would make that name ambiguous. A page's own action is under the name
+// it was registered with: "story:POST" when WithAction gave it none. It is as
+// strict as URL: an unknown name is ErrUnknownRoute, a locale the action has no
+// path in is ErrNoPathInLocale, and params that do not fill the pattern exactly
+// are ErrRouteParams.
+//
+// Templates reach it through {{actionURL}}.
+func (a *App) ActionURL(name, locale string, params map[string]string) (string, error) {
+	if locale == "" {
+		locale = a.cfg.Locale.Default
+	}
+	if !a.localeReachable(locale) {
+		return "", fmt.Errorf("%w: %q", ErrLocaleUnreachable, locale)
+	}
+
+	a.mu.RLock()
+	action := a.actions[name]
+	a.mu.RUnlock()
+	if action == nil {
+		return "", fmt.Errorf("%w: no action named %q", types.ErrUnknownRoute, name)
+	}
+	pattern, found := action.Paths[locale]
+	if !found {
+		return "", fmt.Errorf("%w: action %q has no path in %q", types.ErrNoPathInLocale, name, locale)
+	}
+	path, err := router.BuildPath(pattern, params)
+	if err != nil {
+		return "", fmt.Errorf("collage: URL for action %q: %w", name, err)
+	}
+	return a.prefixLocale(path, locale), nil
+}
+
 // FragmentURL returns the path page opened for its fragment named fragment with
 // WithFragmentPath, in locale, with params filling its pattern — the URL a script
 // fetches to refresh that part of the page:
