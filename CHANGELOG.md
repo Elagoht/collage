@@ -1,5 +1,63 @@
 # Changelog
 
+## v0.39.0
+
+### Breaking
+
+- **A cacheable page's shared render no longer sees per-reader context.** One
+  render of a `Static`, `Incremental` or `Shared` page is served to every reader
+  whose request has its cache key. That render already had the reader's cookies,
+  headers, body and address stripped from it; it kept the request context's
+  values, so a data handler that read a value the application's middleware had
+  stored — a signed-in user, a tenant, a request id — read the first reader's, and
+  it was then cached and served to everyone after. The context is now stripped to
+  the framework's own request-independent values (the route and the vary set) for
+  a shared render, the way the rest of the request already was.
+
+  What to do: a middleware that made a value available to a cacheable page's data
+  handler by putting it in the context — `collage.Vary(r, "Accept-Language", lang)`
+  followed by `r.WithContext(context.WithValue(...))` — now declares it with
+  `Vary` alone and the handler reads it with the new `collage.Varied(rc, header)`.
+  The value is safe to read there precisely because it is in the cache key, so
+  each value has its own cached page; a value that is not a cache dimension does
+  not belong in a shared render, and its page should be `Dynamic`. In development,
+  a hidden value a handler actually reads is logged. A dynamic page, and a handler
+  reading the context off the request on a page that is not cached, are unchanged.
+
+### Added
+
+- **`collage.Varied(rc, header)`** returns the value a middleware declared for a
+  request header with `collage.Vary`, and whether one was declared. It is how a
+  data handler reads a cache dimension on a cacheable page — from the cache key,
+  where reading is safe — rather than from the request context.
+
+- **Baseline security headers on every response.** A page, a cached hit, an
+  action and a mounted asset now carry `X-Content-Type-Options: nosniff` and
+  `X-Frame-Options: SAMEORIGIN` unless the application turns them off, so a site
+  that has not installed the `elagoht/secure` plugin still has MIME-sniff and
+  clickjacking protection on its forms. `Security.FrameOptions` sets the value
+  (`"-"` sends none, empty is `SAMEORIGIN`, anything else is verbatim) and
+  `Security.NoSniff` turns nosniff off when it points at `false`. A plugin that
+  sets its own overrides these; the full Content-Security-Policy, HSTS and the
+  rest remain what `elagoht/secure` adds.
+
+### Changed
+
+- **Forgery tokens expire.** A CSRF token now carries the time it was issued,
+  signed alongside its nonce, and is refused once it is older than
+  `Security.CSRFTokenTTL` — twelve hours by default. A reader with a long-open
+  form is issued a fresh token rather than refused, so ordinary use is unchanged;
+  what changes is that a token that leaks can no longer be replayed indefinitely.
+  Set `CSRFTokenTTL` to a negative value to keep the previous behaviour, a token
+  valid for as long as its signature.
+
+- **The disk cache is bounded.** It honours `Cache.MaxEntries` — the cap the
+  in-memory cache already used, ten thousand by default — and evicts the oldest
+  entries by file modification time once it is reached, so an anonymous caller
+  varying the request `Host` or query (both cache-key dimensions) can no longer
+  fill the disk one never-evicted file at a time. A disk cache that should be
+  unbounded sets `MaxEntries` to a negative value, deliberately.
+
 ## v0.38.0
 
 ### Breaking
