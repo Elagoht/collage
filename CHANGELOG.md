@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.39.1
+
+### Fixed
+
+- **A test file was not `gofmt`-clean**, which failed the release check. No change
+  to the library or its behaviour; `elagoht/secure` v0.1.4 pairs with this to make
+  a header turned off there override v0.39.0's baseline.
+
 ## v0.39.0
 
 ### Breaking
