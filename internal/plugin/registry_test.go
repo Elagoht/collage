@@ -459,6 +459,7 @@ func TestRegistry_PluginWithNoHooksIsNeverCalled(t *testing.T) {
 type fakeHost struct{}
 
 func (fakeHost) DevMode() bool                                               { return false }
+func (fakeHost) BaseURL() string                                            { return "" }
 func (fakeHost) Pages() []*types.Page                                        { return nil }
 func (fakeHost) Page(name string) (*types.Page, bool)                        { return nil, false }
 func (fakeHost) InvalidateTags(ctx context.Context, tags ...string) error    { return nil }

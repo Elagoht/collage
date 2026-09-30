@@ -41,6 +41,17 @@
   sets its own overrides these; the full Content-Security-Policy, HSTS and the
   rest remain what `elagoht/secure` adds.
 
+- **`Config.BaseURL` and `Host.BaseURL()`**: the site's own public origin —
+  `"https://example.com"` — in one place, for the absolute URLs a render cannot
+  otherwise know: a canonical link, an `og:url`, a sitemap's entries, a feed's self
+  link. It is distinct from `Server.Host`, the address the process listens on, which
+  behind a proxy is a loopback or a container name, not the origin a reader typed.
+  It must be a bare origin — a scheme and a host, no path, query or fragment — and
+  `Validate` refuses anything else with `ErrInvalidBaseURL`; an empty value is fine,
+  for a site that builds no absolute URLs. A plugin reads it with `host.BaseURL()`
+  (reported without a trailing slash) in `Configure` or `Init`, rather than taking
+  its own copy, so a site configures its origin once.
+
 ### Changed
 
 - **Forgery tokens expire.** A CSRF token now carries the time it was issued,

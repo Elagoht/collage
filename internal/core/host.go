@@ -46,6 +46,12 @@ func (h *hostView) DevMode() bool {
 	return h.app.DevMode()
 }
 
+// BaseURL returns the site's public origin without a trailing slash, or "" when
+// the application set none.
+func (h *hostView) BaseURL() string {
+	return h.app.BaseURL()
+}
+
 // Pages returns every page registered with the application, each a defensive copy.
 func (h *hostView) Pages() []*types.Page {
 	return h.app.Pages()
@@ -160,6 +166,10 @@ var _ plugin.ConfigHost = (*configHostView)(nil)
 
 // DevMode reports whether the application is running in development mode.
 func (h *configHostView) DevMode() bool { return h.app.cfg.DevMode || h.app.cfg.Template.DevMode }
+
+// BaseURL returns the site's public origin without a trailing slash, or "" when
+// the application set none.
+func (h *configHostView) BaseURL() string { return h.app.cfg.BaseURL }
 
 // Logger returns the application's structured logger.
 func (h *configHostView) Logger() *slog.Logger { return h.app.logger }

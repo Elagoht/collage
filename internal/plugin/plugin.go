@@ -93,6 +93,10 @@ type Plugin interface {
 type Host interface {
 	// DevMode reports whether the application is running in development mode.
 	DevMode() bool
+	// BaseURL returns the site's public origin without a trailing slash — the
+	// scheme and host an absolute URL is built on, from Config.BaseURL — or "" when
+	// the application set none, in which case a plugin that needs one takes its own.
+	BaseURL() string
 	// Pages returns every page registered with the application, each a defensive
 	// copy — see the Host doc comment for exactly what "defensive copy" means
 	// here. Mutating a returned Page does not affect the framework's own, with the

@@ -7,7 +7,9 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
@@ -57,6 +59,11 @@ var ErrLocaleDefaultNotSupported = errors.New("collage: default locale not in su
 // per-field sentinel.
 var ErrNegativeDuration = errors.New("collage: negative duration")
 
+// ErrInvalidBaseURL is returned when Config.BaseURL is set to something that is not
+// a bare origin: it must have an http or https scheme and a host, and no path,
+// query or fragment.
+var ErrInvalidBaseURL = errors.New("collage: BaseURL must be a bare origin, scheme://host[:port]")
+
 // Config is the framework's top-level configuration.
 //
 // It is mirrored field for field by internal/core.Config. New applies the defaults
@@ -91,6 +98,19 @@ type Config struct {
 	Logger *slog.Logger
 	// Server configures the HTTP server.
 	Server ServerConfig
+
+	// BaseURL is the site's own public origin — "https://example.com" — for the
+	// absolute URLs a render cannot otherwise know: a canonical link, an og:url, a
+	// sitemap's entries, a feed's self link. It is distinct from Server.Host, which
+	// is the address the process listens on and is often a loopback or a container
+	// name behind a proxy, not the origin a reader typed.
+	//
+	// It is a bare origin: a scheme (http or https) and a host, with an optional
+	// port, and no path, query or fragment. An empty BaseURL is not an error — a
+	// site that builds no absolute URLs needs none, and a plugin that does may take
+	// its own — and Host.BaseURL reports it, without a trailing slash, to a plugin
+	// that asks. Validate rejects a value that is not a bare origin.
+	BaseURL string
 
 	// Security configures request-forgery protection.
 	Security SecurityConfig
@@ -503,7 +523,40 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.BaseURL != "" && !isBareOrigin(c.BaseURL) {
+		return fmt.Errorf("%w: %q", ErrInvalidBaseURL, c.BaseURL)
+	}
+
 	return nil
+}
+
+// isBareOrigin reports whether raw is a scheme (http or https), a host, and
+// nothing else — no path beyond "/", no query, no fragment, no user info. It is
+// what Config.BaseURL must be, so a plugin can join a path to it without guessing
+// what it already ends with.
+func isBareOrigin(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	switch {
+	case u.Scheme != "http" && u.Scheme != "https":
+		return false
+	case u.Host == "", u.User != nil, u.Opaque != "":
+		return false
+	case u.Path != "" && u.Path != "/":
+		return false
+	case u.RawQuery != "", u.Fragment != "", u.RawFragment != "":
+		return false
+	}
+	return true
+}
+
+// normalizeBaseURL trims a single trailing slash from a bare origin, so
+// Host.BaseURL reports "https://example.com", never "https://example.com/", and a
+// plugin joining "/sitemap.xml" to it gets one slash rather than two.
+func normalizeBaseURL(raw string) string {
+	return strings.TrimSuffix(raw, "/")
 }
 
 // IsDevMode reports the config's effective development-mode flag: c.DevMode or

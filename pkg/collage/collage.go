@@ -454,6 +454,7 @@ func toCoreConfig(cfg *Config) core.Config {
 	return core.Config{
 		DevMode:  cfg.DevMode,
 		DevWatch: cfg.DevWatch,
+		BaseURL:  normalizeBaseURL(cfg.BaseURL),
 		Logger:   cfg.Logger,
 		Server: core.ServerConfig{
 			Host:            cfg.Server.Host,

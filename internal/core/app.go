@@ -129,6 +129,11 @@ type Config struct {
 	DevMode bool
 	// DevWatch lists directories whose changes reload a development page.
 	DevWatch []string
+	// BaseURL is the site's public origin, without a trailing slash, for the
+	// absolute URLs a render cannot otherwise know. Empty when the application set
+	// none. It is reported to plugins through Host.BaseURL. The public Config
+	// validates and normalises it before it arrives here.
+	BaseURL string
 	// Security configures request-forgery protection.
 	Security SecurityConfig
 	// Logger is the structured logger the framework writes through and hands to
@@ -605,6 +610,14 @@ func (a *App) DefaultLocale() string {
 // every other locale's do: "/en/about" rather than "/about".
 func (a *App) PrefixDefault() bool {
 	return a.cfg.Locale.PrefixDefault && !a.cfg.Locale.DisablePathLocale
+}
+
+// BaseURL returns the site's public origin without a trailing slash, or "" when
+// the application set none. It is the one place a plugin building an absolute URL
+// — a sitemap, a feed, a canonical link — should read it from, rather than taking
+// its own copy.
+func (a *App) BaseURL() string {
+	return a.cfg.BaseURL
 }
 
 // Logger returns the application's structured logger.
