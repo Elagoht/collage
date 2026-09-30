@@ -185,6 +185,12 @@ type SecurityConfig struct {
 	// DisableCSRF turns forgery checking off for the whole application. It is for
 	// an application with no browser-submitted forms at all.
 	DisableCSRF bool
+	// CSRFTokenTTL is how long a forgery token stays valid after it is issued. The
+	// issue time is signed into the token, so a token past this age is refused and
+	// a fresh one is minted for the next form. Zero selects a sensible default (12
+	// hours); a negative value keeps a token valid for as long as its signature
+	// verifies, which is the behaviour of a token with no expiry at all.
+	CSRFTokenTTL time.Duration
 	// FrameOptions is the X-Frame-Options header sent on every response, which
 	// keeps the site's pages — and so its forms — from being framed by another
 	// origin and clicked through. It defaults to "SAMEORIGIN"; "-" sends none, and

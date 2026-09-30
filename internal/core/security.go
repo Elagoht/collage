@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"log/slog"
+	"time"
 
 	"github.com/Elagoht/collage/internal/csrf"
 	"github.com/Elagoht/collage/internal/types"
@@ -39,6 +40,10 @@ type SecurityConfig struct {
 	// the protection away, which is why it is a field rather than the absence of a
 	// key.
 	DisableCSRF bool
+	// CSRFTokenTTL is how long a forgery token stays valid after it is issued.
+	// Zero selects the default (csrf.DefaultMaxAge); a negative value disables
+	// expiry, keeping a token valid for as long as its signature verifies.
+	CSRFTokenTTL time.Duration
 	// FrameOptions is the X-Frame-Options header value sent on every response.
 	// Empty means the default "SAMEORIGIN"; "-" sends none; anything else is sent
 	// verbatim. See baselineHeaders.
@@ -93,6 +98,7 @@ func buildCSRF(cfg SecurityConfig, logger *slog.Logger) (*csrf.Guard, error) {
 		FieldName:      cfg.CSRFFieldName,
 		HeaderName:     cfg.CSRFHeaderName,
 		TrustedOrigins: cfg.CSRFTrustedOrigins,
+		MaxAge:         cfg.CSRFTokenTTL,
 	})
 }
 

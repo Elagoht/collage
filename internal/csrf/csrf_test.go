@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func guard(t *testing.T) *Guard {
@@ -358,5 +359,78 @@ func TestPersonalise_ReplacesOnlyTheRenderedField(t *testing.T) {
 	}
 	if !g.Carries([]byte(content)) || g.Carries([]byte(`<p>`+m+`</p>`)) {
 		t.Error("Carries() must report the rendered field and only it")
+	}
+}
+
+// A token is refused once it is older than MaxAge, and a request carrying the
+// expired one is minted a fresh token rather than handed the stale one back.
+func TestToken_ExpiresAfterMaxAge(t *testing.T) {
+	clock := time.Now()
+	g, err := New(Config{Key: []byte("a key of some length"), MaxAge: time.Hour, Now: func() time.Time { return clock }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	token, minted, err := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil || !minted {
+		t.Fatalf("TokenFor: err=%v minted=%v, want a fresh token", err, minted)
+	}
+	if !g.valid(token) {
+		t.Fatal("a token is invalid the moment it is minted")
+	}
+
+	clock = clock.Add(59 * time.Minute)
+	if !g.valid(token) {
+		t.Error("token expired before MaxAge")
+	}
+
+	clock = clock.Add(2 * time.Minute) // 61 minutes old, past the hour
+	if g.valid(token) {
+		t.Error("token is still valid past MaxAge")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: g.CookieName(), Value: token})
+	if _, minted, err := g.TokenFor(req); err != nil || !minted {
+		t.Errorf("TokenFor on an expired cookie: err=%v minted=%v, want a fresh token minted", err, minted)
+	}
+}
+
+// A negative MaxAge disables expiry: a token stays valid for as long as its
+// signature does.
+func TestToken_NegativeMaxAgeNeverExpires(t *testing.T) {
+	clock := time.Now()
+	g, err := New(Config{Key: []byte("a key of some length"), MaxAge: -1, Now: func() time.Time { return clock }})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	token, _, err := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatalf("TokenFor: %v", err)
+	}
+	clock = clock.Add(1000 * time.Hour)
+	if !g.valid(token) {
+		t.Error("a token with expiry disabled should stay valid")
+	}
+}
+
+// The issue time is under the signature: moving it forward to dodge expiry
+// invalidates the token.
+func TestToken_TamperedIssueTimeIsRefused(t *testing.T) {
+	g, err := New(Config{Key: []byte("a key of some length"), MaxAge: time.Hour})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	token, _, err := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+	if err != nil {
+		t.Fatalf("TokenFor: %v", err)
+	}
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 {
+		t.Fatalf("token has %d parts, want nonce.issued.sig", len(parts))
+	}
+	tampered := parts[0] + "." + "99999999999" + "." + parts[2]
+	if g.valid(tampered) {
+		t.Error("a token with a rewritten issue time was accepted")
 	}
 }

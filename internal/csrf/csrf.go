@@ -35,7 +35,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Elagoht/collage/internal/ascii"
 )
@@ -68,6 +70,8 @@ type Guard struct {
 	cookieName string
 	fieldName  string
 	headerName string
+	maxAge     time.Duration // 0 disables the age check
+	now        func() time.Time
 	origin     *http.CrossOriginProtection
 }
 
@@ -80,7 +84,20 @@ type Config struct {
 	// TrustedOrigins are other origins whose forms may post here, each spelled
 	// "scheme://host[:port]".
 	TrustedOrigins []string
+	// MaxAge is how long a token stays valid after it was issued. The issue time
+	// is signed into the token, so it cannot be moved without invalidating the
+	// signature; past MaxAge the token is refused and TokenFor mints a fresh one.
+	// Zero selects the default; a negative value disables the age check, keeping a
+	// token valid for as long as its signature verifies.
+	MaxAge time.Duration
+	// Now overrides the clock, for tests.
+	Now func() time.Time
 }
+
+// DefaultMaxAge is the token lifetime used when Config.MaxAge is zero: long
+// enough that a form filled at a reader's own pace still posts, short enough that
+// a token that leaks cannot be replayed indefinitely.
+const DefaultMaxAge = 12 * time.Hour
 
 // New returns a Guard. A nil or empty Key is a programming error the caller must
 // have resolved already — core generates one and warns when the application set
@@ -94,7 +111,18 @@ func New(cfg Config) (*Guard, error) {
 		cookieName: cfg.CookieName,
 		fieldName:  cfg.FieldName,
 		headerName: cfg.HeaderName,
+		maxAge:     cfg.MaxAge,
+		now:        cfg.Now,
 		origin:     http.NewCrossOriginProtection(),
+	}
+	switch {
+	case cfg.MaxAge == 0:
+		g.maxAge = DefaultMaxAge
+	case cfg.MaxAge < 0:
+		g.maxAge = 0 // disabled: the signature alone keeps a token valid
+	}
+	if g.now == nil {
+		g.now = time.Now
 	}
 	for _, origin := range cfg.TrustedOrigins {
 		canonical, err := canonicalOrigin(origin)
@@ -321,23 +349,45 @@ func parseForm(r *http.Request) error {
 	return nil
 }
 
-// mint returns a fresh token: a random nonce and its signature.
+// mint returns a fresh token: a random nonce, the time it was issued, and a
+// signature over both. The issue time travels in the token so the guard need keep
+// no per-token state to expire it, and signing it is what keeps a reader from
+// moving it forward.
 func (g *Guard) mint() (string, error) {
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
 		return "", err
 	}
-	encoded := base64.RawURLEncoding.EncodeToString(nonce)
-	return encoded + "." + g.sign(encoded), nil
+	payload := base64.RawURLEncoding.EncodeToString(nonce) + "." + strconv.FormatInt(g.now().Unix(), 10)
+	return payload + "." + g.sign(payload), nil
 }
 
-// valid reports whether token carries a signature this guard produced.
+// valid reports whether token carries a signature this guard produced and, unless
+// the age check is disabled, was issued no longer ago than maxAge.
 func (g *Guard) valid(token string) bool {
-	nonce, signature, found := strings.Cut(token, ".")
-	if !found || nonce == "" || signature == "" {
+	nonce, rest, found := strings.Cut(token, ".")
+	if !found {
 		return false
 	}
-	return hmac.Equal([]byte(signature), []byte(g.sign(nonce)))
+	issued, signature, found := strings.Cut(rest, ".")
+	if !found || nonce == "" || issued == "" || signature == "" {
+		return false
+	}
+	if !hmac.Equal([]byte(signature), []byte(g.sign(nonce+"."+issued))) {
+		return false
+	}
+	if g.maxAge <= 0 {
+		return true
+	}
+	seconds, err := strconv.ParseInt(issued, 10, 64)
+	if err != nil {
+		return false
+	}
+	// The signature has already established issued was not tampered with, so the
+	// only thing left to reject is a token simply too old. A future issue time can
+	// come of clock skew between instances sharing a key; it is not refused, since
+	// it only shortens the token's own life.
+	return g.now().Unix()-seconds <= int64(g.maxAge/time.Second)
 }
 
 // sign returns the signature for nonce.
