@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -185,5 +186,83 @@ func TestDisk_ClearEmptiesIt(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Errorf("%d entries left after Clear", len(entries))
+	}
+}
+
+// TestDisk_EvictsOldestOverMaxEntries: the cap holds, so an anonymous caller
+// choosing distinct keys (through the Host or the query, which are in the cache
+// key) cannot fill the disk one never-evicted file at a time. The oldest go first.
+func TestDisk_EvictsOldestOverMaxEntries(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	c, err := NewDisk(DiskConfig{Dir: dir, Version: "v", DefaultTTL: time.Minute, MaxEntries: 8})
+	if err != nil {
+		t.Fatalf("NewDisk: %v", err)
+	}
+
+	const n = 40
+	for i := 0; i < n; i++ {
+		key := fmt.Sprintf("k%02d", i)
+		if _, err := c.Set(ctx, key, []byte(key), time.Minute); err != nil {
+			t.Fatalf("Set %s: %v", key, err)
+		}
+	}
+
+	if got := c.countEntries(); got > 8 {
+		t.Errorf("entries on disk = %d, want <= MaxEntries 8: the cap did not hold", got)
+	}
+	if _, _, ok := c.Get(ctx, "k39"); !ok {
+		t.Error("the most recently written entry was evicted")
+	}
+	if _, _, ok := c.Get(ctx, "k00"); ok {
+		t.Error("the oldest entry was not evicted past the cap")
+	}
+}
+
+// TestDisk_NegativeMaxEntriesIsUnlimited: a deliberately unbounded cache keeps
+// everything, matching the project-wide convention.
+func TestDisk_NegativeMaxEntriesIsUnlimited(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	c, err := NewDisk(DiskConfig{Dir: dir, Version: "v", DefaultTTL: time.Minute, MaxEntries: -1})
+	if err != nil {
+		t.Fatalf("NewDisk: %v", err)
+	}
+	for i := 0; i < 50; i++ {
+		if _, err := c.Set(ctx, fmt.Sprintf("k%02d", i), []byte("x"), time.Minute); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	if got := c.countEntries(); got != 50 {
+		t.Errorf("entries = %d, want all 50 kept when MaxEntries is negative", got)
+	}
+}
+
+// TestDisk_CapHoldsAcrossARestart: a new cache over a full directory counts what
+// is there, so the cap is not reset to zero by a restart.
+func TestDisk_CapHoldsAcrossARestart(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	first, err := NewDisk(DiskConfig{Dir: dir, Version: "v", DefaultTTL: time.Minute, MaxEntries: 8})
+	if err != nil {
+		t.Fatalf("NewDisk: %v", err)
+	}
+	for i := 0; i < 8; i++ {
+		if _, err := first.Set(ctx, fmt.Sprintf("a%02d", i), []byte("x"), time.Minute); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+
+	second, err := NewDisk(DiskConfig{Dir: dir, Version: "v", DefaultTTL: time.Minute, MaxEntries: 8})
+	if err != nil {
+		t.Fatalf("NewDisk restart: %v", err)
+	}
+	for i := 0; i < 20; i++ {
+		if _, err := second.Set(ctx, fmt.Sprintf("b%02d", i), []byte("x"), time.Minute); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	if got := second.countEntries(); got > 8 {
+		t.Errorf("entries after restart = %d, want <= 8: the restart lost the running count", got)
 	}
 }

@@ -75,6 +75,7 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 			Dir:        cfg.Cache.Dir,
 			Version:    version,
 			DefaultTTL: cfg.Cache.DefaultTTL,
+			MaxEntries: cfg.Cache.MaxEntries,
 		})
 		if errors.Is(err, cache.ErrEmptyCacheDir) || errors.Is(err, cache.ErrEmptyCacheVersion) {
 			return nil, err

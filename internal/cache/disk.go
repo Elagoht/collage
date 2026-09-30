@@ -13,6 +13,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,11 @@ var ErrEmptyCacheDir = errors.New("collage: disk cache needs a directory")
 // a different version reads a different directory and finds nothing.
 var ErrEmptyCacheVersion = errors.New("collage: disk cache needs a version")
 
+// evictBatch sets how far below MaxEntries a cap-triggered eviction removes: down
+// to maxEntries - maxEntries/evictBatch. Removing a batch rather than a single
+// entry amortises the directory scan over that many later inserts.
+const evictBatch = 16
+
 // DiskConfig configures a DiskCache.
 type DiskConfig struct {
 	// Dir is the directory entries are stored under. Required.
@@ -44,6 +50,13 @@ type DiskConfig struct {
 	// DefaultTTL is the TTL used when Set is called with zero or less. Defaults to
 	// five minutes.
 	DefaultTTL time.Duration
+	// MaxEntries caps the number of stored entries, oldest evicted first by file
+	// modification time. Zero means "use the default" (10000); a negative value
+	// means unlimited, which a disk cache open to anonymous writes should set only
+	// deliberately — the cache key includes the request's Host and, by default, its
+	// whole query, so without a cap an anonymous caller choosing those fills the
+	// disk one never-evicted file at a time.
+	MaxEntries int
 	// Now overrides the clock, for tests.
 	Now func() time.Time
 }
@@ -62,12 +75,18 @@ type DiskConfig struct {
 type DiskCache struct {
 	dir        string
 	defaultTTL time.Duration
+	maxEntries int
 	now        func() time.Time
 
 	// mu serialises writes and removals. Reads go to the filesystem directly: an
 	// entry file is written atomically, so a reader sees either the whole previous
 	// entry or the whole new one.
 	mu sync.Mutex
+	// entries is an in-memory count of stored files, kept only to decide when to
+	// scan for eviction. It is approximate — an invalidation does not adjust it —
+	// but evictIfNeeded recounts from disk before removing anything, so an
+	// inflated count costs at worst a wasted scan, never an over-eviction.
+	entries int
 }
 
 // header is the JSON line at the front of an entry file.
@@ -93,6 +112,9 @@ func NewDisk(cfg DiskConfig) (*DiskCache, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
+	if cfg.MaxEntries == 0 {
+		cfg.MaxEntries = defaultMaxEntries
+	}
 
 	sum := sha256.Sum256([]byte(cfg.Version))
 	dir := filepath.Join(cfg.Dir, hex.EncodeToString(sum[:8]))
@@ -100,7 +122,29 @@ func NewDisk(cfg DiskConfig) (*DiskCache, error) {
 		return nil, fmt.Errorf("collage: disk cache directory %s: %w", dir, err)
 	}
 
-	return &DiskCache{dir: dir, defaultTTL: cfg.DefaultTTL, now: cfg.Now}, nil
+	c := &DiskCache{dir: dir, defaultTTL: cfg.DefaultTTL, maxEntries: cfg.MaxEntries, now: cfg.Now}
+	// Count what a previous process left here, so the cap holds across restarts
+	// rather than only within one run. Best-effort: an unreadable directory starts
+	// the count at zero and the first eviction scan corrects it.
+	c.entries = c.countEntries()
+	return c, nil
+}
+
+// countEntries returns how many stored entry files the directory holds, ignoring
+// temporary files, dotfiles and subdirectories — the same set Invalidate walks.
+func (c *DiskCache) countEntries() int {
+	dirEntries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, entry := range dirEntries {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		n++
+	}
+	return n
 }
 
 // Dir is where this cache stores its entries, version subdirectory included.
@@ -178,10 +222,67 @@ func (c *DiskCache) SetTagged(_ context.Context, key string, content []byte, ttl
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Whether this key is already stored decides whether the write adds an entry
+	// or replaces one, and so whether it counts toward the cap.
+	_, statErr := os.Stat(path)
+	isNew := errors.Is(statErr, fs.ErrNotExist)
 	if err := c.writeAtomic(path, buf.Bytes()); err != nil {
 		return "", err
 	}
+	if isNew {
+		c.entries++
+		c.evictIfNeeded()
+	}
 	return etag, nil
+}
+
+// evictIfNeeded removes the oldest entries, by file modification time, once the
+// stored count passes maxEntries. Called with c.mu held. It recounts from disk
+// before removing, so it never over-evicts on an inflated in-memory count, and it
+// removes down to a fraction below the cap so the scan is paid once per many
+// inserts rather than on every insert at a full cache.
+func (c *DiskCache) evictIfNeeded() {
+	if c.maxEntries <= 0 || c.entries <= c.maxEntries {
+		return
+	}
+
+	dirEntries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return // best-effort: a cap is not worth failing a write over
+	}
+	type stored struct {
+		name    string
+		modTime time.Time
+	}
+	files := make([]stored, 0, len(dirEntries))
+	for _, entry := range dirEntries {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, stored{entry.Name(), info.ModTime()})
+	}
+
+	c.entries = len(files)
+	if c.entries <= c.maxEntries {
+		return // the in-memory count was stale; nothing to do
+	}
+
+	// Down to a batch below the cap, so the next scan is a batch of inserts away.
+	target := c.maxEntries - c.maxEntries/evictBatch
+	if target < 1 {
+		target = 1
+	}
+	remove := c.entries - target
+	sort.Slice(files, func(i, j int) bool { return files[i].modTime.Before(files[j].modTime) })
+	for i := 0; i < remove && i < len(files); i++ {
+		if err := os.Remove(filepath.Join(c.dir, files[i].name)); err == nil || errors.Is(err, fs.ErrNotExist) {
+			c.entries--
+		}
+	}
 }
 
 // Invalidate removes every entry carrying any of tags.
@@ -246,6 +347,7 @@ func (c *DiskCache) InvalidateKey(_ context.Context, key string) error {
 func (c *DiskCache) Clear(_ context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.entries = 0
 
 	entries, err := os.ReadDir(c.dir)
 	if err != nil {
