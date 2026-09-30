@@ -152,7 +152,7 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
 | `Handle(prefix, http.Handler) error` | Serve a handler under a prefix ending in `/`, or at one exact path without it (`/metrics`), as `App.Handle` does — an event stream, a WebSocket |
 | `RenderFragment(r, FragmentRequest) (*FragmentRender, error)` | Render a fragment a page opened with `WithFragmentPath`, in parts — see below |
-| `Use(middleware) error` | Wrap every request, after the application's own middleware |
+| `Use(middleware) error` | Wrap every request, where the plugin was registered: for one in `Config.Plugins`, outside the application's own middleware — see [http.md](http.md) |
 | `URL(name, locale, params) (string, error)` | The path of a page or document, as `App.URL` builds it |
 | `FragmentURL(page, fragment, locale, params) (string, error)` | The path of a fragment path, as `App.FragmentURL` builds it |
 | `Locales() (default, supported)` | The default locale and every supported one |

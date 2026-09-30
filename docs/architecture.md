@@ -87,8 +87,8 @@ See [documents.md](documents.md) and [assets.md](assets.md).
 
 ## The request lifecycle
 
-For one GET on a page, in order — middleware registered with `app.Use` runs
-first, a mount or a handler registered with `app.Handle` claims the request before
+For one GET on a page, in order — middleware runs first, the plugins' and
+`app.Use`'s in the order they were registered, a mount or a handler registered with `app.Handle` claims the request before
 step 1 if its prefix matches, and a document runs the same steps with its handler
 and `OnDocumentRendered` in place of 4, 5 and 6:
 

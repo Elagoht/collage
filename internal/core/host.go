@@ -110,9 +110,10 @@ func (h *hostView) RenderFragment(r *http.Request, req plugin.FragmentRequest) (
 	return h.app.RenderFragment(r, req)
 }
 
-// Use adds middleware after the application's own.
+// Use adds middleware where the plugin was registered: for one in
+// Config.Plugins, outside the application's own.
 func (h *hostView) Use(middleware func(http.Handler) http.Handler) error {
-	return h.app.Use(middleware)
+	return h.app.usePlugin(h.name, middleware)
 }
 
 // URL builds the path of a page or document by name.

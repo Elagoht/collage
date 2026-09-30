@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.38.0
+
+### Breaking
+
+- **A plugin's middleware runs where the plugin was registered.** The plugins in
+  `Config.Plugins` are now outside every middleware `app.Use` adds; they used to
+  be inside it, because they add theirs in `Init`, which runs after the
+  application's registrations. So application middleware could not read what a
+  plugin puts in the request's context: `session.FromContext` was `nil` in it, and
+  loading the signed-in user once per request, in middleware, could not be
+  written. Now it can. A plugin registered with `app.RegisterPlugin` sits among
+  the application's middleware where the call is made: inside what `app.Use`
+  added before it, outside what it adds after.
+
+  What to do: a plugin that reads a value the application's middleware puts in the
+  context — a rate limit whose `KeyFunc` reads the signed-in user, say — now runs
+  before that middleware and finds nothing. Register it with `app.RegisterPlugin`
+  after the `app.Use` it depends on, rather than in `Config.Plugins`. A plugin that
+  adds template functions cannot be registered that way; none of the plugins with
+  middleware that read the application's context does.
+
+  Also visible: a plugin's middleware now sees a request the application's own
+  middleware answers, a `401` from an auth check, and the time it spent.
+
 ## v0.37.1
 
 ### Changed

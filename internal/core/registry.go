@@ -528,6 +528,11 @@ func (a *App) RegisterPlugin(p plugin.Plugin) error {
 		}
 		return err
 	}
+	// The plugin's middleware goes here in the chain, inside what Use added
+	// before this call and outside what it adds after, whenever Init adds it.
+	a.mu.Lock()
+	a.middleware = append(a.middleware, middlewareSlot{plugin: p.Name()})
+	a.mu.Unlock()
 	return nil
 }
 

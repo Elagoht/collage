@@ -356,8 +356,8 @@ type App struct {
 	// RegisterPlugin.
 	startAttempted bool
 	// handlers holds every http.Handler mounted with Handle, and middleware
-	// every wrapper registered with Use, both in registration order. See
-	// handle.go.
+	// every wrapper registered with Use and every place a plugin was
+	// registered, both in registration order. See handle.go.
 	handlers []httpx.HandlerMount
 	// data keeps what collage.Cached fetches across renders. Nil when the cache
 	// is off or in development, where Cached shares within one render only.
@@ -365,7 +365,7 @@ type App struct {
 	// devTemplateDir is the directory templates are read from in development,
 	// empty when they are not read from disk.
 	devTemplateDir string
-	middleware     []httpx.Middleware
+	middleware     []middlewareSlot
 	// commands holds the CLI subcommands plugins contributed through
 	// RegisterCommand.
 	commands []plugin.Command
@@ -460,6 +460,7 @@ func New(cfg Config) (*App, error) {
 		if err := app.plugins.Register(p); err != nil {
 			return nil, fmt.Errorf("collage: register plugin: %w", err)
 		}
+		app.middleware = append(app.middleware, middlewareSlot{plugin: p.Name()})
 	}
 	if err := app.plugins.Configure(context.Background(), func(name string) plugin.ConfigHost {
 		return &configHostView{app: app, name: name}
@@ -749,7 +750,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		Handlers:     a.handlers,
 		DevSources:   a.devSources(),
 		PageReady:    a.pageReady,
-		Middleware:   a.middleware,
+		Middleware:   a.middlewareChain(),
 		MaxBodyBytes: a.cfg.Server.MaxBodyBytes,
 		// An action asks for invalidation declaratively, and this is what
 		// carries it out. Handing every handler the whole application so it
