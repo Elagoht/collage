@@ -39,8 +39,11 @@ func langApp(t *testing.T, vary bool, extra func(*collage.App)) *collage.App {
 
 	layout := collage.NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()
 	content := collage.NewFragment("home-content", "pages/home.html").
-		WithDataHandler(collage.DataHandler(func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
-			lang, _ := ctx.Value(langKey{}).(string)
+		WithDataHandler(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
+			// Read the varied dimension through the framework, not from the
+			// context: on a cacheable page the context value is stripped from the
+			// shared render, while the vary value is safe because it is in the key.
+			lang, _ := collage.Varied(rc, "Accept-Language")
 			return lang, nil, nil
 		})).
 		Build()
@@ -130,7 +133,10 @@ func TestHandle_ServesUnderItsPrefix(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 		io.WriteString(w, `{"path":"`+r.URL.Path+`","lang":"`+lang+`"}`)
 	})
-	h := langApp(t, false, func(app *collage.App) {
+	// vary=true so the page can read the language back with collage.Varied; the
+	// mounted handler below still reads it straight from the context, which a
+	// per-request handler (unlike a shared page render) is free to do.
+	h := langApp(t, true, func(app *collage.App) {
 		if err := app.Handle("/api/", api); err != nil {
 			t.Fatalf("Handle: %v", err)
 		}

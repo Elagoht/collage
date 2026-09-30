@@ -733,11 +733,18 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// request that started it does. Under that request's context, a reader
 		// leaving would fail every data handler still running with "context
 		// canceled", and the optional parts among them would reach every waiter
-		// as a page with holes in it. WithoutCancel keeps the context's values —
-		// the trace, the locale — and the render stays bounded by its fragments'
-		// own timeouts.
-		renderCtx := context.WithoutCancel(ctx)
+		// as a page with holes in it. WithoutCancel detaches it from that, and
+		// renderSafeContext then strips the context down to the values every
+		// reader of this page shares — the route and the vary set — hiding the
+		// per-reader ones an application's middleware may have stored, for the same
+		// reason sharedRequest drops the reader's cookies and headers. The locale
+		// is not among the context values because it is passed to the render
+		// directly (match.Locale); a trace carried in the context does lose its
+		// parent here, since a shared render is nobody's request to trace. The
+		// render stays bounded by its fragments' own timeouts.
+		renderCtx := h.renderSafeContext(context.WithoutCancel(ctx))
 		shareable := sharedRequest(r, page.CacheParams)
+		shareable = shareable.WithContext(h.renderSafeContext(shareable.Context()))
 		out, shared = h.flight.do(ctx, key, func() *outcome {
 			return h.renderPage(renderCtx, shareable, page, match, key, cacheable)
 		})

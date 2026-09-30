@@ -166,6 +166,24 @@ func Vary(r *http.Request, header, value string) error {
 	return nil
 }
 
+// Varied returns the value a middleware declared for header through Vary,
+// and whether one was declared. It is what Varied reads: a shared render's data
+// handler asks the framework for a dimension's value rather than reaching into
+// the request context, because the value is part of the cache key — the one kind
+// of per-reader input a cached page is allowed to depend on — while a raw context
+// value is stripped from a shared render as a possible leak.
+func Varied(r *http.Request, header string) (string, bool) {
+	set, ok := r.Context().Value(varySetKey{}).(*varySet)
+	if !ok {
+		return "", false
+	}
+	header = http.CanonicalHeaderKey(strings.TrimSpace(header))
+	set.mu.Lock()
+	defer set.mu.Unlock()
+	value, ok := set.values[header]
+	return value, ok
+}
+
 // SkipCache declares that r is answered with a fresh render that is neither read
 // from the page cache nor written to it, and marked private and no-store.
 //
