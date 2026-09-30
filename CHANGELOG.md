@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.37.1
+
+### Changed
+
+- **The development overlay is a dialog in the middle of the page**, not a panel
+  along the bottom. It goes in last, after anything a plugin put before
+  `</body>`, so it sits above a plugin's own panel, such as the devtoolbar's, rather
+  than under it. It has two buttons: minimize turns it into a button at the bottom
+  right that counts what it holds (`1 failure · 2 findings`) and opens it again,
+  and close removes it. Clicking outside the dialog minimizes it too. Its styles
+  are scoped to it, so the page's CSS does not reach it.
+
 ## v0.37.0
 
 ### Added

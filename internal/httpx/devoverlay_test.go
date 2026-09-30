@@ -88,3 +88,36 @@ func TestFailedFragment_NamesWhereItStarted(t *testing.T) {
 		t.Errorf("failedFragment = %q, want recipe-content", got)
 	}
 }
+
+// The overlay opens as a dialog in the middle of the page, can be minimized to a
+// button at the bottom right that counts what it holds, and closed, and is the
+// last thing in the body so it sits above whatever a plugin put there first.
+func TestDevOverlay_IsADialogThatMinimizes(t *testing.T) {
+	page := []byte(`<html><body><p>page</p><div id="toolbar"></div></body></html>`)
+	problems := []devProblem{
+		{fragment: "sidebar", detail: "boom"},
+		{finding: &types.Finding{Rule: "one-h1", Plugin: "test/checker"}, detail: "no h1"},
+		{finding: &types.Finding{Rule: "meta", Plugin: "test/checker"}, detail: "no meta"},
+	}
+	body := string(withDevOverlay(page, overlayHeading(problems), problems))
+
+	for _, want := range []string{`data-state="open"`, `role="alertdialog"`, `aria-label="Minimize"`, `aria-label="Close"`, `class="cdo-fab"`, "1 failure · 2 findings"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("overlay does not contain %q:\n%s", want, body)
+		}
+	}
+	if !strings.HasSuffix(body, "</button></div></body></html>") || strings.Index(body, "toolbar") > strings.Index(body, "collage-dev-overlay") {
+		t.Errorf("overlay is not the last element of the body:\n%s", body)
+	}
+}
+
+func TestFabLabel(t *testing.T) {
+	for _, c := range []struct {
+		failures, findings int
+		want               string
+	}{{1, 0, "1 failure"}, {0, 1, "1 finding"}, {2, 3, "2 failures · 3 findings"}} {
+		if got := fabLabel(c.failures, c.findings); got != c.want {
+			t.Errorf("fabLabel(%d, %d) = %q, want %q", c.failures, c.findings, got, c.want)
+		}
+	}
+}
