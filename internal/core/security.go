@@ -39,6 +39,30 @@ type SecurityConfig struct {
 	// the protection away, which is why it is a field rather than the absence of a
 	// key.
 	DisableCSRF bool
+	// FrameOptions is the X-Frame-Options header value sent on every response.
+	// Empty means the default "SAMEORIGIN"; "-" sends none; anything else is sent
+	// verbatim. See baselineHeaders.
+	FrameOptions string
+	// NoSniff, unless it points at false, sends X-Content-Type-Options: nosniff on
+	// every response. See baselineHeaders.
+	NoSniff *bool
+}
+
+// baselineHeaders resolves the security headers sent on every response from the
+// configuration: the X-Frame-Options value to send ("" meaning send none) and
+// whether to send X-Content-Type-Options: nosniff. These are the defaults a site
+// gets without the elagoht/secure plugin; that plugin's own headers override them.
+func baselineHeaders(cfg SecurityConfig) (frameOptions string, noSniff bool) {
+	switch cfg.FrameOptions {
+	case "-":
+		frameOptions = ""
+	case "":
+		frameOptions = "SAMEORIGIN"
+	default:
+		frameOptions = cfg.FrameOptions
+	}
+	noSniff = cfg.NoSniff == nil || *cfg.NoSniff
+	return frameOptions, noSniff
 }
 
 // buildCSRF returns the guard the application will use, or nil when forgery

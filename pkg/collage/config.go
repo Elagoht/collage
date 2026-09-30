@@ -185,6 +185,19 @@ type SecurityConfig struct {
 	// DisableCSRF turns forgery checking off for the whole application. It is for
 	// an application with no browser-submitted forms at all.
 	DisableCSRF bool
+	// FrameOptions is the X-Frame-Options header sent on every response, which
+	// keeps the site's pages — and so its forms — from being framed by another
+	// origin and clicked through. It defaults to "SAMEORIGIN"; "-" sends none, and
+	// any other value is sent verbatim. This is the baseline every site should
+	// have; a full Content-Security-Policy with frame-ancestors, HSTS and the rest
+	// is what the elagoht/secure plugin adds, and its headers override these.
+	FrameOptions string
+	// NoSniff, unless it points at false, sends X-Content-Type-Options: nosniff on
+	// every response, so a browser honours the declared Content-Type instead of
+	// guessing one and running a response as a type it was never meant to be. It is
+	// on by default because it is never wrong for a site that declares its types,
+	// which collage does.
+	NoSniff *bool
 }
 
 // TemplateConfig configures template loading and rendering.

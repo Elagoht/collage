@@ -347,6 +347,10 @@ type App struct {
 	// csrf issues and verifies request-forgery tokens, or is nil when the
 	// application turned the protection off.
 	csrf *csrf.Guard
+	// frameOptions and noSniff are the baseline security headers sent on every
+	// response, resolved once from Security. See baselineHeaders.
+	frameOptions string
+	noSniff      bool
 	// mounts holds every mounted asset file system, in registration order. See
 	// mount.go for Mount, Mounts, and checkMountsDoNotShadow, the close-out check
 	// that keeps a mount from silently swallowing a page's or a document's route
@@ -511,6 +515,7 @@ func New(cfg Config) (*App, error) {
 		return nil, fmt.Errorf("collage: csrf: %w", err)
 	}
 	app.csrf = guard
+	app.frameOptions, app.noSniff = baselineHeaders(cfg.Security)
 
 	// A caller-supplied Store wins over Type, and is taken exactly as given: this
 	// is the one cache the application will use, so nothing here wraps, copies, or
@@ -761,8 +766,10 @@ func (a *App) buildHandler() (http.Handler, error) {
 		},
 		// The URL builders alone, for the same reason: an action's handler
 		// builds its redirect by name through rc.URL.
-		Routes: types.Routes{Page: a.URL, Action: a.ActionURL, DefaultLocale: a.cfg.Locale.Default},
-		CSRF:   a.csrf,
+		Routes:       types.Routes{Page: a.URL, Action: a.ActionURL, DefaultLocale: a.cfg.Locale.Default},
+		CSRF:         a.csrf,
+		FrameOptions: a.frameOptions,
+		NoSniff:      a.noSniff,
 	})
 	if err != nil {
 		return a.buildFailed(err)

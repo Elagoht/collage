@@ -195,6 +195,13 @@ type Deps struct {
 	// {{csrfToken}} renders. Nil turns forgery checking off entirely, which is
 	// what an application with no forms and no key gets.
 	CSRF *csrf.Guard
+	// FrameOptions is the X-Frame-Options value set on every response before
+	// routing, so a mount, a handler, the router — and a plugin's middleware,
+	// which can override it — all inherit it. Empty sends none.
+	FrameOptions string
+	// NoSniff sets X-Content-Type-Options: nosniff on every response before
+	// routing when true, on the same terms as FrameOptions.
+	NoSniff bool
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
@@ -219,6 +226,8 @@ type Handler struct {
 	invalidator  Invalidator
 	routes       types.Routes
 	csrf         *csrf.Guard
+	frameOptions string
+	noSniff      bool
 	// flight coalesces concurrent renders of one cache key, so an expiring
 	// popular page costs one render rather than one per request that arrives
 	// while it is being re-made.
@@ -263,6 +272,8 @@ func New(d Deps) (*Handler, error) {
 		invalidator:  d.Invalidator,
 		routes:       d.Routes,
 		csrf:         d.CSRF,
+		frameOptions: d.FrameOptions,
+		noSniff:      d.NoSniff,
 		flight:       newFlight(),
 	}
 	// Composed once rather than per request: a middleware constructor is
@@ -289,6 +300,13 @@ func New(d Deps) (*Handler, error) {
 // for why a mount now runs through the same timing, span, panic guard, and metric
 // every page and document request gets.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// The baseline security headers, set before anything writes a response —
+	// before routing, so a mount, a handler and the router inherit them, and
+	// before middleware, so a plugin such as elagoht/secure that sets its own
+	// X-Frame-Options or Content-Security-Policy overrides them with a plain
+	// Header().Set. They are the floor every response stands on, not the ceiling.
+	h.setBaselineHeaders(w.Header())
+
 	// Ahead of everything, middleware included: it is the development tool's
 	// own channel, and an auth middleware refusing it would turn live reload off
 	// with nothing to say why. Outside the metrics too — a stream that stays
@@ -339,6 +357,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	span.End()
 	h.metrics.HTTPResponse(ctx, status, r.URL.Path, time.Since(start))
 	finish(status)
+}
+
+// setBaselineHeaders writes the framework's default security headers onto h,
+// the response's header map, at the start of every request. A later
+// Header().Set — by a plugin's middleware or by a handler — replaces either of
+// them, so these are defaults, not decisions the application cannot change. An
+// empty frameOptions, or noSniff being off, sends that header not at all.
+func (h *Handler) setBaselineHeaders(header http.Header) {
+	if h.noSniff {
+		header.Set("X-Content-Type-Options", "nosniff")
+	}
+	if h.frameOptions != "" {
+		header.Set("X-Frame-Options", h.frameOptions)
+	}
 }
 
 // startRequestSpan opens the request's span, containing a panic from an

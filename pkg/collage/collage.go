@@ -471,6 +471,8 @@ func toCoreConfig(cfg *Config) core.Config {
 			CSRFHeaderName:     cfg.Security.CSRFHeaderName,
 			CSRFTrustedOrigins: cfg.Security.CSRFTrustedOrigins,
 			DisableCSRF:        cfg.Security.DisableCSRF,
+			FrameOptions:       cfg.Security.FrameOptions,
+			NoSniff:            cfg.Security.NoSniff,
 		},
 		Plugins:      cfg.Plugins,
 		PluginConfig: cfg.PluginConfig,
