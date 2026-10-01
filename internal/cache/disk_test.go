@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -265,4 +268,123 @@ func TestDisk_CapHoldsAcrossARestart(t *testing.T) {
 	if got := second.countEntries(); got > 8 {
 		t.Errorf("entries after restart = %d, want <= 8: the restart lost the running count", got)
 	}
+}
+
+// fullDisk is a cache at its cap whose next eviction scan stops until release is
+// closed, reporting through scanning that it has started.
+func fullDisk(t *testing.T, limit int) (c *DiskCache, scanning chan struct{}, release chan struct{}) {
+	t.Helper()
+	c, err := NewDisk(DiskConfig{Dir: t.TempDir(), Version: "v", DefaultTTL: time.Minute, MaxEntries: limit})
+	if err != nil {
+		t.Fatalf("NewDisk: %v", err)
+	}
+	for i := range limit {
+		if _, err := c.Set(context.Background(), fmt.Sprintf("old%02d", i), []byte("x"), time.Minute); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+	}
+	scanning, release = make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	c.scanned = func() {
+		once.Do(func() { close(scanning) })
+		<-release
+	}
+	return c, scanning, release
+}
+
+// An eviction reads the whole directory. A write that arrives meanwhile is not
+// made to wait for it: on a cache under a flood of new keys the scan is what every
+// writer would otherwise queue behind, a request at a time.
+func TestDisk_AWriteDoesNotWaitForAnEvictionScan(t *testing.T) {
+	c, scanning, release := fullDisk(t, 8)
+	defer close(release)
+	go c.Set(context.Background(), "trigger", []byte("x"), time.Minute)
+	<-scanning
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		c.Set(context.Background(), "other", []byte("x"), time.Minute)
+		c.Set(context.Background(), "old00", []byte("replaced"), time.Minute)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a write waited for the eviction scan")
+	}
+}
+
+// What the scan has not yet made room for is not stored past the cap: a new entry
+// arriving at a full cache mid-scan is skipped, a replaced one is still written,
+// and the cap holds once the scan finishes.
+func TestDisk_TheCapHoldsWhileAnEvictionScans(t *testing.T) {
+	const limit = 8
+	c, scanning, release := fullDisk(t, limit)
+	evicted := make(chan struct{})
+	go func() {
+		defer close(evicted)
+		c.Set(context.Background(), "trigger", []byte("x"), time.Minute)
+	}()
+	<-scanning
+
+	for i := range 20 {
+		if _, err := c.Set(context.Background(), fmt.Sprintf("new%02d", i), []byte("x"), time.Minute); err != nil {
+			t.Fatalf("a write at a full cache failed rather than being skipped: %v", err)
+		}
+	}
+	if got := c.countEntries(); got > limit+1 {
+		t.Errorf("mid-scan the disk holds %d entries, cap %d", got, limit)
+	}
+	if _, err := c.Set(context.Background(), "old01", []byte("replaced"), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if body, _, ok := c.Get(context.Background(), "old01"); !ok || string(body) != "replaced" {
+		t.Errorf("a replaced entry mid-scan: %q %v", body, ok)
+	}
+
+	close(release)
+	<-evicted
+	if got := c.countEntries(); got > limit {
+		t.Errorf("after the scan the disk holds %d entries, cap %d", got, limit)
+	}
+	if _, _, ok := c.Get(context.Background(), "trigger"); !ok {
+		t.Error("the write that started the eviction was itself evicted")
+	}
+}
+
+// A cache Clear empties while a write is between its temporary file and its
+// rename loses that write, and says nothing of it: the entry is simply not there.
+func TestDisk_AWriteRacingClearIsLostQuietly(t *testing.T) {
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	var wg sync.WaitGroup
+	for i := range 50 {
+		wg.Go(func() {
+			if _, err := c.Set(context.Background(), fmt.Sprintf("k%02d", i), []byte("x"), time.Minute); err != nil {
+				t.Errorf("Set racing Clear: %v", err)
+			}
+		})
+		if i%10 == 0 {
+			wg.Go(func() { _ = c.Clear(context.Background()) })
+		}
+	}
+	wg.Wait()
+}
+
+func BenchmarkDisk_SetAtTheCap(b *testing.B) {
+	c, err := NewDisk(DiskConfig{Dir: b.TempDir(), Version: "v", DefaultTTL: time.Minute, MaxEntries: 2000})
+	if err != nil {
+		b.Fatal(err)
+	}
+	body := make([]byte, 32<<10)
+	var n atomic.Int64
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			if _, err := c.Set(context.Background(), strconv.FormatInt(n.Add(1), 10), body, time.Minute); err != nil {
+				b.Error(err)
+				return
+			}
+		}
+	})
 }

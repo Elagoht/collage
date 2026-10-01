@@ -56,6 +56,10 @@ type DiskConfig struct {
 	// deliberately — the cache key includes the request's Host and, by default, its
 	// whole query, so without a cap an anonymous caller choosing those fills the
 	// disk one never-evicted file at a time.
+	//
+	// Eviction scans the directory without blocking other writers. A new entry
+	// that arrives while the cache is full and a scan is still making room is not
+	// stored: the page is served, and only not kept.
 	MaxEntries int
 	// Now overrides the clock, for tests.
 	Now func() time.Time
@@ -78,15 +82,21 @@ type DiskCache struct {
 	maxEntries int
 	now        func() time.Time
 
-	// mu serialises writes and removals. Reads go to the filesystem directly: an
-	// entry file is written atomically, so a reader sees either the whole previous
-	// entry or the whole new one.
+	// mu serialises renaming entries into place, removals, and the count. Reads
+	// go to the filesystem directly: an entry file is written atomically, so a
+	// reader sees either the whole previous entry or the whole new one.
 	mu sync.Mutex
 	// entries is an in-memory count of stored files, kept only to decide when to
 	// scan for eviction. It is approximate — an invalidation does not adjust it —
-	// but evictIfNeeded recounts from disk before removing anything, so an
+	// but evict recounts from disk before removing anything, so an
 	// inflated count costs at worst a wasted scan, never an over-eviction.
 	entries int
+
+	// evicting is set while an eviction scan runs, outside mu.
+	evicting bool
+	// scanned, when set, runs after an eviction's directory scan; tests use it to
+	// hold a scan open.
+	scanned func()
 }
 
 // header is the JSON line at the front of an entry file.
@@ -220,31 +230,82 @@ func (c *DiskCache) SetTagged(_ context.Context, key string, content []byte, ttl
 	buf.WriteByte('\n')
 	buf.Write(content)
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	// Whether this key is already stored decides whether the write adds an entry
-	// or replaces one, and so whether it counts toward the cap.
-	_, statErr := os.Stat(path)
-	isNew := errors.Is(statErr, fs.ErrNotExist)
-	if err := c.writeAtomic(path, buf.Bytes()); err != nil {
+	// The file is written before the lock and only renamed into place under it:
+	// writing is the slow part, and two writers of different keys have nothing
+	// to wait on each other for.
+	tmp, err := c.writeTemp(buf.Bytes())
+	if err != nil {
 		return "", err
 	}
+	// Whether this key is already stored decides whether the write adds an entry
+	// or replaces one, and so whether it counts toward the cap. Read outside the
+	// lock, so a racing writer of the same key can count it twice: the count is
+	// approximate already, and the eviction scan recounts.
+	_, statErr := os.Stat(path)
+	isNew := errors.Is(statErr, fs.ErrNotExist)
+
+	c.mu.Lock()
+	if isNew && c.maxEntries > 0 && c.entries >= c.maxEntries && c.evicting {
+		// Full, and a scan is already making room. Storing this entry would
+		// pass the cap; waiting for the scan would make every writer queue
+		// behind it. The render is served either way and only not kept.
+		c.mu.Unlock()
+		os.Remove(tmp)
+		return etag, nil
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		c.mu.Unlock()
+		os.Remove(tmp)
+		if errors.Is(err, fs.ErrNotExist) {
+			return etag, nil // a Clear took the file between write and rename
+		}
+		return "", err
+	}
+	var start int
+	evict := false
 	if isNew {
 		c.entries++
-		c.evictIfNeeded()
+		if c.maxEntries > 0 && !c.evicting && c.entries > c.evictAt() {
+			c.evicting, evict, start = true, true, c.entries
+		}
+	}
+	c.mu.Unlock()
+	if evict {
+		c.evict(start)
 	}
 	return etag, nil
 }
 
-// evictIfNeeded removes the oldest entries, by file modification time, once the
-// stored count passes maxEntries. Called with c.mu held. It recounts from disk
-// before removing, so it never over-evicts on an inflated in-memory count, and it
-// removes down to a fraction below the cap so the scan is paid once per many
-// inserts rather than on every insert at a full cache.
-func (c *DiskCache) evictIfNeeded() {
-	if c.maxEntries <= 0 || c.entries <= c.maxEntries {
-		return
-	}
+// evictAt is the count past which a write starts an eviction: a little short of
+// maxEntries, so writes go on being stored while the scan runs. A cache too small
+// for that margin evicts once it passes maxEntries itself.
+func (c *DiskCache) evictAt() int {
+	return c.maxEntries - c.maxEntries/(2*evictBatch)
+}
+
+// evict removes the oldest entries, by file modification time, down to a batch
+// below maxEntries. It runs without c.mu, in the write that crossed evictAt, so
+// the directory scan stalls that one write and no other; c.evicting keeps a second
+// scan from starting meanwhile, and writes of new entries that reach maxEntries
+// before this one finishes are skipped rather than stored past it. start is the
+// in-memory count when the scan began.
+//
+// It recounts from disk before removing, so it never over-evicts on an inflated
+// in-memory count, and it removes down to a fraction below the cap so the scan is
+// paid once per many inserts rather than on every insert at a full cache.
+func (c *DiskCache) evict(start int) {
+	removed, scanned := 0, -1
+	defer func() {
+		c.mu.Lock()
+		if scanned >= 0 {
+			// What the scan saw, less what it removed, plus what was written
+			// since it began. Entries written during the scan may be counted
+			// twice; an inflated count costs an early scan, never a lost entry.
+			c.entries = scanned - removed + (c.entries - start)
+		}
+		c.evicting = false
+		c.mu.Unlock()
+	}()
 
 	dirEntries, err := os.ReadDir(c.dir)
 	if err != nil {
@@ -265,22 +326,20 @@ func (c *DiskCache) evictIfNeeded() {
 		}
 		files = append(files, stored{entry.Name(), info.ModTime()})
 	}
-
-	c.entries = len(files)
-	if c.entries <= c.maxEntries {
+	if c.scanned != nil {
+		c.scanned()
+	}
+	scanned = len(files)
+	if scanned <= c.evictAt() {
 		return // the in-memory count was stale; nothing to do
 	}
 
 	// Down to a batch below the cap, so the next scan is a batch of inserts away.
-	target := c.maxEntries - c.maxEntries/evictBatch
-	if target < 1 {
-		target = 1
-	}
-	remove := c.entries - target
+	target := max(c.maxEntries-c.maxEntries/evictBatch, 1)
 	sort.Slice(files, func(i, j int) bool { return files[i].modTime.Before(files[j].modTime) })
-	for i := 0; i < remove && i < len(files); i++ {
+	for i := 0; i < scanned-target && i < len(files); i++ {
 		if err := os.Remove(filepath.Join(c.dir, files[i].name)); err == nil || errors.Is(err, fs.ErrNotExist) {
-			c.entries--
+			removed++
 		}
 	}
 }
@@ -379,29 +438,26 @@ func (c *DiskCache) path(key string) (string, bool) {
 	return filepath.Join(c.dir, hex.EncodeToString(sum[:])), true
 }
 
-// writeAtomic writes through a temporary file and a rename, so a reader sees either
-// the whole previous entry or the whole new one. Called with c.mu held.
-func (c *DiskCache) writeAtomic(path string, body []byte) error {
+// writeTemp writes body to a new temporary file in the cache directory and
+// returns its name. The caller renames it into place: a rename within one
+// directory is atomic, so a reader sees either the whole previous entry or the
+// whole new one, never half a write.
+func (c *DiskCache) writeTemp(body []byte) (string, error) {
 	tmp, err := os.CreateTemp(c.dir, ".tmp-*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	name := tmp.Name()
-
 	if _, err := tmp.Write(body); err != nil {
 		tmp.Close()
 		os.Remove(name)
-		return err
+		return "", err
 	}
 	if err := tmp.Close(); err != nil {
 		os.Remove(name)
-		return err
+		return "", err
 	}
-	if err := os.Rename(name, path); err != nil {
-		os.Remove(name)
-		return err
-	}
-	return nil
+	return name, nil
 }
 
 // readHeader reads an entry's header without reading its content.
