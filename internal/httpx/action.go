@@ -249,7 +249,15 @@ func (h *Handler) writeActionResult(
 	case result.Fragment != nil:
 		html, err := h.renderer.RenderFragment(r.Context(), rc, result.Fragment)
 		if err != nil {
-			return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
+			// Missing and broken apart, as on the page: a required fragment whose
+			// data handler wrapped ErrNotFound is a 404 here too. An optional
+			// one's failure never reaches this point — the policy absorbed it —
+			// so the error is read the way Render's NotFound would read it.
+			status := http.StatusInternalServerError
+			if errors.Is(err, types.ErrNotFound) {
+				status = http.StatusNotFound
+			}
+			return h.serveFailure(w, r, route.failure(status, stageRender, err))
 		}
 		status := statusOr(result.Status, http.StatusOK)
 		if status == http.StatusOK && (r.Method == http.MethodGet || r.Method == http.MethodHead) {

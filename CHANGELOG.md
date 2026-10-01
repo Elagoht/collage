@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.39.2
+
+### Fixed
+
+- **A fragment path answers 404 when its required fragment is not found.** A
+  `Required()` fragment whose data handler wraps `collage.ErrNotFound` made its page
+  a 404 but its fragment path — and any action answering with that `Fragment` — a
+  500. Both are 404 now, so "missing" and "broken" are told apart at a fragment's
+  own URL as they are on the page. The body is unchanged: plain text, never cached,
+  as for any action's failure.
+
 ## v0.39.1
 
 ### Fixed

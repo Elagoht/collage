@@ -286,7 +286,9 @@ collage.NewPage("search").
 
 `GET /search/results?q=grid` renders that fragment and nothing else — its data
 handler runs, its children are prefetched and rendered, its failure policy applies,
-because it is the same walk started lower down.
+because it is the same walk started lower down. That includes the difference between
+missing and broken: a required fragment whose data handler wraps `ErrNotFound` answers
+404, any other failure 500 — as plain text, the way every action's failure does.
 
 It is the answer to refreshing part of a page without a client framework: fetch the
 URL, replace the element. Combined with an action that returns a `Fragment`, a form

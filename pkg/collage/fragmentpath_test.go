@@ -3,6 +3,7 @@ package collage_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/http/httptest"
@@ -374,5 +375,53 @@ func TestRenderFragment_ETagMatchesTheFragmentPath(t *testing.T) {
 	}
 	if got.ETag == "" || got.ETag != res.Header().Get("ETag") {
 		t.Errorf("RenderFragment ETag %q, fragment path ETag %q", got.ETag, res.Header().Get("ETag"))
+	}
+}
+
+// "Missing" and "broken" are told apart at a fragment path as they are on the page:
+// a required fragment whose data handler wraps ErrNotFound answers 404 at both URLs,
+// and any other failure answers 500 at both. The fragment path used to answer 500
+// for either.
+func TestFragmentPath_NotFoundIsA404(t *testing.T) {
+	app := newFragmentApp(t, map[string]string{"p.html": `<p>{{.}}</p>`})
+	missing := collage.NewFragment("missing", "p.html").
+		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+			return "", fmt.Errorf("thing %s: %w", rc.Param("id"), collage.ErrNotFound)
+		})).Required().Build()
+	broken := collage.NewFragment("broken", "p.html").
+		WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) (string, error) {
+			return "", errors.New("database is down")
+		})).Required().Build()
+	if err := app.RegisterPage(collage.NewPage("missing").WithPath("en", "/things/{id}").WithContent(missing).
+		WithFragmentPath("en", "/things/{id}/part", missing).Build()); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RegisterPage(collage.NewPage("broken").WithPath("en", "/broken/{id}").WithContent(broken).
+		WithFragmentPath("en", "/broken/{id}/part", broken).Build()); err != nil {
+		t.Fatal(err)
+	}
+
+	for path, want := range map[string]int{
+		"/things/1":      http.StatusNotFound,
+		"/things/1/part": http.StatusNotFound,
+		"/broken/1":      http.StatusInternalServerError,
+		"/broken/1/part": http.StatusInternalServerError,
+	} {
+		if got := serveFragment(app, httptest.NewRequest(http.MethodGet, path, nil)).Code; got != want {
+			t.Errorf("GET %s = %d, want %d", path, got, want)
+		}
+	}
+
+	// An action's failure is plain text, never cached: no layout, nothing of the
+	// page, for the script that asked.
+	rec := serveFragment(app, httptest.NewRequest(http.MethodGet, "/things/1/part", nil))
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain", got)
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Errorf("Cache-Control = %q, want no-store", got)
+	}
+	if got := rec.Body.String(); got != "Not Found\n" {
+		t.Errorf("body = %q, want %q", got, "Not Found\n")
 	}
 }
