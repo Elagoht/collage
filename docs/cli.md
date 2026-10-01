@@ -11,6 +11,8 @@ collage dev
 collage build [-o path] [-os name] [-arch name] [-i]
 collage export [-out dir] [-clean]
 collage serve [-dir dir] [-host name] [-port n]
+collage inspect
+collage check [-json]
 collage version
 collage help [command]
 ```
@@ -364,6 +366,45 @@ with `App.Inspect`, so a scaffolded project needs nothing more. It is what an
 editor's completion reads: the Collage Snippets & Highlighter extension for VS Code
 offers page names in `{{pageURL "…"}}`, slots in `{{slot "…"}}` and files in
 `{{asset "…"}}` from it.
+
+## `collage check`
+
+Checks every template's links without rendering anything. A link built by name —
+`{{pageURL "post" "slug" .Slug}}`, `{{pageURLIn "en" "about"}}`,
+`{{actionURL "logout"}}`, `{{fragmentURL "home" "clock"}}`, `{{localeURL "en"}}` —
+fails when the template renders, and only on the page that reaches it. `check`
+finds them all at once:
+
+```
+$ collage check
+error [unknown-route] inline template of fragment "hello":4:16: {{pageURL "featurs"}}: collage: no page or document by that name: "featurs"; did you mean "features"?
+```
+
+| Rule | What it means |
+| --- | --- |
+| `unknown-route` | No page, document, action or fragment path by that name; the closest registered name is suggested |
+| `route-params` | The parameters do not fill the route's pattern — one missing, one it has no placeholder for, or not in name and value pairs |
+| `unreachable-locale` | A locale no URL can carry: not `Locale.Default`, nor in `Locale.Supported` |
+| `no-path-in-locale` | The route has no path in the locale `pageURLIn` or `fragmentURLIn` names |
+
+It checks with the framework's own URL builders, so what it reports is exactly
+what a render would fail on. Only names written as string literals are checked: a
+name from a field, `{{pageURL .Name}}`, is known only when the template renders,
+and a parameter whose name is not a literal leaves the parameters unchecked. A
+link with no locale of its own passes when its route can be built in some locale,
+since a render falls back to the default one.
+
+It exits `1` when it finds anything, so it can stand in CI before `collage build`;
+`-json` prints the findings as an array of `{level, rule, message}` for an editor.
+It runs `go run . collage-check`, which `collage.DispatchCommands` answers by
+starting the application and calling `App.Check` — the same function a test can
+call:
+
+```go
+if findings := app.Check(); len(findings) > 0 {
+	t.Errorf("broken links: %v", findings)
+}
+```
 
 ## Plugin commands
 

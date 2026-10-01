@@ -37,6 +37,18 @@
   whole command. It works on a project scaffolded by an earlier version too. See
   [docs/cli.md](docs/cli.md#collage-add).
 
+- **`collage check` and `App.Check`: broken links found before anything
+  renders.** Every template's `{{pageURL}}`, `{{pageURLIn}}`, `{{actionURL}}`,
+  `{{fragmentURL}}`, `{{fragmentURLIn}}` and `{{localeURL}}` written with literal
+  names is checked against what is registered, with the framework's own URL
+  builders: an unknown name — with the closest registered one suggested —
+  parameters that do not fill the pattern, a locale no URL carries, a route with no
+  path in the named locale. Each is a finding with its template, line and column,
+  inline templates included. `collage check` exits 1 on any, for CI; `-json` is
+  for an editor. It is `go run . collage-check`, answered by
+  `collage.DispatchCommands`, so a project scaffolded before needs no change. See
+  [docs/cli.md](docs/cli.md#collage-check).
+
 ### Changed
 
 - **`collage new` scaffolds a different layout**: `pages/<area>/<name>.go` beside

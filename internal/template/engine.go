@@ -67,6 +67,10 @@ type Engine interface {
 	// renders, so registration can check a fragment's bindings against them
 	// before anything renders.
 	SlotCalls(path string) (names []string, dynamic bool)
+	// Calls returns every call of the functions named funcs in every loaded
+	// template, with the arguments written as string literals, so a check can see
+	// what the templates link to without rendering them.
+	Calls(funcs ...string) []Call
 	// AddSource adds a template given as text rather than as a file, under name,
 	// to the set every render draws from, and keeps it so Reload does not drop
 	// it. The same name and source again is a no-op; the same name with another

@@ -345,6 +345,7 @@ collage add page blog/post  # write a page, an action, a document into it
 collage dev                 # run it, rebuilding and restarting on every Go change
 collage build               # compile the binary you deploy
 collage export              # render the statically-buildable pages to dist/
+collage check               # find links to pages, actions and locales that do not exist
 collage serve               # serve dist/ the way a static host would
 ```
 

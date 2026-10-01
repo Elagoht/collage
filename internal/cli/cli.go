@@ -59,7 +59,7 @@ var ErrNoCommand = errors.New("collage: no command given")
 var ErrUnknownCommand = errors.New("collage: unknown command")
 
 // ErrReservedCommandName is returned when a CLI.Commands entry's Name matches
-// a built-in command ("new", "add", "dev", "build", "export", "serve", "inspect", "version", or
+// a built-in command ("new", "add", "dev", "build", "export", "serve", "inspect", "check", "version", or
 // "help"). A plugin is not permitted to shadow a built-in command.
 var ErrReservedCommandName = errors.New("collage: command name collides with a built-in command")
 
@@ -117,6 +117,7 @@ var builtins = []builtinDescription{
 	{"export", "Render the current directory's project to static files"},
 	{"serve", "Serve a static export the way a static host would"},
 	{"inspect", "Print what the current directory's project is made of, as JSON"},
+	{"check", "Check the current directory's project's templates without rendering them"},
 	{"version", "Print the collage CLI version"},
 	{"help", "Show help for a command, or list every command"},
 }
@@ -166,6 +167,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.runServe(ctx, rest)
 	case "inspect":
 		return c.runInspect(ctx, rest)
+	case "check":
+		return c.runCheck(ctx, rest)
 	}
 
 	if cmd, ok := c.findPluginCommand(name); ok {
@@ -292,6 +295,9 @@ func (c *CLI) printCommandHelp(w io.Writer, name string) error {
 		return nil
 	case "inspect":
 		fmt.Fprint(w, inspectUsage)
+		return nil
+	case "check":
+		fmt.Fprint(w, checkUsage)
 		return nil
 	case "version":
 		fmt.Fprintln(w, "Usage: collage version")
