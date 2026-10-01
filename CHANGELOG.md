@@ -25,7 +25,26 @@
   that sends it in a header, and `Request`/`Do` make any other request. See
   [docs/testing.md](docs/testing.md).
 
+- **`collage add page|fragment|action|document <[area/]name>`** writes a new page
+  (and its content), fragment, action (builder and handler) or document into the
+  project, in the scaffold's layout, and registers it in `routes.go` — after the
+  last item of its kind in an `app.Register` call, or at the end of a
+  `[]*collage.Page` literal — editing the file in place so its comments stay put.
+  The path's locale is read from `main.go`'s `Locale.Default`; `--file` keeps a
+  template in a file under `Template.Root`. Everything is worked out before
+  anything is written: an existing file, a name the project already gives a page,
+  action or document, or an identifier the package already declares refuses the
+  whole command. It works on a project scaffolded by an earlier version too. See
+  [docs/cli.md](docs/cli.md#collage-add).
+
 ### Changed
+
+- **`collage new` scaffolds a different layout**: `pages/<area>/<name>.go` beside
+  `fragments/pages/<area>/<name>.go`, `fragments/layouts` with `Master()`,
+  builders in `actions/<area>.go` and their handlers in `actions/funcs/`, and state
+  in `data/<domain>/`. Small fragments keep their markup inline. It is the layout
+  `collage add` writes into. A project scaffolded before is unchanged and keeps
+  working; nothing in the framework depends on the layout.
 
 - **The demo project's tests use `collagetest`.** `collage new --template demo`
   writes a `main_test.go` without its own `get`, `post` and `token` helpers. An

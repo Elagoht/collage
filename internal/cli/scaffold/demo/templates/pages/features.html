@@ -16,7 +16,7 @@
     <article class="card">
       <h2>Forms</h2>
       <p>No JavaScript here. Pick a name and the server greets you on a page of its own.</p>
-      <form class="inline-form" method="post" action="/hello">
+      <form class="inline-form" method="post" action="{{pageURL "hello"}}">
         {{csrfToken}}
         <input type="text" name="name" placeholder="your name" autocomplete="off" aria-label="Your name">
         <button type="submit" class="button">Say hello</button>

@@ -32,13 +32,13 @@ go test ./...
 ```
 main.go       configuration, the static mount, and the collage CLI contract
 routes.go     every page, document and action — a new route goes here
-main_test.go  the tests, driving app.Handler() with no server and no port
-pages/        one file per page: layout, content, route
-fragments/    reusable pieces: the layout and the demos
-actions/      handlers for POST and friends
+main_test.go  the tests, driving app.Handler() with pkg/collagetest
+pages/        a page per file, by area: pages/demo/hello.go is the hello page
+fragments/    layouts/, and pages/: each page's content, mirroring pages/
+actions/      POST and friends, by domain; their handlers in actions/funcs/
 documents/    routes that are not HTML, like /healthz
-store/        the demo's in-memory state
-templates/    the HTML, one file per fragment
+data/         state, by domain: the demo's in-memory count
+templates/    the HTML kept in files; small fragments keep theirs inline
 static/       CSS, JavaScript and images, at /static/
 ```
 
@@ -53,6 +53,18 @@ file. `/features` has four live demos:
   `WithFragmentPath`, fetched and swapped in without a client framework.
 - **Documents** — `/healthz` is JSON, routed like a page but never passed
   through HTML.
+
+## Adding to it
+
+`collage add` writes a page, a fragment, an action or a document in this layout,
+and registers it in `routes.go`:
+
+```
+collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
+collage add page blog/post --file   # the template in templates/pages/blog/post.html
+collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
+collage add document feed --path /feed.xml --type application/xml
+```
 
 ## Set `COLLAGE_CSRF_KEY` before deploying
 

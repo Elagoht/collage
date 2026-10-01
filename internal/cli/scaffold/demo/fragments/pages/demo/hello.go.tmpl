@@ -1,0 +1,45 @@
+package fragments
+
+import (
+	"context"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+// Types data used on this page.
+type helloView struct {
+	Name       string
+	RenderedAt time.Time
+}
+
+// Returns the hello page's content: a greeting for the name the features page's
+// form posted, or for a stranger.
+func Hello() *collage.Fragment {
+	return collage.NewInlineFragment("hello", helloBlock).
+		WithDataHandler(collage.Load(helloData)).
+		Build()
+}
+
+const helloBlock collage.InlineHTML = `<main class="hello">
+  <h1>Hello, {{.Name}}!</h1>
+  <p>This page was rendered on the server at <time datetime="{{formatTime .RenderedAt "2006-01-02T15:04:05Z07:00"}}">{{formatTime .RenderedAt "15:04:05"}}</time>, just for this request.</p>
+  <p><a href="{{pageURL "features"}}">Back to the features</a></p>
+</main>`
+
+// Reads the posted name. The page's action answers a POST by rendering this
+// page, so the render it answers with sees the request the form sent.
+func helloData(
+	_ context.Context,
+	rc *collage.RenderContext,
+) (helloView, error) {
+	name := "stranger"
+	if rc.Request.Method == http.MethodPost {
+		if posted := strings.TrimSpace(rc.Request.PostFormValue("name")); posted != "" {
+			name = posted
+		}
+	}
+	return helloView{Name: name, RenderedAt: time.Now()}, nil
+}

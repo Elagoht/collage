@@ -1,0 +1,18 @@
+package pages
+
+import (
+	"@@MODULE@@/fragments/layouts"
+	fragments "@@MODULE@@/fragments/pages/errors"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+// Returns the page every unknown address answers with. It has no path: it is
+// reached by failing to match, and "collage export" writes it as 404.html.
+func NotFoundPage() *collage.Page {
+	return collage.NewPage("not-found").
+		WithLayouts(layouts.Master()).
+		WithContent(fragments.NotFound()).
+		Dynamic().
+		Build()
+}

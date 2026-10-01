@@ -6,6 +6,7 @@ go install github.com/Elagoht/collage/cmd/collage@latest
 
 ```
 collage new <name> [--template minimal|demo] [--dir path] [--module path] [--force]
+collage add <page|fragment|action|document> <[area/]name> [--file] [--path p] [--name n] [--locale l] [--type t]
 collage dev
 collage build [-o path] [-os name] [-arch name] [-i]
 collage export [-out dir] [-clean]
@@ -162,8 +163,27 @@ should pass.
 ## What `collage new --template demo` gives you
 
 A home page and a page of live demos, split into the directories a real project
-grows into — `pages/`, `fragments/`, `actions/`, `documents/`, `store/` — with a
-test file that drives all of it through `app.Handler()`.
+grows into, with a test file that drives all of it through `app.Handler()` with
+[`collagetest`](testing.md):
+
+```
+pages/<area>/<name>.go            a page: its layouts, content, path, actions
+fragments/layouts/main.go         Master(), the layout every page wraps itself in
+fragments/pages/<area>/<name>.go  each page's content, mirroring pages/
+actions/<area>.go                 action builders, one file per area
+actions/funcs/<area>.go           their handlers
+documents/<name>.go               routes that are not HTML
+data/<domain>/                    state, by domain
+templates/                        the HTML kept in files
+```
+
+`pages/` and `fragments/pages/` mirror each other by area, and every package in
+them is called `pages` or `fragments`, so a page file imports its content as
+`fragments "<module>/fragments/pages/<area>"` and `routes.go` imports each area's
+pages under an alias, `demopages`. Small fragments keep their markup inline, as a
+`collage.InlineHTML` const beside their data handler; the layout and the larger
+pages keep theirs in `templates/`. An action a page attaches with `WithActionFor`
+shares the page's name and has no path of its own.
 
 - **`/`** is `Static()`: nothing about it depends on the request, which is what
   lets `collage export` render it to a file.
@@ -185,6 +205,53 @@ anything with a form in it. Without one a key is generated per process, and the
 application says so at startup — as a warning outside development, and only when
 it has an action that could verify a token.
 
+
+## `collage add`
+
+Writes a page, a fragment, an action or a document in that layout, and registers
+it in `routes.go`:
+
+```
+collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
+collage add page blog/post --file   # its template in templates/pages/blog/post.html
+collage add fragment blog/sidebar   # fragments/pages/blog/sidebar.go, for a slot
+collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
+collage add action blog/ping --path /api/ping
+collage add document feed --path /feed.xml --type application/xml
+```
+
+- **A page** is `pages/<area>/<name>.go`, wrapped in `layouts.Master()` — or the
+  first layout in `fragments/layouts` that takes no arguments — with its content in
+  `fragments/pages/<area>/<name>.go`: an inline template, a view struct, and a
+  typed `collage.Load` handler that declares the page's title. Its path is
+  `/<area>/<name>` unless `--path` says otherwise.
+- **An action** gets a builder appended to `actions/<area>.go` and a handler to
+  `actions/funcs/<area>.go`, either created when it is not there. With `--path` it
+  answers at a URL of its own and is registered; without one it answers at the
+  page it is attached to, and the command prints the `.WithActionFor(...)` to add.
+- **A document** is `documents/<name>.go`, `text/plain` unless `--type` says
+  otherwise.
+- **A fragment** is a page's content without the page, for a slot.
+
+What it writes is named after the last segment — `blog/post` is the page `"post"`,
+built by `Post()` — unless `--name` gives another. The locale of its path is
+`Locale.Default` as `main.go` writes it, `en` when it is not a literal there, or
+`--locale`; a template file goes under `Template.Root` with its `Extension`, read
+the same way. The command says which locale it used.
+
+It registers into the list `routes.go` already keeps: an `app.Register(...)`
+call, where the new item goes after the last one of its kind, or a
+`[]*collage.Page{...}` literal ranged over with `RegisterPage` — and the same for
+`Document` and `Action`. It edits the file in place, so its comments stay where
+they were, and imports the area's package under the same kind of alias the
+scaffold uses. With no such list it changes nothing there and prints the line to
+add. Constructors take no arguments: a page that needs a service gets it added by
+hand.
+
+**Nothing is overwritten.** Everything is worked out before anything is written,
+and a file that exists, a page, action or document name the project already
+declares, or an identifier already in the package a file goes into stops the
+command with nothing written.
 
 ## `collage new`
 

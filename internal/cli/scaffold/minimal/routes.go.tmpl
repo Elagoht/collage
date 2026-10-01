@@ -1,14 +1,14 @@
 package main
 
 import (
-	"github.com/Elagoht/collage/pkg/collage"
+	landingpages "@@MODULE@@/pages/landing"
 
-	"@@MODULE@@/pages"
+	"github.com/Elagoht/collage/pkg/collage"
 )
 
-// register adds every page, document and action to app. A new route goes here.
+// Registers every page, document and action to app. A new route goes here.
 func register(app *collage.App) error {
 	return app.Register(
-		pages.HomePage(),
+		landingpages.Home(),
 	)
 }

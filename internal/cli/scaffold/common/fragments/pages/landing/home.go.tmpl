@@ -1,0 +1,16 @@
+package fragments
+
+import "github.com/Elagoht/collage/pkg/collage"
+
+// Types data used on this page: what templates/pages/home.html renders as ".".
+type homeView struct {
+	Name string
+}
+
+// Returns the home page's content. Its data is fixed when the program starts, so
+// WithData rather than a data handler, and the page stays static.
+func Home() *collage.Fragment {
+	return collage.NewFragment("home", "pages/home.html").
+		WithData(homeView{Name: "@@NAME@@"}).
+		Build()
+}

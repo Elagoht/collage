@@ -3,27 +3,33 @@ package main
 import (
 	"fmt"
 
-	"github.com/Elagoht/collage/pkg/collage"
-
 	"@@MODULE@@/actions"
 	"@@MODULE@@/documents"
-	"@@MODULE@@/pages"
+	demopages "@@MODULE@@/pages/demo"
+	errorpages "@@MODULE@@/pages/errors"
+	landingpages "@@MODULE@@/pages/landing"
+
+	"github.com/Elagoht/collage/pkg/collage"
 )
 
-// register adds every page, document and action to app. A new route goes here.
+// Registers every page, document and action to app. A new route goes here;
+// "collage add" puts the ones it writes here too.
 func register(app *collage.App) error {
 	if err := app.Register(
-		pages.HomePage(),
-		pages.FeaturesPage(),
-		pages.HelloPage(),
-		documents.HealthDocument(),
-		actions.CountAction(),
+		landingpages.Home(),
+		demopages.Features(),
+		demopages.Hello(),
+		documents.Health(),
+		// Actions a page attaches with WithActionFor are registered with it;
+		// this one has a URL of its own.
+		actions.Count(),
 	); err != nil {
 		return err
 	}
+
 	// Registered rather than given a path: it is reached by failing to match.
 	// "collage export" writes it as 404.html.
-	if err := app.RegisterNotFoundPage(pages.NotFoundPage()); err != nil {
+	if err := app.RegisterNotFoundPage(errorpages.NotFoundPage()); err != nil {
 		return fmt.Errorf("register not-found page: %w", err)
 	}
 	return nil

@@ -18,12 +18,12 @@
     <pre><code><span class="dir">@@NAME@@/</span>
 ├── main.go       <span class="muted">configuration and the static mount</span>
 ├── routes.go     <span class="muted">every page, document and action</span>
-├── <span class="dir">pages/</span>        <span class="muted">one file per page: layout, content, route</span>
-├── <span class="dir">fragments/</span>    <span class="muted">reusable pieces: the layout and the demos</span>
-├── <span class="dir">actions/</span>      <span class="muted">handlers for POST and friends</span>
+├── <span class="dir">pages/</span>        <span class="muted">a page per file, by area: layout, content, route</span>
+├── <span class="dir">fragments/</span>    <span class="muted">layouts/, and pages/: each page's content, by area</span>
+├── <span class="dir">actions/</span>      <span class="muted">POST and friends; their handlers in funcs/</span>
 ├── <span class="dir">documents/</span>    <span class="muted">routes that are not HTML, like /healthz</span>
-├── <span class="dir">store/</span>        <span class="muted">the demo's in-memory state</span>
-├── <span class="dir">templates/</span>    <span class="muted">the HTML, one file per fragment</span>
+├── <span class="dir">data/</span>         <span class="muted">state, by domain: the demo's count</span>
+├── <span class="dir">templates/</span>    <span class="muted">the HTML kept in files: layouts and big pages</span>
 └── <span class="dir">static/</span>       <span class="muted">CSS, JavaScript and images, at /static/</span></code></pre>
   </section>
 

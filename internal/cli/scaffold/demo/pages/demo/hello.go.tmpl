@@ -1,0 +1,21 @@
+package pages
+
+import (
+	"@@MODULE@@/actions"
+	"@@MODULE@@/fragments/layouts"
+	fragments "@@MODULE@@/fragments/pages/demo"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+// Returns the hello page, with the action the features page's form posts to
+// attached at its URL.
+func Hello() *collage.Page {
+	return collage.NewPage("hello").
+		WithLayouts(layouts.Master()).
+		WithContent(fragments.Hello()).
+		WithPath("en", "/hello").
+		WithActionFor(actions.Hello()).
+		Dynamic().
+		Build()
+}

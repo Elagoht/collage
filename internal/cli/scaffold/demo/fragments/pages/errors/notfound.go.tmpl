@@ -1,0 +1,14 @@
+package fragments
+
+import "github.com/Elagoht/collage/pkg/collage"
+
+// Returns the content of the page every unknown address answers with.
+func NotFound() *collage.Fragment {
+	return collage.NewInlineFragment("not-found", notFoundBlock).Build()
+}
+
+const notFoundBlock collage.InlineHTML = `<main class="not-found">
+  <h1>Not found</h1>
+  <p>There is nothing at this address.</p>
+  <p><a href="{{pageURL "home"}}">Back to the home page</a></p>
+</main>`

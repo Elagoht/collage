@@ -1,0 +1,28 @@
+package actions
+
+import (
+	"net/http"
+
+	"@@MODULE@@/actions/funcs"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+// Returns the action the counter button posts to, at a URL of its own.
+func Count() *collage.Action {
+	return collage.NewAction("count").
+		WithPath("en", "/api/count").
+		WithMethods(http.MethodPost).
+		WithHandler(funcs.Count()).
+		Build()
+}
+
+// Returns the action the hello form posts to. It has no path of its own: the
+// hello page attaches it with WithActionFor, so it answers at the page's URL, and
+// it shares the page's name.
+func Hello() *collage.Action {
+	return collage.NewAction("hello").
+		WithMethods(http.MethodPost).
+		WithHandler(funcs.Hello()).
+		Build()
+}

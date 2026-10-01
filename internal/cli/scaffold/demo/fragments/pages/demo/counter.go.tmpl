@@ -1,0 +1,37 @@
+package fragments
+
+import (
+	"context"
+	"time"
+
+	"@@MODULE@@/data/count"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+// Types data used on this fragment.
+type counterView struct {
+	Count int64
+}
+
+// Returns the count, rendered into the features page's counter slot.
+func Counter() *collage.Fragment {
+	return collage.NewInlineFragment("demo-counter", counterBlock).
+		WithDataHandler(collage.DataHandler(counterData)).
+		Build()
+}
+
+const counterBlock collage.InlineHTML = `<output class="count">{{.Count}}</output>`
+
+// Reads the count through Cached. count.Current stands in for a database query:
+// every page and every fragment path that shows the count shares one read, kept
+// until the count action invalidates count.Tag. Once would share it only within
+// one render.
+func counterData(
+	_ context.Context,
+	rc *collage.RenderContext,
+) (counterView, []string, error) {
+	current, err := collage.Cached(rc, "demo:count", time.Hour, []string{count.Tag},
+		func(context.Context) (int64, error) { return count.Current(), nil })
+	return counterView{Count: current}, nil, err
+}

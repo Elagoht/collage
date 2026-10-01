@@ -142,8 +142,12 @@ func TestRun_New_ScaffoldsExpectedFiles(t *testing.T) {
 		".gitignore",
 		".env.example",
 		"plugins-config.json",
-		filepath.Join("pages", "home.go"),
+		filepath.Join("pages", "landing", "home.go"),
+		filepath.Join("pages", "demo", "hello.go"),
 		filepath.Join("fragments", "layouts", "main.go"),
+		filepath.Join("fragments", "pages", "landing", "home.go"),
+		filepath.Join("actions", "funcs", "demo.go"),
+		filepath.Join("data", "count", "count.go"),
 		filepath.Join("templates", "layouts", "default.html"),
 		filepath.Join("templates", "pages", "home.html"),
 		filepath.Join("static", "app.css"),
@@ -307,7 +311,7 @@ func TestRun_New_Minimal(t *testing.T) {
 	}
 
 	want := []string{".gitignore", "README.md", "go.mod", "main.go", "routes.go",
-		"fragments/layouts/main.go", "pages/home.go",
+		"fragments/layouts/main.go", "fragments/pages/landing/home.go", "pages/landing/home.go",
 		"templates/layouts/default.html", "templates/pages/home.html", "static/app.css"}
 	var got []string
 	if err := filepath.WalkDir(target, func(path string, d fs.DirEntry, err error) error {

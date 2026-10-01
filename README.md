@@ -57,10 +57,12 @@ watcher, nothing to install. A change that does not compile leaves the last good
 build running. Plain `collage new mysite`, without `--template demo`, starts from
 one page saying hello instead — the default.
 
-Where to look next: `pages/` has one file per page, `fragments/` the layout and the
-demos, `actions/` the API endpoint; `routes.go` registers them, and `main.go` has the
-configuration. The rest of this file is what
-those are made of, and [docs/](docs/) is the detail.
+Where to look next: `pages/` has one file per page, by area, and `fragments/pages/`
+each page's content beside it; `fragments/layouts/` the layout, `actions/` the
+endpoints with their handlers in `actions/funcs/`; `routes.go` registers them, and
+`main.go` has the configuration. `collage add page blog/post` writes a new page in
+that layout and registers it. The rest of this file is what those are made of, and
+[docs/](docs/) is the detail.
 
 **Adding collage to a project you already have** is `go get
 github.com/Elagoht/collage` and the application below.
@@ -333,16 +335,17 @@ Details in [docs/caching.md](docs/caching.md),
 | [docs/actions.md](docs/actions.md) | `Action`: methods, forms, `ActionResult`, request-forgery tokens, fragments at their own URLs |
 | [docs/testing.md](docs/testing.md) | `collagetest`: driving `app.Handler()` from a test like a browser — cookies, forms with their hidden fields, redirects |
 | [docs/deployment.md](docs/deployment.md) | Building a binary, containers, signals, TLS, the cache in production, health checks |
-| [docs/cli.md](docs/cli.md) | `collage new`/`dev`/`build`, plugin subcommands, and the static site builder |
+| [docs/cli.md](docs/cli.md) | `collage new`/`add`/`dev`/`build`, the scaffold's layout, plugin subcommands, and the static site builder |
 
 ## The CLI
 
 ```
-collage new myblog    # scaffold a runnable project
-collage dev           # run it, rebuilding and restarting on every Go change
-collage build         # compile the binary you deploy
-collage export        # render the statically-buildable pages to dist/
-collage serve         # serve dist/ the way a static host would
+collage new myblog          # scaffold a runnable project
+collage add page blog/post  # write a page, an action, a document into it
+collage dev                 # run it, rebuilding and restarting on every Go change
+collage build               # compile the binary you deploy
+collage export              # render the statically-buildable pages to dist/
+collage serve               # serve dist/ the way a static host would
 ```
 
 ## Contributing and security

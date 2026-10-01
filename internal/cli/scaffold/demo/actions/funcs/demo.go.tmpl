@@ -1,0 +1,43 @@
+package funcs
+
+import (
+	"context"
+	"net/http"
+
+	"@@MODULE@@/data/count"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+// Types the count action's JSON answer.
+type countResponse struct {
+	Count int64 `json:"count"`
+}
+
+// Adds one to the count and answers with the new value as JSON.
+func Count() collage.ActionHandlerFunc {
+	return func(
+		_ context.Context,
+		_ *collage.RenderContext,
+	) (*collage.ActionResult, error) {
+		result, err := collage.JSONOf(http.StatusOK, countResponse{Count: count.Increment()})
+		if err != nil {
+			return nil, err
+		}
+		// The features page is cached and shows the count, so this is what keeps
+		// it true: its entry is dropped, and the next reader gets a fresh render.
+		result.InvalidateTags = []string{count.Tag}
+		return result, nil
+	}
+}
+
+// Answers the hello form with the page it was posted to, which is rc.Page; that
+// page's data handler reads the name from the post.
+func Hello() collage.ActionHandlerFunc {
+	return func(
+		_ context.Context,
+		rc *collage.RenderContext,
+	) (*collage.ActionResult, error) {
+		return collage.RenderPage(rc.Page), nil
+	}
+}

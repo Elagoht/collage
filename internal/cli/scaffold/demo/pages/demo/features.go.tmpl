@@ -1,0 +1,22 @@
+package pages
+
+import (
+	"@@MODULE@@/fragments/layouts"
+	fragments "@@MODULE@@/fragments/pages/demo"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+// Returns the features page: its layout, content, path, and the clock opened at
+// /fragments/clock.
+func Features() *collage.Page {
+	clock := fragments.Clock()
+
+	return collage.NewPage("features").
+		WithLayouts(layouts.Master()).
+		WithContent(fragments.Features(clock)).
+		WithPath("en", "/features").
+		WithFragmentPath("en", "/fragments/clock", clock).
+		Static().
+		Build()
+}

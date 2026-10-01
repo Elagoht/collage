@@ -1,0 +1,15 @@
+package fragments
+
+import "github.com/Elagoht/collage/pkg/collage"
+
+// Returns the features page's content, templates/pages/features.html, with the
+// counter and the given clock bound into its slots. The clock is passed in
+// because the page also opens that same fragment at a URL of its own.
+func Features(
+	clock *collage.Fragment,
+) *collage.Fragment {
+	return collage.NewFragment("features", "pages/features.html").
+		WithSlotFragment("counter", Counter()).
+		WithSlotFragment("clock", clock).
+		Build()
+}

@@ -1,0 +1,21 @@
+package count
+
+import "sync/atomic"
+
+// Tag is the dependency tag of everything that shows the count. The count action
+// invalidates it, and every cached render that reported it is dropped.
+const Tag = "count"
+
+// count stands in for a database: the demo's one piece of state, in memory and
+// shared by every visitor.
+var count atomic.Int64
+
+// Returns the current count.
+func Current() int64 {
+	return count.Load()
+}
+
+// Adds one to the count and returns the new value.
+func Increment() int64 {
+	return count.Add(1)
+}

@@ -9,7 +9,9 @@ import (
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
-func HealthDocument() *collage.Document {
+// Returns the health check: JSON at /healthz, rendered without a template so it
+// cannot start failing because a page did.
+func Health() *collage.Document {
 	return collage.NewDocument("health", "application/json").
 		WithPath("en", "/healthz").
 		WithHandler(sayOk).
@@ -17,12 +19,17 @@ func HealthDocument() *collage.Document {
 		Build()
 }
 
+// Types the health check's answer.
 type healthResponse struct {
 	Status string    `json:"status"`
 	Date   time.Time `json:"date"`
 }
 
-func sayOk(context.Context, *collage.RenderContext) ([]byte, []string, error) {
+// Answers that the program is up, and when it said so.
+func sayOk(
+	_ context.Context,
+	_ *collage.RenderContext,
+) ([]byte, []string, error) {
 	body, err := json.MarshalIndent(healthResponse{
 		Status: "ok",
 		Date:   time.Now().UTC(),

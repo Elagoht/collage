@@ -1,0 +1,48 @@
+package fragments
+
+import (
+	"context"
+	"runtime"
+	"time"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+// startedAt is when the program started, for the clock's uptime.
+var startedAt = time.Now()
+
+// Types data used on this fragment.
+type clockView struct {
+	Now       time.Time
+	Uptime    string
+	GoVersion string
+}
+
+// Returns the clock: a fragment the features page renders in a slot, and opens at
+// a URL of its own with WithFragmentPath.
+func Clock() *collage.Fragment {
+	return collage.NewInlineFragment("demo-clock", clockBlock).
+		WithDataHandler(collage.Load(clockData)).
+		Build()
+}
+
+const clockBlock collage.InlineHTML = `<div id="clock" class="clock">
+  <span class="clock-label">rendered at</span>
+  <time datetime="{{formatTime .Now "2006-01-02T15:04:05Z07:00"}}">{{formatTime .Now "15:04:05"}}</time>
+  <dl>
+    <div><dt>uptime</dt><dd>{{.Uptime}}</dd></div>
+    <div><dt>go</dt><dd>{{.GoVersion}}</dd></div>
+  </dl>
+</div>`
+
+// Reads the time, the uptime and the Go version, fresh on every render.
+func clockData(
+	_ context.Context,
+	_ *collage.RenderContext,
+) (clockView, error) {
+	return clockView{
+		Now:       time.Now(),
+		Uptime:    time.Since(startedAt).Round(time.Second).String(),
+		GoVersion: runtime.Version(),
+	}, nil
+}
