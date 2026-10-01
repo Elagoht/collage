@@ -63,6 +63,37 @@
   writes a `main_test.go` without its own `get`, `post` and `token` helpers. An
   existing project's tests are unchanged and keep working.
 
+- **Renders no longer cost as much as the project's whole template set.** Every
+  fragment of every render cloned all of the application's templates and escaped
+  the copy again. A page of five fragments in a project of 200 templates took
+  2.2ms and 2.9MB per request; it now takes 62us and 42KB, and every dynamic render
+  is 40-66% faster. A render reuses an executed copy and puts back every function
+  it bound before another render takes it, so nothing bound to one request
+  reaches the next.
+- **Benchmarks and stress tests.** `go test -bench=.` measures each request path a
+  site serves, and the suite now checks under concurrency that a crowd on a cold
+  page renders it once, the disk cache stays inside its cap, abandoned or
+  panicking requests leave nothing running, and shutdown finishes the requests in
+  flight (skipped with `-short`). A tag's CI compares its benchmarks with the
+  previous tag's and reports the difference in the job summary.
+
+### Fixed
+
+- **A disk cache eviction no longer stalls every writer.** The eviction scan read
+  the whole cache directory under the lock every write takes, and each entry's file
+  was written under it too, so under a flood of new keys (`?utm=1`, `?utm=2`, ...)
+  every writer queued behind a ~60ms scan. Files are now written before the lock
+  and only renamed under it, and the scan runs outside it. A new entry that reaches
+  a full cache while a scan is still making room is served but not stored, so
+  `MaxEntries` still holds.
+- **The dependency tracker is bounded across pages, not only per tag.** Nothing
+  removes a key from the tracker when the cache evicts its entry, and every cached
+  path is a tag of its own, so `MaxKeysPerTag` alone let the tracker reach 10000
+  keys per page while the cache stayed at `MaxEntries`. That is an out-of-memory an
+  anonymous client can cause on a large site. With a built-in cache the tracker now
+  holds at most `MaxEntries` keys in all, dropping the oldest written first. A
+  custom `Store` keeps the per-tag bound only.
+
 ## v0.39.2
 
 ### Fixed
