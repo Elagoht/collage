@@ -36,6 +36,10 @@ var ErrEmptyCacheVersion = errors.New("collage: disk cache needs a version")
 // entry amortises the directory scan over that many later inserts.
 const evictBatch = 16
 
+// DefaultDiskMaxBytes is the size DiskConfig.MaxBytes caps a disk cache at when
+// left at zero: 1 GiB.
+const DefaultDiskMaxBytes int64 = 1 << 30
+
 // DiskConfig configures a DiskCache.
 type DiskConfig struct {
 	// Dir is the directory entries are stored under. Required.
@@ -61,6 +65,13 @@ type DiskConfig struct {
 	// that arrives while the cache is full and a scan is still making room is not
 	// stored: the page is served, and only not kept.
 	MaxEntries int
+	// MaxBytes caps the total size of the entry files, in bytes. Zero means "use
+	// the default" (DefaultDiskMaxBytes); a negative value means unlimited. It is
+	// enforced the way MaxEntries is, oldest first and by the same scan, and an
+	// entry larger than the whole cap is not stored. MaxEntries counts files, not
+	// what they weigh: a large page under thousands of invented queries fills the
+	// disk with copies of it.
+	MaxBytes int64
 	// Now overrides the clock, for tests.
 	Now func() time.Time
 }
@@ -80,6 +91,7 @@ type DiskCache struct {
 	dir        string
 	defaultTTL time.Duration
 	maxEntries int
+	maxBytes   int64
 	now        func() time.Time
 
 	// mu serialises renaming entries into place, removals, and the count. Reads
@@ -91,6 +103,9 @@ type DiskCache struct {
 	// but evict recounts from disk before removing anything, so an
 	// inflated count costs at worst a wasted scan, never an over-eviction.
 	entries int
+	// bytes is the same kind of count of the entry files' total size: inflated
+	// by an invalidation, recounted by every eviction scan.
+	bytes int64
 
 	// evicting is set while an eviction scan runs, outside mu.
 	evicting bool
@@ -125,6 +140,9 @@ func NewDisk(cfg DiskConfig) (*DiskCache, error) {
 	if cfg.MaxEntries == 0 {
 		cfg.MaxEntries = defaultMaxEntries
 	}
+	if cfg.MaxBytes == 0 {
+		cfg.MaxBytes = DefaultDiskMaxBytes
+	}
 
 	sum := sha256.Sum256([]byte(cfg.Version))
 	dir := filepath.Join(cfg.Dir, hex.EncodeToString(sum[:8]))
@@ -132,12 +150,32 @@ func NewDisk(cfg DiskConfig) (*DiskCache, error) {
 		return nil, fmt.Errorf("collage: disk cache directory %s: %w", dir, err)
 	}
 
-	c := &DiskCache{dir: dir, defaultTTL: cfg.DefaultTTL, maxEntries: cfg.MaxEntries, now: cfg.Now}
+	c := &DiskCache{dir: dir, defaultTTL: cfg.DefaultTTL, maxEntries: cfg.MaxEntries, maxBytes: cfg.MaxBytes, now: cfg.Now}
 	// Count what a previous process left here, so the cap holds across restarts
 	// rather than only within one run. Best-effort: an unreadable directory starts
 	// the count at zero and the first eviction scan corrects it.
 	c.entries = c.countEntries()
+	c.bytes = c.storedBytes()
 	return c, nil
+}
+
+// storedBytes returns the total size of the stored entry files: the set
+// countEntries counts.
+func (c *DiskCache) storedBytes() int64 {
+	dirEntries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return 0
+	}
+	var n int64
+	for _, entry := range dirEntries {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if info, err := entry.Info(); err == nil {
+			n += info.Size()
+		}
+	}
+	return n
 }
 
 // countEntries returns how many stored entry files the directory holds, ignoring
@@ -230,6 +268,30 @@ func (c *DiskCache) SetTagged(_ context.Context, key string, content []byte, ttl
 	buf.WriteByte('\n')
 	buf.Write(content)
 
+	size := int64(buf.Len())
+	// Whether this key is already stored, and how large it was, decides what the
+	// write adds to the counts the caps are checked against. Read outside the
+	// lock, so a racing writer of the same key can count it twice: the counts
+	// are approximate already, and the eviction scan recounts.
+	info, statErr := os.Stat(path)
+	isNew := errors.Is(statErr, fs.ErrNotExist)
+	var oldSize int64
+	if statErr == nil {
+		oldSize = info.Size()
+	}
+
+	if c.maxBytes > 0 && size > c.maxBytes {
+		// Larger than the whole cache: storing it would evict everything else
+		// and then itself. Served, not kept; the entry it replaces is stale now.
+		c.mu.Lock()
+		if err := os.Remove(path); err == nil {
+			c.entries--
+			c.bytes -= oldSize
+		}
+		c.mu.Unlock()
+		return etag, nil
+	}
+
 	// The file is written before the lock and only renamed into place under it:
 	// writing is the slow part, and two writers of different keys have nothing
 	// to wait on each other for.
@@ -237,17 +299,13 @@ func (c *DiskCache) SetTagged(_ context.Context, key string, content []byte, ttl
 	if err != nil {
 		return "", err
 	}
-	// Whether this key is already stored decides whether the write adds an entry
-	// or replaces one, and so whether it counts toward the cap. Read outside the
-	// lock, so a racing writer of the same key can count it twice: the count is
-	// approximate already, and the eviction scan recounts.
-	_, statErr := os.Stat(path)
-	isNew := errors.Is(statErr, fs.ErrNotExist)
 
+	grows := size - oldSize
 	c.mu.Lock()
-	if isNew && c.maxEntries > 0 && c.entries >= c.maxEntries && c.evicting {
+	if c.evicting && ((isNew && c.maxEntries > 0 && c.entries >= c.maxEntries) ||
+		(grows > 0 && c.maxBytes > 0 && c.bytes+grows > c.maxBytes)) {
 		// Full, and a scan is already making room. Storing this entry would
-		// pass the cap; waiting for the scan would make every writer queue
+		// pass a cap; waiting for the scan would make every writer queue
 		// behind it. The render is served either way and only not kept.
 		c.mu.Unlock()
 		os.Remove(tmp)
@@ -261,40 +319,45 @@ func (c *DiskCache) SetTagged(_ context.Context, key string, content []byte, ttl
 		}
 		return "", err
 	}
-	var start int
-	evict := false
 	if isNew {
 		c.entries++
-		if c.maxEntries > 0 && !c.evicting && c.entries > c.evictAt() {
-			c.evicting, evict, start = true, true, c.entries
-		}
+	}
+	c.bytes += grows
+	var start int
+	var startBytes int64
+	evict := false
+	if !c.evicting && c.overEvictAt(c.entries, c.bytes) {
+		c.evicting, evict, start, startBytes = true, true, c.entries, c.bytes
 	}
 	c.mu.Unlock()
 	if evict {
-		c.evict(start)
+		c.evict(start, startBytes)
 	}
 	return etag, nil
 }
 
-// evictAt is the count past which a write starts an eviction: a little short of
-// maxEntries, so writes go on being stored while the scan runs. A cache too small
-// for that margin evicts once it passes maxEntries itself.
-func (c *DiskCache) evictAt() int {
-	return c.maxEntries - c.maxEntries/(2*evictBatch)
+// overEvictAt reports whether entries files of n bytes in all are past the point
+// a write starts an eviction: a little short of each cap, so writes go on being
+// stored while the scan runs. A cap too small for that margin evicts once it is
+// passed itself. A cap that is off is never passed.
+func (c *DiskCache) overEvictAt(entries int, n int64) bool {
+	return (c.maxEntries > 0 && entries > c.maxEntries-c.maxEntries/(2*evictBatch)) ||
+		(c.maxBytes > 0 && n > c.maxBytes-c.maxBytes/(2*evictBatch))
 }
 
 // evict removes the oldest entries, by file modification time, down to a batch
-// below maxEntries. It runs without c.mu, in the write that crossed evictAt, so
+// below maxEntries and maxBytes. It runs without c.mu, in the write that crossed evictAt, so
 // the directory scan stalls that one write and no other; c.evicting keeps a second
 // scan from starting meanwhile, and writes of new entries that reach maxEntries
-// before this one finishes are skipped rather than stored past it. start is the
-// in-memory count when the scan began.
+// before this one finishes are skipped rather than stored past it. start and
+// startBytes are the in-memory counts when the scan began.
 //
 // It recounts from disk before removing, so it never over-evicts on an inflated
 // in-memory count, and it removes down to a fraction below the cap so the scan is
 // paid once per many inserts rather than on every insert at a full cache.
-func (c *DiskCache) evict(start int) {
+func (c *DiskCache) evict(start int, startBytes int64) {
 	removed, scanned := 0, -1
+	var removedBytes, scannedBytes int64
 	defer func() {
 		c.mu.Lock()
 		if scanned >= 0 {
@@ -302,6 +365,7 @@ func (c *DiskCache) evict(start int) {
 			// since it began. Entries written during the scan may be counted
 			// twice; an inflated count costs an early scan, never a lost entry.
 			c.entries = scanned - removed + (c.entries - start)
+			c.bytes = scannedBytes - removedBytes + (c.bytes - startBytes)
 		}
 		c.evicting = false
 		c.mu.Unlock()
@@ -314,6 +378,7 @@ func (c *DiskCache) evict(start int) {
 	type stored struct {
 		name    string
 		modTime time.Time
+		size    int64
 	}
 	files := make([]stored, 0, len(dirEntries))
 	for _, entry := range dirEntries {
@@ -324,22 +389,29 @@ func (c *DiskCache) evict(start int) {
 		if err != nil {
 			continue
 		}
-		files = append(files, stored{entry.Name(), info.ModTime()})
+		files = append(files, stored{entry.Name(), info.ModTime(), info.Size()})
+		scannedBytes += info.Size()
 	}
 	if c.scanned != nil {
 		c.scanned()
 	}
 	scanned = len(files)
-	if scanned <= c.evictAt() {
-		return // the in-memory count was stale; nothing to do
+	if !c.overEvictAt(scanned, scannedBytes) {
+		return // the in-memory counts were stale; nothing to do
 	}
 
-	// Down to a batch below the cap, so the next scan is a batch of inserts away.
+	// Down to a batch below each cap, so the next scan is a batch of inserts away.
 	target := max(c.maxEntries-c.maxEntries/evictBatch, 1)
+	targetBytes := c.maxBytes - c.maxBytes/evictBatch
+	over := func() bool {
+		return (c.maxEntries > 0 && scanned-removed > target) ||
+			(c.maxBytes > 0 && scannedBytes-removedBytes > targetBytes)
+	}
 	sort.Slice(files, func(i, j int) bool { return files[i].modTime.Before(files[j].modTime) })
-	for i := 0; i < scanned-target && i < len(files); i++ {
+	for i := 0; i < len(files) && over(); i++ {
 		if err := os.Remove(filepath.Join(c.dir, files[i].name)); err == nil || errors.Is(err, fs.ErrNotExist) {
 			removed++
+			removedBytes += files[i].size
 		}
 	}
 }
@@ -407,6 +479,7 @@ func (c *DiskCache) Clear(_ context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.entries = 0
+	c.bytes = 0
 
 	entries, err := os.ReadDir(c.dir)
 	if err != nil {

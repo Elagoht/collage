@@ -4,6 +4,16 @@
 
 ### Added
 
+- **`Cache.MaxBytes` caps what a built-in cache stores, in bytes.** `MaxEntries`
+  counts entries, not what they weigh, and the cache key holds the query by
+  default, so one large page asked for under thousands of invented queries
+  (`?utm=1`, `?utm=2`, ...) filled the cache with copies of it: 665 MB of live
+  heap on a documentation site, gigabytes for larger pages, reachable by an
+  anonymous client. Past `MaxBytes` the oldest entries are evicted, as at
+  `MaxEntries`, and a page larger than the whole cap is served but not stored.
+  Zero means 256 MiB for `"memory"` and 1 GiB for `"disk"`; negative means
+  unlimited. A custom `Store` ignores it.
+
 - **`app.Register(items ...)` registers pages, documents and actions in one
   call**, in order, each through its own `Register` method, and stops at the first
   refusal with its error wrapped as `register page "name": ...`. It replaces the

@@ -1171,6 +1171,34 @@ func TestDependencyTracker_IsBoundedAcrossManyPages(t *testing.T) {
 	}
 }
 
+// A flood of invented queries on one page stores a copy of it per query; however
+// few bytes MaxEntries lets through per entry, the built-in cache holds no more
+// than MaxBytes of them in all.
+func TestCache_MaxBytesBoundsAQueryFlood(t *testing.T) {
+	const maxBytes = 4096
+	app := newTestApp(t, func(cfg *Config) { cfg.Cache.MaxBytes = maxBytes })
+	if err := app.RegisterPage(newHomePage()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	handler := app.Handler()
+	for i := range 500 {
+		if rec := get(handler, "/?utm="+strconv.Itoa(i)); rec.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d", i, rec.Code)
+		}
+	}
+	store, ok := app.store.(*cache.MemoryCache)
+	if !ok {
+		t.Fatalf("store is %T, want the built-in memory cache", app.store)
+	}
+	stats := store.Stats()
+	if stats.Bytes > maxBytes {
+		t.Fatalf("the cache holds %d bytes, MaxBytes %d", stats.Bytes, maxBytes)
+	}
+	if stats.Entries == 0 || stats.Evictions == 0 {
+		t.Fatalf("stats %+v: the cap was never reached, so this proves nothing", stats)
+	}
+}
+
 // TestNew_MaxKeysPerTag_NegativeMeansUnlimited checks the other half of the
 // convention the rest of the configuration uses: zero is "use the default", and a
 // negative value is the caller explicitly accepting unbounded growth.

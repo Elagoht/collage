@@ -323,6 +323,18 @@ type CacheConfig struct {
 	// (ApplyDefaults sets it to 10000); a negative value means unlimited, and is left
 	// untouched by ApplyDefaults.
 	MaxEntries int
+	// MaxBytes caps the total size of what a built-in cache stores, in bytes.
+	// Zero means the cache type's default: 256 MiB for "memory", 1 GiB for
+	// "disk". A negative value means unlimited. Past it the oldest entries are
+	// evicted, as at MaxEntries, and a page larger than the whole cap is served
+	// but not stored. A custom Store bounds itself and ignores this.
+	//
+	// MaxEntries counts entries, not what they weigh. The cache key holds the
+	// query by default, so a client asking for one large page under thousands
+	// of invented queries fills the cache with copies of it: ten thousand
+	// entries of a 500 KB page is 5 GB. This is the bound that holds whatever
+	// the pages weigh.
+	MaxBytes int64
 	// Dir is where a "disk" cache stores its entries. Required for that type.
 	Dir string
 	// Version identifies the build whose rendered output a "disk" cache holds.

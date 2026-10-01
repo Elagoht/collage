@@ -12,6 +12,7 @@ app, err := collage.New(&collage.Config{
 		Type:       "memory",
 		DefaultTTL:    5 * time.Minute,
 		MaxEntries:    10000,
+		MaxBytes:      256 << 20, // 0 means the type's default; negative, unlimited
 		MaxKeysPerTag: 10000,
 	},
 })
@@ -404,6 +405,12 @@ hook adjusted, so the value a client sees does not change from request to reques
   used. Reading an entry does not make it younger.
 - **Lazy expiry** — an expired entry is dropped when it is next looked up.
 - `MaxEntries: 0` means the default (10000); a negative value means unlimited.
+- **A byte cap** at `MaxBytes`, evicted the same way. `MaxEntries` counts entries,
+  not what they weigh, and the cache key holds the query by default: one large
+  page asked for under thousands of invented queries fills the cache with copies
+  of it. `MaxBytes: 0` means 256 MiB for memory and 1 GiB for disk; a negative
+  value means unlimited. A page larger than the whole cap is served but not
+  stored. A custom `Store` bounds itself and ignores it.
 
 The same `MaxEntries` bounds the `collage.Cached` data store, which evicts the
 other way: least recently used, so a value read on every page stays. Two caches,

@@ -28,6 +28,7 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 		return cache.NewMemory(cache.MemoryConfig{
 			DefaultTTL: cfg.Cache.DefaultTTL,
 			MaxEntries: cfg.Cache.MaxEntries,
+			MaxBytes:   cfg.Cache.MaxBytes,
 		})
 	}
 
@@ -76,6 +77,7 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 			Version:    version,
 			DefaultTTL: cfg.Cache.DefaultTTL,
 			MaxEntries: cfg.Cache.MaxEntries,
+			MaxBytes:   cfg.Cache.MaxBytes,
 		})
 		if errors.Is(err, cache.ErrEmptyCacheDir) || errors.Is(err, cache.ErrEmptyCacheVersion) {
 			return nil, err

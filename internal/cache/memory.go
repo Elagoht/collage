@@ -12,6 +12,10 @@ import (
 // a negative value means unlimited.
 const defaultMaxEntries = 10000
 
+// DefaultMemoryMaxBytes is the content weight MemoryConfig.MaxBytes caps a memory
+// cache at when left at zero: 256 MiB.
+const DefaultMemoryMaxBytes int64 = 256 << 20
+
 // MemoryConfig configures a MemoryCache.
 type MemoryConfig struct {
 	// DefaultTTL is the entry lifetime Set and SetTagged use when called with
@@ -22,6 +26,13 @@ type MemoryConfig struct {
 	// the oldest entry by insertion sequence is dropped, not the least recently
 	// used one — so callers must not assume LRU semantics.
 	MaxEntries int
+	// MaxBytes caps the total size of the stored content, in bytes. Zero means
+	// "use the default" (DefaultMemoryMaxBytes); a negative value means unlimited.
+	// Past it the oldest entries are evicted, as for MaxEntries, and an entry
+	// larger than the whole cap is not stored at all. MaxEntries counts entries,
+	// not what they weigh: a client asking for one large page under thousands of
+	// invented queries fills a cache with copies of it.
+	MaxBytes int64
 	// Now returns the current time, used for expiry checks. Defaults to
 	// time.Now. Tests should inject a controllable clock here instead of
 	// sleeping to exercise expiry.
@@ -55,6 +66,8 @@ type MemoryCache struct {
 	head    *node // oldest inserted, evicted first
 	tail    *node // most recently inserted
 	seq     uint64
+	// bytes is the total length of every stored entry's content.
+	bytes int64
 
 	hits      atomic.Uint64
 	misses    atomic.Uint64
@@ -80,6 +93,8 @@ type Stats struct {
 	Evictions uint64
 	// Entries is the number of entries currently stored.
 	Entries uint64
+	// Bytes is the total size of the content currently stored.
+	Bytes int64
 }
 
 // NewMemory creates a MemoryCache configured by cfg. A zero cfg.MaxEntries becomes
@@ -88,6 +103,9 @@ type Stats struct {
 func NewMemory(cfg MemoryConfig) *MemoryCache {
 	if cfg.MaxEntries == 0 {
 		cfg.MaxEntries = defaultMaxEntries
+	}
+	if cfg.MaxBytes == 0 {
+		cfg.MaxBytes = DefaultMemoryMaxBytes
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
@@ -180,6 +198,12 @@ func (c *MemoryCache) SetTagged(ctx context.Context, key string, content []byte,
 	if _, exists := c.entries[key]; exists {
 		c.removeLocked(key)
 	}
+	if c.cfg.MaxBytes > 0 && int64(len(content)) > c.cfg.MaxBytes {
+		// Larger than the whole cache: storing it would evict everything else
+		// and then itself. Served, not kept; the entry it replaces is gone,
+		// because that one is stale now.
+		return etag, nil
+	}
 
 	c.seq++
 	pos := c.pushBackLocked(key)
@@ -193,6 +217,7 @@ func (c *MemoryCache) SetTagged(ctx context.Context, key string, content []byte,
 		},
 		pos: pos,
 	}
+	c.bytes += int64(len(content))
 
 	for _, tag := range tags {
 		set, ok := c.tags[tag]
@@ -263,6 +288,7 @@ func (c *MemoryCache) Clear(ctx context.Context) error {
 	c.tags = make(map[string]map[string]struct{})
 	c.head = nil
 	c.tail = nil
+	c.bytes = 0
 	return nil
 }
 
@@ -270,6 +296,7 @@ func (c *MemoryCache) Clear(ctx context.Context) error {
 func (c *MemoryCache) Stats() Stats {
 	c.mu.RLock()
 	entries := uint64(len(c.entries))
+	size := c.bytes
 	c.mu.RUnlock()
 
 	return Stats{
@@ -278,6 +305,7 @@ func (c *MemoryCache) Stats() Stats {
 		Sets:      c.sets.Load(),
 		Evictions: c.evictions.Load(),
 		Entries:   entries,
+		Bytes:     size,
 	}
 }
 
@@ -301,6 +329,7 @@ func (c *MemoryCache) removeLocked(key string) {
 	}
 	delete(c.entries, key)
 	c.unlinkLocked(rec.pos)
+	c.bytes -= int64(len(rec.entry.Content))
 
 	for _, tag := range rec.entry.Tags {
 		keys, ok := c.tags[tag]
@@ -315,13 +344,14 @@ func (c *MemoryCache) removeLocked(key string) {
 }
 
 // evictIfNeededLocked evicts the oldest entry, by insertion sequence, while the
-// cache holds more than cfg.MaxEntries entries. A negative MaxEntries means
-// unlimited and disables eviction entirely. Callers must hold c.mu for writing.
+// cache holds more than cfg.MaxEntries entries or more than cfg.MaxBytes of
+// content. A negative value disables that cap. Callers must hold c.mu for writing.
 func (c *MemoryCache) evictIfNeededLocked() {
-	if c.cfg.MaxEntries < 0 {
-		return
+	over := func() bool {
+		return (c.cfg.MaxEntries >= 0 && len(c.entries) > c.cfg.MaxEntries) ||
+			(c.cfg.MaxBytes > 0 && c.bytes > c.cfg.MaxBytes)
 	}
-	for len(c.entries) > c.cfg.MaxEntries && c.head != nil {
+	for over() && c.head != nil {
 		key := c.head.key
 		c.removeLocked(key)
 		c.evictions.Add(1)

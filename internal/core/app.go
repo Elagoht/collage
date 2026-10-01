@@ -229,6 +229,9 @@ type CacheConfig struct {
 	DefaultTTL time.Duration
 	// MaxEntries caps the number of cache entries.
 	MaxEntries int
+	// MaxBytes caps the total size of a built-in cache's content. Zero means the
+	// cache type's own default; negative, unlimited.
+	MaxBytes int64
 	// Dir is where a "disk" cache stores its entries.
 	Dir string
 	// Version identifies the build whose output a "disk" cache holds. Entries live

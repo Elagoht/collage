@@ -177,6 +177,7 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 			Type:       "memory",
 			DefaultTTL: 7 * time.Second,
 			MaxEntries: 42,
+			MaxBytes:   43,
 		},
 		Locale: LocaleConfig{
 			Default:           "tr",
@@ -224,7 +225,7 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	if len(core.DevWatch) != 1 || core.DevWatch[0] != "content" {
 		t.Errorf("DevWatch = %v, want [content]", core.DevWatch)
 	}
-	if core.Cache.DefaultTTL != 7*time.Second || core.Cache.MaxEntries != 42 {
+	if core.Cache.DefaultTTL != 7*time.Second || core.Cache.MaxEntries != 42 || core.Cache.MaxBytes != 43 {
 		t.Errorf("Cache = %+v, want a 7s TTL and 42 entries", core.Cache)
 	}
 	if core.Locale.Default != "tr" {
