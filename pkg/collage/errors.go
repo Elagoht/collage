@@ -8,6 +8,13 @@ import (
 	"github.com/Elagoht/collage/internal/template"
 )
 
+// Registering several things at once.
+var (
+	// ErrNilRegistrable is returned by Register for a nil item, where a page, a
+	// document or an action was expected.
+	ErrNilRegistrable = core.ErrNilRegistrable
+)
+
 // Registering an action.
 var (
 	// ErrNilAction is returned by RegisterAction for a nil action.

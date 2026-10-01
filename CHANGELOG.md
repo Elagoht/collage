@@ -4,6 +4,15 @@
 
 ### Added
 
+- **`app.Register(items ...)` registers pages, documents and actions in one
+  call**, in order, each through its own `Register` method, and stops at the first
+  refusal with its error wrapped as `register page "name": ...`. It replaces the
+  loop per kind a `routes.go` wrote; the scaffolded one is a single call now. It
+  takes `collage.Registrable`, which only `*Page`, `*Document` and `*Action`
+  satisfy; a `nil` is `ErrNilRegistrable`. The not-found and error pages keep
+  `RegisterNotFoundPage` and `RegisterErrorPage`. See
+  [docs/routing.md](docs/routing.md#registering-several-at-once).
+
 - **`pkg/collagetest`: a test drives the application the way a browser does.**
   `collagetest.New(t, app.Handler())` is a client with a cookie jar of its own;
   `Get` reads a page, and `Submit(page, action, values)` submits the page's form

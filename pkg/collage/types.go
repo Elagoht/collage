@@ -63,6 +63,10 @@ type GuardDecision = types.GuardDecision
 // and how its output is cached.
 type Page = types.Page
 
+// Registrable is what App.Register takes: a *Page, a *Document or an *Action.
+// Nothing else satisfies it.
+type Registrable = types.Registrable
+
 // Redirect describes a source path pattern that redirects to a destination.
 type Redirect = types.Redirect
 

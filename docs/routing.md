@@ -338,6 +338,33 @@ error message routinely carries a DSN, an internal hostname, or a filesystem pat
 and an error page is the response most likely to hand all three to an anonymous
 client.
 
+## Registering several at once
+
+`app.Register` takes pages, documents and actions in one call and registers each in
+order, through `RegisterPage`, `RegisterDocument` or `RegisterAction`:
+
+```go
+func register(app *collage.App) error {
+	if err := app.Register(
+		pages.Home(),
+		pages.About(),
+		documents.Health(),
+		actions.Logout(),
+	); err != nil {
+		return err
+	}
+	return app.RegisterNotFoundPage(pages.NotFound())
+}
+```
+
+It stops at the first one refused and returns its error wrapped with its kind and
+name — `register page "about": collage: duplicate page ...` — so `errors.Is` still
+finds the cause. What was registered before it stays registered, as with the
+single methods; a refusal is a startup failure. A `nil` is `ErrNilRegistrable`.
+The not-found and error pages are reached by failing to match, not by a path, so
+they keep `RegisterNotFoundPage` and `RegisterErrorPage`. `Register` takes a
+`collage.Registrable`, which only `*Page`, `*Document` and `*Action` satisfy.
+
 ## Registration errors worth knowing
 
 | Error | Cause |

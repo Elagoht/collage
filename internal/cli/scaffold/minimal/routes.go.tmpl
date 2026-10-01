@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"github.com/Elagoht/collage/pkg/collage"
 
 	"@@MODULE@@/pages"
@@ -10,10 +8,7 @@ import (
 
 // register adds every page, document and action to app. A new route goes here.
 func register(app *collage.App) error {
-	for _, page := range []*collage.Page{pages.HomePage()} {
-		if err := app.RegisterPage(page); err != nil {
-			return fmt.Errorf("register page %q: %w", page.Name, err)
-		}
-	}
-	return nil
+	return app.Register(
+		pages.HomePage(),
+	)
 }
