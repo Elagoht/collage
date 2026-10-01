@@ -1129,6 +1129,48 @@ func TestDependencyTracker_IsBoundedUnderAKeyFlood(t *testing.T) {
 	}
 }
 
+// Every cached path is a tag of its own, so a per-tag cap bounds the tracker at
+// that cap times the number of pages: a flood of invented queries spread across a
+// site's pages grows it far past what the cache can hold, which for a large site
+// is an out-of-memory an anonymous client can cause. The tracker holds no more
+// keys than the cache holds entries, since no more than that can still be live.
+func TestDependencyTracker_IsBoundedAcrossManyPages(t *testing.T) {
+	const (
+		maxEntries = 20
+		pages      = 40
+		requests   = 4000
+	)
+	app := newTestApp(t, func(cfg *Config) { cfg.Cache.MaxEntries = maxEntries })
+	for i := range pages {
+		page := newHomePage()
+		page.Name = "page" + strconv.Itoa(i)
+		page.Paths = map[string]string{"en": "/p" + strconv.Itoa(i)}
+		if err := app.RegisterPage(page); err != nil {
+			t.Fatalf("RegisterPage: %v", err)
+		}
+	}
+	handler := app.Handler()
+	for i := range requests {
+		if rec := get(handler, "/p"+strconv.Itoa(i%pages)+"?utm="+strconv.Itoa(i)); rec.Code != http.StatusOK {
+			t.Fatalf("request %d: status = %d", i, rec.Code)
+		}
+	}
+	tracker, ok := app.tracker.(*dependency.MemoryTracker)
+	if !ok {
+		t.Fatalf("tracker is %T, want *dependency.MemoryTracker", app.tracker)
+	}
+	if stats := tracker.Stats(); stats.Keys > maxEntries {
+		t.Fatalf("tracker holds %d keys across %d pages, want at most the cache's %d entries", stats.Keys, pages, maxEntries)
+	}
+
+	// The keys it keeps are the newest: invalidating a page written last still
+	// reaches its entry.
+	last := "/p" + strconv.Itoa((requests-1)%pages)
+	if n, err := app.InvalidateTagsN(context.Background(), types.PathTag(last)); err != nil || n == 0 {
+		t.Fatalf("InvalidateTagsN(%s) = %d, %v: the newest key was dropped", last, n, err)
+	}
+}
+
 // TestNew_MaxKeysPerTag_NegativeMeansUnlimited checks the other half of the
 // convention the rest of the configuration uses: zero is "use the default", and a
 // negative value is the caller explicitly accepting unbounded growth.

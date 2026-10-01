@@ -360,6 +360,12 @@ type CacheConfig struct {
 	// one page; without a cap the tracker grows without bound while the cache
 	// itself stays at MaxEntries. This is that cap.
 	//
+	// Every cached path is a tag of its own, so a per-tag cap alone bounds the
+	// tracker at this value times the number of pages. With a built-in cache it
+	// is also held to MaxEntries keys in all, the most a cache of that size can
+	// still hold, dropping the oldest written first; a negative MaxEntries leaves
+	// that bound off. A custom Store keeps the per-tag bound only.
+	//
 	// When a tag is at the cap, recording a new key under it drops the oldest key
 	// recorded under that tag, from the tracker only. The built-in memory and disk
 	// caches index tags themselves (they implement TaggedCache), so InvalidateTags

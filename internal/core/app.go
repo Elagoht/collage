@@ -542,6 +542,22 @@ func New(cfg Config) (*App, error) {
 	// which is MemoryTracker's own meaning for a non-positive value.
 	tracker := dependency.NewMemory()
 	tracker.MaxKeysPerTag = cfg.Cache.MaxKeysPerTag
+	// And bounded in all, not only per tag: every cached path is a tag of its
+	// own, so the per-tag cap alone lets the index reach that cap times the
+	// number of pages. A built-in cache holds at most MaxEntries entries, so no
+	// more keys than that can still be live, and the oldest are what it has
+	// evicted. A caller's Store has a capacity this package cannot know, and
+	// keeps the per-tag bound only. Zero is the caches' own default, which
+	// defaultMaxKeysPerTag matches; negative, an unlimited cache, leaves the
+	// tracker unlimited too.
+	if cfg.Cache.Store == nil {
+		switch {
+		case cfg.Cache.MaxEntries > 0:
+			tracker.MaxKeys = cfg.Cache.MaxEntries
+		case cfg.Cache.MaxEntries == 0:
+			tracker.MaxKeys = defaultMaxKeysPerTag
+		}
+	}
 
 	app.tmpl = tmpl
 	// On when the page cache is, and never in development: there the page cache

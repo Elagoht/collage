@@ -107,11 +107,20 @@ type MemoryTracker struct {
 	// used concurrently; MemoryTracker does not synchronize reads of this field
 	// against writes to it.
 	MaxKeysPerTag int
+	// MaxKeys caps the number of keys tracked in all, across every tag. Zero means
+	// unlimited. Past it the key written longest ago — by its latest Track — is
+	// dropped from every tag and Stats().Dropped is incremented. MaxKeysPerTag
+	// alone bounds the index at that cap times the number of tags, and every cached
+	// path is a tag of its own; this is the bound that holds however many there
+	// are. Set it, like MaxKeysPerTag, before concurrent use.
+	MaxKeys int
 
 	mu        sync.RWMutex
 	keyToTags map[string]map[string]struct{}
 	tagToKeys map[string]*tagEntry
-	dropped   uint64
+	// order holds every key in keyToTags, oldest latest-Track first, for MaxKeys.
+	order   tagEntry
+	dropped uint64
 }
 
 var _ Tracker = (*MemoryTracker)(nil)
@@ -123,7 +132,8 @@ type Stats struct {
 	// Tags is the number of tags currently tracking at least one key.
 	Tags uint64
 	// Dropped is the cumulative count of keys removed from a tag by
-	// MaxKeysPerTag eviction. It does not reset on Clear.
+	// MaxKeysPerTag eviction, or from the index by MaxKeys eviction. It does not
+	// reset on Clear.
 	Dropped uint64
 }
 
@@ -133,6 +143,7 @@ func NewMemory() *MemoryTracker {
 	return &MemoryTracker{
 		keyToTags: make(map[string]map[string]struct{}),
 		tagToKeys: make(map[string]*tagEntry),
+		order:     tagEntry{nodes: make(map[string]*keyNode)},
 	}
 }
 
@@ -172,11 +183,40 @@ func (t *MemoryTracker) Track(ctx context.Context, key string, tags []string) er
 
 	if len(newSet) == 0 {
 		delete(t.keyToTags, key)
+		t.unorderLocked(key)
 	} else {
 		t.keyToTags[key] = newSet
+		t.reorderLocked(key)
 	}
 
 	return nil
+}
+
+// reorderLocked moves key to the newest end of t.order, then drops the oldest keys
+// while the index is over MaxKeys. Callers must hold t.mu for writing.
+func (t *MemoryTracker) reorderLocked(key string) {
+	t.unorderLocked(key)
+	t.order.pushBack(key)
+	if t.MaxKeys <= 0 {
+		return
+	}
+	for len(t.order.nodes) > t.MaxKeys {
+		oldest := t.order.head.key
+		for tag := range t.keyToTags[oldest] {
+			t.untrackKeyFromTagLocked(tag, oldest)
+		}
+		delete(t.keyToTags, oldest)
+		t.unorderLocked(oldest)
+		t.dropped++
+	}
+}
+
+// unorderLocked removes key from t.order, if it is there. Every path that deletes
+// a key from t.keyToTags calls it. Callers must hold t.mu for writing.
+func (t *MemoryTracker) unorderLocked(key string) {
+	if n, ok := t.order.nodes[key]; ok {
+		t.order.unlink(n)
+	}
 }
 
 // Resolve returns the de-duplicated, sorted union of every key currently tracked
@@ -217,6 +257,7 @@ func (t *MemoryTracker) Forget(ctx context.Context, key string) error {
 		t.untrackKeyFromTagLocked(tag, key)
 	}
 	delete(t.keyToTags, key)
+	t.unorderLocked(key)
 
 	return nil
 }
@@ -272,6 +313,7 @@ func (t *MemoryTracker) Clear(ctx context.Context) error {
 
 	t.keyToTags = make(map[string]map[string]struct{})
 	t.tagToKeys = make(map[string]*tagEntry)
+	t.order = tagEntry{nodes: make(map[string]*keyNode)}
 
 	return nil
 }
@@ -344,6 +386,7 @@ func (t *MemoryTracker) untagKeyLocked(key, tag string) {
 	delete(tags, tag)
 	if len(tags) == 0 {
 		delete(t.keyToTags, key)
+		t.unorderLocked(key)
 	}
 }
 
@@ -357,4 +400,11 @@ func sortedKeys(set map[string]struct{}) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+// orderLen reports how many keys t.order holds, for tests.
+func (t *MemoryTracker) orderLen() int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return len(t.order.nodes)
 }

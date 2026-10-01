@@ -405,3 +405,77 @@ func mustTrack(t *testing.T, tr *MemoryTracker, key string, tags ...string) {
 		t.Fatalf("Track(%q, %v) error = %v", key, tags, err)
 	}
 }
+
+// MaxKeys bounds the whole index, not one tag: keys spread one to a tag, as every
+// cached path is, are still held to it, the newest kept.
+func TestMemoryTracker_MaxKeysBoundsTheWholeIndex(t *testing.T) {
+	ctx := context.Background()
+	tr := NewMemory()
+	tr.MaxKeys = 10
+	for i := range 100 {
+		if err := tr.Track(ctx, fmt.Sprintf("k%03d", i), []string{fmt.Sprintf("path:/p%d", i), "shared"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	stats := tr.Stats()
+	if stats.Keys != 10 || stats.Tags != 11 {
+		t.Fatalf("Stats = %+v, want 10 keys under 11 tags", stats)
+	}
+	if stats.Dropped != 90 {
+		t.Errorf("Dropped = %d, want 90", stats.Dropped)
+	}
+	got, _ := tr.Resolve(ctx, []string{"shared"})
+	if len(got) != 10 || got[0] != "k090" || got[9] != "k099" {
+		t.Errorf("shared resolves to %v, want k090..k099", got)
+	}
+	if got, _ := tr.Resolve(ctx, []string{"path:/p0"}); len(got) != 0 {
+		t.Errorf("the oldest key's tag still resolves: %v", got)
+	}
+}
+
+// A key tracked again is as new as its latest write, the order a cache evicts in.
+func TestMemoryTracker_MaxKeysKeepsAKeyWrittenAgain(t *testing.T) {
+	ctx := context.Background()
+	tr := NewMemory()
+	tr.MaxKeys = 3
+	for _, k := range []string{"a", "b", "c", "a", "d"} {
+		if err := tr.Track(ctx, k, []string{"t"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, _ := tr.Resolve(ctx, []string{"t"})
+	if fmt.Sprint(got) != "[a c d]" {
+		t.Errorf("t resolves to %v, want [a c d]: b was the oldest write", got)
+	}
+}
+
+// Every way a key leaves the index takes it out of the order MaxKeys evicts by,
+// so a key forgotten and tracked again counts once, and churn leaves nothing
+// behind.
+func TestMemoryTracker_MaxKeysOrderFollowsEveryRemoval(t *testing.T) {
+	ctx := context.Background()
+	tr := NewMemory()
+	tr.MaxKeys = 5
+	tr.MaxKeysPerTag = 2
+	for i := range 200 {
+		key := fmt.Sprintf("k%d", i%7)
+		_ = tr.Track(ctx, key, []string{fmt.Sprintf("t%d", i%3)})
+		switch i % 5 {
+		case 1:
+			_ = tr.Forget(ctx, key)
+		case 2:
+			_ = tr.ForgetTags(ctx, []string{fmt.Sprintf("t%d", (i+1)%3)})
+		case 3:
+			_ = tr.Track(ctx, fmt.Sprintf("k%d", (i+3)%7), nil)
+		}
+		if i == 150 {
+			_ = tr.Clear(ctx)
+		}
+		if got, want := tr.Stats().Keys, uint64(tr.orderLen()); got != want {
+			t.Fatalf("step %d: %d keys tracked, %d in eviction order", i, got, want)
+		}
+		if tr.Stats().Keys > 5 {
+			t.Fatalf("step %d: %d keys, MaxKeys 5", i, tr.Stats().Keys)
+		}
+	}
+}
