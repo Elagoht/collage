@@ -46,8 +46,9 @@
   path in the named locale. Each is a finding with its template, line and column,
   inline templates included. `collage check` exits 1 on any, for CI; `-json` is
   for an editor. It is `go run . collage-check`, answered by
-  `collage.DispatchCommands`, so a project scaffolded before needs no change. See
-  [docs/cli.md](docs/cli.md#collage-check).
+  `collage.DispatchCommands`: a project's own `main.go` needs no change, but its
+  collage must be this version — an earlier one answers `unknown command:
+  "collage-check"`. See [docs/cli.md](docs/cli.md#collage-check).
 
 ### Changed
 

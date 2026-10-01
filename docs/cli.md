@@ -398,7 +398,8 @@ It exits `1` when it finds anything, so it can stand in CI before `collage build
 `-json` prints the findings as an array of `{level, rule, message}` for an editor.
 It runs `go run . collage-check`, which `collage.DispatchCommands` answers by
 starting the application and calling `App.Check` — the same function a test can
-call:
+call. That needs the project's collage at v0.40.0 or later; an earlier one
+answers `unknown command: "collage-check"`.
 
 ```go
 if findings := app.Check(); len(findings) > 0 {

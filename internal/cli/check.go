@@ -22,7 +22,9 @@ Exits 1 when it finds anything, so it can stand in CI before a build.
 Runs "go run . collage-check" in the current directory's Go project. The
 scaffolded main.go hands the word after its flags to collage.DispatchCommands,
 which answers collage-check itself, after starting the application — so a
-program that opens a database on start opens it here too.
+program that opens a database on start opens it here too. It needs the
+project's collage at v0.40.0 or later; an earlier one answers
+unknown command: "collage-check".
 `
 
 // runCheck implements the "check" command.
