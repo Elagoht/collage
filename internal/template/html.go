@@ -51,6 +51,13 @@ type HTMLEngine struct {
 	mu    sync.RWMutex
 	tmpl  *template.Template
 	names []string
+	// idle holds executed copies of tmpl that no render is using, so a render
+	// takes one instead of copying the whole set again. It is replaced with every
+	// tmpl: a copy belongs to the set it was made from.
+	idle *sync.Pool
+	// base is the function map tmpl was parsed with: what a copy's functions are
+	// put back to before another render takes it.
+	base template.FuncMap
 	// sources are the templates added as text with AddSource, by name, re-parsed
 	// by every Reload so a dev-mode reload does not lose them.
 	sources map[string]string
@@ -89,6 +96,13 @@ func (e *HTMLEngine) Lookup(path string) bool {
 // renders never see each other's functions; this is how the render engine binds a
 // per-render "slot" implementation.
 //
+// A copy is made once and reused, not made for every render: copying the set and
+// escaping it again costs as much as the whole project's templates, on every
+// fragment of every page. A render holds its copy alone, and gives it back only
+// after it succeeded and only once every function it bound is put back to the one
+// the set was parsed with, so nothing bound to one request reaches the next. A copy
+// whose render failed is dropped.
+//
 // html/template resolves a function name to its implementation at execution time,
 // but it can only call a name that already existed in the FuncMap the template was
 // parsed with. RenderWithFuncs can therefore replace the implementation behind a
@@ -113,16 +127,19 @@ func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path stri
 	}
 
 	e.mu.RLock()
-	tmpl := e.tmpl
+	tmpl, idle, base := e.tmpl, e.idle, e.base
 	e.mu.RUnlock()
 
 	if tmpl.Lookup(path) == nil {
 		return fmt.Errorf("%w: %s", ErrTemplateNotFound, path)
 	}
 
-	clone, err := tmpl.Clone()
-	if err != nil {
-		return fmt.Errorf("collage: clone template set: %w", err)
+	clone, _ := idle.Get().(*template.Template)
+	if clone == nil {
+		var err error
+		if clone, err = tmpl.Clone(); err != nil {
+			return fmt.Errorf("collage: clone template set: %w", err)
+		}
 	}
 	if funcs != nil {
 		clone = clone.Funcs(funcs)
@@ -132,9 +149,25 @@ func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path stri
 	if err := clone.ExecuteTemplate(&buf, path, data); err != nil {
 		return err
 	}
+	if funcs != nil {
+		clone.Funcs(unbound(funcs, base))
+	}
+	idle.Put(clone)
 
-	_, err = w.Write(buf.Bytes())
+	_, err := w.Write(buf.Bytes())
 	return err
+}
+
+// unbound maps every name in funcs that base holds back to base's function. A name
+// base does not hold was never parsed, so no template in the set can call it.
+func unbound(funcs, base template.FuncMap) template.FuncMap {
+	restore := make(template.FuncMap, len(funcs))
+	for name := range funcs {
+		if fn, ok := base[name]; ok {
+			restore[name] = fn
+		}
+	}
+	return restore
 }
 
 // Reload discards the current template set and reparses every template under
@@ -217,6 +250,8 @@ func (e *HTMLEngine) Reload() error {
 		}
 	}
 	e.tmpl = set
+	e.idle = &sync.Pool{}
+	e.base = funcs
 	e.names = names
 	return nil
 }
@@ -249,6 +284,7 @@ func (e *HTMLEngine) AddSource(name, src string) error {
 	}
 	e.sources[name] = src
 	e.tmpl = next
+	e.idle = &sync.Pool{}
 	return nil
 }
 
