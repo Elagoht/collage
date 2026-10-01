@@ -153,6 +153,7 @@ func (c *Client) Submit(page *Response, action string, values url.Values) *Respo
 	c.t.Helper()
 	if page == nil {
 		c.t.Fatal("collagetest: Submit with a nil page")
+		return nil
 	}
 	f := c.findForm(page, action)
 
