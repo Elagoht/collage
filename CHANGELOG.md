@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.40.0
+
+### Added
+
+- **`pkg/collagetest`: a test drives the application the way a browser does.**
+  `collagetest.New(t, app.Handler())` is a client with a cookie jar of its own;
+  `Get` reads a page, and `Submit(page, action, values)` submits the page's form
+  with every hidden input it carries — the forgery token, and whatever a plugin
+  stamps into a form, such as a honeypot's timestamp — and the test's values on
+  top. A test fills in only the fields a reader would, and no longer reads the
+  token out of the page with a regular expression or copies cookies between
+  recorders by hand. Redirects are not followed, so a `303` and its `Location` can
+  be checked; `Follow` takes one. `CSRFToken` is the page's token for a request
+  that sends it in a header, and `Request`/`Do` make any other request. See
+  [docs/testing.md](docs/testing.md).
+
+### Changed
+
+- **The demo project's tests use `collagetest`.** `collage new --template demo`
+  writes a `main_test.go` without its own `get`, `post` and `token` helpers. An
+  existing project's tests are unchanged and keep working.
+
 ## v0.39.2
 
 ### Fixed

@@ -45,7 +45,7 @@ installed any Go tool before.
 Then, in that directory:
 
 ```
-go test ./...    # the tests it came with
+go test ./...    # the tests it came with, written with pkg/collagetest
 collage build    # -> bin/mysite, the binary you deploy
 collage export   # -> dist/, static files, for a site that needs no server
 collage serve    # serves dist/ the way a static host would
@@ -331,6 +331,7 @@ Details in [docs/caching.md](docs/caching.md),
 | [docs/routing.md](docs/routing.md) | Path patterns, locales, redirects, error-page resolution, registration errors |
 | [docs/http.md](docs/http.md) | `app.Use` middleware, `app.Handle` for your own handlers, `collage.Vary` |
 | [docs/actions.md](docs/actions.md) | `Action`: methods, forms, `ActionResult`, request-forgery tokens, fragments at their own URLs |
+| [docs/testing.md](docs/testing.md) | `collagetest`: driving `app.Handler()` from a test like a browser — cookies, forms with their hidden fields, redirects |
 | [docs/deployment.md](docs/deployment.md) | Building a binary, containers, signals, TLS, the cache in production, health checks |
 | [docs/cli.md](docs/cli.md) | `collage new`/`dev`/`build`, plugin subcommands, and the static site builder |
 
