@@ -6,7 +6,11 @@
 // does, hands its handler to New, and reads pages and submits their forms:
 //
 //	func TestLogin(t *testing.T) {
-//		c := collagetest.New(t, newApp(t).Handler())
+//		app, err := newApp(false, 0) // the function main builds the application with
+//		if err != nil {
+//			t.Fatal(err)
+//		}
+//		c := collagetest.New(t, app.Handler())
 //
 //		page := c.Get("/login").WantStatus(http.StatusOK)
 //		res := c.Submit(page, "/login", url.Values{
