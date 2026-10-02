@@ -212,7 +212,7 @@ func TestBuildPath_Affixed(t *testing.T) {
 	if err := rt.RegisterDocument(testDocument("md", "/blogs/{slug}.md")); err != nil {
 		t.Fatal(err)
 	}
-	for _, slug := range []string{"hello", "çay ?#%", ".", "a.md"} {
+	for _, slug := range []string{"hello", "çay ?#%", "...", "a.md"} {
 		path, err := BuildPath("/blogs/{slug}.md", map[string]string{"slug": slug})
 		if err != nil {
 			t.Fatalf("BuildPath(%q) = %v", slug, err)
@@ -224,12 +224,51 @@ func TestBuildPath_Affixed(t *testing.T) {
 			t.Errorf("%q -> %q -> %+v", slug, path, m)
 		}
 	}
-	for _, slug := range []string{"a/b", ""} {
+	for _, slug := range []string{"a/b", "", ".", ".."} {
 		if _, err := BuildPath("/blogs/{slug}.md", map[string]string{"slug": slug}); !errors.Is(err, types.ErrRouteParams) {
 			t.Errorf("BuildPath(%q) = %v, want ErrRouteParams", slug, err)
 		}
 	}
 	if _, err := BuildPath("/.{x}", map[string]string{"x": "."}); !errors.Is(err, types.ErrRouteParams) {
-		t.Errorf(`BuildPath("/.{x}", ".") = %v, want ErrRouteParams: the segment is ".."`, err)
+		t.Errorf(`BuildPath("/.{x}", ".") = %v, want ErrRouteParams`, err)
+	}
+}
+
+// An affixed placeholder never captures "." or "..": "/blogs/...md" would hand
+// {slug}.md the slug "..", which a handler joining it onto a directory climbs out
+// with. The segment is the bare placeholder's instead, captured whole.
+func TestAffixedPlaceholderNeverCapturesADotSegment(t *testing.T) {
+	rt := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
+	if err := rt.RegisterDocument(testDocument("md", "/blogs/{slug}.md")); err != nil {
+		t.Fatal(err)
+	}
+	for name, pattern := range map[string]string{"post": "/blogs/{slug}", "v": "/x/.{v}"} {
+		if err := rt.Register(newTestPage(name, map[string]string{"en": pattern})); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, want := range map[string]string{
+		"/blogs/...md":  "post",
+		"/blogs/..md":   "post",
+		"/blogs/....md": "md",
+		"/x/...":        "",
+		"/x/..":         "",
+	} {
+		m := matchPath(t, rt, path)
+		for name, value := range m.PathParams {
+			if value == "." || value == ".." {
+				t.Errorf("%s captured %s = %q", path, name, value)
+			}
+		}
+		got := ""
+		switch {
+		case m.Document != nil:
+			got = m.Document.Name
+		case m.Page != nil:
+			got = m.Page.Name
+		}
+		if got != want {
+			t.Errorf("%s -> %q, want %q", path, got, want)
+		}
 	}
 }

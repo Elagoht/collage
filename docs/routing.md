@@ -70,7 +70,10 @@ in. Two placeholders at the same position are one of three things:
 
 So `/blogs/hello.md` is the document, `/blogs/hello` the page, a static
 `/blogs/index.md` beats both, and `/blogs/.md` — nothing between the text — is the
-page's, with `slug` = `.md`. Only the value is escaped when a link is built:
+page's, with `slug` = `.md`. A placeholder with text around it never captures
+`.` or `..`: `/blogs/...md` is the page's too, with `slug` = `...md`, rather than
+the document's with `slug` = `..`, which a handler joining it onto a directory
+would climb out with. Only the value is escaped when a link is built:
 `{{pageURL "post-md" "slug" "çay"}}` is `/blogs/%C3%A7ay.md`. A segment holds one
 placeholder: `{name}.{ext}` has no single answer for `a.b.c`, so register
 `{name}.md` and `{name}.json` as two routes. A value is checked by its handler,

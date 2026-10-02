@@ -3,6 +3,7 @@ package router
 import (
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"testing"
 
@@ -35,7 +36,7 @@ func FuzzMatch(f *testing.F) {
 		"/", "/blog/x", "/tr/blog/x", "/EN/blog/x", "/s%E2%84%AA/admin", "/%C5%BFk/",
 		"/old/%5Cevil.com", "/old/%2Fevil.com", "/docs/a/b", "/files%2Fx", "/%", "/%zz",
 		"/a%00b", "/\t/evil.com", "/blog/x/", "//evil.com", "/%09/x",
-		"/blog/x.md", "/blog/.md", "/old/x.html", "/old/%2F.html", "/tr/blog/x.md", "/post-1",
+		"/blog/x.md", "/blog/.md", "/blog/...md", "/blog/..md", "/old/x.html", "/old/%2F.html", "/tr/blog/x.md", "/post-1",
 	} {
 		f.Add(seed, false, false)
 	}
@@ -83,6 +84,12 @@ func FuzzMatch(f *testing.F) {
 			}
 			if name != "rest" && value == "" {
 				t.Fatalf("Match(%q): %s is empty", target, name)
+			}
+			// A path holding a dot segment is redirected to its clean form before
+			// it reaches the router; of the rest, none may hand a handler one —
+			// "/blog/...md" against "{slug}.md" once captured "..".
+			if name != "rest" && (value == "." || value == "..") && path.Clean(u.Path) == strings.TrimSuffix(u.Path, "/") {
+				t.Fatalf("Match(%q): %s = %q, which a handler joining it onto a directory climbs out with", target, name, value)
 			}
 		}
 	})

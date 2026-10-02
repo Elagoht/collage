@@ -48,6 +48,12 @@ func BuildPath(pattern string, params map[string]string) (string, error) {
 			if strings.Contains(value, "/") {
 				return "", fmt.Errorf("%w: %q: %q holds a \"/\", which only a catch-all such as {%s...} can", types.ErrRouteParams, pattern, segment.text, segment.text)
 			}
+			// The value cannot be "." or "..", which the router never captures
+			// (see affixEdge.capture), nor make the whole segment one, which a
+			// browser resolves as a path step.
+			if value == "." || value == ".." {
+				return "", fmt.Errorf("%w: %q: %q cannot be %q", types.ErrRouteParams, pattern, segment.text, value)
+			}
 			if whole := segment.prefix + value + segment.suffix; whole == "." || whole == ".." {
 				return "", fmt.Errorf("%w: %q: %q makes the segment %q, which a browser resolves as a path step", types.ErrRouteParams, pattern, segment.text, whole)
 			}

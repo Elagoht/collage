@@ -23,7 +23,11 @@
   more specific wins), or crossing — some segment matches both and neither is more
   specific, as `a{x}` and `{x}b` both match `aXb` — which is refused with the new
   **`ErrOverlappingPattern`**, naming such a segment. The test for each is exact,
-  so no registered pair is ever ambiguous. A segment holds one placeholder
+  so no registered pair is ever ambiguous. A placeholder with text around it
+  never captures `.` or `..` — `/blogs/...md` would otherwise hand `{slug}.md`
+  the slug `..`, which a handler joining it onto a directory climbs out with — so
+  such a segment is the bare placeholder's, captured whole, and `BuildPath`
+  refuses either value. A segment holds one placeholder
   (`{name}.{ext}` has no single answer for `a.b.c`), a catch-all takes no text
   around it, and there is no regex: a value is checked by its handler, which keeps
   every collision decidable at registration. See

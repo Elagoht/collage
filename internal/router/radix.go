@@ -105,12 +105,23 @@ type affixEdge struct {
 
 // capture returns what seg holds between e's prefix and suffix, if seg carries
 // both around at least one character.
+//
+// A value of "." or ".." is no capture. A bare placeholder never sees one — a dot
+// segment is redirected to its clean path before matching — but "...md" is no dot
+// segment, and would hand "{slug}.md" the slug "..": a handler joining a value
+// onto a directory, as one for a version or a file name does, would climb out of
+// it. Such a segment falls through to the bare placeholder, which captures it
+// whole.
 func (e *affixEdge) capture(seg string) (string, bool) {
 	p, s := e.segment.prefix, e.segment.suffix
 	if len(seg) <= len(p)+len(s) || !strings.HasPrefix(seg, p) || !strings.HasSuffix(seg, s) {
 		return "", false
 	}
-	return seg[len(p) : len(seg)-len(s)], true
+	value := seg[len(p) : len(seg)-len(s)]
+	if value == "." || value == ".." {
+		return "", false
+	}
+	return value, true
 }
 
 // terminal reports whether n is the end of a registered page, document, or
