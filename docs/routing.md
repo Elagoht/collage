@@ -36,20 +36,51 @@ site-wide not-found page, and a method other than `GET` or `HEAD` is a 405.
 | --- | --- |
 | `blog` | Exactly that text |
 | `{slug}` | Exactly one segment, captured as `slug` |
-| `{rest...}` | The remainder of the path, captured as `rest`. Must be the final segment |
+| `{slug}.md`, `post-{id}`, `v{version}.json` | One segment carrying that text before and after the placeholder, with at least one character between, which is what is captured: `/blogs/hello.md` gives `slug` = `hello` |
+| `{rest...}` | The remainder of the path, captured as `rest`. Must be the final segment, with no text around it |
 
-At every level, a static child is tried before the dynamic edge, which is tried
-before the catch-all — with backtracking, so a static match always beats a dynamic
-one even when the dynamic branch would have matched further down.
+At every level a static child is tried first, then placeholders with text around
+them from the most specific, then the bare placeholder, then the catch-all — with
+backtracking, so a static match always beats a dynamic one even when the dynamic
+branch would have matched further down.
 
 `/blog` and `/blog/` are the same route. A pattern must start with `/`, must not
-contain an empty segment or an empty placeholder name, and must not put a
-catch-all anywhere but last; anything else is `collage.ErrInvalidPattern` at
+contain an empty segment or an empty placeholder name, must hold at most one
+placeholder in a segment, and must not put a catch-all anywhere but last;
+anything else is `collage.ErrInvalidPattern` at registration.
+
+### Text around a placeholder
+
+A page and the same content in another format sit side by side:
+
+```go
+collage.NewPage("post").WithPath("en", "/blogs/{slug}")                          // /blogs/hello
+collage.NewDocument("post-md", "text/markdown; charset=utf-8").
+	WithPath("en", "/blogs/{slug}.md")                                           // /blogs/hello.md
+```
+
+Which route a segment reaches never depends on the order they were registered
+in. Two placeholders at the same position are one of three things:
+
+| | Example | Result |
+| --- | --- | --- |
+| Disjoint — no segment matches both | `{slug}.md` and `{slug}.json` | Both register; the text decides |
+| Nested — one is the other made more specific | `{slug}.min.md` within `{slug}.md`, both within `{slug}` | Both register; the more specific wins |
+| Crossing — a segment matches both, and neither is more specific | `a{x}` and `{x}b`, which `aXb` matches | `collage.ErrOverlappingPattern`, naming a segment that matches both |
+
+So `/blogs/hello.md` is the document, `/blogs/hello` the page, a static
+`/blogs/index.md` beats both, and `/blogs/.md` — nothing between the text — is the
+page's, with `slug` = `.md`. Only the value is escaped when a link is built:
+`{{pageURL "post-md" "slug" "çay"}}` is `/blogs/%C3%A7ay.md`. A segment holds one
+placeholder: `{name}.{ext}` has no single answer for `a.b.c`, so register
+`{name}.md` and `{name}.json` as two routes. A value is checked by its handler,
+not its pattern — there is no regex — which keeps every collision decidable at
 registration.
 
 Two different parameter names at the same position — `/blog/{slug}` and
-`/blog/{id}/edit` — are rejected with `collage.ErrAmbiguousParameterName`: a node
-holds one dynamic edge, so the two names cannot both be right.
+`/blog/{id}/edit`, or `{slug}.md` and `{id}.md` — are rejected with
+`collage.ErrAmbiguousParameterName`: they are one edge, so the two names cannot
+both be right.
 
 Captured values reach the data handler through the render context:
 
@@ -380,6 +411,7 @@ they keep `RegisterNotFoundPage` and `RegisterErrorPage`. `Register` takes a
 | `collage.ErrLocaleUnreachable` | A path in a locale that is neither `Locale.Default` nor in `Locale.Supported`, or any non-default locale under `DisablePathLocale` |
 | `collage.ErrDuplicateRoute` | Any two of {page, document} at one path, or two redirects at one source |
 | `collage.ErrAmbiguousParameterName` | Two parameter names at one position |
+| `collage.ErrOverlappingPattern` | Two placeholders with text around them that cross: `a{x}` and `{x}b` |
 | `collage.ErrRedirectShadowsPage` | A redirect source that is also a page or document path |
 | `collage.ErrUnsubstitutedPlaceholder` | A redirect destination placeholder the source does not capture |
 | `collage.ErrTemplateRootMissing` | `New`: `Template.Root` does not exist, on disk or within `Template.FS` |

@@ -41,6 +41,19 @@ func BuildPath(pattern string, params map[string]string) (string, error) {
 			return "", fmt.Errorf("%w: %q needs a value for %q", types.ErrRouteParams, pattern, segment.text)
 		}
 		used++
+		if segment.affixed() {
+			// The text around the placeholder is the pattern's, and only the
+			// value is escaped. The whole segment is what a browser resolves,
+			// so it is the whole segment that cannot be "." or "..".
+			if strings.Contains(value, "/") {
+				return "", fmt.Errorf("%w: %q: %q holds a \"/\", which only a catch-all such as {%s...} can", types.ErrRouteParams, pattern, segment.text, segment.text)
+			}
+			if whole := segment.prefix + value + segment.suffix; whole == "." || whole == ".." {
+				return "", fmt.Errorf("%w: %q: %q makes the segment %q, which a browser resolves as a path step", types.ErrRouteParams, pattern, segment.text, whole)
+			}
+			b.WriteString(segment.prefix + url.PathEscape(value) + segment.suffix)
+			continue
+		}
 		pieces := []string{value}
 		if segment.kind == segmentCatchAll {
 			pieces = strings.Split(strings.Trim(value, "/"), "/")

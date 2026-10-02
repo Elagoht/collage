@@ -847,9 +847,10 @@ func callStaticParams(ctx context.Context, list types.StaticParamsFunc, locale s
 }
 
 // isDynamicPattern reports whether pattern contains a "{param}" or "{param...}"
-// placeholder segment. Every such segment is wrapped in braces, so a substring check
-// for "{" is sufficient and does not require depending on internal/router's pattern
-// parser.
+// placeholder, a whole segment or one with text around it ("{slug}.md"). Every
+// placeholder is written in braces, and a literal "{" is refused at registration,
+// so a substring check for "{" is sufficient and does not require depending on
+// internal/router's pattern parser.
 func isDynamicPattern(pattern string) bool {
 	return strings.Contains(pattern, "{")
 }

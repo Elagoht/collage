@@ -319,7 +319,8 @@ var ErrUnsupportedCache = core.ErrUnsupportedCache
 
 // ErrInvalidPattern is returned when a page path or redirect source is malformed:
 // it does not start with "/", contains an empty segment, contains a placeholder
-// with an empty name, or places a catch-all ("{name...}") anywhere but last.
+// with an empty name, holds two placeholders in one segment ("{name}.{ext}"),
+// places a catch-all ("{name...}") anywhere but last, or puts text around one.
 var ErrInvalidPattern = router.ErrInvalidPattern
 
 // ErrDuplicateRoute is returned when a page path, or a redirect source, is already
@@ -330,6 +331,14 @@ var ErrDuplicateRoute = router.ErrDuplicateRoute
 // names at the same position, such as "/blog/{slug}" and "/blog/{id}/edit": a route
 // node carries one dynamic edge, so the two names cannot both be right.
 var ErrAmbiguousParameterName = router.ErrAmbiguousParameterName
+
+// ErrOverlappingPattern is returned when two placeholders with text around them
+// at the same position cross: some segment matches both and neither is more
+// specific, such as "/a{x}" and "/{x}b", which "/aXb" matches both of. Disjoint
+// ones ("{slug}.md" and "{slug}.json") and nested ones ("{slug}.min.md" within
+// "{slug}.md", every one within "{slug}") are fine: the more specific wins,
+// whatever the order of registration.
+var ErrOverlappingPattern = router.ErrOverlappingPattern
 
 // ErrRedirectShadowsPage is returned when a redirect's source path is also a
 // registered page path, in either registration order: one of the two would be

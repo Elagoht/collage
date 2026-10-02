@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.41.0
+
+### Added
+
+- **A placeholder may have text around it: `/blogs/{slug}.md`, `/post-{id}`,
+  `/v{version}.json`.** The segment must carry the text before and after the
+  placeholder with at least one character between them, and what lies between is
+  the value: `/blogs/hello.md` gives `slug` = `hello`. A page at `/blogs/{slug}`
+  and a document at `/blogs/{slug}.md` stand side by side — a post and its
+  Markdown, a feed per category at `/feeds/{category}.xml` — where before the
+  second pattern was refused at registration. Links build with the value escaped
+  and the text kept (`{{pageURL "post-md" "slug" "çay"}}` is
+  `/blogs/%C3%A7ay.md`), and an export writes `blogs/hello.md` beside
+  `blogs/hello/index.html`.
+
+  Which route a segment reaches never depends on registration order. At every
+  level a static segment is tried first, then placeholders with text around them
+  from the most specific, then the bare placeholder, then the catch-all. Two
+  placeholders at one position are disjoint (`{slug}.md`, `{slug}.json`: the text
+  decides), nested (`{slug}.min.md` within `{slug}.md`, both within `{slug}`: the
+  more specific wins), or crossing — some segment matches both and neither is more
+  specific, as `a{x}` and `{x}b` both match `aXb` — which is refused with the new
+  **`ErrOverlappingPattern`**, naming such a segment. The test for each is exact,
+  so no registered pair is ever ambiguous. A segment holds one placeholder
+  (`{name}.{ext}` has no single answer for `a.b.c`), a catch-all takes no text
+  around it, and there is no regex: a value is checked by its handler, which keeps
+  every collision decidable at registration. See
+  [docs/routing.md](docs/routing.md#text-around-a-placeholder).
+
 ## v0.40.0
 
 ### Added

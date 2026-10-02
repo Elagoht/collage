@@ -8,8 +8,9 @@ import (
 
 // ErrInvalidPattern is returned when a route or redirect pattern is malformed: it
 // does not start with "/", contains an empty segment, contains a placeholder with
-// an empty name, or places a catch-all segment ("{name...}") anywhere but the
-// final segment.
+// an empty name, holds more than one placeholder in a segment, places a catch-all
+// segment ("{name...}") anywhere but the final segment, or gives a catch-all
+// literal text around it.
 var ErrInvalidPattern = errors.New("collage: invalid pattern")
 
 // segmentKind distinguishes the three kinds of pattern segment.
@@ -18,7 +19,10 @@ type segmentKind int
 const (
 	// segmentStatic is a literal segment matched by exact text.
 	segmentStatic segmentKind = iota
-	// segmentDynamic is a "{name}" segment matching exactly one path segment.
+	// segmentDynamic is a "{name}" segment matching exactly one path segment, or
+	// one with literal text around its placeholder — "{slug}.md", "post-{id}",
+	// "v{version}.json" — matching a segment that begins with the prefix, ends
+	// with the suffix, and has at least one character between them.
 	segmentDynamic
 	// segmentCatchAll is a "{name...}" segment matching the rest of the path. It
 	// is only valid as a pattern's final segment.
@@ -31,6 +35,61 @@ type patternSegment struct {
 	// text is the literal text for segmentStatic, or the parameter name for
 	// segmentDynamic and segmentCatchAll.
 	text string
+	// prefix and suffix are a segmentDynamic's literal text before and after its
+	// placeholder: ".md" is the suffix of "{slug}.md". Both are empty for a
+	// placeholder that is the whole segment.
+	prefix, suffix string
+}
+
+// affixed reports whether s is a placeholder with literal text around it.
+func (s patternSegment) affixed() bool { return s.prefix != "" || s.suffix != "" }
+
+// literal returns the segment's text with its placeholder written as {name},
+// as a pattern spells it.
+func (s patternSegment) literal() string {
+	switch s.kind {
+	case segmentStatic:
+		return s.text
+	case segmentCatchAll:
+		return "{" + s.text + "...}"
+	default:
+		return s.prefix + "{" + s.text + "}" + s.suffix
+	}
+}
+
+// parseSegment reads one segment of a pattern. A segment holds at most one
+// placeholder: "{slug}", "{slug}.md", "post-{id}", or the whole-segment catch-all
+// "{path...}". ok is false, with a reason, for a segment that is none of those.
+func parseSegment(part string) (seg patternSegment, reason string, ok bool) {
+	open := strings.IndexByte(part, '{')
+	if open < 0 {
+		if strings.IndexByte(part, '}') >= 0 {
+			return patternSegment{}, fmt.Sprintf("segment %q has a \"}\" with no \"{\"", part), false
+		}
+		return patternSegment{kind: segmentStatic, text: part}, "", true
+	}
+	end := strings.IndexByte(part[open:], '}')
+	if end < 0 {
+		return patternSegment{}, fmt.Sprintf("segment %q has a \"{\" with no \"}\"", part), false
+	}
+	end += open
+	prefix, inner, suffix := part[:open], part[open+1:end], part[end+1:]
+	if strings.ContainsAny(prefix, "{}") || strings.ContainsAny(suffix, "{}") || strings.ContainsAny(inner, "{") {
+		return patternSegment{}, fmt.Sprintf("segment %q holds more than one placeholder; a segment holds one, such as \"{name}.md\" — register \"{name}.md\" and \"{name}.json\" as two routes", part), false
+	}
+	if name, isCatchAll := strings.CutSuffix(inner, "..."); isCatchAll {
+		if name == "" {
+			return patternSegment{}, "it has an empty catch-all name", false
+		}
+		if prefix != "" || suffix != "" {
+			return patternSegment{}, fmt.Sprintf("catch-all segment %q has text around it; a catch-all is a whole segment", part), false
+		}
+		return patternSegment{kind: segmentCatchAll, text: name}, "", true
+	}
+	if inner == "" {
+		return patternSegment{}, "it has an empty placeholder name", false
+	}
+	return patternSegment{kind: segmentDynamic, text: inner, prefix: prefix, suffix: suffix}, "", true
 }
 
 // splitPath splits path on "/" after trimming every leading and trailing "/", and
@@ -67,18 +126,25 @@ func normalizePattern(pattern string) string {
 	return "/" + strings.Join(normalized, "/")
 }
 
-// normalizeSegment returns "{}" for a dynamic segment, "{...}" for a catch-all one,
-// and segment unchanged for a literal one. It recognises a placeholder the same way
-// parsePattern does — braces at both ends — so the two cannot disagree about what a
-// placeholder is.
+// normalizeSegment returns segment with its placeholder's name erased: "{}" for
+// a dynamic segment, "{...}" for a catch-all one, "pre{}suf" for one with text
+// around its placeholder, and segment unchanged for a literal one. It reads the
+// segment with parseSegment, so the two cannot disagree about what a placeholder
+// is; a segment parseSegment refuses is returned as it is, since registration
+// refuses it before anything compares it.
 func normalizeSegment(segment string) string {
-	if !strings.HasPrefix(segment, "{") || !strings.HasSuffix(segment, "}") {
+	seg, _, ok := parseSegment(segment)
+	if !ok {
 		return segment
 	}
-	if strings.HasSuffix(segment[1:len(segment)-1], "...") {
+	switch seg.kind {
+	case segmentCatchAll:
 		return "{...}"
+	case segmentDynamic:
+		return seg.prefix + "{}" + seg.suffix
+	default:
+		return segment
 	}
-	return "{}"
 }
 
 // parsePattern parses a route or redirect pattern into its ordered segments. See
@@ -93,34 +159,31 @@ func parsePattern(pattern string) ([]patternSegment, error) {
 		if part == "" {
 			return nil, fmt.Errorf("%w: %q contains an empty segment", ErrInvalidPattern, pattern)
 		}
-		if strings.HasPrefix(part, "{") && strings.HasSuffix(part, "}") {
-			inner := part[1 : len(part)-1]
-			if strings.HasSuffix(inner, "...") {
-				name := strings.TrimSuffix(inner, "...")
-				if name == "" {
-					return nil, fmt.Errorf("%w: %q has an empty catch-all name", ErrInvalidPattern, pattern)
-				}
-				if i != len(raw)-1 {
-					return nil, fmt.Errorf("%w: %q: catch-all segment %q must be the final segment", ErrInvalidPattern, pattern, part)
-				}
-				segments = append(segments, patternSegment{kind: segmentCatchAll, text: name})
-				continue
-			}
-			if inner == "" {
-				return nil, fmt.Errorf("%w: %q has an empty placeholder name", ErrInvalidPattern, pattern)
-			}
-			segments = append(segments, patternSegment{kind: segmentDynamic, text: inner})
-			continue
+		seg, reason, ok := parseSegment(part)
+		if !ok {
+			return nil, fmt.Errorf("%w: %q: %s", ErrInvalidPattern, pattern, reason)
 		}
-		// A placeholder is a whole segment. One written inside a segment —
-		// "{category}.xml", "post-{id}" — used to be taken as literal text: the
-		// route matched only the braces themselves, and a reader following the
-		// pattern got a 404 with nothing to say why.
-		if strings.ContainsAny(part, "{}") {
-			return nil, fmt.Errorf("%w: %q: segment %q has a placeholder inside it; a placeholder is a whole segment, such as \"/feeds/{category}/rss.xml\"",
-				ErrInvalidPattern, pattern, part)
+		if seg.kind == segmentCatchAll && i != len(raw)-1 {
+			return nil, fmt.Errorf("%w: %q: catch-all segment %q must be the final segment", ErrInvalidPattern, pattern, part)
 		}
-		segments = append(segments, patternSegment{kind: segmentStatic, text: part})
+		segments = append(segments, seg)
 	}
 	return segments, nil
+}
+
+// overlaps reports whether some path segment matches both a and b, two
+// placeholders with literal text around them. The placeholder matches any text of
+// at least one character, so a segment long enough to begin with the longer prefix
+// and end with the longer suffix matches both whenever each prefix begins the
+// other and each suffix ends the other — and none does otherwise.
+func overlaps(a, b patternSegment) bool {
+	return (strings.HasPrefix(a.prefix, b.prefix) || strings.HasPrefix(b.prefix, a.prefix)) &&
+		(strings.HasSuffix(a.suffix, b.suffix) || strings.HasSuffix(b.suffix, a.suffix))
+}
+
+// within reports whether every segment a matches, b matches too: a is the more
+// specific of the two — "{slug}.min.md" within "{slug}.md", and every placeholder
+// within the bare "{slug}".
+func within(a, b patternSegment) bool {
+	return strings.HasPrefix(a.prefix, b.prefix) && strings.HasSuffix(a.suffix, b.suffix)
 }
