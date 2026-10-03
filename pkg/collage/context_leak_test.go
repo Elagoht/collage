@@ -143,3 +143,106 @@ func TestSharedRender_VariedValueIsKeptPerReader(t *testing.T) {
 		t.Errorf("reader B body = %q, want its own varied value, a separate cache entry", got)
 	}
 }
+
+// cacheableDocument is cacheablePage's counterpart for a document: one at /feed.txt
+// whose handler writes read(ctx, rc), behind the same middleware. cached picks an
+// Incremental document, whose one render is served to every reader, over a Dynamic
+// one, rendered per request.
+func cacheableDocument(t *testing.T, vary, cached bool, read func(context.Context, *collage.RenderContext) string) http.Handler {
+	t.Helper()
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/s.html": {Data: []byte(`unused`)}}, Root: "t"},
+		Cache:    collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Minute},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	doc := collage.NewDocument("feed", "text/plain").WithPath("en", "/feed.txt").
+		WithHandler(func(ctx context.Context, rc *collage.RenderContext) ([]byte, []string, error) {
+			return []byte("secret=" + read(ctx, rc) + "."), nil, nil
+		})
+	if cached {
+		doc = doc.Incremental(time.Minute)
+	} else {
+		doc = doc.Dynamic()
+	}
+	if err := app.RegisterDocument(doc.Build()); err != nil {
+		t.Fatalf("RegisterDocument: %v", err)
+	}
+	if err := app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if vary {
+				if err := collage.Vary(r, "X-Secret", r.Header.Get("X-Secret")); err != nil {
+					t.Errorf("Vary: %v", err)
+				}
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), secretKey{}, r.Header.Get("X-Secret"))))
+		})
+	}); err != nil {
+		t.Fatalf("Use: %v", err)
+	}
+	return app.Handler()
+}
+
+func getDocSecret(h http.Handler, secret string) string {
+	req := httptest.NewRequest(http.MethodGet, "/feed.txt", nil)
+	req.Header.Set("X-Secret", secret)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec.Body.String()
+}
+
+// A cacheable document's one render is served to every reader, as a page's is, so
+// it is stripped of per-reader context values the same way: through the context
+// its handler is given and through the request's own.
+func TestSharedDocument_DoesNotLeakContextBetweenReaders(t *testing.T) {
+	reads := map[string]func(context.Context, *collage.RenderContext) string{
+		"ctx": func(ctx context.Context, _ *collage.RenderContext) string {
+			secret, _ := ctx.Value(secretKey{}).(string)
+			return secret
+		},
+		"rc.Request": func(_ context.Context, rc *collage.RenderContext) string {
+			secret, _ := rc.Request.Context().Value(secretKey{}).(string)
+			return secret
+		},
+	}
+	for name, read := range reads {
+		t.Run(name, func(t *testing.T) {
+			h := cacheableDocument(t, false, true, read)
+			first := getDocSecret(h, "alice-secret")
+			second := getDocSecret(h, "bob-secret")
+			if strings.Contains(second, "alice-secret") {
+				t.Errorf("reader B was served reader A's context value: %q", second)
+			}
+			if first != "secret=." {
+				t.Errorf("first body = %q, want the context value stripped to %q", first, "secret=.")
+			}
+		})
+	}
+}
+
+// A varied value still reaches a cacheable document, one cache entry per value.
+func TestSharedDocument_VariedValueIsKeptPerReader(t *testing.T) {
+	h := cacheableDocument(t, true, true, func(_ context.Context, rc *collage.RenderContext) string {
+		secret, _ := collage.Varied(rc, "X-Secret")
+		return secret
+	})
+	if got := getDocSecret(h, "alice-secret"); got != "secret=alice-secret." {
+		t.Errorf("reader A body = %q, want its own varied value", got)
+	}
+	if got := getDocSecret(h, "bob-secret"); got != "secret=bob-secret." {
+		t.Errorf("reader B body = %q, want its own varied value", got)
+	}
+}
+
+// A Dynamic document is rendered for its one reader, so it keeps the whole context.
+func TestDynamicDocument_SeesContext(t *testing.T) {
+	h := cacheableDocument(t, false, false, func(ctx context.Context, _ *collage.RenderContext) string {
+		secret, _ := ctx.Value(secretKey{}).(string)
+		return secret
+	})
+	if got := getDocSecret(h, "alice-secret"); got != "secret=alice-secret." {
+		t.Errorf("body = %q, want the reader's own context value", got)
+	}
+}

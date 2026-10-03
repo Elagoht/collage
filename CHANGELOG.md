@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.41.1
+
+### Fixed
+
+- **A cacheable document's shared render no longer sees per-reader context.**
+  v0.39.0 stripped the request context's values from a cacheable page's one
+  render, served to every reader of its cache key; a cacheable document — a feed,
+  a sitemap, a JSON endpoint — still had them. A document handler that read a
+  value the application's middleware stored in the context, directly or through
+  `rc.Request`, read the first reader's, and that body was cached and served to
+  everyone after. Its render now gets the same stripped context a page's does,
+  and so does `OnDocumentRendered`; a value the document depends on is declared
+  with `collage.Vary` and read back with `collage.Varied`, as for a page. A
+  `Dynamic` document, rendered for its one reader, keeps the whole context.
+
 ## v0.41.0
 
 ### Added

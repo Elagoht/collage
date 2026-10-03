@@ -85,16 +85,20 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		}
 
 		// A document one render of serves every reader sees only what its key
-		// holds, as a page does: see sharedRequest.
-		req := r
+		// holds, as a page does: see sharedRequest for the request and
+		// renderSafeContext for the context's values, which the handler reaches
+		// both directly and through rc.Request.
+		renderCtx, req := ctx, r
 		if key != "" {
+			renderCtx = h.renderSafeContext(ctx)
 			req = sharedRequest(r, doc.CacheParams)
+			req = req.WithContext(h.renderSafeContext(req.Context()))
 		}
-		rc := types.NewRenderContext(ctx, req, nil, match.Locale, match.PathParams)
+		rc := types.NewRenderContext(renderCtx, req, nil, match.Locale, match.PathParams)
 		if skipsCache(r) {
 			types.SkipDataCache(rc)
 		}
-		result, err := docRenderer.ExecuteDocument(ctx, doc, rc)
+		result, err := docRenderer.ExecuteDocument(renderCtx, doc, rc)
 		if err != nil {
 			// result is non-nil on every ExecuteDocument path, including a failure,
 			// so NotFound can be read here safely; the error is checked first, as
@@ -122,7 +126,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			Path:        r.URL.Path,
 			Body:        result.Body,
 		}
-		if err := h.plugins.DocumentRendered(ctx, documentEvent); err != nil {
+		if err := h.plugins.DocumentRendered(renderCtx, documentEvent); err != nil {
 			return failed(route.failure(http.StatusInternalServerError, stageRender, err))
 		}
 		result.Body = documentEvent.Body
