@@ -291,10 +291,11 @@ func (p *Plugin) Origin(ctx context.Context, host string) (string, bool) {
 }
 ```
 
-The host arrives lower-cased with its port stripped. The first plugin in
-registration order that returns `ok` wins. An origin must be a bare
-`scheme://host[:port]` with scheme `http` or `https`, which `collage.ParseOrigin`
-checks and normalizes; an invalid one counts as not known, and dev mode logs it
+The host arrives lower-cased with its port stripped, and an IPv6 literal without
+its brackets (`::1`). The first plugin in registration order that returns `ok`
+wins. An origin must be a bare `scheme://host[:port]` with scheme `http` or
+`https`, which `collage.ParseOrigin` checks and normalizes, and must name a host
+(`https://:8080` does not); an invalid one counts as not known, and dev mode logs it
 once per plugin and origin. A host no plugin knows gets `Config.BaseURL`, and a
 resolver that panics is logged and skipped. Application code reads the result with
 `collage.BaseURL(rc)`, which is safe in a cached render because the host is in the

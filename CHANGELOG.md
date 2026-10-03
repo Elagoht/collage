@@ -9,8 +9,8 @@
   `Origin(ctx, host string) (origin string, ok bool)` says which origin
   (`https://acme.app.com`) absolute URLs for a host are built against. The first
   plugin in registration order that knows the host wins; the host is matched
-  lower-cased with its port stripped; an origin that is not a bare
-  `scheme://host[:port]` is ignored, and dev mode logs it once per plugin and
+  lower-cased with its port stripped, an IPv6 literal without its brackets; an
+  origin that is not a bare `scheme://host[:port]` naming a host is ignored, and dev mode logs it once per plugin and
   origin; an unknown host gets `Config.BaseURL`. Application code calls
   `collage.BaseURL(rc)` for the request's origin. It is safe in a shared, cached
   render, because the host is part of the cache key, and a static build, which has
