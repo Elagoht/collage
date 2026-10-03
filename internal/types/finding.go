@@ -57,6 +57,14 @@ const PathTagPrefix = "collage:path:"
 // invalidating it drops them, whatever else they depend on.
 func PathTag(path string) string { return PathTagPrefix + path }
 
+// HostTagPrefix begins the dependency tag every cached entry carries for the host
+// it was cached for, lower-cased. See HostTag.
+const HostTagPrefix = "collage:host:"
+
+// HostTag is the dependency tag of the cached entries cached for host, which an
+// invalidation reads back to tell a plugin which host each dropped path was on.
+func HostTag(host string) string { return HostTagPrefix + host }
+
 // FragmentReport is how one fragment of a render went: what a development tool
 // shows beside the page.
 type FragmentReport struct {

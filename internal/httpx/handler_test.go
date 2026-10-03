@@ -968,9 +968,9 @@ func TestTrackerReceivesTagsOnTaggedWrite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tags() = %v, want nil", err)
 	}
-	// Both render tags, and the one naming the path the entry was rendered for.
-	if len(tags) != 3 || tags[0] != "author:7" || tags[1] != "collage:path:/post" || tags[2] != "post:1" {
-		t.Errorf("Tags() = %v, want both render tags and the path's", tags)
+	// Both render tags, and the ones naming the host and path the entry was rendered for.
+	if len(tags) != 4 || tags[0] != "author:7" || tags[1] != "collage:host:example.com" || tags[2] != "collage:path:/post" || tags[3] != "post:1" {
+		t.Errorf("Tags() = %v, want both render tags and the host's and path's", tags)
 	}
 }
 

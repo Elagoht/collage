@@ -1087,22 +1087,44 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 	}
 
 	// The URL paths of what is being dropped, read before the keys are forgotten:
-	// every cached entry carries a tag naming the path it was rendered for.
+	// every cached entry carries a tag naming the path it was rendered for, and
+	// one naming the host it was cached for.
 	var paths []string
+	var entries []plugin.InvalidatedEntry
 	seenPath := make(map[string]bool)
+	seenEntry := make(map[plugin.InvalidatedEntry]bool)
 	for _, key := range keys {
 		keyTags, err := a.tracker.Tags(ctx, key)
 		if err != nil {
 			continue
 		}
+		var entry plugin.InvalidatedEntry
 		for _, tag := range keyTags {
-			if path, ok := strings.CutPrefix(tag, types.PathTagPrefix); ok && !seenPath[path] {
-				seenPath[path] = true
-				paths = append(paths, path)
+			if path, ok := strings.CutPrefix(tag, types.PathTagPrefix); ok {
+				entry.Path = path
+			} else if host, ok := strings.CutPrefix(tag, types.HostTagPrefix); ok {
+				entry.Host = host
 			}
+		}
+		if entry.Path == "" {
+			continue
+		}
+		if !seenPath[entry.Path] {
+			seenPath[entry.Path] = true
+			paths = append(paths, entry.Path)
+		}
+		if !seenEntry[entry] {
+			seenEntry[entry] = true
+			entries = append(entries, entry)
 		}
 	}
 	slices.Sort(paths)
+	slices.SortFunc(entries, func(x, y plugin.InvalidatedEntry) int {
+		if c := strings.Compare(x.Host, y.Host); c != 0 {
+			return c
+		}
+		return strings.Compare(x.Path, y.Path)
+	})
 
 	var failures error
 	invalidated := 0
@@ -1131,8 +1153,9 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 	// as the event's own, and a plugin must not be able to reach back into the
 	// caller's slice through it.
 	if err := a.plugins.CacheInvalidate(ctx, &plugin.CacheInvalidateEvent{
-		Tags:  append([]string(nil), tags...),
-		Paths: paths,
+		Tags:    append([]string(nil), tags...),
+		Paths:   paths,
+		Entries: entries,
 	}); err != nil {
 		failures = errors.Join(failures, err)
 	}
