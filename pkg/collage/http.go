@@ -1,6 +1,7 @@
 package collage
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/Elagoht/collage/internal/core"
@@ -58,6 +59,16 @@ func Varied(rc *RenderContext, header string) (string, bool) {
 		return "", false
 	}
 	return httpx.Varied(rc.Request, header)
+}
+
+// VariedContext is Varied for code that holds only a context — a page's
+// StaticParams, a document handler's ctx, a sitemap's LastMod:
+//
+//	tenant, ok := collage.VariedContext(ctx, "X-Tenant")
+//
+// It is as safe in a shared render as Varied is: the value is in the cache key.
+func VariedContext(ctx context.Context, header string) (string, bool) {
+	return httpx.VariedContext(ctx, header)
 }
 
 // BaseURL returns the public origin of the request rc renders for —

@@ -173,7 +173,14 @@ func Vary(r *http.Request, header, value string) error {
 // of per-reader input a cached page is allowed to depend on — while a raw context
 // value is stripped from a shared render as a possible leak.
 func Varied(r *http.Request, header string) (string, bool) {
-	set, ok := r.Context().Value(varySetKey{}).(*varySet)
+	return VariedContext(r.Context(), header)
+}
+
+// VariedContext is Varied for code that holds only a context: a page's
+// StaticParams, a document handler's ctx. The vary set is a framework key, kept
+// in a shared render's context.
+func VariedContext(ctx context.Context, header string) (string, bool) {
+	set, ok := ctx.Value(varySetKey{}).(*varySet)
 	if !ok {
 		return "", false
 	}

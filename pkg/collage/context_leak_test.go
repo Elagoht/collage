@@ -246,3 +246,80 @@ func TestDynamicDocument_SeesContext(t *testing.T) {
 		t.Errorf("body = %q, want the reader's own context value", got)
 	}
 }
+
+// A varied value reaches code that holds only a context — a cacheable document's
+// ctx, stripped of everything per-reader but the vary set.
+func TestVariedContext_InSharedDocument(t *testing.T) {
+	h := cacheableDocument(t, true, true, func(ctx context.Context, _ *collage.RenderContext) string {
+		secret, _ := collage.VariedContext(ctx, "X-Secret")
+		return secret
+	})
+	if got := getDocSecret(h, "alice-secret"); got != "secret=alice-secret." {
+		t.Errorf("reader A body = %q, want its varied value", got)
+	}
+	if got := getDocSecret(h, "bob-secret"); got != "secret=bob-secret." {
+		t.Errorf("reader B body = %q, want its varied value", got)
+	}
+}
+
+// pageURLsLister registers a document listing a page's URLs through Host.PageURLs,
+// as a sitemap does: the page's StaticParams run with the document's context.
+type pageURLsLister struct{}
+
+func (pageURLsLister) Name() string                   { return "test/lister" }
+func (pageURLsLister) Version() string                { return "0" }
+func (pageURLsLister) Shutdown(context.Context) error { return nil }
+func (pageURLsLister) Init(_ context.Context, host collage.Host) error {
+	return host.RegisterDocument(collage.NewDocument("list", "text/plain").AtRoot("/list.txt").
+		WithHandler(func(ctx context.Context, _ *collage.RenderContext) ([]byte, []string, error) {
+			urls, err := host.PageURLs(ctx, "post")
+			if err != nil {
+				return nil, nil, err
+			}
+			var b strings.Builder
+			for _, u := range urls {
+				b.WriteString(u.Path + ";")
+			}
+			return []byte(b.String()), nil, nil
+		}).Incremental(time.Minute).Build())
+}
+
+// StaticParams, reached through PageURLs from a shared document render, reads the
+// varied value with VariedContext: a URL set per tenant.
+func TestVariedContext_InStaticParams(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/s.html": {Data: []byte(`x`)}}, Root: "t"},
+		Cache:    collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Minute},
+		Plugins:  []collage.Plugin{pageURLsLister{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := collage.NewPage("post").WithContent(collage.NewFragment("p", "s.html").Build()).WithPath("en", "/posts/{slug}").
+		WithStaticParams(func(ctx context.Context, _ string) ([]map[string]string, error) {
+			tenant, _ := collage.VariedContext(ctx, "X-Secret")
+			return []map[string]string{{"slug": tenant + "-1"}, {"slug": tenant + "-2"}}, nil
+		}).Build()
+	if err := app.RegisterPage(post); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = collage.Vary(r, "X-Secret", r.Header.Get("X-Secret"))
+			next.ServeHTTP(w, r)
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	h := app.Handler()
+	for _, tenant := range []string{"acme", "globex", "acme"} {
+		req := httptest.NewRequest(http.MethodGet, "/list.txt", nil)
+		req.Header.Set("X-Secret", tenant)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if want := "/posts/" + tenant + "-1;/posts/" + tenant + "-2;"; rec.Body.String() != want {
+			t.Errorf("%s list = %q, want %q", tenant, rec.Body.String(), want)
+		}
+	}
+}
