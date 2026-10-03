@@ -201,6 +201,22 @@ type CacheWriteEvent = plugin.CacheWriteEvent
 // CacheInvalidateEvent describes a cache invalidation that has just happened.
 type CacheInvalidateEvent = plugin.CacheInvalidateEvent
 
+// InvalidatedEntry is one cached page or document an invalidation dropped, with
+// the host it was cached for. See CacheInvalidateEvent.Entries.
+type InvalidatedEntry = plugin.InvalidatedEntry
+
+// OriginResolver is implemented by a plugin that knows the public origin of a
+// host the site is served on. See collage.BaseURL.
+type OriginResolver = plugin.OriginResolver
+
+// Origins is a capability of Host and ConfigHost: host.(collage.Origins) gives a
+// plugin a host's origin outside a render, and whether origins vary by host.
+type Origins = plugin.Origins
+
+// ParseOrigin checks that raw is a bare origin, scheme://host[:port], and returns
+// it without a trailing slash; anything else is ErrInvalidBaseURL.
+func ParseOrigin(raw string) (string, error) { return plugin.ParseOrigin(raw) }
+
 // ErrorEvent describes a failure encountered while serving a request.
 type ErrorEvent = plugin.ErrorEvent
 
@@ -460,10 +476,14 @@ func New(cfg *Config) (*App, error) {
 // that the two structs have drifted apart, so this function is the one place where
 // adding a field to one and forgetting the other becomes visible.
 func toCoreConfig(cfg *Config) core.Config {
+	baseURL := cfg.BaseURL
+	if normalized, err := plugin.ParseOrigin(baseURL); err == nil {
+		baseURL = normalized
+	}
 	return core.Config{
 		DevMode:  cfg.DevMode,
 		DevWatch: cfg.DevWatch,
-		BaseURL:  normalizeBaseURL(cfg.BaseURL),
+		BaseURL:  baseURL,
 		Logger:   cfg.Logger,
 		Server: core.ServerConfig{
 			Host:            cfg.Server.Host,

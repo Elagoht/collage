@@ -441,6 +441,18 @@ type CacheInvalidateEvent struct {
 	// be told has changed. A page that is not cached is never in it: nothing of
 	// it was dropped.
 	Paths []string
+	// Entries are the same drops with the host each was cached for, sorted by
+	// host, then path: one path cached under two hosts is two entries. A plugin
+	// that makes the URLs absolute reads these, because on a site served on
+	// several hosts a path alone does not say which origin it was dropped from.
+	Entries []InvalidatedEntry
+}
+
+// InvalidatedEntry is one cached page or document an invalidation dropped: the
+// host it was cached for, lower-cased as in the cache key, and its URL path.
+type InvalidatedEntry struct {
+	Host string
+	Path string
 }
 
 // ErrorEvent describes a failure encountered while serving a request.

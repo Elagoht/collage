@@ -7,13 +7,12 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
-	"net/url"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/observability"
+	"github.com/Elagoht/collage/internal/plugin"
 )
 
 // ErrInvalidPort is returned when Config.Server.Port is outside the valid TCP port
@@ -60,9 +59,8 @@ var ErrLocaleDefaultNotSupported = errors.New("collage: default locale not in su
 var ErrNegativeDuration = errors.New("collage: negative duration")
 
 // ErrInvalidBaseURL is returned when Config.BaseURL is set to something that is not
-// a bare origin: it must have an http or https scheme and a host, and no path,
-// query or fragment.
-var ErrInvalidBaseURL = errors.New("collage: BaseURL must be a bare origin, scheme://host[:port]")
+// a bare origin, and by ParseOrigin.
+var ErrInvalidBaseURL = plugin.ErrInvalidOrigin
 
 // Config is the framework's top-level configuration.
 //
@@ -541,40 +539,13 @@ func (c *Config) Validate() error {
 		}
 	}
 
-	if c.BaseURL != "" && !isBareOrigin(c.BaseURL) {
-		return fmt.Errorf("%w: %q", ErrInvalidBaseURL, c.BaseURL)
+	if c.BaseURL != "" {
+		if _, err := plugin.ParseOrigin(c.BaseURL); err != nil {
+			return err
+		}
 	}
 
 	return nil
-}
-
-// isBareOrigin reports whether raw is a scheme (http or https), a host, and
-// nothing else — no path beyond "/", no query, no fragment, no user info. It is
-// what Config.BaseURL must be, so a plugin can join a path to it without guessing
-// what it already ends with.
-func isBareOrigin(raw string) bool {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return false
-	}
-	switch {
-	case u.Scheme != "http" && u.Scheme != "https":
-		return false
-	case u.Host == "", u.User != nil, u.Opaque != "":
-		return false
-	case u.Path != "" && u.Path != "/":
-		return false
-	case u.RawQuery != "", u.Fragment != "", u.RawFragment != "":
-		return false
-	}
-	return true
-}
-
-// normalizeBaseURL trims a single trailing slash from a bare origin, so
-// Host.BaseURL reports "https://example.com", never "https://example.com/", and a
-// plugin joining "/sitemap.xml" to it gets one slash rather than two.
-func normalizeBaseURL(raw string) string {
-	return strings.TrimSuffix(raw, "/")
 }
 
 // IsDevMode reports the config's effective development-mode flag: c.DevMode or
