@@ -184,6 +184,49 @@ func (r *Registry) Request(req *http.Request) (*http.Request, func(status int)) 
 	}
 }
 
+// HasOriginResolver reports whether a registered plugin implements
+// OriginResolver. A nil Registry has none.
+func (r *Registry) HasOriginResolver() bool {
+	for _, p := range r.snapshot() {
+		if _, ok := p.(OriginResolver); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// Origin asks every plugin implementing OriginResolver, in registration order,
+// for host's origin, and returns the first one known, normalized by ParseOrigin.
+// An origin that is not a bare one is handed to invalid, when it is not nil, and
+// skipped; a resolver that panics is logged and skipped. A nil Registry knows no
+// origin.
+func (r *Registry) Origin(ctx context.Context, host string, invalid func(plugin, origin string)) (string, bool) {
+	for _, p := range r.snapshot() {
+		resolver, ok := p.(OriginResolver)
+		if !ok {
+			continue
+		}
+		var origin string
+		var known bool
+		if err := safeCall(func() error { origin, known = resolver.Origin(ctx, host); return nil }); err != nil {
+			r.logOrDefault().Error("collage: origin resolver panicked", "plugin", p.Name(), "host", host, "err", err)
+			continue
+		}
+		if !known {
+			continue
+		}
+		normalized, err := ParseOrigin(origin)
+		if err != nil {
+			if invalid != nil {
+				invalid(p.Name(), origin)
+			}
+			continue
+		}
+		return normalized, true
+	}
+	return "", false
+}
+
 // CloseStreams asks every plugin implementing StreamCloser to end its open
 // streams, in registration order. A panic in one is contained, so the others
 // still close theirs. A nil Registry does nothing.
