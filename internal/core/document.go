@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 
+	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
@@ -159,6 +160,7 @@ func (a *App) RenderDocumentPath(ctx context.Context, path, locale string, param
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	ctx = httpx.WithOrigins(ctx, a.OriginFor)
 
 	// Startup first, memoised — see RenderPath for why.
 	if _, err := a.buildHandler(); err != nil {

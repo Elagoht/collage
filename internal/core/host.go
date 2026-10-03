@@ -41,6 +41,30 @@ type hostView struct {
 // Host's methods fails to build rather than failing to run.
 var _ plugin.Host = (*hostView)(nil)
 
+// Both views offer Origins, a capability a plugin reaches by type assertion
+// rather than a Host method, so a Host a test writes need not have it.
+var (
+	_ plugin.Origins = (*hostView)(nil)
+	_ plugin.Origins = (*configHostView)(nil)
+)
+
+// OriginFor returns host's public origin. See App.OriginFor.
+func (h *hostView) OriginFor(ctx context.Context, host string) string {
+	return h.app.OriginFor(ctx, host)
+}
+
+// Dynamic reports whether a plugin implementing OriginResolver is registered.
+func (h *hostView) Dynamic() bool { return h.app.plugins.HasOriginResolver() }
+
+// OriginFor returns host's public origin. See App.OriginFor.
+func (h *configHostView) OriginFor(ctx context.Context, host string) string {
+	return h.app.OriginFor(ctx, host)
+}
+
+// Dynamic reports whether a plugin implementing OriginResolver is registered —
+// among those registered so far, at Configure time.
+func (h *configHostView) Dynamic() bool { return h.app.plugins.HasOriginResolver() }
+
 // DevMode reports whether the application is running in development mode.
 func (h *hostView) DevMode() bool {
 	return h.app.DevMode()

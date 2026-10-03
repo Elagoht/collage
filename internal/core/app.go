@@ -274,6 +274,9 @@ type ObservabilityConfig struct {
 // InvalidateTags, Logger, RegisterCommand — are all safe to call while requests are
 // being served.
 type App struct {
+	// invalidOrigins records, in development, the plugin+origin pairs already
+	// reported by invalidOrigin.
+	invalidOrigins sync.Map
 	// cfg is the configuration the App was built from. It is read-only after New.
 	cfg Config
 	// devMode is the effective development-mode flag: cfg.DevMode or
@@ -639,6 +642,32 @@ func (a *App) BaseURL() string {
 	return a.cfg.BaseURL
 }
 
+// OriginFor returns the public origin URLs for host are absolute against: the
+// first OriginResolver plugin's that knows host, else Config.BaseURL — "" when
+// that is unset too. host is matched lower-cased and without a port.
+func (a *App) OriginFor(ctx context.Context, host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if origin, ok := a.plugins.Origin(ctx, ascii.LowerString(host), a.invalidOrigin); ok {
+		return origin
+	}
+	return a.cfg.BaseURL
+}
+
+// invalidOrigin reports, in development and once per plugin and origin, an
+// OriginResolver that answered with something that is not a bare origin.
+func (a *App) invalidOrigin(plugin, origin string) {
+	if !a.DevMode() {
+		return
+	}
+	if _, seen := a.invalidOrigins.LoadOrStore(plugin+"\x00"+origin, true); seen {
+		return
+	}
+	a.logger.Warn("collage: an origin resolver returned an invalid origin; it was ignored",
+		"plugin", plugin, "origin", origin)
+}
+
 // Logger returns the application's structured logger.
 func (a *App) Logger() *slog.Logger {
 	return a.logger
@@ -773,6 +802,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 	a.warnAboutGeneratedKey()
 
 	handler, err := httpx.New(httpx.Deps{
+		Origins:      a.OriginFor,
 		Router:       a.routes,
 		Renderer:     a.renderer,
 		Cache:        a.store,
@@ -1190,6 +1220,7 @@ func (a *App) renderResolved(
 	params map[string]string,
 	path string,
 ) (*render.Result, error) {
+	ctx = httpx.WithOrigins(ctx, a.OriginFor)
 	rc := types.NewRenderContext(ctx, req, page, locale, params)
 
 	// The render hooks fire here as well as in the HTTP handler, and that is the

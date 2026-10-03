@@ -60,6 +60,27 @@ func Varied(rc *RenderContext, header string) (string, bool) {
 	return httpx.Varied(rc.Request, header)
 }
 
+// BaseURL returns the public origin of the request rc renders for —
+// "https://acme.app.com", without a trailing slash — which absolute URLs in a
+// page, a sitemap or a feed are built on. On a site served on one host it is
+// Config.BaseURL. On a site served on several, a plugin implementing
+// OriginResolver (elagoht/tenant, for one) names each host's origin, and a host it
+// does not know has Config.BaseURL's. It is "" when neither says.
+//
+// It is safe in a cached page's render, shared between readers: the origin
+// follows the host, and the host is in the cache key. In a static build, which has
+// no request, it is Config.BaseURL.
+func BaseURL(rc *RenderContext) string {
+	if rc == nil {
+		return ""
+	}
+	host := ""
+	if rc.Request != nil {
+		host = rc.Request.Host
+	}
+	return httpx.BaseURL(rc.Context(), host)
+}
+
 // SkipCache declares, from middleware, that r is answered with a fresh render that
 // is neither read from the page cache nor written to it, and marked private and
 // no-store. It is what a preview is made of:

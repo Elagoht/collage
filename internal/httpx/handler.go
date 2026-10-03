@@ -128,6 +128,9 @@ const staticCacheTTL = 100 * 365 * 24 * time.Hour
 // Deps are the collaborators a Handler needs. Router, Renderer, Tracker, and Logger
 // are required; Cache, Metrics, Tracer, and Plugins may be left nil.
 type Deps struct {
+	// Origins resolves a host's public origin, for collage.BaseURL. Nil leaves
+	// BaseURL "" in a render.
+	Origins OriginFunc
 	// Router resolves a request to a page, a redirect, or a not-found result, and
 	// holds the site's global not-found and error pages. Required.
 	Router router.Router
@@ -207,6 +210,7 @@ type Deps struct {
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
 // Handler is safe for concurrent use by as many requests as the server accepts.
 type Handler struct {
+	origins      OriginFunc
 	router       router.Router
 	renderer     render.Engine
 	cache        cache.Cache
@@ -253,6 +257,7 @@ func New(d Deps) (*Handler, error) {
 		return nil, fmt.Errorf("%w: Logger", ErrMissingDependency)
 	}
 	h := &Handler{
+		origins:    d.Origins,
 		router:     d.Router,
 		renderer:   d.Renderer,
 		cache:      d.Cache,
@@ -343,6 +348,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the raw path. See RouteOf.
 	route := &routeRef{}
 	r = r.WithContext(context.WithValue(r.Context(), routeCtxKey{}, route))
+	if h.origins != nil {
+		r = r.WithContext(WithOrigins(r.Context(), h.origins))
+	}
 
 	// Before the request's span: a plugin carrying a trace in from the caller
 	// makes its span the parent of collage's own. See plugin.RequestHook.
