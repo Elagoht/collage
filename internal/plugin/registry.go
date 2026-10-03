@@ -216,6 +216,9 @@ func (r *Registry) Origin(ctx context.Context, host string, invalid func(plugin,
 			continue
 		}
 		normalized, err := ParseOrigin(origin)
+		if err == nil && !hasHostname(normalized) {
+			err = ErrInvalidOrigin
+		}
 		if err != nil {
 			if invalid != nil {
 				invalid(p.Name(), origin)

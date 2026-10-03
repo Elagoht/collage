@@ -103,20 +103,63 @@ func TestBaseURL_FollowsTheHost(t *testing.T) {
 
 func TestOriginFor_FoldsHostCase(t *testing.T) {
 	app := originSite(t, false, nil, &hostOrigins{origins: map[string]string{"acme.test": "https://acme.example"}})
-	if got := app.OriginFor(context.Background(), "ACME.test"); got != "https://acme.example" {
-		t.Errorf("OriginFor(ACME.test) = %q, want https://acme.example", got)
+	for _, host := range []string{"ACME.test", "ACME.test:8080"} {
+		if got := app.OriginFor(context.Background(), host); got != "https://acme.example" {
+			t.Errorf("OriginFor(%s) = %q, want https://acme.example", host, got)
+		}
 	}
 }
 
-// A static build has no request: the origin is Config.BaseURL.
+// An IPv6 literal reaches a resolver in one spelling, without brackets, whether
+// or not the host had a port.
+func TestOriginFor_IPv6WithoutBrackets(t *testing.T) {
+	app := originSite(t, false, nil, &hostOrigins{origins: map[string]string{"::1": "https://six.example"}})
+	for _, host := range []string{"[::1]", "[::1]:80"} {
+		if got := app.OriginFor(context.Background(), host); got != "https://six.example" {
+			t.Errorf("OriginFor(%s) = %q, want https://six.example", host, got)
+		}
+	}
+}
+
+// A static build has no request: the origin is Config.BaseURL, even when a
+// resolver knows the synthetic request's host, Server.Host.
 func TestBaseURL_StaticRenderUsesConfig(t *testing.T) {
-	app := originSite(t, false, nil, &hostOrigins{})
+	app := originSite(t, false, nil, &hostOrigins{origins: map[string]string{"localhost": "https://tenant.example"}})
 	result, err := app.RenderPath(context.Background(), "/", "en", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(result.HTML), "https://main.example") {
-		t.Errorf("static render = %q, want Config.BaseURL", result.HTML)
+	if html := string(result.HTML); !strings.Contains(html, "https://main.example") || strings.Contains(html, "tenant.example") {
+		t.Errorf("static render = %q, want Config.BaseURL", html)
+	}
+	doc, err := app.RenderDocumentPath(context.Background(), "/o.txt", "en", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(doc.Body); got != "origin=https://main.example" {
+		t.Errorf("static document = %q, want origin=https://main.example", got)
+	}
+}
+
+// A fragment a plugin renders outside ServeHTTP follows the request's host too.
+func TestBaseURL_RenderFragmentFollowsTheHost(t *testing.T) {
+	app := originSite(t, false, nil, &hostOrigins{origins: map[string]string{"acme.test": "https://acme.example"}})
+	frag := collage.NewFragment("live", "o.html").
+		WithDataHandler(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
+			return collage.BaseURL(rc), nil, nil
+		})).Build()
+	if err := app.RegisterPage(collage.NewPage("live").WithContent(frag).WithPath("en", "/live").
+		WithFragmentPath("en", "/live/o", frag).Build()); err != nil {
+		t.Fatal(err)
+	}
+	app.Handler()
+	got, err := app.RenderFragment(httptest.NewRequest(http.MethodGet, "http://acme.test/stream", nil),
+		collage.FragmentRequest{Page: "live", Fragment: "live"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got.HTML) != "<p>https://acme.example</p>" {
+		t.Errorf("RenderFragment = %q, want the host's origin", got.HTML)
 	}
 }
 
@@ -140,6 +183,19 @@ func TestBaseURL_InvalidOriginIsIgnoredAndLogged(t *testing.T) {
 		if got := getAt(h, "http://bad.test/"); !strings.Contains(got, "https://main.example") {
 			t.Errorf("GET bad.test = %q, want Config.BaseURL", got)
 		}
+	}
+	if n := strings.Count(logs.String(), "invalid origin"); n != 1 {
+		t.Errorf("logged %d times, want once: %s", n, logs.String())
+	}
+}
+
+// An origin with no host name, "https://:8080", is not a bare origin: it is
+// ignored and logged like any other invalid one.
+func TestBaseURL_OriginWithoutHostnameIsIgnored(t *testing.T) {
+	var logs bytes.Buffer
+	app := originSite(t, true, &logs, &hostOrigins{origins: map[string]string{"bad.test": "https://:8080"}})
+	if got := getAt(app.Handler(), "http://bad.test/"); !strings.Contains(got, "https://main.example") {
+		t.Errorf("GET bad.test = %q, want Config.BaseURL", got)
 	}
 	if n := strings.Count(logs.String(), "invalid origin"); n != 1 {
 		t.Errorf("logged %d times, want once: %s", n, logs.String())

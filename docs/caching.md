@@ -169,6 +169,21 @@ absolute URLs against is theirs too. A static build has no request and gets
 an invalidation drops entries, `CacheInvalidateEvent.Entries` names each one's host
 as well as its path.
 
+The page cache is kept per host; [`collage.Cached`](#caching-data-not-only-pages)
+is not. Its store is one per process, keyed only by the key you give it, so on a
+site serving several customers — elagoht/tenant, say — `Cached(rc, "posts", …)`
+fetches acme's posts once and hands them to globex too. Put the customer in the key,
+and in the tags, so invalidating one customer's data leaves the others' alone:
+
+```go
+func posts(ctx context.Context, rc *collage.RenderContext) ([]Post, []string, error) {
+	id, _ := tenant.ID(rc)
+	list, err := collage.Cached(rc, "posts:"+id, time.Hour, []string{"posts:" + id},
+		func(ctx context.Context) ([]Post, error) { return db.Posts(ctx, id) })
+	return list, nil, err
+}
+```
+
 ## ETags and conditional requests
 
 Every cached entry stores the ETag its content hashed to, and the fresh response

@@ -160,7 +160,9 @@ func (a *App) RenderDocumentPath(ctx context.Context, path, locale string, param
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	ctx = httpx.WithOrigins(ctx, a.OriginFor)
+	// A synthetic render, as in renderResolved: Config.BaseURL, never the origin a
+	// resolver gives the synthetic request's Host.
+	ctx = httpx.WithOrigins(ctx, a.configOrigin)
 
 	// Startup first, memoised — see RenderPath for why.
 	if _, err := a.buildHandler(); err != nil {

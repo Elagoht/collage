@@ -30,14 +30,24 @@ func ParseOrigin(raw string) (string, error) {
 	return "", fmt.Errorf("%w: %q", ErrInvalidOrigin, raw)
 }
 
+// hasHostname reports whether origin, one ParseOrigin accepted, names a host:
+// "https://:8080" has a port and no host. ParseOrigin itself accepts it, because
+// it validates Config.BaseURL too, whose rule does not change; a resolver's
+// answer is held to the stricter one.
+func hasHostname(origin string) bool {
+	u, err := url.Parse(origin)
+	return err == nil && u.Hostname() != ""
+}
+
 // OriginResolver is implemented by a plugin that knows the public origin of a
 // host the site is served on — one site, a host per customer — so the absolute
 // URLs a page, a sitemap or a feed carries follow the host it was asked for.
 //
-// host is lower-cased, without its port. The first plugin, in registration order,
-// that reports ok decides; an origin that is not a bare one (see ParseOrigin) is
-// ignored, as if the plugin had not known the host. A host no plugin knows has
-// Config.BaseURL's origin.
+// host is lower-cased, without its port; an IPv6 literal is without its brackets,
+// "::1". The first plugin, in registration order, that reports ok decides; an
+// origin that is not a bare one (see ParseOrigin), or that names no host, such as
+// "https://:8080", is ignored, as if the plugin had not known the host. A host no
+// plugin knows has Config.BaseURL's origin.
 type OriginResolver interface {
 	Origin(ctx context.Context, host string) (origin string, ok bool)
 }

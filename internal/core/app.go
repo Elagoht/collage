@@ -644,14 +644,23 @@ func (a *App) BaseURL() string {
 
 // OriginFor returns the public origin URLs for host are absolute against: the
 // first OriginResolver plugin's that knows host, else Config.BaseURL — "" when
-// that is unset too. host is matched lower-cased and without a port.
+// that is unset too. host is matched lower-cased and without a port; an IPv6
+// literal without its brackets, with a port or without one.
 func (a *App) OriginFor(ctx context.Context, host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
+	} else if len(host) > 1 && host[0] == '[' && host[len(host)-1] == ']' {
+		host = host[1 : len(host)-1]
 	}
 	if origin, ok := a.plugins.Origin(ctx, ascii.LowerString(host), a.invalidOrigin); ok {
 		return origin
 	}
+	return a.cfg.BaseURL
+}
+
+// configOrigin is the OriginFunc of a render with no real request: Config.BaseURL,
+// whatever the host.
+func (a *App) configOrigin(context.Context, string) string {
 	return a.cfg.BaseURL
 }
 
@@ -1243,7 +1252,11 @@ func (a *App) renderResolved(
 	params map[string]string,
 	path string,
 ) (*render.Result, error) {
-	ctx = httpx.WithOrigins(ctx, a.OriginFor)
+	// Every caller is synthetic — RenderPath, RenderNotFound, a static build — so
+	// the origin is Config.BaseURL. The synthetic request's Host is Server.Host,
+	// and a resolver that happens to know "localhost" must not hand a built page
+	// one tenant's origin.
+	ctx = httpx.WithOrigins(ctx, a.configOrigin)
 	rc := types.NewRenderContext(ctx, req, page, locale, params)
 
 	// The render hooks fire here as well as in the HTTP handler, and that is the

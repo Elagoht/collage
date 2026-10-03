@@ -449,7 +449,9 @@ type CacheInvalidateEvent struct {
 }
 
 // InvalidatedEntry is one cached page or document an invalidation dropped: the
-// host it was cached for, lower-cased as in the cache key, and its URL path.
+// host it was cached for, lower-cased as in the cache key, and its URL path. The
+// host keeps its port when the request had one, "acme.test:8080"; pass it to
+// Origins.OriginFor, which drops it.
 type InvalidatedEntry struct {
 	Host string
 	Path string

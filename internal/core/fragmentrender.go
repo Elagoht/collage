@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
@@ -32,6 +33,9 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 	if r == nil {
 		return nil, ErrNoRequest
 	}
+	// A plugin calls this outside ServeHTTP, so the origins ServeHTTP installs
+	// are not on r yet. It renders for a real request, so the host decides.
+	r = r.WithContext(httpx.WithOrigins(r.Context(), a.OriginFor))
 	page, fragment, locale, params, r, err := a.resolveFragmentRequest(r, req)
 	if err != nil {
 		return nil, err
