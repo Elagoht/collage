@@ -479,3 +479,35 @@ func TestMemoryTracker_MaxKeysOrderFollowsEveryRemoval(t *testing.T) {
 		}
 	}
 }
+
+// A host tag holds every key of its host, so MaxKeysPerTag must not evict from it.
+func TestMemoryTracker_HostTagExemptFromPerTagCap(t *testing.T) {
+	tr := NewMemory()
+	tr.MaxKeysPerTag = 2
+	ctx := context.Background()
+	host := "collage:host:a.test"
+	for i := 0; i < 5; i++ {
+		if err := tr.Track(ctx, fmt.Sprintf("k%d", i), []string{"t", host}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		tags, _ := tr.Tags(ctx, fmt.Sprintf("k%d", i))
+		found := false
+		for _, g := range tags {
+			found = found || g == host
+		}
+		if !found {
+			t.Errorf("k%d lost its host tag: %v", i, tags)
+		}
+	}
+	if keys, _ := tr.Resolve(ctx, []string{host}); len(keys) != 5 {
+		t.Errorf("host tag holds %d keys, want 5", len(keys))
+	}
+	if keys, _ := tr.Resolve(ctx, []string{"t"}); len(keys) != 2 {
+		t.Errorf("tag t holds %d keys, want 2 (capped)", len(keys))
+	}
+	if d := tr.Stats().Dropped; d != 3 {
+		t.Errorf("Dropped = %d, want 3 (only t's)", d)
+	}
+}

@@ -11,7 +11,10 @@ package dependency
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // Tracker records which cache keys were produced from which dependency tags and
@@ -105,7 +108,9 @@ type MemoryTracker struct {
 	// key tracked under it — by insertion order into that tag, not overall — is
 	// dropped and Stats().Dropped is incremented. Set it before the tracker is
 	// used concurrently; MemoryTracker does not synchronize reads of this field
-	// against writes to it.
+	// against writes to it. Tags beginning with types.HostTagPrefix are exempt:
+	// a host tag holds every cached key of its host by design, and evicting from it
+	// would leave entries with no host; MaxKeys still bounds it.
 	MaxKeysPerTag int
 	// MaxKeys caps the number of keys tracked in all, across every tag. Zero means
 	// unlimited. Past it the key written longest ago — by its latest Track — is
@@ -344,7 +349,7 @@ func (t *MemoryTracker) trackKeyUnderTagLocked(tag, key string) {
 	}
 	entry.pushBack(key)
 
-	if t.MaxKeysPerTag <= 0 {
+	if t.MaxKeysPerTag <= 0 || strings.HasPrefix(tag, types.HostTagPrefix) {
 		return
 	}
 	for len(entry.nodes) > t.MaxKeysPerTag {
