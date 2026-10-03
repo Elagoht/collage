@@ -1,5 +1,47 @@
 # Changelog
 
+## v0.42.0
+
+### Added
+
+- **`OriginResolver` is an optional plugin hook that gives each host its own
+  public origin, and `collage.BaseURL(rc)` reads it.** A plugin that implements
+  `Origin(ctx, host string) (origin string, ok bool)` says which origin
+  (`https://acme.app.com`) absolute URLs for a host are built against. The first
+  plugin in registration order that knows the host wins; the host is matched
+  lower-cased with its port stripped; an origin that is not a bare
+  `scheme://host[:port]` is ignored, and dev mode logs it once per plugin and
+  origin; an unknown host gets `Config.BaseURL`. Application code calls
+  `collage.BaseURL(rc)` for the request's origin. It is safe in a shared, cached
+  render, because the host is part of the cache key, and a static build, which has
+  no request, gets `Config.BaseURL`. A resolver that panics is logged and skipped.
+  **Nothing changes for a site without a resolver.** See
+  [docs/plugins.md](docs/plugins.md#which-origin-a-host-has-originresolver).
+- **`Origins` is an optional capability of the `Host` a plugin receives.** Reach it
+  by type assertion, `host.(collage.Origins)`: `OriginFor(ctx, host) string` is the
+  origin for a host, a resolver's else `Config.BaseURL`, and `Dynamic() bool`
+  reports whether a resolver is registered, so a plugin that builds absolute URLs
+  knows whether the origin can differ by host. `plugin.Host` gains no method, so a
+  test double that implements it still compiles.
+- **`collage.VariedContext(ctx, header)` is `Varied` for code that holds only a
+  context.** `StaticParams`, a sitemap's `LastMod` and a document handler's `ctx`
+  have no `RenderContext`; they read a header declared with `collage.Vary` through
+  this, and it works in the stripped context a shared render gets.
+- **`collage.ParseOrigin(raw) (string, error)` is the rule `Config.BaseURL` is
+  checked with, exported.** It accepts a bare `scheme://host[:port]` with scheme
+  `http` or `https` and returns it without a trailing slash. A plugin that takes
+  origins in its own configuration validates them with it rather than a copy.
+  `collage.ErrInvalidBaseURL` is now the same error as `plugin.ErrInvalidOrigin`,
+  with the same message, so `errors.Is` matches either.
+- **`CacheInvalidateEvent.Entries` names the host of each dropped entry.** It is a
+  list of `InvalidatedEntry{Host, Path}`, sorted by host and then path; a path
+  cached under two hosts is two entries, and the host keeps its port if the
+  request had one. `Paths` is unchanged. A plugin that purges a CDN or pings a
+  search engine reads `Entries` to build each URL against the right origin. The
+  host is recorded as a `collage:host:<host>` dependency tag beside
+  `collage:path:`; host tags are exempt from the tracker's `MaxKeysPerTag`, and
+  `MaxKeys` still bounds memory.
+
 ## v0.41.1
 
 ### Fixed

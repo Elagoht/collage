@@ -78,7 +78,7 @@ type OriginResolver interface {
   `ok` wins.
 - The returned origin is validated with `Config.BaseURL`'s rule: a bare
   `scheme://host[:port]`, normalized without a trailing slash. An invalid origin
-  counts as `ok == false`, and dev mode logs it once per host.
+  counts as `ok == false`, and dev mode logs it once per plugin and origin.
 - With no resolver, or none that knows the host, the origin is `Config.BaseURL`,
   which may be `""`.
 
@@ -99,6 +99,14 @@ type Origins interface {
 - `plugin.Host` gains no method, so existing test doubles still compile. This is
   the first trial of the roadmap's phase 5 pattern: optional capabilities instead
   of a growing `Host`.
+
+### `collage.ParseOrigin(raw string) (string, error)`
+
+- The rule `Config.BaseURL` is validated with, exported: a bare
+  `scheme://host[:port]`, scheme `http` or `https`, returned normalized without a
+  trailing slash. tenant validates its origins with the same rule core uses.
+- `collage.ErrInvalidBaseURL` is now the same value as `plugin.ErrInvalidOrigin`,
+  the error it returns; the message is unchanged and `errors.Is` still matches.
 
 ### `collage.BaseURL(rc *RenderContext) string`
 
@@ -127,7 +135,11 @@ Entries []InvalidatedEntry // sorted by Host, then Path
 
 - The tracker records the host beside the path tag, so the host is known for every
   entry an invalidation drops.
-- This must survive a restart for the disk store.
+- The dependency tracker is in-memory only (`internal/dependency.MemoryTracker`), so
+  nothing about invalidation survives a restart. The host is recorded as a
+  `collage:host:<host>` tag beside the existing `collage:path:<path>` tag.
+- Host tags are exempt from the tracker's `MaxKeysPerTag`, so one busy host cannot
+  evict its own entries' hosts; `MaxKeys` still bounds memory.
 - `Paths` stays as it is: the deduplicated paths. Whether v1 keeps it is decided in
   phase 5.
 
@@ -195,7 +207,7 @@ strips those.
 | Case | Behaviour |
 |---|---|
 | Unknown host, empty host | 404 through `ServeStatus`. Negative-cached. |
-| `Resolve` errors or panics | 503 with `Retry-After`. The error is logged and goes to `ErrorHook`. Not cached. |
+| `Resolve` errors or panics | 503 with `Retry-After`. The error is logged by the plugin: only core dispatches `ErrorHook`, so it does not reach it. Not cached. |
 | `Resolve` returns an invalid `Origin` | 503 and a log entry. It never falls back to `Config.BaseURL`, which would emit absolute links to the wrong domain. |
 | Many distinct hosts | The cache is bounded by `MaxHosts`, FIFO, negatives included. Random hosts cannot grow memory or hammer the resolver unboundedly. |
 | Static list: a host under two tenants, one ID with two origins, a host both in `Bypass` and under a tenant, an invalid origin | `Init` error, one per case. |
@@ -246,7 +258,7 @@ absolute URLs and is unchanged.
 - `CacheInvalidateEvent.Entries`:
   - one path cached under two hosts gives two entries;
   - `Paths` is unchanged;
-  - the disk tracker keeps hosts across a restart.
+  - a host tag is exempt from `MaxKeysPerTag`, and `MaxKeys` still bounds memory.
 - The full suite, `-race`, and the go.work compatibility run over all 35 plugins'
   latest tags.
 

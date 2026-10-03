@@ -160,6 +160,15 @@ matter is the application's call, so the framework does not guess: a page that
 names its parameters with `WithCacheParams` recovers both, and one that names none
 keeps the whole query in its key.
 
+### Origins
+
+`collage.BaseURL(rc)` is safe in a shared render. The host is in the cache key, so
+every reader served a copy asked for the same host, and the origin the render built
+absolute URLs against is theirs too. A static build has no request and gets
+`Config.BaseURL`. A site with no `OriginResolver` plugin sees no difference. When
+an invalidation drops entries, `CacheInvalidateEvent.Entries` names each one's host
+as well as its path.
+
 ## ETags and conditional requests
 
 Every cached entry stores the ETag its content hashed to, and the fresh response

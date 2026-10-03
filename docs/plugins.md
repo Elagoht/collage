@@ -278,6 +278,42 @@ than a plugin afterwards — and so is a key hoisted twice. If an earlier plugin
 replaced `ev.HTML`, the layout's place can no longer be found: `"head"` then lands
 before `</head>`, and another area reports false.
 
+### Which origin a host has: `OriginResolver`
+
+A plugin that serves several sites from one process — a host per customer — says
+which public origin absolute URLs for a host are built against by implementing
+`OriginResolver`:
+
+```go
+func (p *Plugin) Origin(ctx context.Context, host string) (string, bool) {
+	origin, ok := p.origins[host]
+	return origin, ok
+}
+```
+
+The host arrives lower-cased with its port stripped. The first plugin in
+registration order that returns `ok` wins. An origin must be a bare
+`scheme://host[:port]` with scheme `http` or `https`, which `collage.ParseOrigin`
+checks and normalizes; an invalid one counts as not known, and dev mode logs it
+once per plugin and origin. A host no plugin knows gets `Config.BaseURL`, and a
+resolver that panics is logged and skipped. Application code reads the result with
+`collage.BaseURL(rc)`, which is safe in a cached render because the host is in the
+cache key. A site without a resolver sees no change.
+
+A plugin that builds absolute URLs itself reaches the same answer through the
+`Origins` capability, by type assertion on the `Host` it was given. `Host` gains no
+method for it:
+
+```go
+if o, ok := host.(collage.Origins); ok {
+	origin := o.OriginFor(ctx, "acme.test") // a resolver's, else Config.BaseURL
+	varies := o.Dynamic()                   // is a resolver registered?
+}
+```
+
+`CacheInvalidateHook` events carry `ev.Entries`, each a `Host` and a `Path`, so a
+purge can build every URL against the right origin; `ev.Paths` stays as it was.
+
 ### Before collage starts on a request
 
 `RequestHook.OnRequest` runs before anything else — before collage starts its
