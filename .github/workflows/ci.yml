@@ -164,6 +164,7 @@ jobs:
           - collage-secure
           - collage-session
           - collage-sitemap
+          - collage-tenant
           - collage-toc
           - collage-validate
           - collage-websocket
