@@ -90,7 +90,7 @@ collage build -i           # also offers a Dockerfile and a systemd unit in bin/
 HOST=0.0.0.0 PORT=8080 COLLAGE_CSRF_KEY=... ./bin/@@NAME@@
 ```
 
-Templates and static files are embedded, so the binary is the whole site —
+Templates and static files are embedded (`embed.go`), so the binary is the whole site —
 nothing to copy next to it. It drains in-flight requests on `SIGTERM`, answers
 `/healthz` for a liveness check, and caches rendered pages under `.cache` so a
 restart does not re-render everything.
@@ -122,7 +122,9 @@ https://collage.furkanbaytekin.dev/en/docs/plugins/.
 
 ## The collage CLI contract
 
-- **`collage dev`** builds this program with `go build`, runs the binary with
+- **`collage dev`** builds this program with `go build -tags collage_dev` —
+  which leaves out `embed.go`, so development builds embed nothing and read
+  `templates/` and `static/` from disk — runs the binary with
   `COLLAGE_DEV=1` set, and rebuilds and restarts it when its Go code changes.
   `main.go` reads that variable and turns on development mode. The browser talks
   to `collage dev`, which passes requests on to the program at the `HOST` and
