@@ -181,7 +181,9 @@ A request that is a probe and a 404 strikes `probe` only.
 ### Banning
 
 - A ban lasts the jail's `BanTime`. A client banned again within 24 hours of its
-  previous ban gets twice the previous length, capped at `MaxBanTime`.
+  previous ban's end gets the jail's `BanTime` × 2^(Count−1), where Count is the
+  number of such consecutive bans, capped at `MaxBanTime`. A manual ban keeps
+  Count but is not doubled. `Unban` also forgets the client's earlier bans.
 - The plugin's middleware answers a banned client with `403`, body `Forbidden\n`,
   `Content-Type: text/plain; charset=utf-8`, `Cache-Control: no-store`. It never
   renders the error page: a flood of banned requests must stay cheap.
