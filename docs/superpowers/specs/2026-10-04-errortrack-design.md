@@ -203,20 +203,20 @@ transaction. `MinStatus` does not apply to an explicit capture.
 
 | Data | Default | Opt in |
 |---|---|---|
-| Headers | Only `User-Agent`, `Accept`, `Accept-Language`, `Content-Type`, `Content-Length` and `Referer` (query removed). `Cookie`, `Authorization`, `Proxy-Authorization`, CSRF tokens and every other header are never sent. | `BeforeSend` can add to `Headers` |
-| URL path | The route pattern (`/reset/{token}`), or the raw path when no route resolved | `SendPath` |
+| Headers | Only `User-Agent`, `Accept`, `Accept-Language`, `Content-Type`, `Content-Length` and `Referer` (reduced to its origin, `scheme://host`, unless `SendPath`; with it, credentials, query and fragment removed). `Cookie`, `Authorization`, `Proxy-Authorization`, CSRF tokens and every other header are never sent. | `BeforeSend` can add to `Headers` |
+| URL path | The route pattern (`/reset/{token}`); when no route resolved (a middleware's panic), only `scheme://host` | `SendPath` |
 | Query | Keys, each value `[filtered]` | `SendQuery` |
 | Body | Never | — |
 | Client IP | Not sent | `SendIP` (RemoteAddr host) |
 | User | Not sent | `User` callback |
-| Error message, panic value | Sent; the README warns that messages may carry secrets (a database DSN) and shows `BeforeSend` scrubbing | — |
+| Error message, panic value | Sent; the README warns that messages may carry secrets (a database DSN) or the request path (collage's own messages name it) and shows `BeforeSend` scrubbing | — |
 | Stack | Functions, files and lines; never values | — |
 
 ### Errors
 
 | Case | Behaviour |
 |---|---|
-| DSN missing or invalid | Start error. The error never echoes the key. |
+| DSN missing or invalid | Start error. The error never echoes the key. In development without `InDevelopment` a missing DSN is not an error (nothing is sent); a DSN that is given is still validated. |
 | `DSNEnv` names an empty variable | Start error. |
 | `SampleRate` negative or above 1, or a negative MinStatus, PerMinute or QueueSize | Start error. |
 | Development without `InDevelopment` | No queue, no goroutine, nothing sent. |
