@@ -1,9 +1,12 @@
 package httpx
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+
+	"github.com/Elagoht/collage/internal/render"
 )
 
 // writePlainText writes a plain-text error response for a document. The content
@@ -17,7 +20,12 @@ import (
 func writePlainText(w http.ResponseWriter, r *http.Request, status int, devMode bool, route string, cause error) {
 	body := http.StatusText(status) + "\n"
 	if devMode && cause != nil {
-		body = fmt.Sprintf("%s\n\nroute: %s\nerror: %s\n", http.StatusText(status), route, errorDetail(cause))
+		detail := fmt.Sprintf("%+v", cause)
+		var panicErr *render.PanicError
+		if errors.As(cause, &panicErr) && len(panicErr.Stack) > 0 {
+			detail += "\n\n" + string(panicErr.Stack)
+		}
+		body = fmt.Sprintf("%s\n\nroute: %s\nerror: %s\n", http.StatusText(status), route, detail)
 	}
 
 	header := w.Header()
