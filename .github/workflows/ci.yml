@@ -139,6 +139,7 @@ jobs:
           - collage-cdnpurge
           - collage-compress
           - collage-devtoolbar
+          - collage-errortrack
           - collage-favicon
           - collage-feed
           - collage-flash
