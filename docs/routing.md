@@ -234,10 +234,14 @@ http.Redirect(w, r, collage.SafeRedirect(r.URL.Query().Get("next"), "/"), http.S
 ```
 
 `SafeRedirect` returns `next` if it is a safe path — one that starts with "/",
-not with "//" or "/\", and holds no control character — and `fallback` otherwise.
-If `fallback` is not one either, it returns "/". It is the check collage applies
-to its own redirects. An absolute URL is never accepted, even one on this site's
-own origin: the rule is one simple check. A handler may still redirect to any
+not with "//", holds no backslash and no control character, and still starts with
+a single "/" once cleaned — and `fallback` otherwise. If `fallback` is not one
+either, it returns "/". The check is the one collage applies to its own redirects,
+plus two rules for what `http.Redirect` does: it cleans a rooted path, so
+`/./\evil.com` would leave as `/\evil.com`, which a browser reads as `//evil.com`.
+A backslash is therefore refused anywhere, the query included, and the cleaned path
+is checked too. An absolute URL is never accepted, even one on this site's own
+origin: the rule is one simple check. A handler may still redirect to any
 `Location`; only user-supplied values are validated this way.
 
 ## Guards

@@ -4,11 +4,16 @@
 
 ### Added
 
-- **`collage.SafeRedirect` checks a "next" the way collage checks its own redirects.**
-  It returns `next` when it is a path on this site — it starts with "/", not with "//"
-  or "/\", and holds no control character — and `fallback` otherwise; a fallback that
-  is not one either gives "/". It is for a login that sends the reader back to a "next"
-  taken from a URL query parameter: `http.Redirect(w, r, collage.SafeRedirect(r.URL.Query().Get("next"), "/"), http.StatusSeeOther)`.
+- **`collage.SafeRedirect` checks a "next" before it becomes a redirect.**
+  It returns `next` when it is a path on this site — it starts with "/", not with "//",
+  holds no backslash and no control character, and still starts with a single "/"
+  once cleaned — and `fallback` otherwise; a fallback that is not one either gives
+  "/". It is for a login that sends the reader back to a "next" taken from a URL
+  query parameter: `http.Redirect(w, r, collage.SafeRedirect(r.URL.Query().Get("next"), "/"), http.StatusSeeOther)`.
+  The check is the one collage applies to its own redirects plus two rules, because
+  `http.Redirect` cleans a rooted path: `/./\evil.com` would leave as `/\evil.com`,
+  which a browser reads as `//evil.com`. So a backslash is refused anywhere, the query
+  included (`/search?q=a\b` gives the fallback), and the cleaned path is checked too.
   An absolute URL is never accepted, even one on this site's own origin: the rule
   stays one simple check. collage itself still sends a guard's or an action's Location
   as given, since some must leave the site (a sign-in provider). **Core routes and

@@ -31,8 +31,8 @@ on the reader's behalf.
   - an `*http.Client` refreshes the token as needed.
 - stdlib only (beyond collage and collage-session).
 - Core, additive: `collage.SafeRedirect(next, fallback string) string`, the
-  router's own redirect check, open to applications and plugins. The core's
-  defaults do not change.
+  router's own redirect check plus a backslash and a cleaned-path rule, open to
+  applications and plugins. The core's defaults do not change.
 
 ## Non-goals
 
@@ -56,7 +56,17 @@ path on this site and `fallback` otherwise.
 
 - A path on this site starts with `/`, does not start with `//` or `/\`, and
   contains no control character. This is the router's `unsafeRedirectReason`,
-  moved where both the router and `pkg/collage` can call it, and unchanged.
+  moved where both the router and `pkg/collage` can call it, and unchanged; the
+  router itself keeps using it as it was.
+- `SafeRedirect` adds two rules, because its output is handed to
+  `http.Redirect`, which runs `path.Clean` on a rooted path: `/./\evil.com` and
+  `/a/../\evil.com` pass the router's check but leave as `/\evil.com`, which a
+  browser reads as `//evil.com`. So `SafeRedirect` also refuses a backslash
+  anywhere (the query included; a legitimate `next` escapes it as `%5C`), and
+  refuses a value whose part before `?` or `#`, once `path.Clean`ed, fails the
+  router's check. With backslashes gone the second rule cannot fire on its own
+  (a cleaned rooted path never starts with `//`); it stays as the statement of
+  what `http.Redirect` will send. `/.//evil.com` cleans to `/evil.com` and is kept.
 - An absolute URL is never accepted, not even one on this site's own origin. The
   rule stays one simple check.
 - A `fallback` that is itself not a path on this site gives `"/"`.
@@ -90,12 +100,12 @@ type Options struct {
 type Provider struct {
 	Name            string   `json:"name"`            // URL segment: {prefix}/{name}/login
 	Preset          string   `json:"preset"`          // "google" | "microsoft" | "gitlab"
-	Issuer          string   `json:"issuer"`          // OIDC issuer, when no preset
+	Issuer          string   `json:"issuer"`          // OIDC issuer; with a preset, overrides its issuer
 	ClientID        string   `json:"clientID"`
 	ClientSecretEnv string   `json:"clientSecretEnv"` // name of the environment variable
 	ClientSecret    string   `json:"-"`               // or set from Go
 	Scopes          []string `json:"scopes"`          // added to "openid email profile"
-	Offline         bool     `json:"offline"`         // ask for a refresh token
+	Offline         bool     `json:"offline"`         // ask for a refresh token (offline_access without a preset)
 }
 
 type Identity struct {
@@ -133,6 +143,13 @@ Presets fill `Issuer` and the provider-specific parameters:
 | google | `https://accounts.google.com` | `access_type=offline&prompt=consent` |
 | microsoft | `https://login.microsoftonline.com/common/v2.0`, with the `{tenantid}` issuer template accepted | `offline_access` scope |
 | gitlab | `https://gitlab.com` | nothing added: GitLab issues a refresh token with every authorization-code exchange |
+| none (an `Issuer`) | the configured one | `offline_access` scope (standard OIDC) |
+
+A preset and an `Issuer` may both be set: the preset gives its parameters and the
+`Issuer` replaces its issuer (one Microsoft tenant). The microsoft preset alone
+(`common`) accepts any Entra tenant and any personal Microsoft account; the docs
+say so, and that `EmailVerified` is false for Microsoft (no `email_verified`
+claim).
 
 ### Routes
 
@@ -149,8 +166,13 @@ The plugin registers two GET routes with `host.Handle`:
 so a site still starts when a provider is unreachable.
 
 - It is cached for one hour. A failed fetch is not cached.
-- The document's `issuer` must equal the configured one. For microsoft "common"
-  it must match the preset's template.
+- The document's `issuer` must equal the configured one. For the microsoft
+  preset with no `Issuer` set it may instead match the preset's `{tenantid}`
+  template; a configured `Issuer` is matched exactly.
+- The issuer, and every endpoint the document names (authorization and token
+  always, userinfo and revocation when present), must be `https`, or `http` only
+  to `localhost` or a loopback IP literal. An issuer that is not fails the start;
+  an endpoint that is not fails discovery, so the sign-in ends `unavailable`.
 
 ### Login
 
@@ -158,15 +180,18 @@ so a site still starts when a provider is unreachable.
 2. Make `state`, `nonce` and a PKCE `verifier`, 32 random bytes each,
    base64url-encoded.
 3. Store `{state, nonce, verifier, next, created}` in the session under
-   `oauth:<name>`. There is one pending sign-in per provider; a new one replaces
-   it.
+   `oauth:<name>`, as JSON without HTML escapes. There is one pending sign-in per
+   provider; a new one replaces it. A `next` over 1024 bytes is dropped, and when
+   the session still cannot hold the entry (`ErrTooLarge`) it is stored again
+   with `next = AfterLogin`.
 4. Build `redirect_uri` as `Origins.OriginFor(ctx, r.Host)` + `{prefix}/{name}/callback`.
    It follows the host, so on a multi-tenant site each host's callback must be
    registered with the provider. The docs say so.
 5. Answer 303 to `authorization_endpoint` with these parameters:
    - `response_type=code`, `client_id`, `redirect_uri`;
    - `scope`: "openid email profile" plus the provider's `Scopes`, plus
-     `offline_access` where the preset says;
+     `offline_access` when `Offline` is set and the preset says so or there is
+     no preset;
    - `state`, `nonce`;
    - `code_challenge=S256(verifier)` and `code_challenge_method=S256`;
    - the preset's offline parameters when `Offline` is set.
@@ -187,10 +212,12 @@ secret is ever logged.
    - the client's credentials: HTTP Basic when the discovery document lists
      `client_secret_basic` or lists nothing, form fields otherwise.
 
-   The call has a 10s timeout and a 1 MiB response limit. A failed call fails
-   with `exchange`.
+   The call has a 10s timeout and a 1 MiB response limit, and never follows a
+   redirect (a 307/308 would re-send the client secret elsewhere); the
+   revocation call likewise. A failed call fails with `exchange`.
 5. Check the id_token's claims. Any failing check fails with `token`.
-   - `iss` equals the discovery issuer (or matches the microsoft template).
+   - `iss` equals the discovery issuer (or matches the microsoft template when
+     no `Issuer` is set).
    - `aud` contains the client ID, and `azp` equals it when there are several
      audiences.
    - `exp` is in the future, with 60s skew allowed.
@@ -207,7 +234,9 @@ secret is ever logged.
 9. With a `Store`, seal the tokens and `Save` them. A failed save is logged and the
    sign-in still completes; API access is set up again on the next sign-in.
    A sign-in that returns no refresh token keeps the one already stored.
-10. Answer 303 to the pending `next`.
+10. Answer 303 to the pending `next`, checked again with `SafeRedirect`. Every
+    303 the plugin sends is written as a raw `Location` header (bytes past ASCII
+    percent-encoded), not through `http.Redirect`, which would clean the path.
 
 The docs say to key accounts on `Provider + Subject`, never on the e-mail, and to
 trust an e-mail only when `EmailVerified` is true.
@@ -260,6 +289,7 @@ Start fails (from `Init` or `Configure`) for any of these:
 - a provider without a name, or two with the same name;
 - an unknown preset;
 - neither a preset nor an issuer;
+- an issuer that is not `https` (or `http` to loopback);
 - no client ID;
 - a client secret that is unset, or whose environment variable is empty;
 - `Store` without `Key`;
@@ -321,6 +351,10 @@ Each one checks the response for both `ErrorPath` set and `ErrorPath` empty.
 
 - `/a` is kept;
 - `//a`, `/\a` and `https://a` give the fallback;
+- `/./\a`, `/a/../\a` and any backslash give the fallback; `/.//a`,
+  `/%2F%2Fa`, `/%5Ca` and `/ /x` are kept;
+- piped through `http.Redirect`, an accepted value never gives a Location
+  starting with `//` or `/\`;
 - a control character gives the fallback;
 - an empty value gives the fallback;
 - an invalid fallback gives `"/"`;
