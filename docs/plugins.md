@@ -494,6 +494,12 @@ headers, its method. Its body may already have been read. It is nil when the
 failure did not come from a request. It is the live request, not a copy: read what
 you need during `OnError`, and do not keep it or hand it to another goroutine.
 
+A page's failed cache write (`"cache_write"`) happens inside the render shared by
+every reader waiting on the same cache key, so its `Request` is that shared
+render's stripped request, not a particular reader's: no cookies, only the headers
+middleware declared with `collage.Vary`, no `RemoteAddr`. A document's cache write
+carries the request of the reader whose miss started the shared render.
+
 ## Dispatch and error semantics
 
 Hooks are dispatched in **registration order**. Every hook call is panic-guarded:

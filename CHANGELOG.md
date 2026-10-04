@@ -11,6 +11,10 @@
   `"error_page"` event, the application's own error page failing to render, always
   says 500. `ErrorEvent.Request` is the reader's request, for reading only (its body
   may already have been read), and nil when the failure did not come from a request.
+  A page's `"cache_write"` failure happens in the render shared by every reader of
+  one cache key, so its `Request` is that shared render's stripped request — no
+  cookies, only the headers declared with `Vary`, no `RemoteAddr` — not a particular
+  reader's; a document's carries the request of the reader whose miss started it.
   A plugin reporting failures elsewhere can now tell a 5xx from a 4xx and name the
   URL, method and headers without a middleware of its own. See
   [docs/plugins.md](docs/plugins.md).

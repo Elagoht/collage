@@ -241,3 +241,36 @@ func TestErrorEvent_ErrorPageFailureIsA500(t *testing.T) {
 		t.Errorf("no error_page event among %+v", rec.at("/broken"))
 	}
 }
+
+// A panic in an app.Handle handler is answered in plain text; in development
+// that answer shows the panic's stack, as the HTML dev page does, and in
+// production it shows neither the panic value nor the stack.
+func TestPanicPlainTextAnswer(t *testing.T) {
+	for _, dev := range []bool{true, false} {
+		app, err := collage.New(&collage.Config{
+			Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+			DevMode:  dev,
+			Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>hi</p>`)}}, Root: "t"},
+			Logger:   slog.New(slog.NewTextHandler(&lockedBuffer{}, nil)),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := app.Handle("/boom", http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic("kaboom-value") })); err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		app.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/boom", nil))
+		body := w.Body.String()
+		if w.Code != http.StatusInternalServerError || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/plain") {
+			t.Fatalf("dev %v: %d %q, want a plain-text 500", dev, w.Code, w.Header().Get("Content-Type"))
+		}
+		hasStack, hasValue := strings.Contains(body, "goroutine "), strings.Contains(body, "kaboom-value")
+		if dev && (!hasStack || !hasValue) {
+			t.Errorf("development body lacks the panic or its stack:\n%s", body)
+		}
+		if !dev && (hasStack || hasValue) {
+			t.Errorf("production body shows the panic:\n%s", body)
+		}
+	}
+}

@@ -11,12 +11,13 @@ import (
 // returned to a crawler fetching sitemap.xml, or to a client expecting JSON, is the
 // same mistake a page's HTML error page would be for either of them. In production
 // the body is a single generic line; in dev mode it names the route and carries the
-// error chain. The response always carries Cache-Control: no-store, since an error
-// is never a representation worth caching.
+// error chain and, for a panic, its stack, as the HTML dev page does. The response
+// always carries Cache-Control: no-store, since an error is never a representation
+// worth caching.
 func writePlainText(w http.ResponseWriter, r *http.Request, status int, devMode bool, route string, cause error) {
 	body := http.StatusText(status) + "\n"
 	if devMode && cause != nil {
-		body = fmt.Sprintf("%s\n\nroute: %s\nerror: %+v\n", http.StatusText(status), route, cause)
+		body = fmt.Sprintf("%s\n\nroute: %s\nerror: %s\n", http.StatusText(status), route, errorDetail(cause))
 	}
 
 	header := w.Header()

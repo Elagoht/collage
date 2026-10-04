@@ -519,5 +519,12 @@ type ErrorEvent struct {
 	// have been read. Nil when the failure did not come from a request. It is the
 	// live request, not a copy: a plugin that keeps it past OnError, or hands it
 	// to another goroutine, must clone what it needs first.
+	//
+	// A page's failed cache write ("cache_write") happens inside the render
+	// shared by every reader waiting on the same cache key, so its Request is
+	// that shared render's stripped request, not a particular reader's: no
+	// cookies, only the headers middleware declared with Vary, no RemoteAddr. A
+	// document's cache write carries the request of the reader whose miss
+	// started the shared render.
 	Request *http.Request
 }
