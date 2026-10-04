@@ -625,7 +625,12 @@ func TestNonce_FragmentPath(t *testing.T) {
 
 func TestNonce_Head(t *testing.T) {
 	h := nonceSite(t, secure.New(secure.Options{CSP: "script-src 'nonce-{nonce}'"}))
-	rec, body, header := fetch(t, h, http.Methoses' ETags differ", and keep the `private, no-store` assertion. This is a known open point; resolve it against Task 2's behaviour, not by changing the core.
+	rec, body, header := fetch(t, h, http.MethodHead, "/")
+	if rec.Code != http.StatusOK || body != "" || header == "" {
+		t.Errorf("HEAD = %d, body %q, header nonce %q", rec.Code, body, header)
+	}
+}
+```
 
 Add the imports `compress/gzip`, `io`, `regexp` and `compress "github.com/Elagoht/collage-compress"` if missing. Keep every existing test. Where an existing test asserted `nonceWriter`-specific behaviour (Content-Length on HTML, Flush passthrough of buffered HTML), update it to the new behaviour, and list every such change in the report.
 
