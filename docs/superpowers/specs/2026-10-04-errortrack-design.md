@@ -117,14 +117,13 @@ type Event struct {
 	EventID     string
 	Timestamp   time.Time
 	Level       string // "error", or "fatal" for a panic
-	Message     string
 	Exceptions  []Exception // outermost last, as Sentry expects
 	Tags        map[string]string
 	Request     *RequestInfo
 	User        *User
 	Environment string
 	Release     string
-	ServerName  string
+	ServerName  string // os.Hostname(), or "" when it fails
 	Transaction string // the route pattern
 }
 
@@ -165,7 +164,8 @@ func (p *Plugin) Capture(ctx context.Context, err error)
    `debug.ReadBuildInfo().Main.Path`, and false for the standard library and
    dependencies.
 3. **Level:** "fatal" for a panic, "error" otherwise.
-4. **Tags:** stage, route kind, method, status.
+4. **Tags:** stage, route kind, method, status. **ServerName:** `os.Hostname()`,
+   read once at Init.
 5. **Transaction:** the route pattern from `RouteInfo`.
 6. **Request** (see Privacy).
 7. **User:** from `User(r)` when set. A panic in it is recovered, and the event is
