@@ -112,7 +112,7 @@ type PersonaliseEvent struct {
 | Case | Behaviour |
 |---|---|
 | A hook errors or panics on a page, fragment or action | Logged. The response becomes a 500 through the existing failure path (`serveFailure` and the error page). |
-| A hook errors or panics while writing an error page | Logged. The error page is written with the body as it stood before the failing hook, never recursing into another error page. |
+| A hook errors or panics while writing an error page | Logged. The response is the core's built-in page for that status (`builtinPage`: a title and one sentence, no layout, so no plugin content and no marker). It never recurses into another error page, and it never sends a half-personalised body: a body still carrying a plugin's marker would leak it, and its inline scripts would be blocked anyway. |
 
 `personalise`'s signature gains an error return, or an equivalent internal path,
 so callers can route a failure. This is internal to `internal/httpx`, so nothing
@@ -168,8 +168,8 @@ today:
   - a page gets `private, no-store` and an ETag of the sent body;
   - a 304 is never given for a body that differs.
 - Hooks run in registration order and each sees the previous body.
-- A hook error gives a 500. A hook error on an error page writes that page
-  without recursion.
+- A hook error gives a 500. A hook error on an error page writes the built-in
+  page for that status, without recursion and without the marker.
 - With no hook, responses are byte-identical; existing tests stay green.
 - The plugin compatibility workspace (all 36 plugins, latest tags) passes.
 
