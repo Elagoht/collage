@@ -206,6 +206,7 @@ secret is ever logged.
    theirs carries over.
 9. With a `Store`, seal the tokens and `Save` them. A failed save is logged and the
    sign-in still completes; API access is set up again on the next sign-in.
+   A sign-in that returns no refresh token keeps the one already stored.
 10. Answer 303 to the pending `next`.
 
 The docs say to key accounts on `Provider + Subject`, never on the e-mail, and to
