@@ -358,7 +358,9 @@ The answer to a GET carries an `ETag`, the hash of the body as sent, and
 `Cache-Control: private, no-cache`. A request with a matching `If-None-Match` is
 answered `304` with no body. The render still runs; what is saved is the body on
 the wire and the client's work, which for a panel refreshed every few seconds is
-most of it. A handler that sets `Cache-Control` itself keeps its own.
+most of it. A handler that sets `Cache-Control` itself keeps its own, unless a
+`PersonaliseHook` made the body personal (since v0.43.0): then it is
+`private, no-cache` whatever the handler set.
 
 The response is never cached by the framework.
 

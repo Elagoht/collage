@@ -268,6 +268,19 @@ func TestPersonalise_PersonalCachedPageIgnoresWildcard(t *testing.T) {
 			if rec := getStamp(h, path, "*"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
 				t.Errorf("If-None-Match: * on a cached personal page = %d, want 200 with the body", rec.Code)
 			}
+			// A returning reader keeps their token, so the body and its ETag repeat;
+			// a personal page is still answered in full.
+			first := getStamp(h, path, "")
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			for _, c := range first.Result().Cookies() {
+				req.AddCookie(c)
+			}
+			req.Header.Set("If-None-Match", first.Header().Get("ETag"))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Errorf("own ETag with own cookie on a cached personal page = %d, want 200", rec.Code)
+			}
 		})
 	}
 }

@@ -357,7 +357,7 @@ answer and an error page, never a document.
 
 `Personal` treats the response as a forgery token does: its ETag is recomputed
 from the body sent, a page answers `private, no-store` and, from the cache, never
-`304`, even to `If-None-Match: *`. A fragment read answers `private, no-cache`
+`304`, not even to `If-None-Match: *`. A fragment read answers `private, no-cache`
 with the recomputed ETag and an action's HTML `private, no-store`, overriding even
 a `Cache-Control` the handler set. A compressing middleware that keeps compressed
 bodies per ETag, such as elagoht/compress, gains nothing from a personal
