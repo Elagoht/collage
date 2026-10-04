@@ -201,7 +201,9 @@ secret is ever logged.
    fetch it with the access token. Its `sub` must equal the id_token's.
 7. Call `userID, err := OnLogin(ctx, identity)`. An error or an empty userID fails
    with `rejected`.
-8. Call `session.Regenerate()`, then `Set(session.UserKey, userID)`.
+8. Call `session.Regenerate()`, then `Set(session.UserKey, userID)`. When the
+   session already belongs to a different user, it is cleared first, so nothing of
+   theirs carries over.
 9. With a `Store`, seal the tokens and `Save` them. A failed save is logged and the
    sign-in still completes; API access is set up again on the next sign-in.
 10. Answer 303 to the pending `next`.
