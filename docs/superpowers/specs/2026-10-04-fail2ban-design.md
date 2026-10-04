@@ -17,8 +17,9 @@ routing. Exploration found two gaps and one non-gap.
   - a dirty path (`/a/../b`) gets a 301 or 308 to its clean form and reaches no
     plugin at all.
 
-  These are exactly a scanner's fingerprints. accesslog, prometheus and otel miss
-  them too.
+  These are exactly a scanner's fingerprints. RequestHook observers such as otel
+  miss them too (accesslog is a middleware and prometheus counts through
+  `Metrics.HTTPResponse`; neither changes here).
 - **There is no shared client address.** Behind a reverse proxy every request's
   `RemoteAddr` is the proxy. A plugin that bans by `RemoteAddr` bans the proxy,
   and so the whole site. elagoht/ratelimit solves this with its own
@@ -99,8 +100,10 @@ handler gets step 1–2 only.
 
 The development reload channel stays outside everything, as now. The span and
 the `HTTPResponse` metric stay where they are. For these requests `RouteOf` is
-empty and `r.URL` holds the raw path; a plugin judges it itself. The CHANGELOG
-lists this as a fix for observers that missed these requests.
+empty and `r.URL` holds the raw path; a plugin judges it itself. The route
+record and origins go on the context before the hook, so a hook reading
+`RouteInfo` in `finish` still sees the route of a routed request. The CHANGELOG
+lists this as a fix for RequestHook observers that missed these requests.
 
 ## The plugin
 
