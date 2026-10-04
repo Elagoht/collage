@@ -61,8 +61,9 @@ var ErrEmptyErrorPage = errors.New("collage: error page rendered empty")
 // "panic", when a collaborator panicked while serving a request and the handler
 // recovered it into a 500. It is deliberately distinct from every other failure: a
 // panic is a bug in the code that raised it, not a condition the request ran into,
-// and an operator triaging one needs to tell it apart at a glance. The wrapped
-// message carries the panic value and the stack it was raised on.
+// and an operator triaging one needs to tell it apart at a glance. It wraps a
+// *render.PanicError, which holds the panic value and the stack it was raised on;
+// the message carries the value, and the log line carries the stack.
 //
 // A panic inside a data handler or a template function is not this: the render
 // engine recovers those itself, as render.PanicError, and they follow the ordinary
@@ -492,7 +493,7 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request, route *ro
 		status = h.serveFailure(w, r, route.failure(
 			http.StatusInternalServerError,
 			stagePanic,
-			fmt.Errorf("%w: %v\n%s", ErrPanic, recovered, debug.Stack()),
+			fmt.Errorf("%w: %w", ErrPanic, &render.PanicError{Value: recovered, Stack: debug.Stack()}),
 		))
 	}()
 	if h.chain == nil {

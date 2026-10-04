@@ -249,6 +249,7 @@ type Timing = observability.Timing
 // PanicError is what a panic in a data handler or a template function becomes: the
 // fragment fails like any other failure instead of taking the process down. Reach
 // it with errors.As on a render error to recover the panic value and its stack.
+// A panic recovered while serving a request is one too, wrapped in ErrPanic.
 type PanicError = render.PanicError
 
 // Cache stores rendered pages keyed by request identity. Implement it, and set it
@@ -446,6 +447,9 @@ var ErrEmptyErrorPage = httpx.ErrEmptyErrorPage
 // write — a Router, Cache, Metrics, or Tracer implementation, or a plugin hook — but
 // not one inside a data handler or a template function, which the render engine
 // recovers itself as a PanicError.
+//
+// The error wraps a *PanicError as well, so errors.As reaches the panic value and
+// the stack it was raised on, and errors.Is reaches the value when it was an error.
 var ErrPanic = httpx.ErrPanic
 
 // ErrAssetFailed is the error a plugin's ErrorHook receives, under the stage

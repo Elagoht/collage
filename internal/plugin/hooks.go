@@ -509,4 +509,13 @@ type ErrorEvent struct {
 	// "render" or "cache_write". It is caller-defined, not an exhaustive enum,
 	// and this event's own copy.
 	Stage string
+	// Status is the HTTP status the failure is answered with, or 0 when it is
+	// unknown or no response is written for it, as for a cache write that failed
+	// after the page was served.
+	Status int
+	// Request is the reader's request, for reading only; its body may already
+	// have been read. Nil when the failure did not come from a request. It is the
+	// live request, not a copy: a plugin that keeps it past OnError, or hands it
+	// to another goroutine, must clone what it needs first.
+	Request *http.Request
 }

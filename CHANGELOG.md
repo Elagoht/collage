@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.45.0
+
+### Added
+
+- **ErrorEvent says which status a failure is answered with, and carries the request.**
+  `ErrorEvent.Status` is the HTTP status written for the failure — 404 for a missing
+  asset, 500 for a failed render or a recovered panic — or 0 when no response is
+  written for it, as for a cache write that failed after the page was served. An
+  `"error_page"` event, the application's own error page failing to render, always
+  says 500. `ErrorEvent.Request` is the reader's request, for reading only (its body
+  may already have been read), and nil when the failure did not come from a request.
+  A plugin reporting failures elsewhere can now tell a 5xx from a 4xx and name the
+  URL, method and headers without a middleware of its own. See
+  [docs/plugins.md](docs/plugins.md).
+
+### Changed
+
+- **A panic recovered while serving a request reaches ErrorHook as a `*collage.PanicError`.**
+  The error still wraps `collage.ErrPanic`, so `errors.Is(err, collage.ErrPanic)`
+  holds as before; `errors.As` now also reaches the panic value and its stack, and
+  `errors.Is` reaches the value itself when the code panicked with an error. The
+  error's message changed: it no longer carries the stack, only
+  `collage: panic recovered while serving the request: collage: panic: <value>`.
+  The stack left the message for a separate `stack` attribute on the
+  `collage: request failed` log line, so logs keep it. Anything that matched the
+  stack in the message text has to read the `stack` attribute, or `PanicError.Stack`,
+  instead.
+
 ## v0.44.0
 
 ### Added

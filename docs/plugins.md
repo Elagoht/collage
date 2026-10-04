@@ -475,6 +475,25 @@ caller-defined rather than an enum. `"error_page"` is the one worth alerting on:
 it means the page that reports failures failed, which nobody finds out about
 otherwise, because the client still receives a plausible-looking error page.
 
+A panic recovered while serving a request — stage `"panic"` — matches
+`errors.Is(ev.Err, collage.ErrPanic)` and also holds a `*collage.PanicError`:
+`errors.As` reaches the panic value and the stack it was raised on, and
+`errors.Is` reaches the value itself when it panicked with an error. The stack is
+not in the error's message; the framework's log line carries it as a separate
+`stack` attribute.
+
+`ErrorEvent.Status` is the HTTP status the failure is answered with: 404 for a
+missing asset, 500 for a failed render or a panic. It is 0 when no response is
+written for the failure, as for a cache write that failed after the page was
+served. An `"error_page"` event always says 500, even when the failure it was
+answering was a 404: the event reports the error page breaking, which is a
+server error, while the reader still receives the original status.
+
+`ErrorEvent.Request` is the reader's request, for reading only — its URL, its
+headers, its method. Its body may already have been read. It is nil when the
+failure did not come from a request. It is the live request, not a copy: read what
+you need during `OnError`, and do not keep it or hand it to another goroutine.
+
 ## Dispatch and error semantics
 
 Hooks are dispatched in **registration order**. Every hook call is panic-guarded:

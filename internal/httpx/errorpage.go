@@ -181,30 +181,39 @@ func (h *Handler) reportError(r *http.Request, f failure) {
 		// is where they are looking.
 		level = slog.LevelDebug
 	}
+	// A panic's stack is its own attribute rather than part of the error's
+	// message, so the message stays one line and the stack is still logged.
+	var stack []slog.Attr
+	var panicErr *render.PanicError
+	if errors.As(f.err, &panicErr) && len(panicErr.Stack) > 0 {
+		stack = []slog.Attr{slog.String("stack", string(panicErr.Stack))}
+	}
 	if f.kind == routeKindDocument {
-		h.logger.Log(r.Context(), level, "collage: request failed",
-			"path", r.URL.Path,
-			"stage", f.stage,
-			"fragment", f.fragment,
-			"document", f.route,
-			"error", f.err,
-		)
+		h.logger.LogAttrs(r.Context(), level, "collage: request failed", append([]slog.Attr{
+			slog.String("path", r.URL.Path),
+			slog.String("stage", f.stage),
+			slog.String("fragment", f.fragment),
+			slog.String("document", f.route),
+			slog.Any("error", f.err),
+		}, stack...)...)
 	} else {
-		h.logger.Log(r.Context(), level, "collage: request failed",
-			"path", r.URL.Path,
-			"stage", f.stage,
-			"fragment", f.fragment,
-			"error", f.err,
-		)
+		h.logger.LogAttrs(r.Context(), level, "collage: request failed", append([]slog.Attr{
+			slog.String("path", r.URL.Path),
+			slog.String("stage", f.stage),
+			slog.String("fragment", f.fragment),
+			slog.Any("error", f.err),
+		}, stack...)...)
 	}
 
 	// Error always returns nil: the registry logs and swallows a failing ErrorHook
 	// rather than handing it back, precisely so error handling cannot recurse.
 	_ = h.plugins.Error(r.Context(), &plugin.ErrorEvent{
-		Err:   f.err,
-		Page:  f.page,
-		Path:  r.URL.Path,
-		Stage: f.stage,
+		Err:     f.err,
+		Page:    f.page,
+		Path:    r.URL.Path,
+		Stage:   f.stage,
+		Status:  f.status,
+		Request: r,
 	})
 }
 
@@ -304,11 +313,17 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 // failure, and it cannot recurse: Registry.Error logs and swallows a failing
 // ErrorHook by contract rather than handing it back to be handled again.
 func (h *Handler) reportErrorPageFailure(r *http.Request, page *types.Page, err error) {
+	// The status is 500 whatever the failure being answered was, a 404 included:
+	// what this event reports is not the reader's failure but the application's
+	// own error page breaking, which is a server error in its own right. The
+	// response itself keeps the status of the failure it answers.
 	_ = h.plugins.Error(r.Context(), &plugin.ErrorEvent{
-		Err:   err,
-		Page:  page,
-		Path:  r.URL.Path,
-		Stage: stageErrorPage,
+		Err:     err,
+		Page:    page,
+		Path:    r.URL.Path,
+		Stage:   stageErrorPage,
+		Status:  http.StatusInternalServerError,
+		Request: r,
 	})
 }
 
