@@ -3,6 +3,8 @@ package collage
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/netip"
 
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/core"
@@ -125,6 +127,17 @@ type Route = httpx.Route
 // included — a bounded label for a span or a metric, for pages, documents and
 // actions alike. The zero Route means it resolved to nothing.
 func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
+
+// ClientIP is the address of the client r comes from. It is RemoteAddr's host,
+// unless that is one of ServerConfig.TrustedProxies: then it is the first
+// untrusted address in X-Forwarded-For read from the right, or the leftmost when
+// every one is trusted. With no TrustedProxies, the default, X-Forwarded-For is
+// never read, so a client cannot forge it. The address is unmapped
+// ("::ffff:1.2.3.4" is 1.2.3.4) and has no zone; it is the zero netip.Addr when
+// RemoteAddr holds none, as in a shared page render, whose request has no
+// RemoteAddr. A plugin keying anything on the client — a rate limit, a ban —
+// should use it rather than RemoteAddr.
+func ClientIP(r *http.Request) netip.Addr { return httpx.ClientIP(r) }
 
 // StreamCloser is implemented by a plugin serving connections that never end by
 // themselves — an event stream, a WebSocket. CloseStreams runs when shutdown
@@ -491,6 +504,8 @@ func toCoreConfig(cfg *Config) core.Config {
 	if normalized, err := plugin.ParseOrigin(baseURL); err == nil {
 		baseURL = normalized
 	}
+	// Validate has already refused an entry that does not parse.
+	trustedProxies, _ := httpx.ParseTrustedProxies(cfg.Server.TrustedProxies)
 	return core.Config{
 		DevMode:  cfg.DevMode,
 		DevWatch: cfg.DevWatch,
@@ -504,6 +519,7 @@ func toCoreConfig(cfg *Config) core.Config {
 			IdleTimeout:     cfg.Server.IdleTimeout,
 			ShutdownTimeout: cfg.Server.ShutdownTimeout,
 			MaxBodyBytes:    cfg.Server.MaxBodyBytes,
+			TrustedProxies:  trustedProxies,
 		},
 		Security: core.SecurityConfig{
 			CSRFKey:            cfg.Security.CSRFKey,

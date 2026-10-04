@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
 )
@@ -174,6 +175,11 @@ type ServerConfig struct {
 	// unbounded, which is a decision worth making deliberately, because an
 	// unbounded body is memory an anonymous caller chooses the size of.
 	MaxBodyBytes int64
+	// TrustedProxies are the addresses and CIDR ranges of the proxies in front
+	// of the server ("10.0.0.0/8", "127.0.0.1"). A request from one of them may
+	// name its client in X-Forwarded-For; see ClientIP. Empty, the default,
+	// trusts no header: the client is always RemoteAddr.
+	TrustedProxies []string
 }
 
 // SecurityConfig configures request-forgery protection.
@@ -543,6 +549,9 @@ func (c *Config) Validate() error {
 		if _, err := plugin.ParseOrigin(c.BaseURL); err != nil {
 			return err
 		}
+	}
+	if _, err := httpx.ParseTrustedProxies(c.Server.TrustedProxies); err != nil {
+		return err
 	}
 
 	return nil

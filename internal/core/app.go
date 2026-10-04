@@ -20,6 +20,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -190,6 +191,9 @@ type ServerConfig struct {
 	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight
 	// requests.
 	ShutdownTimeout time.Duration
+	// TrustedProxies are the proxies whose X-Forwarded-For collage.ClientIP
+	// believes, parsed from pkg/collage's strings. Empty trusts none.
+	TrustedProxies []netip.Prefix
 }
 
 // TemplateConfig is internal/core's mirror of pkg/collage.TemplateConfig.
@@ -837,10 +841,11 @@ func (a *App) buildHandler() (http.Handler, error) {
 		},
 		// The URL builders alone, for the same reason: an action's handler
 		// builds its redirect by name through rc.URL.
-		Routes:       types.Routes{Page: a.URL, Action: a.ActionURL, DefaultLocale: a.cfg.Locale.Default},
-		CSRF:         a.csrf,
-		FrameOptions: a.frameOptions,
-		NoSniff:      a.noSniff,
+		Routes:         types.Routes{Page: a.URL, Action: a.ActionURL, DefaultLocale: a.cfg.Locale.Default},
+		CSRF:           a.csrf,
+		FrameOptions:   a.frameOptions,
+		NoSniff:        a.noSniff,
+		TrustedProxies: a.cfg.Server.TrustedProxies,
 	})
 	if err != nil {
 		return a.buildFailed(err)

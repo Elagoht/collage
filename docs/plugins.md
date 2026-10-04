@@ -382,6 +382,14 @@ labelled with the route rather than the raw path. `collage.RouteInfo(ctx)` adds
 the pattern the route was registered with — `/blog/{slug}`, without a locale
 prefix — and the locale, for pages, documents and actions alike.
 
+`collage.ClientIP(r)` is the client the request comes from, behind the proxies
+the application lists in `Server.TrustedProxies` (see
+[deployment.md](deployment.md)) — from `OnRequest` on, middleware included. A
+plugin keying anything on the client, a rate limit or a ban, should use it rather
+than `RemoteAddr`, which behind a proxy is the proxy for every request. It is the
+zero `netip.Addr` when there is no address to give, as in a shared page render,
+whose request has no `RemoteAddr`: never count that one.
+
 ### Checking the output: findings
 
 A plugin that checks what a page renders — a heading level skipped, an image

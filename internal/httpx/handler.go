@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"path"
 	"regexp"
@@ -206,6 +207,9 @@ type Deps struct {
 	// NoSniff sets X-Content-Type-Options: nosniff on every response before
 	// routing when true, on the same terms as FrameOptions.
 	NoSniff bool
+	// TrustedProxies are the proxies whose X-Forwarded-For ClientIP believes.
+	// Empty trusts none: the client is always RemoteAddr.
+	TrustedProxies []netip.Prefix
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
@@ -233,6 +237,7 @@ type Handler struct {
 	csrf         *csrf.Guard
 	frameOptions string
 	noSniff      bool
+	trusted      []netip.Prefix
 	// flight coalesces concurrent renders of one cache key, so an expiring
 	// popular page costs one render rather than one per request that arrives
 	// while it is being re-made.
@@ -280,6 +285,7 @@ func New(d Deps) (*Handler, error) {
 		csrf:         d.CSRF,
 		frameOptions: d.FrameOptions,
 		noSniff:      d.NoSniff,
+		trusted:      slices.Clone(d.TrustedProxies),
 		flight:       newFlight(),
 	}
 	// Composed once rather than per request: a middleware constructor is
@@ -324,6 +330,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.reload != nil && r.URL.Path == devReloadWorkerPath {
 		serveReloadWorker(w)
 		return
+	}
+	// The proxies ClientIP believes, in the context from here on: everything
+	// below — a plugin's RequestHook and middleware included — may ask who the
+	// client is.
+	if len(h.trusted) > 0 {
+		r = r.WithContext(WithTrustedProxies(r.Context(), h.trusted))
 	}
 	// Before middleware and plugins, so that a check on a path — "skip
 	// /_collage/", "protect /admin/" — never meets "/_collage/../admin" and lets

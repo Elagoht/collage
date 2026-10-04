@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -164,6 +165,7 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 			WriteTimeout:    2 * time.Second,
 			IdleTimeout:     3 * time.Second,
 			ShutdownTimeout: 4 * time.Second,
+			TrustedProxies:  []string{"10.0.0.0/8", "127.0.0.1"},
 		},
 		Template: TemplateConfig{
 			FS:        templateFS,
@@ -209,6 +211,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	}
 	if core.Server.ShutdownTimeout != 4*time.Second {
 		t.Errorf("Server.ShutdownTimeout = %v, want 4s", core.Server.ShutdownTimeout)
+	}
+	if got := fmt.Sprint(core.Server.TrustedProxies); got != "[10.0.0.0/8 127.0.0.1/32]" {
+		t.Errorf("Server.TrustedProxies = %s, want the parsed [10.0.0.0/8 127.0.0.1/32]", got)
 	}
 	if _, ok := core.Template.FS.(fstest.MapFS); !ok {
 		t.Errorf("Template.FS = %T, want the configured fstest.MapFS", core.Template.FS)

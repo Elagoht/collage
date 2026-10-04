@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.47.0
+
+### Added
+
+- **ServerConfig.TrustedProxies and collage.ClientIP.** `ClientIP(r)` is the
+  address of the client a request comes from, as a `netip.Addr`. With no
+  `TrustedProxies`, the default, it is `RemoteAddr`'s host and `X-Forwarded-For` is
+  never read, so a client cannot forge it. `TrustedProxies` lists the addresses and
+  CIDR ranges of the proxies in front of the server (`"10.0.0.0/8"`, `"127.0.0.1"`);
+  a request from one of them names its client in `X-Forwarded-For`, read from the
+  right: the first address that is not a trusted proxy is the client, or the
+  leftmost when every one is. An entry that is neither an address nor a range makes
+  `collage.New` fail, naming it. The address is unmapped and has no zone, and is the
+  zero `netip.Addr` when `RemoteAddr` holds none — as in a shared page render. A
+  plugin keying anything on the client, a rate limit or a ban, should use it rather
+  than `RemoteAddr`. See [docs/deployment.md](docs/deployment.md) and
+  [docs/plugins.md](docs/plugins.md).
+
 ## v0.46.0
 
 ### Fixed
