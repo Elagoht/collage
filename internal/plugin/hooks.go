@@ -511,7 +511,9 @@ type ErrorEvent struct {
 	Stage string
 	// Status is the HTTP status the failure is answered with, or 0 when it is
 	// unknown or no response is written for it, as for a cache write that failed
-	// after the page was served.
+	// after the page was served. An "error_page" event, an error page that
+	// failed to render, always says 500: the failure is the server's, whatever
+	// status the reader was answered with.
 	Status int
 	// Request is the reader's request, for reading only; its body may already
 	// have been read. Nil when the failure did not come from a request. It is the
