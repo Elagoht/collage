@@ -140,6 +140,7 @@ jobs:
           - collage-compress
           - collage-devtoolbar
           - collage-errortrack
+          - collage-fail2ban
           - collage-favicon
           - collage-feed
           - collage-flash
