@@ -8,20 +8,28 @@
   A plugin that implements `OnPersonalise(ctx, ev *collage.PersonaliseEvent) error`
   is called for every response on its way to one reader, with `ev.Request` (that
   reader's own request, not a shared render's stripped one), `ev.Header` (the
-  response header), `ev.Body` (which it may replace; what the cache holds is never
-  changed) and `ev.Personal`. It runs in the core's personalise stage: after the
-  reader's forgery token has gone into the shared body, inside every middleware,
-  so before compression, and before the dev overlay and reload script; plugins run
-  in registration order and each sees the previous body. It covers a page (from
-  the cache or fresh), a fragment path or fragment read, an action's HTML answer
-  and an error page; a document is not HTML and gets no call. A hook that makes
-  the body particular to its reader sets `ev.Personal`: the ETag is recomputed
-  from the body sent, a page answers `private, no-store`, and a fragment read
-  keeps `private, no-cache` with the recomputed ETag. A body changed without
-  `Personal` still gets an ETag naming what was sent. A hook that fails or panics
+  response header), `ev.Body` and `ev.Personal`. A hook replaces `ev.Body`
+  (assigns a new slice); it must never write into it: the slice may be the
+  cache's, shared with concurrent readers. It runs in the core's personalise
+  stage: after the reader's forgery token has gone into the shared body, inside
+  every middleware, so before compression, and before the dev reload script; on a
+  page it runs before the dev overlay, while on an error page, or a page an action
+  answers with, the overlay is already in. Plugins run in registration order and
+  each sees the previous body. It covers a page (from the cache or fresh), a
+  fragment path or fragment read, an action's HTML answer and an error page; a
+  document is not HTML and gets no call. A hook that makes the body particular to
+  its reader sets `ev.Personal`: the ETag is recomputed from the body sent, a page
+  answers `private, no-store`, a fragment read `private, no-cache` with the
+  recomputed ETag, and an action's HTML `private, no-store`, overriding even a
+  Cache-Control the handler set. A body changed without `Personal` still gets an
+  ETag naming what was sent. A hook that fails or panics
   is logged and the page, fragment or action answers 500; on an error page the
   built-in page for that status is sent instead, never a half-personalised body.
-  **Nothing changes for a site without such a plugin.** It is first used by
+  **Nothing changes for a site without such a plugin**, but for one fix: a cached
+  page carrying a forgery token, like one a hook made personal, is no longer
+  answered 304 to `If-None-Match: *`. A compressing middleware that keeps bodies
+  per ETag gains nothing from a personal response: its ETag is new every time.
+  It is first used by
   elagoht/secure v0.2.0, which moves its CSP nonce here and so fixes a bug: with
   secure listed before elagoht/compress in `Config.Plugins`, the nonce marker was
   left in the compressed body and every inline script was blocked. See

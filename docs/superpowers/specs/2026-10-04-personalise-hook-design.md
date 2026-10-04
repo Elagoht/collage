@@ -183,7 +183,12 @@ today:
 - A fragment path carrying `{{cspNonce}}` is filled.
 - A HEAD request works, and `If-None-Match: *` is still dropped.
 - A static build has the marker removed.
-- No CSP configured: the body is untouched and `Personal` stays false.
+- No CSP configured, or a policy without `{nonce}`: the nonce attribute and the
+  marker are removed, as a static render removes them, and `Personal` stays false,
+  so the page keeps a stable ETag and stays cacheable.
+- A policy set but no nonce in the request (answered outside secure's middleware,
+  say by a plugin listed before it): the hook makes the nonce, writes the header
+  and sets `Personal`; the body's nonce equals the header's.
 
 ## Release order
 

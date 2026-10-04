@@ -343,18 +343,25 @@ The event carries:
 - `ev.Request`: the reader's own request, not a shared render's stripped one.
 - `ev.Header`: the response header; set here what must match the body.
 - `ev.Body`: what will be written, the reader's forgery token already in it. A hook
-  may replace it; what the cache holds is never changed.
+  replaces it (assigns a new slice); it must never write into it: the slice may be
+  the cache's, shared with concurrent readers.
 - `ev.Personal`: set it when the body became particular to this reader.
 
 It runs after the forgery token goes into the shared body, inside every
-middleware, so before compression, and before the dev overlay and reload script.
+middleware, so before compression, and before the dev reload script. On a page it
+runs before the dev overlay; on an error page, or a page an action answers with,
+the overlay is already in the body.
 Plugins run in registration order and each sees the previous body. It covers a
 page (from the cache or fresh), a fragment path or fragment read, an action's HTML
 answer and an error page, never a document.
 
 `Personal` treats the response as a forgery token does: its ETag is recomputed
-from the body sent, a page answers `private, no-store`, and a fragment read keeps
-`private, no-cache` with the recomputed ETag. A body changed without `Personal`
+from the body sent, a page answers `private, no-store` and, from the cache, never
+`304`, even to `If-None-Match: *`. A fragment read answers `private, no-cache`
+with the recomputed ETag and an action's HTML `private, no-store`, overriding even
+a `Cache-Control` the handler set. A compressing middleware that keeps compressed
+bodies per ETag, such as elagoht/compress, gains nothing from a personal
+response: its ETag is new every time, so it is compressed for each reader. A body changed without `Personal`
 still gets an ETag naming the bytes sent. A hook that returns an error or panics is
 logged and the page, fragment or action answers 500; on an error page the built-in
 page for that status is sent instead. A site without such a plugin sends the same

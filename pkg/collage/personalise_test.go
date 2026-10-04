@@ -24,6 +24,8 @@ type stamp struct {
 	personal bool
 	fail     error
 	panics   bool
+	// failOn fails the hook only on a body containing it.
+	failOn string
 }
 
 func (p *stamp) Name() string                             { return "test/stamp" }
@@ -36,6 +38,9 @@ func (p *stamp) OnPersonalise(_ context.Context, ev *collage.PersonaliseEvent) e
 	}
 	if p.fail != nil {
 		return p.fail
+	}
+	if p.failOn != "" && bytes.Contains(ev.Body, []byte(p.failOn)) {
+		return errors.New("refused")
 	}
 	if !bytes.Contains(ev.Body, []byte("MARK")) {
 		return nil
@@ -155,6 +160,113 @@ func TestPersonalise_HookErrorIs500(t *testing.T) {
 			nf := getStamp(h, "/nowhere", "")
 			if nf.Code != http.StatusNotFound || strings.Contains(nf.Body.String(), "MARK") {
 				t.Errorf("not found = %d %q, want the built-in 404 without the marker", nf.Code, nf.Body)
+			}
+		})
+	}
+}
+
+// formSite has a cached page with a form, an error page with one, and two actions
+// whose handlers declare their responses public.
+func formSite(t *testing.T, p *stamp) http.Handler {
+	t.Helper()
+	app, err := collage.New(&collage.Config{
+		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{
+			"t/f.html":   {Data: []byte(`<form>{{csrfToken}}</form><p>FAILME</p>`)},
+			"t/g.html":   {Data: []byte(`<form>{{csrfToken}}</form>`)},
+			"t/m.html":   {Data: []byte(`<p>MARK</p>`)},
+			"t/err.html": {Data: []byte(`<p>err</p><form>{{csrfToken}}</form>`)},
+		}, Root: "t"},
+		Cache:   collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour},
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Plugins: []collage.Plugin{p},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	mark := collage.NewFragment("m", "m.html").Build()
+	public := func(_ context.Context, _ *collage.RenderContext) (*collage.ActionResult, error) {
+		res := collage.RenderFragment(mark)
+		res.Header = http.Header{"Cache-Control": {"public, max-age=60"}}
+		return res, nil
+	}
+	must(app.RegisterPage(collage.NewPage("fail").WithContent(collage.NewFragment("f", "f.html").Build()).
+		WithPath("en", "/fail").Incremental(time.Hour).Build()))
+	must(app.RegisterPage(collage.NewPage("form").WithContent(collage.NewFragment("g", "g.html").Build()).
+		WithPath("en", "/form").Incremental(time.Hour).Build()))
+	must(app.RegisterPage(collage.NewPage("mark").WithContent(mark).
+		WithPath("en", "/mark").Incremental(time.Hour).Build()))
+	must(app.RegisterErrorPage(collage.NewPage("err").WithContent(collage.NewFragment("err", "err.html").Build()).Build()))
+	must(app.RegisterAction(collage.NewAction("read").WithPath("en", "/read").WithMethods(http.MethodGet).
+		WithHandler(public).Build()))
+	must(app.RegisterAction(collage.NewAction("write").WithPath("en", "/write").WithMethods(http.MethodPost).
+		WithoutCSRF().WithHandler(public).Build()))
+	must(app.Start())
+	return app.Handler()
+}
+
+// A handler's own Cache-Control does not outlive a hook that made the body
+// personal: a fragment read is revalidated privately, an action's HTML is never
+// stored. Without Personal the handler's header stands.
+func TestPersonalise_HookPersonalOverridesHandlerCacheControl(t *testing.T) {
+	for _, tc := range []struct {
+		personal         bool
+		method, path     string
+		wantCacheControl string
+	}{
+		{true, http.MethodGet, "/read", "private, no-cache"},
+		{true, http.MethodPost, "/write", "private, no-store"},
+		{false, http.MethodGet, "/read", "public, max-age=60"},
+		{false, http.MethodPost, "/write", "public, max-age=60"},
+	} {
+		h := formSite(t, &stamp{personal: tc.personal})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, nil))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<p>n1</p>") {
+			t.Fatalf("%s %s = %d %q, want 200 stamped", tc.method, tc.path, rec.Code, rec.Body)
+		}
+		if cc := rec.Header().Get("Cache-Control"); cc != tc.wantCacheControl {
+			t.Errorf("personal=%v %s %s: Cache-Control %q, want %q", tc.personal, tc.method, tc.path, cc, tc.wantCacheControl)
+		}
+	}
+}
+
+// A hook failing on a page with a form sends no token cookie for that page: the
+// 500 carries at most the error page's own.
+func TestPersonalise_HookFailureSendsNoExtraTokenCookie(t *testing.T) {
+	h := formSite(t, &stamp{failOn: "FAILME"})
+	rec := getStamp(h, "/fail", "")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", rec.Code)
+	}
+	n := 0
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "collage_csrf" {
+			n++
+		}
+	}
+	if n > 1 {
+		t.Errorf("%d collage_csrf cookies, want at most one: %q", n, rec.Header().Values("Set-Cookie"))
+	}
+}
+
+// A personal response from the cache, by a hook or by a forgery token, is never
+// answered 304, even to "If-None-Match: *", which matches any ETag.
+func TestPersonalise_PersonalCachedPageIgnoresWildcard(t *testing.T) {
+	for name, path := range map[string]string{"hook": "/mark", "token": "/form"} {
+		t.Run(name, func(t *testing.T) {
+			h := formSite(t, &stamp{personal: true})
+			if first := getStamp(h, path, ""); first.Code != http.StatusOK {
+				t.Fatalf("first = %d", first.Code)
+			}
+			if rec := getStamp(h, path, "*"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+				t.Errorf("If-None-Match: * on a cached personal page = %d, want 200 with the body", rec.Code)
 			}
 		})
 	}

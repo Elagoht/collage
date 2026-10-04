@@ -60,7 +60,9 @@ type AfterRenderHook interface {
 //
 // It runs where collage puts each reader's forgery token into the shared body:
 // after the cache, inside every middleware, so before anything compresses the
-// body. It is called for a page (from the cache or fresh), a fragment path or
+// body. On a page it runs before the development overlay is added; on an error
+// page, or a page an action answers with, the overlay is already in the body.
+// It is called for a page (from the cache or fresh), a fragment path or
 // fragment read, an action's HTML answer and an error page. A document is not
 // HTML and gets no call.
 type PersonaliseHook interface {
@@ -75,11 +77,15 @@ type PersonaliseEvent struct {
 	// as a Content-Security-Policy carrying the nonce put in it.
 	Header http.Header
 	// Body is what will be written, the reader's forgery token already in it. A
-	// hook may replace it; what the cache holds is never changed.
+	// hook replaces it (assigns a new slice); it must never write into it: the
+	// slice may be the cache's, shared with concurrent readers.
 	Body []byte
 	// Personal is set by a hook that made Body particular to this reader. The
 	// response is then treated as a forgery token makes it: its ETag names the
-	// body sent, and a page is answered "private, no-store".
+	// body sent, a page is answered "private, no-store" and, from the cache,
+	// never 304, even to "If-None-Match: *". It overrides a handler's own
+	// Cache-Control: a fragment read is answered "private, no-cache" and an
+	// action's HTML "private, no-store".
 	Personal bool
 }
 

@@ -771,10 +771,11 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		return h.serveFailure(w, r, *out.fail)
 	}
 
-	content, etag, personal, err := h.personalise(w, r, out.content, out.etag)
+	p, err := h.personalise(w, r, out.content, out.etag)
 	if err != nil {
 		return h.serveFailure(w, r, failureFor(r, http.StatusInternalServerError, stagePlugin, err))
 	}
+	content, etag, personal := p.body, p.etag, p.personal
 
 	header := w.Header()
 	header.Set("Content-Type", contentTypeHTML)
@@ -824,6 +825,18 @@ func (h *Handler) CloseDevStreams() {
 	}
 }
 
+// personalised is one body made ready for one reader.
+type personalised struct {
+	body []byte
+	etag string
+	// personal: the body carries this reader's forgery token, or a hook made it
+	// particular to them.
+	personal bool
+	// hookPersonal: a hook set Personal. Unlike a token, which a handler's own
+	// Cache-Control has always been trusted around, this overrides it.
+	hookPersonal bool
+}
+
 // personalise replaces the forgery-token marker in content with this reader's own
 // token, and sends the cookie the token is checked against.
 //
@@ -838,10 +851,11 @@ func (h *Handler) CloseDevStreams() {
 // Then every PersonaliseHook plugin rewrites the body for this reader, in
 // registration order; a hook that fails is returned as the error, for the caller to
 // answer as its kind of response must. The content returned with an error is the
-// one before any hook ran, never a partly rewritten one.
-func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []byte, etag string) ([]byte, string, bool, error) {
-	original, originalETag := content, etag
-	personal := false
+// one before any hook ran, never a partly rewritten one, and the token's cookie is
+// not sent: the error page answering instead sends its own if it carries a form.
+func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []byte, etag string) (personalised, error) {
+	original := personalised{body: content, etag: etag}
+	var cookie *http.Cookie
 	if h.csrf != nil && h.csrf.Carries(content) {
 		token, _, err := h.csrf.TokenFor(r)
 		if err != nil {
@@ -851,25 +865,32 @@ func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []
 			h.logger.Error("collage: could not issue a forgery token", "err", err)
 		} else {
 			content = h.csrf.Personalise(content, token)
-			http.SetCookie(w, h.csrf.Cookie(r, token))
-			personal = true
+			cookie = h.csrf.Cookie(r, token)
 		}
 	}
+	personal := cookie != nil
 
 	ev := &plugin.PersonaliseEvent{Request: r, Header: w.Header(), Body: content}
 	if err := h.plugins.Personalise(r.Context(), ev); err != nil {
-		return original, originalETag, false, err
+		return original, err
+	}
+	if cookie != nil {
+		http.SetCookie(w, cookie)
 	}
 	changed := personal || !bytes.Equal(ev.Body, content)
-	content = ev.Body
-	personal = personal || ev.Personal
+	out := personalised{
+		body:         ev.Body,
+		etag:         etag,
+		personal:     personal || ev.Personal,
+		hookPersonal: ev.Personal,
+	}
 	// Recomputed whenever the body is not the one the ETag was made from. An ETag
 	// that names a body nobody was sent is how a conditional request is answered
 	// 304 for content the client never had.
 	if changed || ev.Personal {
-		etag = cache.ETag(content)
+		out.etag = cache.ETag(out.body)
 	}
-	return content, etag, personal, nil
+	return out, nil
 }
 
 // renderPage renders one page and returns what to write, or why nothing can be.
@@ -1037,10 +1058,11 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 	// what is written is not what was stored — and the ETag has to name what was
 	// written, or a conditional request is answered 304 for a body the client was
 	// never sent.
-	content, etag, personal, err := h.personalise(w, r, content, etag)
+	p, err := h.personalise(w, r, content, etag)
 	if err != nil {
 		return h.serveFailure(w, r, failureFor(r, http.StatusInternalServerError, stagePlugin, err))
 	}
+	content, etag, personal := p.body, p.etag, p.personal
 
 	header := w.Header()
 	header.Set("ETag", etag)
@@ -1050,7 +1072,10 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 		header.Set("Cache-Control", "private, no-store")
 	}
 
-	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
+	// Never for a personal body: its ETag is new on every response, so only "*"
+	// could match, and a 304 would have the client keep a body carrying another
+	// response's token or nonce.
+	if !personal && cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		// No Content-Type and no body: a 304 tells the client its copy is still
 		// good, it does not re-describe the representation.
 		w.WriteHeader(http.StatusNotModified)

@@ -379,9 +379,15 @@ func (h *Handler) writeActionPage(
 // submission is refused. That includes every fragment path, which is served as
 // an action.
 func (h *Handler) writeActionHTML(w http.ResponseWriter, r *http.Request, status int, html []byte) int {
-	html, _, _, err := h.personalise(w, r, html, "")
+	p, err := h.personalise(w, r, html, "")
 	if err != nil {
 		return h.serveFailure(w, r, failureFor(r, http.StatusInternalServerError, stagePlugin, err))
+	}
+	html = p.body
+	// A hook's personal body overrides even a handler's own Cache-Control: the
+	// handler declared a body it knew, not the one a plugin made of it.
+	if p.hookPersonal {
+		w.Header().Set("Cache-Control", "private, no-store")
 	}
 	w.Header().Set("Content-Type", contentTypeHTML)
 	w.WriteHeader(status)
@@ -401,14 +407,17 @@ func (h *Handler) writeActionHTML(w http.ResponseWriter, r *http.Request, status
 // Revalidated rather than unstored: "private, no-cache" lets the reader's own
 // browser keep the body and ask whether it still holds, where "no-store" would
 // have it throw the body away and fetch it whole. Private, because a fragment is
-// as personal as its page may be. A handler that set Cache-Control keeps its own.
+// as personal as its page may be. A handler that set Cache-Control keeps its own,
+// unless a PersonaliseHook made the body personal: the handler declared a body it
+// knew, not the one a plugin made of it.
 func (h *Handler) writeFragmentRead(w http.ResponseWriter, r *http.Request, html []byte, cacheControlSet bool) int {
-	html, _, _, err := h.personalise(w, r, html, "")
+	p, err := h.personalise(w, r, html, "")
 	if err != nil {
 		return h.serveFailure(w, r, failureFor(r, http.StatusInternalServerError, stagePlugin, err))
 	}
+	html = p.body
 	header := w.Header()
-	if !cacheControlSet {
+	if !cacheControlSet || p.hookPersonal {
 		header.Set("Cache-Control", "private, no-cache")
 	}
 	etag := cache.ETag(html)
