@@ -178,7 +178,8 @@ A request that is a probe and a 404 strikes `probe` only.
 - `OnRequest` classifies the request (so a later middleware rewriting `r.URL`
   cannot change the verdict) and records nothing; `finish(status)` strikes:
   - a probe path → `probe`, unless the request resolved to a page, document or
-    action (the site really serves that path; handlers and mounts still count);
+    action and was answered below 400 (the site really serves that path; a
+    placeholder page answering 404 does not; handlers and mounts still count);
   - an early rejection (an encoded slash, a `.`/`..` segment) → `probe`;
   - else a 404 → `notfound`, unless it came from a mount (a missing image on a
     page must not ban its readers).
