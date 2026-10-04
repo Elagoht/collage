@@ -153,9 +153,10 @@ func (p *Plugin) Capture(ctx context.Context, err error)
 
 ### Building an event (OnError)
 
-1. Nothing is sent in development without `InDevelopment`; an error with
-   `Status < MinStatus` that is not a panic is skipped; otherwise the event is
-   kept with probability `SampleRate`.
+1. Nothing is sent in development without `InDevelopment`; an error with a
+   known status (`Status != 0`) below `MinStatus` that is not a panic is
+   skipped; otherwise the event is kept with probability `SampleRate`. An
+   unknown status (a failure outside a request) is reported.
 2. **Exceptions:** walk the error chain with `errors.Unwrap`, following the first
    branch of a multi-error. Each link becomes one exception, outermost last, with
    its `%T` type and its own message. A `*PanicError` link gets frames parsed
@@ -172,8 +173,9 @@ func (p *Plugin) Capture(ctx context.Context, err error)
    sent without a user.
 8. **BeforeSend** runs last. False or a panic drops the event; a panic is logged.
 
-`Capture(ctx, err)` builds the same event from the request in `ctx` when there is
-one, and from no request otherwise.
+`Capture(ctx, err)` builds the same event without a request: the core keeps no
+request in `ctx`. When `ctx` carries a route (`RouteInfo`), its pattern becomes the
+transaction. `MinStatus` does not apply to an explicit capture.
 
 ### Sending
 
