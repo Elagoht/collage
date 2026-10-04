@@ -152,6 +152,7 @@ jobs:
           - collage-markdown
           - collage-meta
           - collage-minimizer
+          - collage-oauth
           - collage-offline
           - collage-ogimage
           - collage-opti-image
