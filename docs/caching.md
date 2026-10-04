@@ -655,6 +655,11 @@ protection off) is a miss, dropped and rendered again. Pages without a form carr
 no marker and survive a key change, and a restart of a site with no key — which
 generates a new one every run — no longer starts the cache empty.
 
+A plugin can personalise a stored page the same way: a `PersonaliseHook` runs
+after the reader's token goes in, on that reader's copy of the body, so it can
+put its own per-reader value where it left a marker without the cache ever
+holding one. See [docs/plugins.md](plugins.md#rewriting-each-response-personalisehook).
+
 Two consequences worth knowing before they surprise you:
 
 - **Everything that shares a `Dir` and a build shares entries** — two

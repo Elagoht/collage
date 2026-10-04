@@ -315,6 +315,51 @@ if o, ok := host.(collage.Origins); ok {
 `CacheInvalidateHook` events carry `ev.Entries`, each a `Host` and a `Path`, so a
 purge can build every URL against the right origin; `ev.Paths` stays as it was.
 
+### Rewriting each response: `PersonaliseHook`
+
+`OnAfterRender` runs once, before the cache, so it cannot give each reader
+something of their own. A plugin that must — a Content-Security-Policy nonce, a
+per-visitor token — implements `PersonaliseHook`, called for every HTML response
+on its way to one reader:
+
+```go
+func (p *Plugin) OnPersonalise(_ context.Context, ev *collage.PersonaliseEvent) error {
+	if !bytes.Contains(ev.Body, []byte(p.marker)) {
+		return nil
+	}
+	nonce, err := newNonce()
+	if err != nil {
+		return err
+	}
+	ev.Body = bytes.ReplaceAll(ev.Body, []byte(p.marker), []byte(nonce))
+	ev.Header.Set("Content-Security-Policy", "script-src 'nonce-"+nonce+"'")
+	ev.Personal = true
+	return nil
+}
+```
+
+The event carries:
+
+- `ev.Request`: the reader's own request, not a shared render's stripped one.
+- `ev.Header`: the response header; set here what must match the body.
+- `ev.Body`: what will be written, the reader's forgery token already in it. A hook
+  may replace it; what the cache holds is never changed.
+- `ev.Personal`: set it when the body became particular to this reader.
+
+It runs after the forgery token goes into the shared body, inside every
+middleware, so before compression, and before the dev overlay and reload script.
+Plugins run in registration order and each sees the previous body. It covers a
+page (from the cache or fresh), a fragment path or fragment read, an action's HTML
+answer and an error page, never a document.
+
+`Personal` treats the response as a forgery token does: its ETag is recomputed
+from the body sent, a page answers `private, no-store`, and a fragment read keeps
+`private, no-cache` with the recomputed ETag. A body changed without `Personal`
+still gets an ETag naming the bytes sent. A hook that returns an error or panics is
+logged and the page, fragment or action answers 500; on an error page the built-in
+page for that status is sent instead. A site without such a plugin sends the same
+responses as before.
+
 ### Before collage starts on a request
 
 `RequestHook.OnRequest` runs before anything else — before collage starts its
