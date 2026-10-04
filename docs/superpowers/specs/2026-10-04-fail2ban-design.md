@@ -80,9 +80,16 @@ func ClientIP(r *http.Request) netip.Addr
 3. Otherwise read `X-Forwarded-For` (every value, comma-separated, in order)
    from the right, skipping trusted addresses. The first untrusted address is the
    client. If every address is trusted, the leftmost one is.
-4. An entry that does not parse ends the walk: the last good address seen is the
-   client (the trusted proxy itself if there is none).
-5. Addresses are unmapped (`::ffff:1.2.3.4` → `1.2.3.4`) and lose their zone.
+4. An entry may carry a port (`9.9.9.9:4567`, `[2001:db8::1]:443`) or brackets
+   (`[2001:db8::1]`); these are read as the address. An entry that still does not
+   parse (`unknown`, garbage) ends the walk: the last good untrusted address seen
+   is the client; if none was seen yet, the client is unknown and `ClientIP`
+   returns the zero `Addr` (never the trusted proxy, which would make every
+   visitor one client).
+5. The header is walked from its end without splitting it whole.
+6. A `TrustedProxies` entry with zero bits (`0.0.0.0/0`, `::/0`) is accepted but
+   logged at Warn by `collage.New`: it lets any client name any address.
+7. Addresses are unmapped (`::ffff:1.2.3.4` → `1.2.3.4`) and lose their zone.
    A `RemoteAddr` that does not parse gives the zero `Addr`.
 
 Only `X-Forwarded-For` is read; `X-Real-IP` and `Forwarded` are not. The trusted
@@ -168,13 +175,31 @@ A request that is a probe and a 404 strikes `probe` only.
 
 - The client is `collage.ClientIP(r)`, as a prefix: /32 for IPv4, /64 for IPv6.
   A zero address is never counted.
-- `OnRequest` records nothing; `finish(status)` judges the request: probe path or
-  early rejection → `probe`; else 404 → `notfound`.
+- `OnRequest` classifies the request (so a later middleware rewriting `r.URL`
+  cannot change the verdict) and records nothing; `finish(status)` strikes:
+  - a probe path → `probe`, unless the request resolved to a page, document or
+    action (the site really serves that path; handlers and mounts still count);
+  - an early rejection (an encoded slash, a `.`/`..` segment) → `probe`;
+  - else a 404 → `notfound`, unless it came from a mount (a missing image on a
+    page must not ban its readers).
+- Built-in probe prefixes also match as a segment anywhere for `/.env` and
+  `/.git/` (`/api/.env`, `/backend/.git/config`), and `/.git` without the slash.
+- A browser's subresource request (a `Sec-Fetch-Dest` other than `document`,
+  `iframe`, `empty` or absent: `image`, `script`, `style`, …) never strikes:
+  `<img src="/.env">` on another page must not ban its readers. A scanner that
+  forges the header evades detection; the README says so.
+- A request whose `RemoteAddr` is loopback or private, carries
+  `X-Forwarded-For`, and whose `ClientIP` is that same `RemoteAddr` (the proxy is
+  not in `TrustedProxies`) is not counted, and one Warn per process says
+  `TrustedProxies` is probably missing: otherwise the first scanner bans the
+  proxy, and with it every visitor.
 - A strike is a timestamp in the client's per-jail list, trimmed to `FindTime`.
   `MaxRetry` strikes inside the window ban the client in that jail's name, and
   clear its counters.
-- `Forgive(r, jail)` clears that client's counter for the jail (after a
-  successful login).
+- `Forgive(r, jail)` clears that client's counter for the jail. The README
+  warns it is only safe when the success proves the failures were the same
+  person's (a successful login to the account being guessed); forgiving on any
+  success lets an attacker with an account of their own guess without limit.
 - `Allow` addresses, banned clients' requests and requests in development
   (without `InDevelopment`) are not counted.
 
@@ -192,7 +217,8 @@ A request that is a probe and a 404 strikes `probe` only.
 - Each ban is logged at Warn (prefix, jail, until). `OnBan` is called after the
   ban is in place, on the request's goroutine; a panic in it is recovered and
   logged.
-- `Ban(addr, d)` bans by hand (jail `"manual"`, no doubling); `Unban` lifts a
+- `Ban(addr, d)` bans by hand (jail `"manual"`, no doubling); `d <= 0` does
+  nothing; over an existing ban it never shortens it (the later end wins); `Unban` lifts a
   ban and clears the client's counters; `Bans()` returns a snapshot of live bans,
   soonest to end first.
 
