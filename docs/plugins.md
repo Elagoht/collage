@@ -240,7 +240,7 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | `PageResolvedHook` | `OnPageResolved` | After routing and the page's guards, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch four hooks, not seven" below), and never a request a guard blocked: it never reached the page | nothing |
 | `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** — including an error page, and a page an action answers with | nothing |
 | `BeforeActionHook` | `OnBeforeAction` | Before an action's handler: after the page's guards, the action's body limit and the forgery check. **Actions only**. `ev.Form()` parses the submission through the action's limit, once, for the handler too | `ev.Result`, which answers in the handler's place and stops dispatch |
-| `RequestHook` | `OnRequest` | First, before collage's request span, middleware and routing; returns the context to serve under and a function told the final status | the request's context |
+| `RequestHook` | `OnRequest` | First, before collage's request span, middleware and routing — also for a request answered before routing (an encoded slash, a dirty path); returns the context to serve under and a function told the final status | the request's context |
 | `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure) and `ev.DependencyTags`. **Pages only**, on the same terms | `ev.HTML`, `ev.Hoist(area, key, html)`; reports with `ev.Warn`, `ev.Error` |
 | `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
 | `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored — for a page or a document alike | `ev.Skip`, `ev.TTL`, `ev.Tags` |
@@ -374,6 +374,15 @@ request span, before middleware, before routing — and returns the context the
 request is served under, and a function called with the status once the response is
 written. It is what a tracing plugin needs: a trace carried in from the caller has
 to be the parent of collage's own span, and middleware runs inside it.
+
+It also sees the requests collage answers before routing: a path with an encoded
+slash (`/a%2f..%2fb`), answered 404, and a dirty path (`/a/../b`, `//b`),
+redirected to its clean spelling with 301, or 308 for a method other than GET and
+HEAD. These are a scanner's probes more often than not, so a plugin counting them —
+a ban, a log line — must see them. For such a request `RouteOf` is empty and
+`r.URL` is the raw path as it came in; `Metrics.HTTPResponse` and collage's request
+span are not called for it. The development reload stream is the one request no
+hook sees.
 
 `collage.RouteOf(ctx)` reports what the request resolved to — `"page"`, `"document"`,
 `"action"`, `"mount"` or `"handler"`, and the registered name or prefix — from that

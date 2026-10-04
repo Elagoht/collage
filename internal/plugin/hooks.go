@@ -146,6 +146,11 @@ type CacheInvalidateHook interface {
 // in from the caller, whose span must be the parent of collage's own. Middleware
 // added with Host.Use runs too late for that, inside the span collage has already
 // started.
+//
+// It also sees the requests collage answers before routing: a path with an
+// encoded slash, answered 404, and a dirty path, redirected to its clean spelling
+// with 301 or 308. For those RouteOf is empty and r.URL is the raw path as it came
+// in. Exactly one call to the function OnRequest returns follows every OnRequest.
 type RequestHook interface {
 	// OnRequest returns the context to serve r under, derived from r's, and a
 	// function collage calls with the status once the response is written. The

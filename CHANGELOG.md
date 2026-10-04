@@ -18,6 +18,20 @@
   than `RemoteAddr`. See [docs/deployment.md](docs/deployment.md) and
   [docs/plugins.md](docs/plugins.md).
 
+### Fixed
+
+- **RequestHook sees requests answered before routing.** A path with an encoded
+  slash (`/a%2f..%2fb`, answered 404) and a dirty path (`/a/../b`, redirected with
+  301, or 308 for a method other than GET and HEAD) were answered before the
+  request hooks ran, so a plugin observing traffic through `RequestHook` — the
+  tracing plugin elagoht/otel among them — never saw them, and they are a
+  scanner's probes more often than not. The hooks now run first, after the
+  trusted proxies are known, so `ClientIP` works inside `OnRequest`; their finish
+  is called once with the status written. For such a request `RouteOf` is empty
+  and `r.URL` is the raw path. `Metrics.HTTPResponse` and collage's request span
+  still skip it, so a metrics plugin reading `HTTPResponse` (elagoht/prometheus) and
+  one sitting in middleware (elagoht/accesslog) still do not see it.
+
 ## v0.46.0
 
 ### Fixed

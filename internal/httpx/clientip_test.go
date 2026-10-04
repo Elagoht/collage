@@ -22,6 +22,7 @@ func TestClientIP(t *testing.T) {
 		{"two header lines are one list", "10.0.0.1:5", []string{"8.8.8.8", "9.9.9.9"}, []string{"10.0.0.0/8"}, "9.9.9.9"},
 		{"the walk stops at garbage", "10.0.0.1:5", []string{"8.8.8.8, garbage, 10.0.0.2"}, []string{"10.0.0.0/8"}, "10.0.0.2"},
 		{"only garbage: the proxy", "10.0.0.1:5", []string{"garbage"}, []string{"10.0.0.0/8"}, "10.0.0.1"},
+		{"an empty entry ends the walk", "10.0.0.1:5", []string{"9.9.9.9, "}, []string{"10.0.0.0/8"}, "10.0.0.1"},
 		{"an IPv4-mapped address is unmapped", "[::ffff:1.2.3.4]:5", nil, nil, "1.2.3.4"},
 		{"IPv6 loopback", "[::1]:8080", nil, nil, "::1"},
 		{"the zone is dropped", "[fe80::1%eth0]:80", nil, nil, "fe80::1"},
@@ -72,7 +73,7 @@ func TestParseTrustedProxies(t *testing.T) {
 		}
 	}
 
-	for _, bad := range []string{"10.0.0.0/33", "nope", "::ffff:1.2.3.4/80"} {
+	for _, bad := range []string{"10.0.0.0/33", "nope", "::ffff:1.2.3.4/80", "fe80::1%eth0"} {
 		_, err := ParseTrustedProxies([]string{"10.0.0.0/8", bad})
 		if err == nil || !strings.Contains(err.Error(), bad) {
 			t.Errorf("ParseTrustedProxies(%q) = %v, want an error naming it", bad, err)

@@ -337,7 +337,25 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if len(h.trusted) > 0 {
 		r = r.WithContext(WithTrustedProxies(r.Context(), h.trusted))
 	}
-	// Before middleware and plugins, so that a check on a path — "skip
+	// What the request resolves to is recorded here, in the context every later
+	// frame shares, so a hook, a metric or a trace can name the route instead of
+	// the raw path. See RouteOf. Ahead of the request hooks: a hook keeps the
+	// context it was handed and reads the route from it once the response is
+	// written. A request answered before routing leaves it empty.
+	route := &routeRef{}
+	r = r.WithContext(context.WithValue(r.Context(), routeCtxKey{}, route))
+	if h.origins != nil {
+		r = r.WithContext(WithOrigins(r.Context(), h.origins))
+	}
+
+	// Before the request's span: a plugin carrying a trace in from the caller
+	// makes its span the parent of collage's own. See plugin.RequestHook. And
+	// before the path checks below, so a request answered there — a scanner's
+	// "/a/../etc/passwd", its encoded slash — is still one the hooks see: a
+	// ban counting probes, a trace, a log line.
+	r, finish := h.plugins.Request(r)
+
+	// Before middleware and routing, so that a check on a path — "skip
 	// /_collage/", "protect /admin/" — never meets "/_collage/../admin" and lets
 	// it through to the page behind it.
 	if cleaned, dirty := cleanPath(r.URL.Path); dirty {
@@ -348,26 +366,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// here, before a middleware reads the decoded path it spells.
 		if strings.Contains(ascii.LowerString(r.URL.EscapedPath()), "%2f") {
 			h.ServeStatus(w, r, http.StatusNotFound)
+			finish(http.StatusNotFound)
 			return
 		}
-		redirectClean(w, r, cleaned)
+		finish(redirectClean(w, r, cleaned))
 		return
 	}
 
 	start := time.Now()
-
-	// What the request resolves to is recorded here, in the context every later
-	// frame shares, so a hook, a metric or a trace can name the route instead of
-	// the raw path. See RouteOf.
-	route := &routeRef{}
-	r = r.WithContext(context.WithValue(r.Context(), routeCtxKey{}, route))
-	if h.origins != nil {
-		r = r.WithContext(WithOrigins(r.Context(), h.origins))
-	}
-
-	// Before the request's span: a plugin carrying a trace in from the caller
-	// makes its span the parent of collage's own. See plugin.RequestHook.
-	r, finish := h.plugins.Request(r)
 
 	ctx, span := h.startRequestSpan(r)
 	r = withVarySet(r.WithContext(ctx))
@@ -1183,14 +1189,16 @@ func cleanPath(p string) (string, bool) {
 
 // redirectClean sends the request to the clean spelling of its path, as
 // net/http's ServeMux does: 301 for a read, 308 for anything that carries a body,
-// so a form is posted again rather than turned into a GET.
-func redirectClean(w http.ResponseWriter, r *http.Request, cleaned string) {
+// so a form is posted again rather than turned into a GET. It returns the status
+// it wrote, for the request hooks' finish.
+func redirectClean(w http.ResponseWriter, r *http.Request, cleaned string) int {
 	status := http.StatusPermanentRedirect
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {
 		status = http.StatusMovedPermanently
 	}
 	w.Header().Set("Location", cleanLocation(cleaned, r.URL.RawQuery))
 	w.WriteHeader(status)
+	return status
 }
 
 // cleanLocation spells the clean path as a Location, escaped. The path was
