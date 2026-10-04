@@ -54,6 +54,35 @@ type AfterRenderHook interface {
 	OnAfterRender(ctx context.Context, ev *AfterRenderEvent) error
 }
 
+// PersonaliseHook is implemented by a plugin that rewrites each HTML response for
+// the reader it goes to: a CSP nonce, say, that must be new on every response
+// while the render behind it is cached and shared.
+//
+// It runs where collage puts each reader's forgery token into the shared body:
+// after the cache, inside every middleware, so before anything compresses the
+// body. It is called for a page (from the cache or fresh), a fragment path or
+// fragment read, an action's HTML answer and an error page. A document is not
+// HTML and gets no call.
+type PersonaliseHook interface {
+	OnPersonalise(ctx context.Context, ev *PersonaliseEvent) error
+}
+
+// PersonaliseEvent is one HTML response on its way to one reader.
+type PersonaliseEvent struct {
+	// Request is this reader's own request, not a shared render's stripped one.
+	Request *http.Request
+	// Header is the response's header: set here what must match the body, such
+	// as a Content-Security-Policy carrying the nonce put in it.
+	Header http.Header
+	// Body is what will be written, the reader's forgery token already in it. A
+	// hook may replace it; what the cache holds is never changed.
+	Body []byte
+	// Personal is set by a hook that made Body particular to this reader. The
+	// response is then treated as a forgery token makes it: its ETag names the
+	// body sent, and a page is answered "private, no-store".
+	Personal bool
+}
+
 // DocumentRenderedHook is implemented by a plugin that wants to observe, or
 // transform, a document's output before it is served.
 //

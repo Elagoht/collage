@@ -318,6 +318,24 @@ func (r *Registry) AfterRender(ctx context.Context, ev *AfterRenderEvent) error 
 	return nil
 }
 
+// Personalise dispatches ev to every registered plugin implementing
+// PersonaliseHook, in registration order; each sees the body the one before it
+// left. It stops and returns a wrapped error at the first hook failure, including
+// a contained panic. A nil Registry, or one with no plugin implementing the hook,
+// is a no-op that returns nil.
+func (r *Registry) Personalise(ctx context.Context, ev *PersonaliseEvent) error {
+	for _, p := range r.snapshot() {
+		hook, ok := p.(PersonaliseHook)
+		if !ok {
+			continue
+		}
+		if err := runHook(p.Name(), "OnPersonalise", func() error { return hook.OnPersonalise(ctx, ev) }); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // BuildFinished dispatches ev to every registered plugin implementing
 // BuildFinishedHook, in registration order, stopping at the first that fails.
 func (r *Registry) BuildFinished(ctx context.Context, ev *BuildFinishedEvent) error {

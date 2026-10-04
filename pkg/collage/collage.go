@@ -192,6 +192,13 @@ type BeforeActionEvent = plugin.BeforeActionEvent
 // HTML field to post-process the page.
 type AfterRenderEvent = plugin.AfterRenderEvent
 
+// PersonaliseHook is implemented by a plugin that rewrites each HTML response for
+// the reader it goes to, after the cache. See plugin.PersonaliseHook.
+type PersonaliseHook = plugin.PersonaliseHook
+
+// PersonaliseEvent is one HTML response on its way to one reader.
+type PersonaliseEvent = plugin.PersonaliseEvent
+
 // CacheWriteEvent describes a render result about to be written to the cache, for
 // a page or a document alike. A plugin may set its Skip field or adjust its TTL
 // and Tags. Its Page field is nil for a document, so a hook that reads it must
