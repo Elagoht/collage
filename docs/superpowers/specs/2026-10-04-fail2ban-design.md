@@ -185,9 +185,10 @@ A request that is a probe and a 404 strikes `probe` only.
 - Built-in probe prefixes also match as a segment anywhere for `/.env` and
   `/.git/` (`/api/.env`, `/backend/.git/config`), and `/.git` without the slash.
 - A browser's subresource request (a `Sec-Fetch-Dest` other than `document`,
-  `iframe`, `empty` or absent: `image`, `script`, `style`, …) never strikes:
+  `iframe`, `empty` or absent: `image`, `script`, `style`, …), or a request with
+  `Sec-Fetch-Site: cross-site`, never strikes:
   `<img src="/.env">` on another page must not ban its readers. A scanner that
-  forges the header evades detection; the README says so.
+  forges these headers evades detection; the README says so.
 - A request whose `RemoteAddr` is loopback or private, carries
   `X-Forwarded-For`, and whose `ClientIP` is that same `RemoteAddr` (the proxy is
   not in `TrustedProxies`) is not counted, and one Warn per process says
