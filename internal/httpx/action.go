@@ -379,7 +379,10 @@ func (h *Handler) writeActionPage(
 // submission is refused. That includes every fragment path, which is served as
 // an action.
 func (h *Handler) writeActionHTML(w http.ResponseWriter, r *http.Request, status int, html []byte) int {
-	html, _, _ = h.personalise(w, r, html, "")
+	html, _, _, err := h.personalise(w, r, html, "")
+	if err != nil {
+		return h.serveFailure(w, r, failureFor(r, http.StatusInternalServerError, stagePlugin, err))
+	}
 	w.Header().Set("Content-Type", contentTypeHTML)
 	w.WriteHeader(status)
 	writeBody(w, html)
@@ -400,7 +403,10 @@ func (h *Handler) writeActionHTML(w http.ResponseWriter, r *http.Request, status
 // have it throw the body away and fetch it whole. Private, because a fragment is
 // as personal as its page may be. A handler that set Cache-Control keeps its own.
 func (h *Handler) writeFragmentRead(w http.ResponseWriter, r *http.Request, html []byte, cacheControlSet bool) int {
-	html, _, _ = h.personalise(w, r, html, "")
+	html, _, _, err := h.personalise(w, r, html, "")
+	if err != nil {
+		return h.serveFailure(w, r, failureFor(r, http.StatusInternalServerError, stagePlugin, err))
+	}
 	header := w.Header()
 	if !cacheControlSet {
 		header.Set("Cache-Control", "private, no-cache")

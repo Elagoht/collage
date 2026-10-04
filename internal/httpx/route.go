@@ -1,6 +1,9 @@
 package httpx
 
-import "context"
+import (
+	"context"
+	"net/http"
+)
 
 // routeKind names what kind of route a request resolved to. It exists for exactly
 // one reason: the content type of an error response follows the route kind, never
@@ -172,4 +175,13 @@ func (ref *routeRef) failure(status int, stage string, err error) failure {
 		kind:   ref.kind,
 		route:  ref.name,
 	}
+}
+
+// failureFor is a failure for the route r resolved to, when one did — the
+// writer that hit the failure does not have the routeRef at hand.
+func failureFor(r *http.Request, status int, stage string, err error) failure {
+	if ref, ok := r.Context().Value(routeCtxKey{}).(*routeRef); ok && ref != nil {
+		return ref.failure(status, stage, err)
+	}
+	return failure{status: status, err: err, stage: stage}
 }

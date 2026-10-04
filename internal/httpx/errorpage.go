@@ -319,7 +319,13 @@ func (h *Handler) writeErrorResponse(w http.ResponseWriter, r *http.Request, sta
 	// The reader's token in place of the marker, as on any page: an error
 	// page's layout carries the site's forms too, and never stored, it has no
 	// ETag to recompute.
-	content, _, _ = h.personalise(w, r, content, "")
+	personalised, _, _, err := h.personalise(w, r, content, "")
+	if err != nil {
+		h.logger.Error("collage: a plugin could not personalise the error page; the built-in page is sent instead",
+			"status", status, "err", err)
+		personalised = builtinPage(failure{status: status, err: err, stage: stagePlugin}, h.devMode)
+	}
+	content = personalised
 	header := w.Header()
 	header.Set("Content-Type", contentTypeHTML)
 	header.Set("Cache-Control", "no-store")

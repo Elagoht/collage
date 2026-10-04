@@ -771,7 +771,10 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		return h.serveFailure(w, r, *out.fail)
 	}
 
-	content, etag, personal := h.personalise(w, r, out.content, out.etag)
+	content, etag, personal, err := h.personalise(w, r, out.content, out.etag)
+	if err != nil {
+		return h.serveFailure(w, r, failureFor(r, http.StatusInternalServerError, stagePlugin, err))
+	}
 
 	header := w.Header()
 	header.Set("Content-Type", contentTypeHTML)
@@ -829,30 +832,44 @@ func (h *Handler) CloseDevStreams() {
 // it — a string nobody can compute without the application's key. What goes on the
 // wire is that body with the reader's own token in place of the marker.
 //
-// A body with no marker is returned untouched, which is every page that has no form.
-func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []byte, etag string) ([]byte, string, bool) {
-	if h.csrf == nil {
-		return content, etag, false
-	}
-	if !h.csrf.Carries(content) {
-		return content, etag, false
+// A body no one rewrites is returned untouched, which is every page that has no form
+// on a site with no PersonaliseHook plugin.
+//
+// Then every PersonaliseHook plugin rewrites the body for this reader, in
+// registration order; a hook that fails is returned as the error, for the caller to
+// answer as its kind of response must. The content returned with an error is the
+// one before any hook ran, never a partly rewritten one.
+func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []byte, etag string) ([]byte, string, bool, error) {
+	original, originalETag := content, etag
+	personal := false
+	if h.csrf != nil && h.csrf.Carries(content) {
+		token, _, err := h.csrf.TokenFor(r)
+		if err != nil {
+			// Nothing to substitute with. Serving the marker would render a form
+			// that is refused on submission with nothing to explain why, so this
+			// is a failure rather than a body.
+			h.logger.Error("collage: could not issue a forgery token", "err", err)
+		} else {
+			content = h.csrf.Personalise(content, token)
+			http.SetCookie(w, h.csrf.Cookie(r, token))
+			personal = true
+		}
 	}
 
-	token, _, err := h.csrf.TokenFor(r)
-	if err != nil {
-		// Nothing to substitute with. Serving the marker would render a form that
-		// is refused on submission with nothing to explain why, so this is a
-		// failure rather than a body.
-		h.logger.Error("collage: could not issue a forgery token", "err", err)
-		return content, etag, false
+	ev := &plugin.PersonaliseEvent{Request: r, Header: w.Header(), Body: content}
+	if err := h.plugins.Personalise(r.Context(), ev); err != nil {
+		return original, originalETag, false, err
 	}
-
-	personalised := h.csrf.Personalise(content, token)
-	http.SetCookie(w, h.csrf.Cookie(r, token))
-	// Recomputed, because this body is not the one the ETag was made from. An ETag
+	changed := personal || !bytes.Equal(ev.Body, content)
+	content = ev.Body
+	personal = personal || ev.Personal
+	// Recomputed whenever the body is not the one the ETag was made from. An ETag
 	// that names a body nobody was sent is how a conditional request is answered
 	// 304 for content the client never had.
-	return personalised, cache.ETag(personalised), true
+	if changed || ev.Personal {
+		etag = cache.ETag(content)
+	}
+	return content, etag, personal, nil
 }
 
 // renderPage renders one page and returns what to write, or why nothing can be.
@@ -1020,7 +1037,10 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 	// what is written is not what was stored — and the ETag has to name what was
 	// written, or a conditional request is answered 304 for a body the client was
 	// never sent.
-	content, etag, personal := h.personalise(w, r, content, etag)
+	content, etag, personal, err := h.personalise(w, r, content, etag)
+	if err != nil {
+		return h.serveFailure(w, r, failureFor(r, http.StatusInternalServerError, stagePlugin, err))
+	}
 
 	header := w.Header()
 	header.Set("ETag", etag)
