@@ -20,7 +20,6 @@ package main
 
 import (
 	"context"
-	"embed"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -31,20 +30,6 @@ import (
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
-
-// Templates and static files are embedded, so this binary runs from anywhere:
-// a container with a different WORKDIR, a systemd unit, a copy on a server.
-//
-// It costs nothing in development. With DevMode on, collage prefers the
-// directory on disk whenever it is there — which it is while you are working
-// in this project — so editing a template is still visible on the next
-// request, embedded copy or not.
-//
-//go:embed all:templates
-var templatesFS embed.FS
-
-//go:embed all:static
-var staticFS embed.FS
 
 // cacheDir is where rendered pages are kept between restarts. A variable so the
 // tests can point it at a directory of their own: a disk cache is shared by

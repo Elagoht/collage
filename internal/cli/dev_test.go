@@ -192,11 +192,12 @@ func TestDev_BuildsAndRunsTheProgram(t *testing.T) {
 		t.Fatalf("builds = %d, want 1", runner.buildCount())
 	}
 	build := runner.builds[0]
-	if build.args[0] != "build" || build.args[1] != "-o" || build.args[3] != "." {
-		t.Errorf("build = go %s, want go build -o <binary> .", strings.Join(build.args, " "))
+	if len(build.args) != 6 || build.args[0] != "build" || build.args[1] != "-tags" || build.args[2] != devBuildTag ||
+		build.args[3] != "-o" || build.args[5] != "." {
+		t.Errorf("build = go %s, want go build -tags %s -o <binary> .", strings.Join(build.args, " "), devBuildTag)
 	}
-	if call.name != build.args[2] {
-		t.Errorf("ran %q, want the binary the build wrote, %q", call.name, build.args[2])
+	if call.name != build.args[4] {
+		t.Errorf("ran %q, want the binary the build wrote, %q", call.name, build.args[4])
 	}
 	if len(call.env) == 0 || call.env[len(call.env)-1] != "COLLAGE_DEV=1" {
 		t.Errorf("env = %v, want COLLAGE_DEV=1 last", call.env)
@@ -244,6 +245,33 @@ func TestDev_RebuildsOnlyForWhatTheProgramIsMadeOf(t *testing.T) {
 		t.Errorf("stopped = %d, want the old program stopped before the new one ran", runner.stopped.Load())
 	}
 	stop()
+}
+
+// A program that still embeds files into its development builds is told so once,
+// naming the file: each of those builds stores another copy of everything it
+// embeds in the Go build cache. One whose embedding is tagged out of them is not.
+func TestDev_WarnsAboutFilesEmbeddedIntoDevelopmentBuilds(t *testing.T) {
+	embedding := "package main\n\nimport \"embed\"\n\n//go:embed all:static\nvar staticFS embed.FS\n"
+
+	runner, stderr, stop := devSession(t, map[string]string{"main.go": embedding})
+	waitStarted(t, runner)
+	stop()
+	if got := strings.Count(stderr.String(), "embeds files into every development build"); got != 1 {
+		t.Errorf("stderr = %q, want one warning about the embedded files", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "main.go") || !strings.Contains(stderr.String(), "//go:build !"+devBuildTag) {
+		t.Errorf("stderr = %q, want it to name main.go and the constraint that fixes it", stderr.String())
+	}
+
+	runner, stderr, stop = devSession(t, map[string]string{
+		"main.go":  "package main",
+		"embed.go": "//go:build !" + devBuildTag + "\n\n" + embedding,
+	})
+	waitStarted(t, runner)
+	stop()
+	if strings.Contains(stderr.String(), "embeds files into every development build") {
+		t.Errorf("stderr = %q, want no warning when the embedding is tagged out of development builds", stderr.String())
+	}
 }
 
 // A change that does not compile leaves the last good build serving.

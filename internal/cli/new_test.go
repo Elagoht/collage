@@ -310,7 +310,7 @@ func TestRun_New_Minimal(t *testing.T) {
 		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
 	}
 
-	want := []string{".gitignore", "README.md", "go.mod", "main.go", "routes.go",
+	want := []string{".gitignore", "README.md", "go.mod", "main.go", "embed.go", "embed_dev.go", "routes.go",
 		"fragments/layouts/main.go", "fragments/pages/landing/home.go", "pages/landing/home.go",
 		"templates/layouts/default.html", "templates/pages/home.html", "static/app.css"}
 	var got []string
@@ -351,6 +351,18 @@ func TestRun_New_Minimal(t *testing.T) {
 	runIn("mod", "edit", "-replace", "github.com/Elagoht/collage="+repoRoot)
 	runIn("mod", "tidy")
 	runIn("vet", "./...")
+	runIn("vet", "-tags", devBuildTag, "./...")
+
+	// "collage dev" builds with the development tag, and nothing may be
+	// embedded then: every development build would otherwise store another copy
+	// of templates/ and static/ in the Go build cache. Without the tag — "collage
+	// build", "go build" — both are embedded, so the binary runs from anywhere.
+	if out := strings.TrimSpace(runIn("list", "-tags", devBuildTag, "-f", "{{.EmbedPatterns}}", ".")); out != "[]" {
+		t.Errorf("embed patterns in a development build = %s, want none", out)
+	}
+	if out := strings.TrimSpace(runIn("list", "-f", "{{.EmbedPatterns}}", ".")); out != "[all:static all:templates]" {
+		t.Errorf("embed patterns in a release build = %s, want all:static and all:templates", out)
+	}
 
 	// The home page, and the stylesheet under its own name and its
 	// content-addressed one. Nothing skipped: there is nothing here that needs a

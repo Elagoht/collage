@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`collage dev` no longer fills the Go build cache with copies of `static/` and `templates/`.**
+  A scaffolded `main.go` embedded both, and every rebuild — every save, since a
+  change anywhere recompiles `main` — stored another copy of everything it embedded
+  in the Go build cache, kept there for five days: a 30 MB `static/` grew the cache
+  by about 30 MB per save. `collage dev` now builds with `-tags collage_dev`, and
+  `collage new` writes the `//go:embed` lines into `embed.go`, constrained with
+  `//go:build !collage_dev`, beside an `embed_dev.go` that declares the same
+  variables empty. Development mode already read both directories from disk, so
+  nothing changes in what is served; `collage build`, `collage export` and
+  `go build` embed as before. An existing project keeps growing the cache until it
+  makes the same move, and `collage dev` says so when it starts, naming the file:
+  take the `//go:embed` lines and their variables out of `main.go` into an
+  `embed.go` that starts with `//go:build !collage_dev`, and add an `embed_dev.go`
+  with `//go:build collage_dev` declaring `templatesFS` and `staticFS` as empty
+  `embed.FS` values. `go clean -cache` reclaims what is already there.
+
 ## v0.45.0
 
 ### Added

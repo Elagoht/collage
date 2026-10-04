@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/build"
 	"io"
 	"log/slog"
 	"net"
@@ -13,6 +14,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -44,6 +46,13 @@ The scaffolded main.go (see "collage new") reads COLLAGE_DEV and turns on
 development mode, which reads templates and static files from disk on every
 request — so editing those needs no rebuild, and none happens.
 
+It builds with -tags collage_dev. The scaffolded project embeds templates/ and
+static/ in a file constrained with "//go:build !collage_dev", so development
+builds embed nothing: they read both from disk anyway, and every build that
+embeds them stores another copy of them in the Go build cache — gigabytes, over
+a few days of saves. A project whose main package still embeds files in a
+development build is told so when "collage dev" starts.
+
 What is watched is what the program is made of: .go files (test files aside),
 go.mod and go.sum, and the environment file below. Hidden directories, bin,
 dist, node_modules, testdata and vendor are not looked at, so nothing the
@@ -68,6 +77,11 @@ its own. A request made while the program is starting waits for it. When there
 is no program — it exited, or the first build failed — the page is its output,
 and it reloads by itself once a change brings the program back.
 `
+
+// devBuildTag is the build tag "collage dev" builds with. The scaffold keeps its
+// //go:embed directives in a file constrained with "//go:build !collage_dev", so
+// a development build embeds nothing.
+const devBuildTag = "collage_dev"
 
 // runDev implements the "dev" command.
 func (c *CLI) runDev(ctx context.Context, args []string) int {
@@ -161,6 +175,7 @@ type devProcess struct {
 func (l *devLoop) run(ctx context.Context) {
 	defer l.stopCurrent()
 
+	l.warnEmbedded()
 	snapshot, _ := snapshotSources(".")
 	l.restart(ctx)
 
@@ -219,6 +234,31 @@ func (l *devLoop) run(ctx context.Context) {
 	}
 }
 
+// warnEmbedded warns when the main package embeds files in a development build.
+// The compiled package holds what it embeds, and every rebuild — which is every
+// save, since a change anywhere recompiles main — stores another copy of it in
+// the Go build cache, kept there for days. A package it cannot read is left to
+// the build to complain about.
+func (l *devLoop) warnEmbedded() {
+	ctx := build.Default
+	ctx.BuildTags = append(slices.Clone(ctx.BuildTags), devBuildTag)
+	pkg, err := ctx.ImportDir(".", 0)
+	if err != nil || len(pkg.EmbedPatterns) == 0 {
+		return
+	}
+	var files []string
+	for _, positions := range pkg.EmbedPatternPos {
+		for _, position := range positions {
+			files = append(files, filepath.Base(position.Filename))
+		}
+	}
+	slices.Sort(files)
+	l.log.Warn("collage dev: "+strings.Join(slices.Compact(files), ", ")+
+		" embeds files into every development build, and each build stores another copy of them in the Go build cache;"+
+		" move the //go:embed lines into a file constrained with //go:build !"+devBuildTag+" (see collage help dev)",
+		"patterns", strings.Join(pkg.EmbedPatterns, " "))
+}
+
 // restart builds the program and, if the build succeeds, replaces the running
 // one with it. A failed build leaves the running one alone.
 func (l *devLoop) restart(ctx context.Context) {
@@ -254,7 +294,7 @@ func (l *devLoop) restart(ctx context.Context) {
 	binary := filepath.Join(l.buildDir, fmt.Sprintf("app-%d%s", l.builds, exeSuffix()))
 	buildOutput := &tailBuffer{}
 	stderr := l.cli.stderr()
-	if err := l.cli.runner().Run(ctx, "", nil, l.cli.stdout(), io.MultiWriter(stderr, buildOutput), "go", "build", "-o", binary, "."); err != nil {
+	if err := l.cli.runner().Run(ctx, "", nil, l.cli.stdout(), io.MultiWriter(stderr, buildOutput), "go", "build", "-tags", devBuildTag, "-o", binary, "."); err != nil {
 		if ctx.Err() != nil {
 			return
 		}

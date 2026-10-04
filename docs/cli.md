@@ -196,9 +196,9 @@ shares the page's name and has no path of its own.
   document. It is `Static()` too — cached, and invalidated by the count action —
   but it carries forms, so a static export skips it and says why.
 
-Templates and static files are embedded, so the binary runs from any working
-directory; development mode still prefers the directory on disk, so editing a
-template is visible on the next request. Static files are linked with `{{asset}}`,
+Templates and static files are embedded, in `embed.go`, so the binary runs from
+any working directory; development builds leave them out and read the directories
+on disk, so editing a template is visible on the next request. Static files are linked with `{{asset}}`,
 so they are served content-addressed and `immutable`.
 
 It ships a `.env.example` with `COLLAGE_CSRF_KEY`, `PORT` and `HOST`; copy it to
@@ -292,7 +292,7 @@ to `go` in the current directory, exactly as you would by hand:
 
 | Command | Runs | With |
 | --- | --- | --- |
-| `collage dev` | `go build`, then the binary it built — again on every change | `COLLAGE_DEV=1`, and the `HOST` and `PORT` to listen on, in the environment |
+| `collage dev` | `go build -tags collage_dev`, then the binary it built — again on every change | `COLLAGE_DEV=1`, and the `HOST` and `PORT` to listen on, in the environment |
 | `collage export` | `go run . -collage-build -out <dir>` | `-clean` appended when you passed it |
 
 That is a **contract with your `main.go`**, and the scaffolded one honours both
@@ -317,6 +317,17 @@ tool to install:
   stopped — interrupted, so it drains like it would on Ctrl-C — and the new one
   started. A change that does not compile leaves the last good build serving, with
   the compiler's error on screen.
+- **Development builds embed nothing.** They are built with `-tags collage_dev`,
+  and the scaffold keeps its `//go:embed` lines in `embed.go`, constrained with
+  `//go:build !collage_dev`; `embed_dev.go` declares the same variables, empty, for
+  the development build. Every build that embeds files stores another copy of them
+  in the Go build cache — a change anywhere recompiles `main`, so that is one copy
+  per save, kept for days: a 50 MB `static/` and a few hundred saves fill gigabytes.
+  Development mode reads both directories from disk anyway, so there is nothing to
+  embed. `collage build`, `collage export` and a plain `go build` pass no tag and
+  embed as before. A project scaffolded before this keeps the lines in `main.go`;
+  `collage dev` names the file when it starts, and moving them into the two files
+  above fixes it.
 - **A burst of writes is one rebuild.** A save that touches several files, or a
   formatter that rewrites one, is waited out before building.
 - It polls rather than subscribing to file-system events, which keeps collage free
