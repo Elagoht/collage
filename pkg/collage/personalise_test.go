@@ -165,10 +165,14 @@ func TestPersonalise_HookErrorIs500(t *testing.T) {
 	}
 }
 
-// formSite has a cached page with a form, an error page with one, and two actions
+// formSite (with no plugin for a nil p) has a cached page with a form, an error page with one, and two actions
 // whose handlers declare their responses public.
 func formSite(t *testing.T, p *stamp) http.Handler {
 	t.Helper()
+	var plugins []collage.Plugin
+	if p != nil {
+		plugins = append(plugins, p)
+	}
 	app, err := collage.New(&collage.Config{
 		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{
@@ -179,7 +183,7 @@ func formSite(t *testing.T, p *stamp) http.Handler {
 		}, Root: "t"},
 		Cache:   collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour},
 		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
-		Plugins: []collage.Plugin{p},
+		Plugins: plugins,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -256,31 +260,49 @@ func TestPersonalise_HookFailureSendsNoExtraTokenCookie(t *testing.T) {
 	}
 }
 
-// A personal response from the cache, by a hook or by a forgery token, is never
-// answered 304, even to "If-None-Match: *", which matches any ETag.
-func TestPersonalise_PersonalCachedPageIgnoresWildcard(t *testing.T) {
-	for name, path := range map[string]string{"hook": "/mark", "token": "/form"} {
-		t.Run(name, func(t *testing.T) {
+// againWith requests path again carrying prev's cookies and ifNoneMatch.
+func againWith(h http.Handler, path string, prev *httptest.ResponseRecorder, ifNoneMatch string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	for _, c := range prev.Result().Cookies() {
+		req.AddCookie(c)
+	}
+	req.Header.Set("If-None-Match", ifNoneMatch)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+// A body a hook made personal is never answered 304 — a cached page or a
+// fragment read — not even to "If-None-Match: *", which matches any ETag.
+func TestPersonalise_HookPersonalNeverRevalidates(t *testing.T) {
+	for _, path := range []string{"/mark", "/read"} {
+		t.Run(path, func(t *testing.T) {
 			h := formSite(t, &stamp{personal: true})
-			if first := getStamp(h, path, ""); first.Code != http.StatusOK {
+			first := getStamp(h, path, "")
+			if first.Code != http.StatusOK {
 				t.Fatalf("first = %d", first.Code)
 			}
-			if rec := getStamp(h, path, "*"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
-				t.Errorf("If-None-Match: * on a cached personal page = %d, want 200 with the body", rec.Code)
+			if rec := againWith(h, path, first, "*"); rec.Code != http.StatusOK || rec.Body.Len() == 0 {
+				t.Errorf("If-None-Match: * = %d, want 200 with the body", rec.Code)
 			}
-			// A returning reader keeps their token, so the body and its ETag repeat;
-			// a personal page is still answered in full.
-			first := getStamp(h, path, "")
-			req := httptest.NewRequest(http.MethodGet, path, nil)
-			for _, c := range first.Result().Cookies() {
-				req.AddCookie(c)
-			}
-			req.Header.Set("If-None-Match", first.Header().Get("ETag"))
-			rec := httptest.NewRecorder()
-			h.ServeHTTP(rec, req)
-			if rec.Code != http.StatusOK {
-				t.Errorf("own ETag with own cookie on a cached personal page = %d, want 200", rec.Code)
+			if rec := againWith(h, path, first, first.Header().Get("ETag")); rec.Code != http.StatusOK {
+				t.Errorf("its own previous ETag = %d, want 200", rec.Code)
 			}
 		})
+	}
+}
+
+// A form page on a site with no PersonaliseHook revalidates as it always has: a
+// returning reader keeps their token, so the body and its ETag repeat.
+func TestPersonalise_FormPageWithoutHookStillRevalidates(t *testing.T) {
+	h := formSite(t, nil)
+	first := getStamp(h, "/form", "")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first = %d", first.Code)
+	}
+	for _, inm := range []string{first.Header().Get("ETag"), "*"} {
+		if rec := againWith(h, "/form", first, inm); rec.Code != http.StatusNotModified {
+			t.Errorf("If-None-Match %q with its own cookie = %d, want 304", inm, rec.Code)
+		}
 	}
 }

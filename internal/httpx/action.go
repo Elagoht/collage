@@ -422,7 +422,9 @@ func (h *Handler) writeFragmentRead(w http.ResponseWriter, r *http.Request, html
 	}
 	etag := cache.ETag(html)
 	header.Set("ETag", etag)
-	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
+	// Not for a body a hook made personal, as for a cached page: only "*" could
+	// match its new ETag, and it names nothing this reader holds.
+	if !p.hookPersonal && cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		w.WriteHeader(http.StatusNotModified)
 		return http.StatusNotModified
 	}

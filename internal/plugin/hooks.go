@@ -82,8 +82,9 @@ type PersonaliseEvent struct {
 	Body []byte
 	// Personal is set by a hook that made Body particular to this reader. The
 	// response is then treated as a forgery token makes it: its ETag names the
-	// body sent, a page is answered "private, no-store" and, from the cache,
-	// never 304, not even to "If-None-Match: *". It overrides a handler's own
+	// body sent, a page is answered "private, no-store", and neither a page from
+	// the cache nor a fragment read is answered 304, not even to
+	// "If-None-Match: *". It overrides a handler's own
 	// Cache-Control: a fragment read is answered "private, no-cache" and an
 	// action's HTML "private, no-store".
 	Personal bool

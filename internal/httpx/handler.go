@@ -1072,10 +1072,11 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 		header.Set("Cache-Control", "private, no-store")
 	}
 
-	// Never for a personal body: its ETag is new on every response, so only "*"
-	// could match, and a 304 would have the client keep a body carrying another
-	// response's token or nonce.
-	if !personal && cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
+	// Never for a body a hook made personal: its ETag is new on every response,
+	// so only "*" could match, and a 304 would have the client keep a body
+	// carrying another response's nonce. A forgery token alone keeps the 304: a
+	// returning reader's token, and so the ETag, repeats.
+	if !p.hookPersonal && cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		// No Content-Type and no body: a 304 tells the client its copy is still
 		// good, it does not re-describe the representation.
 		w.WriteHeader(http.StatusNotModified)

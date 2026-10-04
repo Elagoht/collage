@@ -25,12 +25,11 @@
   ETag naming what was sent. A hook that fails or panics
   is logged and the page, fragment or action answers 500; on an error page the
   built-in page for that status is sent instead, never a half-personalised body.
-  **Nothing changes for a site without such a plugin**, but for one fix: a cached
-  page carrying a forgery token, like one a hook made personal, is never answered
-  304, to `If-None-Match: *` or to its own ETag. It is sent `private, no-store`, so
-  no browser or proxy should be holding a copy to revalidate. A compressing
-  middleware that keeps bodies per ETag gains nothing from a hook's personal
-  response: its ETag is new every time. It is first used by
+  A body a hook made personal is never answered 304, from the cache or as a
+  fragment read, not even to `If-None-Match: *`. **Nothing changes for a site
+  without such a plugin.** A compressing middleware that keeps bodies per ETag
+  gains nothing from a hook's personal response: its ETag is new every time. It is
+  first used by
   elagoht/secure v0.2.0, which moves its CSP nonce here and so fixes a bug: with
   secure listed before elagoht/compress in `Config.Plugins`, the nonce marker was
   left in the compressed body and every inline script was blocked. See
