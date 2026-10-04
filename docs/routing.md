@@ -223,6 +223,23 @@ The response is written by hand rather than through `http.Redirect`: a `Location
 header and the status, with no body. A redirect carries its destination in the
 header, and a body only makes `GET` and `HEAD` behave differently for no benefit.
 
+### Validating a redirect to user input: `SafeRedirect`
+
+A login that sends a reader back to a page they came from reads that page from a
+query parameter — `r.URL.Query().Get("next")`. The parameter must be validated
+before passing to `http.Redirect`, or the reader is sent elsewhere:
+
+```go
+http.Redirect(w, r, collage.SafeRedirect(r.URL.Query().Get("next"), "/"), http.StatusSeeOther)
+```
+
+`SafeRedirect` returns `next` if it is a safe path — one that starts with "/",
+not with "//" or "/\", and holds no control character — and `fallback` otherwise.
+If `fallback` is not one either, it returns "/". It is the check collage applies
+to its own redirects. An absolute URL is never accepted, even one on this site's
+own origin: the rule is one simple check. A handler may still redirect to any
+`Location`; only user-supplied values are validated this way.
+
 ## Guards
 
 A guard decides whether a request may reach a page, and it is declared where the

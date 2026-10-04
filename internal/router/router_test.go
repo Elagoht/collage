@@ -572,7 +572,7 @@ func TestRouter_Redirect_SubstitutedValueIsEscaped(t *testing.T) {
 			if result.RedirectTo != c.want {
 				t.Fatalf("RedirectTo = %q, want %q", result.RedirectTo, c.want)
 			}
-			if reason, unsafe := unsafeRedirectReason(result.RedirectTo); unsafe {
+			if reason, unsafe := UnsafeRedirectReason(result.RedirectTo); unsafe {
 				t.Fatalf("RedirectTo %q is unsafe: %s", result.RedirectTo, reason)
 			}
 		})

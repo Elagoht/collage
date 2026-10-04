@@ -301,7 +301,7 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 
 	if redirectNode, params, ok := rt.redirectTree.match(segments); ok {
 		destination := withQuery(substitute(redirectNode.redirectTo, params, redirectNode.redirectCatchAll), req.URL.RawQuery)
-		if reason, unsafe := unsafeRedirectReason(destination); unsafe {
+		if reason, unsafe := UnsafeRedirectReason(destination); unsafe {
 			return nil, fmt.Errorf("%w: redirect to %q resolved to %q: %s", ErrUnsafeRedirectTarget, redirectNode.redirectTo, destination, reason)
 		}
 		return &MatchResult{
@@ -337,7 +337,7 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 					target, redirect = slashed, true
 				}
 				if redirect {
-					if _, unsafe := unsafeRedirectReason(target); !unsafe {
+					if _, unsafe := UnsafeRedirectReason(target); !unsafe {
 						return rt.canonical(req, locale, target, http.StatusMovedPermanently), nil
 					}
 				}
@@ -422,7 +422,7 @@ func (rt *router) canonicalSlash(path string) (string, bool) {
 	if target == path {
 		return "", false
 	}
-	if _, unsafe := unsafeRedirectReason(target); unsafe {
+	if _, unsafe := UnsafeRedirectReason(target); unsafe {
 		return "", false
 	}
 	return target, true
@@ -772,7 +772,7 @@ func escapePathTail(value string) string {
 	return strings.Join(parts, "/")
 }
 
-// unsafeRedirectReason reports whether destination is unsafe to write into a
+// UnsafeRedirectReason reports whether destination is unsafe to write into a
 // Location header, and why. A safe destination is a relative path: it begins with
 // exactly one "/", the character after it is neither "/" nor "\", and it carries no
 // control character.
@@ -783,7 +783,9 @@ func escapePathTail(value string) string {
 // The control-character scan rejects CR and LF, which net/http happens to reject
 // too; relying on that would leave the guarantee owned by another package's
 // implementation detail rather than by this one.
-func unsafeRedirectReason(destination string) (string, bool) {
+//
+// Exported for collage.SafeRedirect.
+func UnsafeRedirectReason(destination string) (string, bool) {
 	if destination == "" {
 		return "destination is empty", true
 	}
