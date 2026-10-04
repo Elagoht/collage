@@ -66,10 +66,13 @@ func WithTrustedProxies(ctx context.Context, trusted []netip.Prefix) context.Con
 // ClientIP is the address of the client r comes from: RemoteAddr's host, unless
 // that is one of the trusted proxies r's context carries. Then it is the first
 // untrusted address in X-Forwarded-For read from the right — every value, in
-// order, comma-separated — or the leftmost when every one is trusted. The walk
-// stops at an entry that is not an address, and the last good one is the client.
-// The result is unmapped and has no zone; it is the zero Addr when RemoteAddr
-// holds no address.
+// order, comma-separated — or the leftmost when every one is trusted. An entry
+// may carry a port ("9.9.9.9:4567", "[2001:db8::1]:443") or brackets
+// ("[2001:db8::1]"). An entry that is still not an address ("unknown") ends the
+// walk before any untrusted address was found, so the client is unknown and the
+// result is the zero Addr: answering with a trusted proxy would make every
+// visitor one client. The result is unmapped and has no zone; it is the zero
+// Addr too when RemoteAddr holds no address.
 func ClientIP(r *http.Request) netip.Addr {
 	remote := parseRemoteAddr(r.RemoteAddr)
 	trusted, _ := r.Context().Value(trustedProxiesKey{}).([]netip.Prefix)
@@ -79,19 +82,48 @@ func ClientIP(r *http.Request) netip.Addr {
 	client := remote
 	values := r.Header.Values("X-Forwarded-For")
 	for i := len(values) - 1; i >= 0; i-- {
-		parts := strings.Split(values[i], ",")
-		for j := len(parts) - 1; j >= 0; j-- {
-			a, err := netip.ParseAddr(strings.TrimSpace(parts[j]))
-			if err != nil {
-				return client
+		// Walk the line from its end, entry by entry, without splitting it whole:
+		// the client is usually the last entry or close to it.
+		line := values[i]
+		for {
+			entry := line
+			comma := strings.LastIndexByte(line, ',')
+			if comma >= 0 {
+				entry, line = line[comma+1:], line[:comma]
 			}
-			client = a.Unmap().WithZone("")
+			a, ok := parseForwardedAddr(entry)
+			if !ok {
+				return netip.Addr{}
+			}
+			client = a
 			if !containsAddr(trusted, client) {
 				return client
+			}
+			if comma < 0 {
+				break
 			}
 		}
 	}
 	return client
+}
+
+// parseForwardedAddr reads one X-Forwarded-For entry: an address, an address
+// with a port, or an IPv6 address in brackets, with or without a port. The
+// result is unmapped and has no zone.
+func parseForwardedAddr(entry string) (netip.Addr, bool) {
+	entry = strings.TrimSpace(entry)
+	if a, err := netip.ParseAddr(entry); err == nil {
+		return a.Unmap().WithZone(""), true
+	}
+	if ap, err := netip.ParseAddrPort(entry); err == nil {
+		return ap.Addr().Unmap().WithZone(""), true
+	}
+	if len(entry) > 2 && entry[0] == '[' && entry[len(entry)-1] == ']' {
+		if a, err := netip.ParseAddr(entry[1 : len(entry)-1]); err == nil && a.Is6() {
+			return a.Unmap().WithZone(""), true
+		}
+	}
+	return netip.Addr{}, false
 }
 
 // parseRemoteAddr is RemoteAddr's host, with or without a port.

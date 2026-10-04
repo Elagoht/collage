@@ -150,7 +150,8 @@ type CacheInvalidateHook interface {
 // It also sees the requests collage answers before routing: a path with an
 // encoded slash, answered 404, and a dirty path, redirected to its clean spelling
 // with 301 or 308. For those RouteOf is empty and r.URL is the raw path as it came
-// in. Exactly one call to the function OnRequest returns follows every OnRequest.
+// in. The function OnRequest returns is called once, unless serving the request
+// panics.
 type RequestHook interface {
 	// OnRequest returns the context to serve r under, derived from r's, and a
 	// function collage calls with the status once the response is written. The

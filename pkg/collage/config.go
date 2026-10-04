@@ -178,7 +178,10 @@ type ServerConfig struct {
 	// TrustedProxies are the addresses and CIDR ranges of the proxies in front
 	// of the server ("10.0.0.0/8", "127.0.0.1"). A request from one of them may
 	// name its client in X-Forwarded-For; see ClientIP. Empty, the default,
-	// trusts no header: the client is always RemoteAddr.
+	// trusts no header: the client is always RemoteAddr. List every hop between
+	// the client and the server, a CDN's published ranges included. A range
+	// with zero bits ("0.0.0.0/0", "::/0") is accepted but logged at Warn by
+	// New: it lets any client name any address.
 	TrustedProxies []string
 }
 

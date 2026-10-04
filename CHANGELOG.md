@@ -11,8 +11,15 @@
   CIDR ranges of the proxies in front of the server (`"10.0.0.0/8"`, `"127.0.0.1"`);
   a request from one of them names its client in `X-Forwarded-For`, read from the
   right: the first address that is not a trusted proxy is the client, or the
-  leftmost when every one is. An entry that is neither an address nor a range makes
-  `collage.New` fail, naming it. The address is unmapped and has no zone, and is the
+  leftmost when every one is. A header entry may carry a port (`9.9.9.9:4567`,
+  `[2001:db8::1]:443`) or brackets (`[2001:db8::1]`), as some proxies write it. An
+  entry that is still not an address (`unknown`) met before any untrusted address
+  leaves the client unknown: `ClientIP` is then the zero `netip.Addr`, never the
+  proxy, which would make every visitor one client. List every hop between the
+  client and the server, a CDN's published ranges included. An entry that is
+  neither an address nor a range makes `collage.New` fail, naming it; one with zero
+  bits (`0.0.0.0/0`, `::/0`) is accepted, but `collage.New` logs a Warn: it lets any
+  client name any address. The address is unmapped and has no zone, and is the
   zero `netip.Addr` when `RemoteAddr` holds none — as in a shared page render. A
   plugin keying anything on the client, a rate limit or a ban, should use it rather
   than `RemoteAddr`. See [docs/deployment.md](docs/deployment.md) and
@@ -27,7 +34,7 @@
   tracing plugin elagoht/otel among them — never saw them, and they are a
   scanner's probes more often than not. The hooks now run first, after the
   trusted proxies are known, so `ClientIP` works inside `OnRequest`; their finish
-  is called once with the status written. For such a request `RouteOf` is empty
+  is called with the status written — once, unless serving the request panics. For such a request `RouteOf` is empty
   and `r.URL` is the raw path. `Metrics.HTTPResponse` and collage's request span
   still skip it, so a metrics plugin reading `HTTPResponse` (elagoht/prometheus) and
   one sitting in middleware (elagoht/accesslog) still do not see it.

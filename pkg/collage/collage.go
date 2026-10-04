@@ -131,7 +131,11 @@ func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
 // ClientIP is the address of the client r comes from. It is RemoteAddr's host,
 // unless that is one of ServerConfig.TrustedProxies: then it is the first
 // untrusted address in X-Forwarded-For read from the right, or the leftmost when
-// every one is trusted. With no TrustedProxies, the default, X-Forwarded-For is
+// every one is trusted. An entry may carry a port ("9.9.9.9:4567",
+// "[2001:db8::1]:443") or brackets ("[2001:db8::1]"). An entry that is still not
+// an address ("unknown") met before any untrusted one leaves the client unknown:
+// the result is the zero netip.Addr, never the proxy, which would make every
+// visitor one client. With no TrustedProxies, the default, X-Forwarded-For is
 // never read, so a client cannot forge it. The address is unmapped
 // ("::ffff:1.2.3.4" is 1.2.3.4) and has no zone; it is the zero netip.Addr when
 // RemoteAddr holds none, as in a shared page render, whose request has no

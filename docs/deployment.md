@@ -140,8 +140,19 @@ trusted addresses, and the first untrusted one is the client (the leftmost, when
 every one is trusted). Empty, the default, trusts no header, and `ClientIP` is
 always `RemoteAddr`.
 
-List only proxies you run, or your platform's documented ranges. Trusting a range
-a client can send from lets that client name any address it likes.
+A header entry may carry a port (`9.9.9.9:4567`, `[2001:db8::1]:443`) or brackets
+(`[2001:db8::1]`), as some proxies write it; it is read as the address. An entry
+that is still not an address — `unknown`, which some proxies send — ends the walk.
+If no untrusted address was found before it, the client is unknown and `ClientIP`
+is the zero `netip.Addr`: never the proxy, which would make every visitor the same
+client. A plugin keying on the client skips such a request.
+
+List every hop between the client and the server: your own proxies and, behind a
+CDN, the CDN's published ranges too. A hop left out is taken for the client, and
+every visitor coming through it becomes one. List only proxies you run, or your
+platform's documented ranges: trusting a range a client can send from lets that
+client name any address it likes. An entry with zero bits (`0.0.0.0/0`, `::/0`)
+trusts everyone; `collage.New` accepts it but logs a Warn saying so.
 
 ## Caching
 

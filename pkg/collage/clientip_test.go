@@ -1,7 +1,9 @@
 package collage_test
 
 import (
+	"bytes"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -60,5 +62,38 @@ func TestClientIP_ABadTrustedProxyFailsNew(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "nope") {
 		t.Errorf("New() = %v, want an error naming \"nope\"", err)
+	}
+}
+
+func TestClientIP_TrustingEveryAddressIsWarned(t *testing.T) {
+	for _, tt := range []struct {
+		trusted []string
+		warns   int
+	}{
+		{[]string{"0.0.0.0/0"}, 1},
+		{[]string{"::/0"}, 1},
+		{[]string{"10.0.0.0/8", "0.0.0.0/0", "::/0"}, 1},
+		{[]string{"10.0.0.0/8", "127.0.0.1"}, 0},
+		{nil, 0},
+	} {
+		var buf bytes.Buffer
+		_, err := collage.New(&collage.Config{
+			Logger: slog.New(slog.NewTextHandler(&buf, nil)),
+			Server: collage.ServerConfig{Host: "localhost", Port: 3000, TrustedProxies: tt.trusted},
+			Template: collage.TemplateConfig{
+				FS:   fstest.MapFS{"templates/pages/home.html": {Data: []byte(`<p>home</p>`)}},
+				Root: "templates",
+			},
+		})
+		if err != nil {
+			t.Fatalf("New(%v): %v", tt.trusted, err)
+		}
+		got := strings.Count(buf.String(), "any client name any address")
+		if got != tt.warns {
+			t.Errorf("TrustedProxies %v: %d warnings, want %d; log:\n%s", tt.trusted, got, tt.warns, buf.String())
+		}
+		if tt.warns > 0 && !strings.Contains(buf.String(), "level=WARN") {
+			t.Errorf("TrustedProxies %v: the warning is not at Warn; log:\n%s", tt.trusted, buf.String())
+		}
 	}
 }

@@ -462,6 +462,7 @@ func New(cfg Config) (*App, error) {
 	if logger == nil {
 		logger = defaultLogger()
 	}
+	warnTrustEverything(cfg.Server.TrustedProxies, logger)
 
 	// The App exists before the template engine because plugins get to influence
 	// it. Only the fields Configure can reach are filled in here; the rest are set

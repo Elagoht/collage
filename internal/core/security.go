@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"errors"
 	"log/slog"
+	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/Elagoht/collage/internal/csrf"
@@ -172,4 +174,21 @@ func (a *App) CSRFMarker() string {
 		return ""
 	}
 	return a.csrf.Marker()
+}
+
+// warnTrustEverything logs, once, when TrustedProxies holds a range with zero
+// bits (0.0.0.0/0, ::/0). It is accepted — a server reachable only through its
+// proxies may mean it — but every client then counts as a proxy and can name any
+// address it likes in X-Forwarded-For.
+func warnTrustEverything(trusted []netip.Prefix, logger *slog.Logger) {
+	var everything []string
+	for _, p := range trusted {
+		if p.Bits() == 0 {
+			everything = append(everything, p.String())
+		}
+	}
+	if len(everything) > 0 {
+		logger.Warn("collage: Server.TrustedProxies trusts every address; it lets any client name any address in X-Forwarded-For, so list only the proxies in front of the server",
+			"entries", strings.Join(everything, ", "))
+	}
 }

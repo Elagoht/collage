@@ -371,8 +371,8 @@ responses as before.
 
 `RequestHook.OnRequest` runs before anything else — before collage starts its
 request span, before middleware, before routing — and returns the context the
-request is served under, and a function called with the status once the response is
-written. It is what a tracing plugin needs: a trace carried in from the caller has
+request is served under, and a function called with the status when the response is
+written — once, unless serving the request panics. It is what a tracing plugin needs: a trace carried in from the caller has
 to be the parent of collage's own span, and middleware runs inside it.
 
 It also sees the requests collage answers before routing: a path with an encoded
@@ -396,8 +396,9 @@ the application lists in `Server.TrustedProxies` (see
 [deployment.md](deployment.md)) — from `OnRequest` on, middleware included. A
 plugin keying anything on the client, a rate limit or a ban, should use it rather
 than `RemoteAddr`, which behind a proxy is the proxy for every request. It is the
-zero `netip.Addr` when there is no address to give, as in a shared page render,
-whose request has no `RemoteAddr`: never count that one.
+zero `netip.Addr` when there is no address to give: in a shared page render,
+whose request has no `RemoteAddr`, and behind a trusted proxy whose
+`X-Forwarded-For` holds no usable client (`unknown`). Never count that one.
 
 ### Checking the output: findings
 
