@@ -271,6 +271,11 @@ furkanbaytekin.dev moves when its owner decides.
   migration table, then says plainly that an app may now fail at startup over a
   template that would already fail when rendered, how to read the error, and that
   `WithoutTypeCheck()` silences one fragment while it is fixed.
+- Order as in every release: tag collage, then each plugin drops its `replace`,
+  `go get`s the tag, tests, tags. The tag's CI run builds each plugin's latest
+  *tag* against collage, so it fails until the plugins that build fragments are
+  re-released; rerun it (`gh workflow run ci.yml --ref v0.49.0`) once they are,
+  and the release is done when that run is green.
 - Framework `docs/` (templates, fragments) and the docs site, EN and TR, gain a
   section on how templates are checked.
 - The extension follows separately, against the inspect contract above.
