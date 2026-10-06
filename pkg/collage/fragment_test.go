@@ -325,7 +325,7 @@ func TestNewKey(t *testing.T) {
 		t.Error("Get of a missing key reported ok")
 	}
 	var values *RenderValues = types.ValuesOf(rc)
-	if got, ok := types.NewKey[int]("count").In(values); !ok || got != 3 {
+	if got, ok := NewKey[int]("count").In(values); !ok || got != 3 {
 		t.Errorf("In = %d, %v; want 3, true", got, ok)
 	}
 }

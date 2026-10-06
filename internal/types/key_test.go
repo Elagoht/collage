@@ -103,3 +103,17 @@ func TestKey_In(t *testing.T) {
 		t.Error("In with a key never set = true")
 	}
 }
+
+func TestKey_NilInterfaceValue(t *testing.T) {
+	rc := NewRenderContext(context.Background(), nil, nil, "en", nil)
+	errKey := NewKey[error]("err")
+	errKey.Set(rc, nil)
+	if err, ok := errKey.Get(rc); !ok || err != nil {
+		t.Errorf("Key[error] after Set(nil) = %v, %v; want nil, true", err, ok)
+	}
+	anyKey := NewKey[any]("v") // any: a nil interface value is what this case stores
+	anyKey.Set(rc, nil)
+	if v, ok := anyKey.Get(rc); !ok || v != nil {
+		t.Errorf("Key[any] after Set(nil) = %v, %v; want nil, true", v, ok)
+	}
+}

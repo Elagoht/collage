@@ -76,6 +76,11 @@ func (k Key[T]) In(values *Values) (T, bool) {
 	if !ok {
 		return zero, false
 	}
+	if v == nil {
+		// A nil stored under an interface-typed key: present, and nil. Asserting
+		// it would fail and read as absent.
+		return zero, true
+	}
 	typed, ok := v.(T)
 	return typed, ok
 }
@@ -94,7 +99,9 @@ func ValuesOf(rc *RenderContext) *Values {
 
 // bag returns rc's values, allocating them on a hand-built context when create
 // is set. A context from NewRenderContext always has them, so every copy the
-// render makes shares one.
+// render makes shares one. A hand-built context is for single-goroutine use: the
+// allocation is unguarded, and a copy made before its first Set does not share
+// the values that Set creates.
 func (rc *RenderContext) bag(create bool) *Values {
 	if rc == nil {
 		return nil

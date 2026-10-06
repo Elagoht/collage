@@ -9,8 +9,8 @@ import (
 //
 // It receives the same RenderContext a fragment's data handler does, so it reads path
 // parameters, the locale and the request the same way — and stores the render's
-// values with Key.Set the same way, which is how a handler that re-renders a page hands that page what it
-// learned. The request body is on rc.Request, already bounded; see Action.MaxBodyBytes.
+// values with Key.Set the same way, which is how a handler that re-renders a page
+// hands that page what it learned. The request body is on rc.Request, already bounded; see Action.MaxBodyBytes.
 //
 // A nil result with a nil error answers 204 No Content, which is the honest answer for
 // a handler that did something and has nothing to say about it.
