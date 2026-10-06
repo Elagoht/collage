@@ -3,9 +3,9 @@
 // type does not have, a method called with the wrong number of arguments or
 // through a value that cannot reach it, a range over something that cannot be
 // ranged over. A value whose type cannot be known before it renders — an
-// interface, a map[string]any entry, what call returns — is unknown, and nothing
-// below an unknown value is reported: the checker speaks only when
-// text/template would fail.
+// interface, a map[string]any entry, a reflect.Value a method or function
+// returns — is unknown, and nothing below an unknown value is reported: the
+// checker speaks only when text/template would fail.
 package typecheck
 
 import (

@@ -14,6 +14,15 @@ import (
 // non-empty, so an execution error can only come from what the checker judges,
 // never from a nil it does not model. Each call makes a new board: ranging over
 // its channel drains it.
+//
+// Every map key a case reads is present, too. The property this test holds the
+// checker to — a finding exactly when execution fails — rests on that: a key
+// absent at runtime gives an invalid value that ends the chain silently, so
+// {{.Meta.absent.Nope}} renders nothing while the checker, which knows only the
+// map's element type, reports .Nope.
+//
+// wrapper hands out reflect.Values, which text/template unwraps when a method
+// or function returns one, and leaves alone in a field.
 func filledBoard() board {
 	c := card{Name: "c", Owner: user{Name: "o"}}
 	ch := make(chan card, 1)
@@ -28,6 +37,20 @@ func filledBoard() board {
 	}
 }
 
+type wrapper struct {
+	F  reflect.Value
+	Fn func() reflect.Value
+}
+
+func (wrapper) RV() reflect.Value             { return reflect.ValueOf(user{Name: "r"}) }
+func (wrapper) RVErr() (reflect.Value, error) { return reflect.ValueOf(&user{Name: "r"}), nil }
+
+func wrap() reflect.Value { return reflect.ValueOf(user{Name: "w"}) }
+
+func filledWrapper() wrapper {
+	return wrapper{F: reflect.ValueOf(user{Name: "f"}), Fn: wrap}
+}
+
 func filledPost() post {
 	return post{
 		Title: "t", secret: "s", Author: &user{Name: "a"}, Owner: user{Name: "o"}, Tags: []string{"x"},
@@ -39,7 +62,7 @@ func filledPost() post {
 }
 
 func TestCheck_AgreesWithTextTemplate(t *testing.T) {
-	funcs := template.FuncMap{"pick": pick, "upper": strings.ToUpper}
+	funcs := template.FuncMap{"pick": pick, "upper": strings.ToUpper, "wrap": wrap}
 	type differential struct {
 		src  string
 		data func() reflect.Value
@@ -95,6 +118,20 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 		`{{if false}}{{.Nope}}{{end}}`, `{{if false}}{{else}}{{.Nope}}{{end}}`,
 		`{{if true}}{{else}}{{.Nope}}{{end}}`, `{{if true}}{{.Nope}}{{end}}`,
 		`{{with false}}{{.Nope}}{{end}}`, `{{with false}}{{else}}{{.Nope}}{{end}}`,
+		`{{if not true}}{{.Nope}}{{end}}`, `{{if not false}}{{.Nope}}{{end}}`,
+		`{{if not true}}{{else}}{{.Nope}}{{end}}`, `{{if not 0}}{{else}}{{.Nope}}{{end}}`,
+		`{{if not nil}}{{.Nope}}{{end}}`, `{{if not ""}}{{.Nope}}{{end}}`,
+		`{{and 0 .Nope}}`, `{{and 1 .Nope}}`, `{{or 1 .Nope}}`, `{{or 0 .Nope}}`,
+		`{{and "" .Nope}}`, `{{and "a" .Nope}}`, `{{or "a" .Nope}}`, `{{or "" .Nope}}`,
+		`{{and nil .Nope}}`, `{{or nil .Nope}}`, `{{and 0.0 .Nope}}`, `{{and 0.5 .Nope}}`,
+		`{{and 0x0 .Nope}}`, `{{and 0x1E .Nope}}`, `{{and 'a' .Nope}}`, `{{or 'a' .Nope}}`,
+		`{{and 0i .Nope}}`, `{{or 1i .Nope}}`, `{{and 1e0 0 .Nope}}`, `{{and 1 2 .Nope}}`,
+		`{{and (not true) .Nope}}`, `{{or (not 0) .Nope}}`, `{{and (not 1) .Nope}}`, `{{or (not "a") .Nope}}`,
+		`{{and .Title 0 .Nope}}`, `{{or .Count 1 .Nope}}`,
+		`{{if 0}}{{.Nope}}{{end}}`, `{{if 1}}{{.Nope}}{{end}}`, `{{if ""}}{{.Nope}}{{end}}`,
+		`{{if "a"}}{{.Nope}}{{end}}`, `{{if 0}}{{else}}{{.Nope}}{{end}}`, `{{if 2}}{{else}}{{.Nope}}{{end}}`,
+		`{{with ""}}{{.Nope}}{{end}}`, `{{with "a"}}{{.Len}}{{end}}`, `{{with "a"}}{{.}}{{end}}`,
+		`{{with 0}}{{else}}{{.Nope}}{{end}}`, `{{with 0}}{{.Nope}}{{end}}`, `{{with 0.0}}{{.Nope}}{{end}}`,
 
 		// Builtins and FuncMap functions.
 		`{{len .Count}}`, `{{len .Title}}`, `{{len .ByCol}}`, `{{index .Count 0}}`, `{{index .Cards 0 0}}`,
@@ -128,6 +165,10 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 		// Positions on later lines, and inside actions that span lines.
 		"x\n{{range .Cards}}\n  {{.Nam}}{{end}}", "\n{{(index .ByCol\n  \"a\").Owner.Edit}}",
 		"\n{{upper\n \"a\" \"b\"}}", "\n\n{{range $i, $v :=\n  .Count}}{{end}}", "{{len\n\n .Owner}}",
+	)
+	add(func() any { return filledWrapper() }, // any: case data
+		`{{.RV.Name}}`, `{{.RVErr.Name}}`, `{{(wrap).Name}}`, `{{.RV}}`, `{{wrap | print}}`,
+		`{{.F.Name}}`, `{{(call .Fn).Name}}`, `{{call .Fn}}`,
 	)
 	add(boardPtr, `{{range .Fixed}}{{.Owner.Edit}}{{end}}`, `{{(index .Fixed 0).Owner.Edit}}`, `{{.Owner.Edit}}`)
 

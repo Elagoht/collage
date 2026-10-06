@@ -3,6 +3,7 @@ package typecheck
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"text/template/parse"
 )
 
@@ -16,7 +17,10 @@ func (w *walker) branch(b *parse.BranchNode, dot value, vars []variable, with bo
 		body = cond
 	}
 	// A literal condition decides which side runs; the other is never walked.
-	taken, constant := literalBool(b.Pipe)
+	taken, constant := false, false
+	if len(b.Pipe.Decl) == 0 {
+		taken, constant = w.truth(b.Pipe, false)
+	}
 	if !constant || taken {
 		w.list(b.List, body, inner)
 	}
@@ -25,16 +29,63 @@ func (w *walker) branch(b *parse.BranchNode, dot value, vars []variable, with bo
 	}
 }
 
-// literalBool reports whether p is nothing but true or false.
-func literalBool(p *parse.PipeNode) (value, ok bool) {
-	if p == nil || len(p.Decl) != 0 || len(p.Cmds) != 1 || len(p.Cmds[0].Args) != 1 {
-		return false, false
+// truth reports the truth text/template gives node when node is a literal, or
+// the builtin not of one, whose value is fixed before the render: false, 0, ""
+// and nil are false, any other number or string is true. ok is false for
+// anything else. nil is a value only as an argument — as a command of its own
+// it is an error — so it counts only when arg is set.
+func (w *walker) truth(node parse.Node, arg bool) (truth, ok bool) {
+	switch n := node.(type) {
+	case *parse.BoolNode:
+		return n.True, true
+	case *parse.StringNode:
+		return n.Text != "", true
+	case *parse.NilNode:
+		return false, arg
+	case *parse.NumberNode:
+		return numberTruth(n)
+	case *parse.PipeNode:
+		if n == nil || len(n.Decl) != 0 || len(n.Cmds) != 1 {
+			return false, false
+		}
+		return w.truth(n.Cmds[0], false)
+	case *parse.CommandNode:
+		switch len(n.Args) {
+		case 1:
+			return w.truth(n.Args[0], false)
+		case 2:
+			ident, isIdent := n.Args[0].(*parse.IdentifierNode)
+			if _, overridden := w.c.Funcs["not"]; !isIdent || ident.Ident != "not" || overridden {
+				return false, false
+			}
+			t, ok := w.truth(n.Args[1], true)
+			return !t, ok
+		}
 	}
-	b, isBool := p.Cmds[0].Args[0].(*parse.BoolNode)
-	if !isBool {
-		return false, false
+	return false, false
+}
+
+// numberTruth is the truth of the value text/template's idealConstant makes of
+// n, taking its cases in the same order. A number that overflows int is an
+// error, not a value.
+func numberTruth(n *parse.NumberNode) (truth, ok bool) {
+	switch {
+	case n.IsComplex:
+		return n.Complex128 != 0, true
+	case n.IsFloat && !isHexInt(n.Text) && !strings.HasPrefix(n.Text, "'") && strings.ContainsAny(n.Text, ".eEpP"):
+		return n.Float64 != 0, true
+	case n.IsInt:
+		if int64(int(n.Int64)) != n.Int64 {
+			return false, false
+		}
+		return n.Int64 != 0, true
 	}
-	return b.True, true
+	return false, false
+}
+
+// isHexInt is text/template's: a hexadecimal integer, whose e or E is a digit.
+func isHexInt(s string) bool {
+	return len(s) > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X') && !strings.ContainsAny(s, "pP")
 }
 
 // rangeOver walks a range: its body with each element as dot, its else with the

@@ -16,7 +16,10 @@ type value struct {
 
 var unknown = value{}
 
-var errorType = reflect.TypeFor[error]()
+var (
+	errorType        = reflect.TypeFor[error]()
+	reflectValueType = reflect.TypeFor[reflect.Value]()
+)
 
 // typed is a value of type t; an interface is unknown, since what it holds is
 // only known when it renders.
@@ -116,6 +119,11 @@ func (w *walker) result(node parse.Node, name string, ft reflect.Type, argc int,
 	}
 	switch {
 	case ft.NumOut() == 1, ft.NumOut() == 2 && ft.Out(1) == errorType:
+		// text/template unwraps a reflect.Value a call returns and goes on
+		// with what it holds, which is only known when it renders.
+		if ft.Out(0) == reflectValueType {
+			return unknown
+		}
 		return typed(ft.Out(0), false)
 	}
 	w.report(node, fmt.Sprintf("%s returns %d values; a template can call one that returns a value, or a value and an error", name, ft.NumOut()), "")

@@ -45,9 +45,11 @@ func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse
 	for _, arg := range args {
 		values = append(values, w.arg(arg, dot, vars))
 		// and and or stop at the first operand that decides them, so what
-		// follows a literal false (and) or true (or) never runs.
-		if b, ok := arg.(*parse.BoolNode); ok && !overridden && (name == "and" && !b.True || name == "or" && b.True) {
-			return unknown
+		// follows a literal that is false (and) or true (or) never runs.
+		if !overridden && (name == "and" || name == "or") {
+			if truth, ok := w.truth(arg, true); ok && truth == (name == "or") {
+				return unknown
+			}
 		}
 	}
 	if hasFinal {
@@ -116,7 +118,13 @@ func (w *walker) builtin(node parse.Node, name string, args []value) value {
 			return unknown
 		}
 		if fn := args[0].t; fn.Kind() == reflect.Func {
-			return w.result(node, "call", fn, len(args)-1, false)
+			v := w.result(node, "call", fn, len(args)-1, false)
+			// call hands back fn's result wrapped once more, and text/template
+			// unwraps only that: a reflect.Value fn returns stays one.
+			if fn.NumOut() > 0 && fn.Out(0) == reflectValueType {
+				return typed(reflectValueType, false)
+			}
+			return v
 		}
 		w.report(node, fmt.Sprintf("call of type %s, which is not a function", args[0].t), "")
 		return unknown
