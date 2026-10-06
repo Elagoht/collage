@@ -104,7 +104,7 @@ registers as before.
 
 **A fragment with no data.** Its `.` is nil, and `{{.X}}` on nil fails at render
 (`nil data; no entry for key`). The walker gives such a fragment the *nil* dot
-type: a field, method or `range` on it is a **definite error**, except inside
+type: a field or method on it is a **definite error**, except inside
 the body of an `{{if}}` or `{{with}}` whose condition is `.` itself, which never
 runs and is not walked. A `{{template "x" .}}` passes the nil type on.
 
@@ -140,7 +140,7 @@ Argument *types* are not checked in this version, only their count:
 `text/template` converts some arguments itself, and mirroring that exactly is
 where false alarms would come from.
 
-| Nil dot (no data, `Effect`) | Field, method or `range`: **definite error**. Bodies of `{{if .}}`/`{{with .}}` are dead and skipped; `else` branches are walked. |
+| Nil dot (no data, `Effect`) | Field or method: **definite error**. `range` over nil is not one (`text/template` runs its `else`), nor is printing it. Bodies of `{{if .}}`/`{{with .}}` are dead and skipped; `else` branches are walked. |
 
 Not in scope: nil-pointer chains inside data, "probably wrong" warnings, anything
 that is not certain to fail.
