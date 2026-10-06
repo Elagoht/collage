@@ -102,11 +102,11 @@ collage.NewFragment("layout", "layout.html")
 `WithoutTypeCheck()` sets a flag the walker honours; the fragment otherwise
 registers as before.
 
-**A fragment with no data.** Its `.` is nil, and `{{.X}}` on nil fails at render
-(`nil data; no entry for key`). The walker gives such a fragment the *nil* dot
-type: a field or method on it is a **definite error**, except inside
-the body of an `{{if}}` or `{{with}}` whose condition is `.` itself, which never
-runs and is not walked. A `{{template "x" .}}` passes the nil type on.
+**A fragment with no data** (no `WithData`, or `Effect`) is walked with an
+unknown `.`. Reading a field of nil data is not an error in html/template: it
+renders nothing (probed on Go 1.26: `{{.X}}`, `{{.X.Y}}` and `{{template "p"}}`
+with nil data all execute cleanly). So nothing about `.` can be reported there;
+function calls, argument counts and `$`-free expressions still are.
 
 ### 2. The walker: `internal/template/typecheck`
 
@@ -124,12 +124,13 @@ unknown value is reported.
 | Construct | Rule |
 | --- | --- |
 | `.Field`, `.A.B.C` | Pointers are followed. On a struct: a field first, promoted fields of embedded structs included, then a method. Neither found, or the field is unexported: **definite error**. |
-| `.Method` | Looked up on `T` and `*T`. The result type is the method's first result; the argument count is checked. |
+| `.Method` | A method of `T`. A method of `*T` is callable only when the value is addressable, as `text/template` reaches it through `Value.Addr`: data handed to the template, a field of a non-addressable struct, a map element and a function's result are not addressable; what a pointer points to, a slice element (by `range` or `index`), and fields of an addressable struct are. `{{.In.PM}}` with `PM` on `*Inner` and the data passed by value is a **definite error**. The result type is the method's first result; the argument count is checked. |
 | `.key` on `map[string]V` (or any map with a string-kind key) | Valid, type `V`. A missing key is the zero value at runtime, not an error. |
 | interface, `any` | Unknown. |
-| `{{range x}}` | Slice, array, map, channel, integer. Inside, `.` is the element; `$i, $v :=` is typed. Ranging over anything else: **definite error**. `else` keeps the outer `.`. |
+| `{{range x}}` | Slice, array, map, channel, integer, `iter.Seq`/`iter.Seq2`. Inside, `.` is the element; `$i, $v :=` is typed. Ranging over a string, a struct or any other kind, or over an integer with two variables: **definite error**. `else` keeps the outer `.`. |
 | `{{with x}}` | Inside, `.` is `x`'s type; `else` keeps the outer `.`. |
 | `{{if}}`, `{{else if}}` | `.` unchanged; every branch is walked. |
+| `len x`, `index x …` | `len` of a kind other than array, chan, map, slice, string, and `index` into a kind other than array, slice, map, string: **definite error**. |
 | `$x := …`, `$x = …`, `$` | Variables are typed for their scope; `$` is the root type. |
 | Function calls | Signatures from the merged FuncMap (built-ins, collage's own, plugin render funcs, `TemplateConfig.Funcs`) by `reflect`. Argument count checked, result type propagated. Special rules for `index`, `slice`, `len`, `not`, `eq`/`ne`/`lt`/`le`/`gt`/`ge`, `print*`, `html`/`js`/`urlquery`. `call` is unknown; `and`/`or` are unknown when their operands differ in type. |
 | `{{template "x" pipeline}}` | `x` is walked with the pipeline's type. A partial included with several types is walked once per type; `(template, type)` pairs are memoised. |
@@ -140,7 +141,6 @@ Argument *types* are not checked in this version, only their count:
 `text/template` converts some arguments itself, and mirroring that exactly is
 where false alarms would come from.
 
-| Nil dot (no data, `Effect`) | Field or method: **definite error**. `range` over nil is not one (`text/template` runs its `else`), nor is printing it. Bodies of `{{if .}}`/`{{with .}}` are dead and skipped; `else` branches are walked. |
 
 Not in scope: nil-pointer chains inside data, "probably wrong" warnings, anything
 that is not certain to fail.
@@ -235,8 +235,8 @@ startup check is the guarantee.
    The reference is `text/template` itself, not this spec's reading of it.
 3. **Registration** (`pkg/collage`): `RegisterPage` fails with findings readable
    through `errors.As`; `WithoutTypeCheck` silences a fragment; `Load[any]` is
-   skipped; data-less fragments are checked with the nil rule; inline fragments
-   and fallbacks are walked.
+   skipped; a data-less fragment reports nothing about `.`; inline fragments and
+   fallbacks are walked.
 4. **Data constructors**: each of `Load`, `DataHandler`, `Value`, `Effect` records
    the right type and keeps today's behaviour (tags, errors dropping the data,
    timeouts, prefetch).
