@@ -483,7 +483,7 @@ func New(cfg Config) (*App, error) {
 		app.middleware = append(app.middleware, middlewareSlot{plugin: p.Name()})
 	}
 	if err := app.plugins.Configure(context.Background(), func(name string) plugin.ConfigHost {
-		return &configHostView{app: app, name: name}
+		return &configHostView{ConfigSource: plugin.ConfigSource{Name: name, Config: app.cfg.PluginConfig}, app: app}
 	}); err != nil {
 		return nil, err
 	}
@@ -784,7 +784,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 	// its way back to Shutdown, ListenAndServe, Handler, and RenderPath, which is
 	// exactly what plugin.Host exists to keep out of reach. See host.go.
 	if err := a.plugins.Init(context.Background(), func(name string) plugin.Host {
-		return &hostView{app: a, name: name}
+		return &hostView{ConfigSource: plugin.ConfigSource{Name: name, Config: a.cfg.PluginConfig}, app: a, name: name}
 	}); err != nil {
 		return a.buildFailed(err)
 	}

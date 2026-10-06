@@ -37,8 +37,8 @@ type App = core.App
 type Plugin = plugin.Plugin
 
 // Host is the capability surface a plugin receives in Init: DevMode, Pages, Page,
-// InvalidateTags, Logger, RegisterCommand, Config, RegisterPage, RegisterDocument,
-// and Mount, and nothing else.
+// InvalidateTags, Logger, RegisterCommand, RegisterPage, RegisterDocument,
+// and Mount, and nothing else — plus the ConfigReader PluginConfig reads through.
 //
 // The value handed to Init is deliberately not the *App. *App has most of these
 // methods, but it also has Shutdown, ListenAndServe, Handler, and RenderPath, and a
@@ -182,6 +182,20 @@ type Configurer = plugin.Configurer
 
 // ConfigHost is the narrower capability surface Configure receives.
 type ConfigHost = plugin.ConfigHost
+
+// ConfigReader is a host PluginConfig reads a plugin's configuration through:
+// the Host given to Init and the ConfigHost given to Configure.
+type ConfigReader = plugin.ConfigReader
+
+// PluginConfig returns the plugin's section of the application's plugin
+// configuration decoded over defaults:
+//
+//	cfg, err := collage.PluginConfig(host, Config{Limit: 10, Window: time.Minute})
+//
+// No section leaves defaults as they are; a malformed one is an error.
+func PluginConfig[T any](host ConfigReader, defaults T) (T, error) {
+	return plugin.PluginConfig(host, defaults)
+}
 
 // DocumentRenderedHook is implemented by a plugin that wants to transform a
 // document's bytes before they are served — the non-HTML counterpart to

@@ -456,7 +456,7 @@ func TestRegistry_PluginWithNoHooksIsNeverCalled(t *testing.T) {
 
 // fakeHost is a minimal Host implementation for tests that only need to satisfy
 // the parameter, not exercise it.
-type fakeHost struct{}
+type fakeHost struct{ ConfigSource }
 
 func (fakeHost) DevMode() bool                                               { return false }
 func (fakeHost) BaseURL() string                                             { return "" }
@@ -465,7 +465,6 @@ func (fakeHost) Page(name string) (*types.Page, bool)                        { r
 func (fakeHost) InvalidateTags(ctx context.Context, tags ...string) error    { return nil }
 func (fakeHost) Logger() *slog.Logger                                        { return slog.Default() }
 func (fakeHost) RegisterCommand(cmd Command) error                           { return nil }
-func (fakeHost) Config(v any) error                                          { return nil } // any: restates encoding/json's own parameter type
 func (fakeHost) RegisterPage(page *types.Page) error                         { return nil }
 func (fakeHost) RegisterDocument(doc *types.Document) error                  { return nil }
 func (fakeHost) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error { return nil }

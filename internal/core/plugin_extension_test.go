@@ -53,8 +53,7 @@ func (p *extPlugin) Configure(_ context.Context, host plugin.ConfigHost) error {
 	p.configDevOK = host.Logger() != nil
 
 	// Defaults in, overlaid by whatever the application supplied.
-	p.settings = extSettings{Greeting: "default"}
-	p.configErr = host.Config(&p.settings)
+	p.settings, p.configErr = plugin.PluginConfig(host, extSettings{Greeting: "default"})
 
 	p.addFuncErr = host.AddTemplateFunc("shout", func(s string) string { return strings.ToUpper(s) })
 	p.addFuncTwice = host.AddTemplateFunc("shout", func(s string) string { return s })
@@ -68,8 +67,7 @@ func (p *extPlugin) Configure(_ context.Context, host plugin.ConfigHost) error {
 
 func (p *extPlugin) Init(_ context.Context, host plugin.Host) error {
 	p.inited = true
-	p.initCfg = extSettings{Greeting: "default"}
-	_ = host.Config(&p.initCfg)
+	p.initCfg, _ = plugin.PluginConfig(host, extSettings{Greeting: "default"})
 
 	p.registerErr = host.RegisterDocument(&types.Document{
 		Name:        "plugin-doc",
@@ -333,8 +331,9 @@ func (*configInInitPlugin) Name() string    { return "acme/late" }
 func (*configInInitPlugin) Version() string { return "1.0.0" }
 
 func (p *configInInitPlugin) Init(_ context.Context, host plugin.Host) error {
-	p.settings = extSettings{Greeting: "default"}
-	return host.Config(&p.settings)
+	var err error
+	p.settings, err = plugin.PluginConfig(host, extSettings{Greeting: "default"})
+	return err
 }
 
 func (*configInInitPlugin) Shutdown(context.Context) error { return nil }

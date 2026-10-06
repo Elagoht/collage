@@ -31,8 +31,13 @@ import (
 // The forwarding methods are deliberately not promoted from an embedded *App: an
 // embedded field promotes the whole method set, which is the thing being prevented.
 type hostView struct {
+	// ConfigSource is this plugin's name and the application's plugin
+	// configuration, which collage.PluginConfig reads. Its one method is
+	// unexported, so embedding it promotes nothing a plugin could call.
+	plugin.ConfigSource
 	app *App
-	// name is the plugin this view was made for, so Config can find its section.
+	// name is the plugin this view was made for, so Use knows whose middleware
+	// it is adding.
 	name string
 }
 
@@ -100,12 +105,6 @@ func (h *hostView) Logger() *slog.Logger {
 // RegisterCommand registers cmd as one of the application's CLI subcommands.
 func (h *hostView) RegisterCommand(cmd plugin.Command) error {
 	return h.app.RegisterCommand(cmd)
-}
-
-// Config decodes this plugin's section of the application's plugin configuration
-// into v.
-func (h *hostView) Config(v any) error { // any: restates encoding/json's own parameter type
-	return plugin.DecodeConfig(h.app.cfg.PluginConfig, h.name, v)
 }
 
 // RegisterPage registers a page the plugin contributes.
@@ -182,8 +181,9 @@ func (h *hostView) ServeStatus(w http.ResponseWriter, r *http.Request, status in
 // have no cache to reach. Handing over a Host whose methods are all technically
 // callable and mostly meaningless is worse than handing over a smaller interface.
 type configHostView struct {
-	app  *App
-	name string
+	// ConfigSource is what collage.PluginConfig reads; see hostView.
+	plugin.ConfigSource
+	app *App
 }
 
 var _ plugin.ConfigHost = (*configHostView)(nil)
@@ -197,12 +197,6 @@ func (h *configHostView) BaseURL() string { return h.app.cfg.BaseURL }
 
 // Logger returns the application's structured logger.
 func (h *configHostView) Logger() *slog.Logger { return h.app.logger }
-
-// Config decodes this plugin's section of the application's plugin configuration
-// into v.
-func (h *configHostView) Config(v any) error { // any: restates encoding/json's own parameter type
-	return plugin.DecodeConfig(h.app.cfg.PluginConfig, h.name, v)
-}
 
 // AddTemplateFunc registers fn under name, for every template parsed after this
 // call — which, since Configure runs before parsing, means all of them.

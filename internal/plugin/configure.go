@@ -46,11 +46,8 @@ type ConfigHost interface {
 	BaseURL() string
 	// Logger returns the application's structured logger.
 	Logger() *slog.Logger
-	// Config decodes this plugin's section of the application's plugin
-	// configuration into v, leaving v untouched when the plugin has no section.
-	// That is what lets v carry the plugin's defaults in and come back either
-	// unchanged or overlaid.
-	Config(v any) error // any: restates encoding/json's own parameter type
+	// ConfigReader lets collage.PluginConfig read this plugin's configuration.
+	ConfigReader
 	// AddTemplateFunc registers fn as a template function under name. It returns
 	// ErrDuplicateTemplateFunc when another plugin already registered that name,
 	// because two plugins quietly overwriting each other's functions is a bug
@@ -129,23 +126,6 @@ func (r *Registry) CheckConfigKeys(config map[string]json.RawMessage) error {
 		if _, ok := known[key]; !ok {
 			return fmt.Errorf("%w: %q", ErrUnknownPluginConfig, key)
 		}
-	}
-	return nil
-}
-
-// DecodeConfig decodes the section named for a plugin into v.
-//
-// An absent section is not an error and leaves v alone, so a plugin passes its
-// defaults in and gets them back either unchanged or overlaid. A present but
-// malformed section is an error: the operator wrote something, and running on
-// defaults instead would be the silent failure this refuses.
-func DecodeConfig(config map[string]json.RawMessage, name string, v any) error { // any: restates encoding/json's own parameter type
-	raw, ok := config[name]
-	if !ok || len(raw) == 0 {
-		return nil
-	}
-	if err := json.Unmarshal(raw, v); err != nil {
-		return fmt.Errorf("collage: plugin %q configuration: %w", name, err)
 	}
 	return nil
 }

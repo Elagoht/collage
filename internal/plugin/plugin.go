@@ -115,11 +115,8 @@ type Host interface {
 	// the CLI; a Host implementation that has no CLI may simply store
 	// cmd or reject it, at its own discretion.
 	RegisterCommand(cmd Command) error
-	// Config decodes this plugin's section of the application's plugin
-	// configuration into v, leaving v untouched when the plugin has no section —
-	// so v carries the plugin's defaults in and comes back either unchanged or
-	// overlaid.
-	Config(v any) error // any: restates encoding/json's own parameter type
+	// ConfigReader lets collage.PluginConfig read this plugin's configuration.
+	ConfigReader
 	// RegisterPage registers a page the plugin contributes. It fails on the same
 	// terms as the application's own registration — a duplicate name, a path
 	// another route already claims — and for the same reason: a plugin's page
