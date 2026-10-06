@@ -10,23 +10,30 @@ import (
 // call evaluates a call of the function ident names. A name the set was parsed
 // with comes first, as in text/template; then text/template's builtins. The
 // escaper's own functions, which html/template adds after parsing, and any name
-// neither knows, are unknown. Every argument is walked.
-func (w *walker) call(ident *parse.IdentifierNode, args []parse.Node, dot value, vars []variable, hasFinal bool, final value) value {
+// neither knows, are unknown. Every argument is walked, except those and and or
+// skip. Findings are reported at node, the whole command.
+func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse.Node, dot value, vars []variable, hasFinal bool, final value) value {
+	name := ident.Ident
+	_, overridden := w.c.Funcs[name]
 	values := make([]value, 0, len(args)+1)
 	for _, arg := range args {
 		values = append(values, w.arg(arg, dot, vars))
+		// and and or stop at the first operand that decides them, so what
+		// follows a literal false (and) or true (or) never runs.
+		if b, ok := arg.(*parse.BoolNode); ok && !overridden && (name == "and" && !b.True || name == "or" && b.True) {
+			return unknown
+		}
 	}
 	if hasFinal {
 		values = append(values, final)
 	}
-	name := ident.Ident
 	if strings.HasPrefix(name, "_html_template_") {
 		return unknown
 	}
 	if ft, ok := w.c.Funcs[name]; ok && ft != nil && ft.Kind() == reflect.Func {
-		return w.result(ident, name, ft, len(values), false)
+		return w.result(node, name, ft, len(values), false)
 	}
-	return w.builtin(ident, name, values)
+	return w.builtin(node, name, values)
 }
 
 func (w *walker) builtin(node parse.Node, name string, args []value) value {

@@ -165,7 +165,7 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 		argc++
 	}
 	if ident, ok := cmd.Args[0].(*parse.IdentifierNode); ok {
-		return w.call(ident, cmd.Args[1:], dot, vars, hasFinal, final)
+		return w.call(ident, cmd, cmd.Args[1:], dot, vars, hasFinal, final)
 	}
 	for _, arg := range cmd.Args[1:] {
 		w.arg(arg, dot, vars)
@@ -195,7 +195,7 @@ func (w *walker) arg(node parse.Node, dot value, vars []variable) value {
 	case *parse.DotNode:
 		return dot
 	case *parse.IdentifierNode:
-		return w.call(n, nil, dot, vars, false, unknown)
+		return w.call(n, n, nil, dot, vars, false, unknown)
 	case *parse.StringNode:
 		return typed(reflect.TypeFor[string](), false)
 	case *parse.BoolNode:

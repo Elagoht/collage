@@ -15,8 +15,26 @@ func (w *walker) branch(b *parse.BranchNode, dot value, vars []variable, with bo
 	if with {
 		body = cond
 	}
-	w.list(b.List, body, inner)
-	w.list(b.ElseList, dot, inner)
+	// A literal condition decides which side runs; the other is never walked.
+	taken, constant := literalBool(b.Pipe)
+	if !constant || taken {
+		w.list(b.List, body, inner)
+	}
+	if !constant || !taken {
+		w.list(b.ElseList, dot, inner)
+	}
+}
+
+// literalBool reports whether p is nothing but true or false.
+func literalBool(p *parse.PipeNode) (value, ok bool) {
+	if p == nil || len(p.Decl) != 0 || len(p.Cmds) != 1 || len(p.Cmds[0].Args) != 1 {
+		return false, false
+	}
+	b, isBool := p.Cmds[0].Args[0].(*parse.BoolNode)
+	if !isBool {
+		return false, false
+	}
+	return b.True, true
 }
 
 // rangeOver walks a range: its body with each element as dot, its else with the

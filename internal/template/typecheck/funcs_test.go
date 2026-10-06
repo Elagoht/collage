@@ -2,6 +2,7 @@ package typecheck
 
 import (
 	"html/template"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -70,5 +71,44 @@ func TestCheck_EscaperFunctionsIgnored(t *testing.T) {
 	c := &Checker{Lookup: func(name string) *parse.Tree { return set.Lookup(name).Tree }}
 	if got := c.Check("t.html", Dot{Type: boardType}); len(got) != 0 {
 		t.Errorf("escaped tree: %+v, want none", got)
+	}
+}
+
+func TestCheck_ShortCircuitsAndLiteralConditions(t *testing.T) {
+	nope := "t.html:1 type typecheck.board has no field or method Nope"
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"and stops at false", `{{and false .Nope}}`, nil},
+		{"or stops at true", `{{or true .Nope}}`, nil},
+		{"and walks past true", `{{and true .Nope}}`, []string{nope}},
+		{"or walks past false", `{{or false .Nope}}`, []string{nope}},
+		{"and with a non-constant guard", `{{and .Title .Nope}}`, []string{nope}},
+		{"if false skips the body", `{{if false}}{{.Nope}}{{end}}`, nil},
+		{"if false walks the else", `{{if false}}{{else}}{{.Nope}}{{end}}`, []string{nope}},
+		{"if true skips the else", `{{if true}}{{else}}{{.Nope}}{{end}}`, nil},
+		{"if true walks the body", `{{if true}}{{.Nope}}{{end}}`, []string{nope}},
+		{"with false skips the body", `{{with false}}{{.Nope}}{{end}}`, nil},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := template.Must(template.New("x").Parse(test.src)).Execute(io.Discard, board{Title: "x"}); (err != nil) != (len(test.want) > 0) {
+				t.Fatalf("html/template Execute(%q) = %v, disagrees with the expectation %q", test.src, err, test.want)
+			}
+			got := reasons(t, test.src, boardType)
+			if strings.Join(got, "\n") != strings.Join(test.want, "\n") {
+				t.Errorf("Check(%q)\n got: %q\nwant: %q", test.src, got, test.want)
+			}
+		})
+	}
+}
+
+func TestCheck_FunctionFindingIsTheWholeCommand(t *testing.T) {
+	c := checker(t, map[string]string{"t.html": `{{len (index .Cards 0).Owner}}`}, nil)
+	got := c.Check("t.html", Dot{Type: boardType})
+	if len(got) != 1 || got[0].Expr != "{{len (index .Cards 0).Owner}}" {
+		t.Errorf("findings = %+v, want one with the whole command as Expr", got)
 	}
 }
