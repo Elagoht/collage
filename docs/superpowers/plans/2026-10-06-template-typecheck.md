@@ -123,7 +123,7 @@ func checker(t *testing.T, files map[string]string, funcs template.FuncMap) *Che
 }
 
 // reasons runs src as "t.html" against dot and returns each finding as
-// "line:col reason [suggestion]".
+// "t.html:line reason [suggestion]".
 func reasons(t *testing.T, src string, dot reflect.Type) []string {
 	t.Helper()
 	c := checker(t, map[string]string{"t.html": src}, nil)
@@ -134,9 +134,10 @@ func reasons(t *testing.T, src string, dot reflect.Type) []string {
 	return out
 }
 
-// describe writes a finding as "file:line:col reason [suggestion]".
+// describe writes a finding as "file:line reason [suggestion]". Columns are left
+// to Task 4's test, which compares them with text/template's own errors.
 func describe(f Finding) string {
-	line := f.Template + ":" + strconv.Itoa(f.Line) + ":" + strconv.Itoa(f.Col) + " " + f.Reason
+	line := f.Template + ":" + strconv.Itoa(f.Line) + " " + f.Reason
 	if f.Suggestion != "" {
 		line += " [" + f.Suggestion + "]"
 	}
@@ -155,40 +156,40 @@ func TestCheck_FieldsMethodsMaps(t *testing.T) {
 	}{
 		{"field", `{{.Title}}`, postType, nil},
 		{"missing field suggests", `{{.Titel}}`, postType,
-			[]string{"t.html:1:2 type typecheck.post has no field or method Titel [Title]"}},
+			[]string{"t.html:1 type typecheck.post has no field or method Titel [Title]"}},
 		{"unexported field", `{{.secret}}`, postType,
-			[]string{"t.html:1:2 secret is an unexported field of type typecheck.post"}},
+			[]string{"t.html:1 secret is an unexported field of type typecheck.post"}},
 		{"promoted field", `{{.Promoted}}`, postType, nil},
 		{"through a pointer", `{{.Author.Name}}`, postType, nil},
 		{"missing through a pointer", `{{.Author.Nmae}}`, postType,
-			[]string{"t.html:1:2 type typecheck.user has no field or method Nmae [Name]"}},
+			[]string{"t.html:1 type typecheck.user has no field or method Nmae [Name]"}},
 		{"value method", `{{.URL}}`, postType, nil},
 		{"field of a string", `{{.Title.Len}}`, postType,
-			[]string{"t.html:1:2 type string has no field or method Len"}},
+			[]string{"t.html:1 type string has no field or method Len"}},
 		{"field given arguments", `{{.Title "x"}}`, postType,
-			[]string{"t.html:1:2 Title is a field of type typecheck.post, not a method, and takes no arguments"}},
+			[]string{"t.html:1 Title is a field of type typecheck.post, not a method, and takes no arguments"}},
 		{"method argument count", `{{.Two "a"}}`, postType,
-			[]string{"t.html:1:2 wrong number of arguments for Two: want 2, got 1"}},
+			[]string{"t.html:1 wrong number of arguments for Two: want 2, got 1"}},
 		{"variadic method", `{{.Join "," "a" "b"}}`, postType, nil},
 		{"variadic method too few", `{{.Join}}`, postType,
-			[]string{"t.html:1:2 wrong number of arguments for Join: want at least 1, got 0"}},
+			[]string{"t.html:1 wrong number of arguments for Join: want at least 1, got 0"}},
 		{"two results without error", `{{.Bad}}`, postType,
-			[]string{"t.html:1:2 Bad returns 2 values; a template can call one that returns a value, or a value and an error"}},
+			[]string{"t.html:1 Bad returns 2 values; a template can call one that returns a value, or a value and an error"}},
 		{"value and error", `{{.Err}}`, postType, nil},
 		{"string-keyed map", `{{.Meta.anything}}`, postType, nil},
 		{"map keyed by a named string", `{{.ByID.first}}`, postType,
-			[]string{"t.html:1:2 type map[typecheck.slug]typecheck.comment is keyed by typecheck.slug, which .first cannot look up"}},
+			[]string{"t.html:1 type map[typecheck.slug]typecheck.comment is keyed by typecheck.slug, which .first cannot look up"}},
 		{"map[string]any is unknown", `{{.Loose.a.b.c}}`, postType, nil},
 		{"interface field is unknown", `{{.Extra.Whatever}}`, postType, nil},
 		{"unknown dot reports nothing", `{{.Nope}}`, nil, nil},
 
 		{"pointer method on data passed by value", `{{.Owner.Edit}}`, postType,
-			[]string{"t.html:1:2 method Edit has a pointer receiver, and this typecheck.user is not addressable: pass the data as a pointer, or reach the value through a slice"}},
+			[]string{"t.html:1 method Edit has a pointer receiver, and this typecheck.user is not addressable: pass the data as a pointer, or reach the value through a slice"}},
 		{"pointer method on data passed by pointer", `{{.Owner.Edit}}`, postPtr, nil},
 		{"pointer method through a pointer field", `{{.Author.Edit}}`, postType, nil},
 		{"value method on a map element", `{{.x.By.Display}}`, reflect.TypeFor[map[string]comment](), nil},
 		{"pointer method on a string-map element", `{{.x.By.Edit}}`, reflect.TypeFor[map[string]comment](),
-			[]string{"t.html:1:2 method Edit has a pointer receiver, and this typecheck.user is not addressable: pass the data as a pointer, or reach the value through a slice"}},
+			[]string{"t.html:1 method Edit has a pointer receiver, and this typecheck.user is not addressable: pass the data as a pointer, or reach the value through a slice"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -211,6 +212,14 @@ func TestCheck_ExprAndOrder(t *testing.T) {
 	}
 }
 
+func TestCheck_ExprIsNotTruncated(t *testing.T) {
+	c := checker(t, map[string]string{"t.html": `{{.Author.Nmaaaaaaaaaaaaaaaaaaaaaaaaaa}}`}, nil)
+	got := c.Check("t.html", Dot{Type: postType})
+	if len(got) != 1 || got[0].Expr != "{{.Author.Nmaaaaaaaaaaaaaaaaaaaaaaaaaa}}" {
+		t.Errorf("findings = %+v, want the whole expression", got)
+	}
+}
+
 func TestCheck_UnknownTemplate(t *testing.T) {
 	c := checker(t, map[string]string{"t.html": `x`}, nil)
 	if got := c.Check("nope.html", Dot{Type: postType}); len(got) != 0 {
@@ -219,7 +228,7 @@ func TestCheck_UnknownTemplate(t *testing.T) {
 }
 ```
 
-Columns are what `parse.Tree.ErrorContext` reports — the byte offset of the node on its line, the same numbers `text/template`'s own errors print.
+Columns are not asserted here: the parser places a multi-segment field (`.Title.Len`) at its last segment, not where it starts, and Task 4 checks every column against `text/template`'s own error for the same node.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -470,9 +479,11 @@ func lookup(vars []variable, name string) value {
 
 // report records a finding at node, once.
 func (w *walker) report(node parse.Node, reason, suggestion string) {
-	location, context := w.tree.ErrorContext(node)
+	// ErrorContext gives the location; its context is cut at twenty characters,
+	// so the expression is the node's own text.
+	location, _ := w.tree.ErrorContext(node)
 	name, line, col := splitLocation(location)
-	f := Finding{Template: name, Line: line, Col: col, Expr: "{{" + context + "}}", Reason: reason, Suggestion: suggestion}
+	f := Finding{Template: name, Line: line, Col: col, Expr: "{{" + node.String() + "}}", Reason: reason, Suggestion: suggestion}
 	if w.seen[f] {
 		return
 	}
@@ -706,7 +717,7 @@ func (w *walker) call(ident *parse.IdentifierNode, args []parse.Node, dot value,
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `go test -count=1 ./internal/template/typecheck/`
-Expected: PASS. If a `want` line differs only in a column number, the column is what `parse.Tree.ErrorContext` reports for that node; fix the test, not the walker, and say so in the commit message.
+Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
@@ -767,30 +778,30 @@ func TestCheck_Control(t *testing.T) {
 	}{
 		{"range slice", `{{range .Cards}}{{.Name}}{{end}}`, nil},
 		{"range slice wrong field", `{{range .Cards}}{{.Nam}}{{end}}`,
-			[]string{"t.html:1:18 type typecheck.card has no field or method Nam [Name]"}},
+			[]string{"t.html:1 type typecheck.card has no field or method Nam [Name]"}},
 		{"range else keeps outer dot", `{{range .Cards}}{{else}}{{.Title}}{{end}}`, nil},
 		{"range two variables", `{{range $i, $c := .Cards}}{{$c.Name}}{{$i}}{{end}}`, nil},
 		{"range map", `{{range $k, $v := .ByCol}}{{$v.Name}}{{end}}`, nil},
 		{"range int", `{{range .Count}}{{.}}{{end}}`, nil},
 		{"range int two variables", `{{range $i, $v := .Count}}{{end}}`,
-			[]string{"t.html:1:8 range over type int cannot declare two variables"}},
+			[]string{"t.html:1 range over type int cannot declare two variables"}},
 		{"range iter.Seq", `{{range .Seq}}{{.Name}}{{end}}`, nil},
 		{"range string", `{{range .Title}}{{end}}`,
-			[]string{"t.html:1:8 range cannot iterate over type string"}},
+			[]string{"t.html:1 range cannot iterate over type string"}},
 		{"range struct", `{{range .Owner}}{{end}}`,
-			[]string{"t.html:1:8 range cannot iterate over type typecheck.user"}},
+			[]string{"t.html:1 range cannot iterate over type typecheck.user"}},
 		{"slice element is addressable", `{{range .Cards}}{{.Owner.Edit}}{{end}}`, nil},
 		{"map element is not addressable", `{{range .ByCol}}{{.Owner.Edit}}{{end}}`,
-			[]string{"t.html:1:18 method Edit has a pointer receiver, and this typecheck.user is not addressable: pass the data as a pointer, or reach the value through a slice"}},
+			[]string{"t.html:1 method Edit has a pointer receiver, and this typecheck.user is not addressable: pass the data as a pointer, or reach the value through a slice"}},
 		{"with narrows dot", `{{with .Owner}}{{.Name}}{{end}}`, nil},
 		{"with narrows wrong field", `{{with .Owner}}{{.Title}}{{end}}`,
-			[]string{"t.html:1:17 type typecheck.user has no field or method Title"}},
+			[]string{"t.html:1 type typecheck.user has no field or method Title"}},
 		{"with else keeps outer dot", `{{with .Owner}}{{else}}{{.Title}}{{end}}`, nil},
 		{"if walks both branches", `{{if .Title}}{{.Nope}}{{else}}{{.Nada}}{{end}}`,
-			[]string{"t.html:1:15 type typecheck.board has no field or method Nope", "t.html:1:32 type typecheck.board has no field or method Nada"}},
+			[]string{"t.html:1 type typecheck.board has no field or method Nope", "t.html:1 type typecheck.board has no field or method Nada"}},
 		{"variable in scope", `{{$o := .Owner}}{{$o.Name}}`, nil},
 		{"variable wrong field", `{{$o := .Owner}}{{$o.Nme}}`,
-			[]string{"t.html:1:18 type typecheck.user has no field or method Nme [Name]"}},
+			[]string{"t.html:1 type typecheck.user has no field or method Nme [Name]"}},
 		{"root variable", `{{range .Cards}}{{$.Title}}{{end}}`, nil},
 		{"variable out of scope after end", `{{with .Owner}}{{$x := .Name}}{{end}}{{$y := 1}}`, nil},
 	}
@@ -969,7 +980,7 @@ func (w *walker) include(n *parse.TemplateNode, dot value, vars []variable) {
 }
 ```
 
-Range findings are reported at `r.Pipe`, whose position is the first token after `range`; a field inside a body is reported at its own node. A chain such as `(index .X 0).Name` is reported at the chain node, whose position is the `.Name` after the parenthesis.
+Range findings are reported at `r.Pipe`; a field inside a body at its own node; a chain such as `(index .X 0).Name` at the chain node. Task 4 checks that each of these is where `text/template` itself points.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -1025,27 +1036,27 @@ func TestCheck_Funcs(t *testing.T) {
 	}{
 		{"result type flows", `{{range pick 2}}{{.Name}}{{end}}`, nil},
 		{"result type wrong field", `{{range pick 2}}{{.Nme}}{{end}}`,
-			[]string{"t.html:1:18 type typecheck.card has no field or method Nme [Name]"}},
+			[]string{"t.html:1 type typecheck.card has no field or method Nme [Name]"}},
 		{"function argument count", `{{upper}}`,
-			[]string{"t.html:1:2 wrong number of arguments for upper: want 1, got 0"}},
+			[]string{"t.html:1 wrong number of arguments for upper: want 1, got 0"}},
 		{"piped final argument counts", `{{.Title | upper}}`, nil},
 		{"arguments are walked", `{{upper .Titl}}`,
-			[]string{"t.html:1:8 type typecheck.board has no field or method Titl [Title]"}},
+			[]string{"t.html:1 type typecheck.board has no field or method Titl [Title]"}},
 		{"plugin stand-in is unknown", `{{(stand 1 2).Anything}}`, nil},
 		{"reflect.Value variadic", `{{urlFor "post" "id" 1}}`, nil},
 		{"len", `{{len .Cards}}`, nil},
 		{"len of struct", `{{len .Owner}}`,
-			[]string{"t.html:1:2 len of type typecheck.user"}},
+			[]string{"t.html:1 len of type typecheck.user"}},
 		{"index slice", `{{(index .Cards 0).Name}}`, nil},
 		{"index slice element is addressable", `{{(index .Cards 0).Owner.Edit}}`, nil},
 		{"index map", `{{(index .ByCol "a").Nme}}`,
-			[]string{"t.html:1:20 type typecheck.card has no field or method Nme [Name]"}},
+			[]string{"t.html:1 type typecheck.card has no field or method Nme [Name]"}},
 		{"index struct", `{{index .Owner 0}}`,
-			[]string{"t.html:1:2 cannot index into type typecheck.user"}},
+			[]string{"t.html:1 cannot index into type typecheck.user"}},
 		{"slice keeps the type", `{{range slice .Cards 1}}{{.Name}}{{end}}`, nil},
 		{"comparisons are bool", `{{if eq .Title "x"}}{{end}}`, nil},
 		{"print is string", `{{(print .Title).Nope}}`,
-			[]string{"t.html:1:16 type string has no field or method Nope"}},
+			[]string{"t.html:1 type string has no field or method Nope"}},
 		{"call is unknown", `{{(call .Seq).Whatever}}`, nil},
 		{"and/or are unknown", `{{(and .Title .Count).Whatever}}`, nil},
 	}
@@ -1212,7 +1223,7 @@ git commit -m "feat: typecheck checks function calls and text/template's builtin
 
 ### Task 4: The walker agrees with text/template
 
-The previous tasks pin the walker to this plan's reading of `text/template`. This task pins it to `text/template` itself: for every case, the checker reports something **if and only if** executing the template fails.
+The previous tasks pin the walker to this plan's reading of `text/template`. This task pins it to `text/template` itself: for every case, the checker reports something **if and only if** executing the template fails, and its first finding is at the line and column `text/template`'s error names. Each case has at most one failing node, so "first" is unambiguous.
 
 **Files:**
 - Test: `internal/template/typecheck/differential_test.go`
@@ -1229,6 +1240,8 @@ import (
 	"html/template"
 	"io"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1299,7 +1312,18 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 			findings := c.Check("t.html", Dot{Type: tc.data.Type()})
 			execErr := set.Execute(io.Discard, tc.data.Interface())
 			if (len(findings) > 0) != (execErr != nil) {
-				t.Errorf("checker found %+v; execution error: %v", findings, execErr)
+				t.Fatalf("checker found %+v; execution error: %v", findings, execErr)
+			}
+			// text/template stops at its first error; the first finding must
+			// point where it does: "template: t.html:1:8: executing ...".
+			if execErr != nil {
+				at := regexp.MustCompile(`t\.html:(\d+):(\d+)`).FindStringSubmatch(execErr.Error())
+				if at == nil {
+					t.Fatalf("no position in %v", execErr)
+				}
+				if want := at[1] + ":" + at[2]; strconv.Itoa(findings[0].Line)+":"+strconv.Itoa(findings[0].Col) != want {
+					t.Errorf("first finding at %d:%d, text/template at %s (%v)", findings[0].Line, findings[0].Col, want, execErr)
+				}
 			}
 		})
 	}
@@ -1309,7 +1333,7 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 - [ ] **Step 2: Run it**
 
 Run: `go test -count=1 -run AgreesWithTextTemplate ./internal/template/typecheck/`
-Expected: PASS. A failure is a real disagreement: fix the walker so it matches `text/template`, re-run Tasks 1–3's tests, and correct any `want` line those tests got wrong. Do not delete a case to make this pass.
+Expected: PASS. A failure is a real disagreement: fix the walker so it matches `text/template` — for a position, report at the node `text/template` names — re-run Tasks 1–3's tests, and correct any `want` line those tests got wrong. Do not delete a case to make this pass.
 
 - [ ] **Step 3: Commit**
 
@@ -2025,6 +2049,78 @@ func TestRegister_SharedPartialNamesTheIncludingFragment(t *testing.T) {
 
 Template paths are relative to `TemplateConfig.Root`, as everywhere in the repo's tests (`t/p.html` on disk is `"p.html"`).
 
+Add to `pkg/collage/typecheck_test.go`, for Review Focus #5:
+
+```go
+func TestRegister_TemplateTypeErrorsInAFixedOrder(t *testing.T) {
+	files := fstest.MapFS{
+		"t/layout.html": {Data: []byte(`{{slot "a"}}{{slot "b"}}`)},
+		"t/a.html":      {Data: []byte(`{{.Zz}}`)},
+		"t/b.html":      {Data: []byte(`{{.Aa}}`)},
+	}
+	var first []string
+	for run := range 20 {
+		app := tcApp(t, files)
+		layout := collage.NewFragment("layout", "layout.html").
+			WithSlotFragment("b", collage.NewFragment("b", "b.html").WithData(collage.Load(loadPost)).Build()).
+			WithSlotFragment("a", collage.NewFragment("a", "a.html").WithData(collage.Load(loadPost)).Build()).
+			Build()
+		err := app.RegisterPage(collage.NewPage("p").WithContent(layout).WithPath("en", "/").Build())
+		var order []string
+		for _, e := range unwrapAll(err) {
+			var te *collage.TemplateTypeError
+			if errors.As(e, &te) {
+				order = append(order, te.Template)
+			}
+		}
+		if strings.Join(order, ",") != "a.html,b.html" {
+			t.Fatalf("run %d: order = %v, want a.html then b.html", run, order)
+		}
+		first = order
+	}
+	_ = first
+}
+```
+
+And `internal/render/placeholders_test.go` (package `render`), so the checker's argument counts — read from the parse-time placeholders — can never disagree with the functions a render binds:
+
+```go
+package render
+
+import (
+	"context"
+	"reflect"
+	"testing"
+
+	"github.com/Elagoht/collage/internal/template"
+	"github.com/Elagoht/collage/internal/types"
+)
+
+// The type check counts a call's arguments against the function the templates
+// were parsed with; a render calls the one slotFuncs binds. If the two ever
+// differed in what they take or return first, every app calling it would fail
+// at startup over a template that renders fine.
+func TestSlotFuncs_MatchTheirPlaceholders(t *testing.T) {
+	engine := newEngine(t, Options{})
+	f := fragment("c", "leaf.html")
+	rc := types.NewRenderContext(context.Background(), nil, pageWith(f), "en", nil)
+	state := &renderState{page: "p", tags: map[string]struct{}{}, hoistToken: newHoistToken()}
+	bound := engine.slotFuncs(rc, f, state, nil, nil)
+	for name, placeholder := range template.DefaultFuncs() {
+		fn, ok := bound[name]
+		if !ok || fn == nil {
+			continue
+		}
+		pt, bt := reflect.TypeOf(placeholder), reflect.TypeOf(fn)
+		if pt.NumIn() != bt.NumIn() || pt.IsVariadic() != bt.IsVariadic() || pt.Out(0) != bt.Out(0) {
+			t.Errorf("%s: placeholder %v, bound %v", name, pt, bt)
+		}
+	}
+}
+```
+
+This passes today (probed: `hoist` differs only in its error result, which the check does not read).
+
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `go test -count=1 -run 'TemplateTypeError|TemplateType' ./internal/types/ ./pkg/collage/`
@@ -2132,13 +2228,13 @@ func (e *HTMLEngine) TypeCheck(path string, dot reflect.Type) []typecheck.Findin
 Find every other implementation of `Engine` (`grep -rn 'func (.*) SlotCalls' --include='*.go' .`) and give it `TypeCheck`; an embedding test fake gets it for free.
 
 In `internal/core/registry.go` `checkTemplates`:
-- Declare `var findings []error` before `visit`.
+- Declare `var findings []*types.TemplateTypeError` before `visit`.
 - In `visit`, right after the `Lookup` check and **before** `calls, dynamic := …` (whose early `return nil` would skip it), add:
 
   ```go
   		findings = append(findings, a.typeFindings(p, f, name)...)
   ```
-- Replace the final `return nil` with `return errors.Join(findings...)` (it is nil when there are none).
+- Replace the final `return nil` with `return joinTypeErrors(findings)`.
 - Update the doc comment: it now also reports, joined, every `types.TemplateTypeError` of the page's fragments, after the first structural error it would return has not occurred.
 - Add:
 
@@ -2147,7 +2243,7 @@ In `internal/core/registry.go` `checkTemplates`:
   // WithoutTypeCheck, or whose data type is unknown, is not walked; a fragment
   // with no data is walked with an unknown dot, which still checks its function
   // calls.
-  func (a *App) typeFindings(p *types.Page, f *types.Fragment, name string) []error {
+  func (a *App) typeFindings(p *types.Page, f *types.Fragment, name string) []*types.TemplateTypeError {
   	if f.SkipTypeCheck {
   		return nil
   	}
@@ -2155,7 +2251,7 @@ In `internal/core/registry.go` `checkTemplates`:
   	if (ds.Kind == types.DataFixed || ds.Kind == types.DataFetched) && ds.Type == nil {
   		return nil
   	}
-  	var out []error
+  	var out []*types.TemplateTypeError
   	for _, found := range a.tmpl.TypeCheck(name, ds.Type) {
   		out = append(out, &types.TemplateTypeError{
   			Page: p.Name, Fragment: f.Name, Template: types.HumanizeTemplateNames(found.Template),
@@ -2167,6 +2263,35 @@ In `internal/core/registry.go` `checkTemplates`:
   ```
 
   `HumanizeTemplateNames` turns `inline:c#…` into `inline template of fragment "c"`.
+
+  ```go
+  // joinTypeErrors joins a page's findings into one error in a fixed order —
+  // template, line, column, fragment — whatever order the fragments were
+  // visited in. Nil when there are none.
+  func joinTypeErrors(found []*types.TemplateTypeError) error {
+  	if len(found) == 0 {
+  		return nil
+  	}
+  	sort.SliceStable(found, func(i, j int) bool {
+  		a, b := found[i], found[j]
+  		if a.Template != b.Template {
+  			return a.Template < b.Template
+  		}
+  		if a.Line != b.Line {
+  			return a.Line < b.Line
+  		}
+  		if a.Col != b.Col {
+  			return a.Col < b.Col
+  		}
+  		return a.Fragment < b.Fragment
+  	})
+  	errs := make([]error, len(found))
+  	for i, e := range found {
+  		errs[i] = e
+  	}
+  	return errors.Join(errs...)
+  }
+  ```
 
 - [ ] **Step 4: Run them to verify they pass, then everything**
 
@@ -2182,7 +2307,7 @@ Expected: no regression worth noting in render (the check runs at registration o
 
 ```bash
 git status --short
-git add internal/types/typeerror.go internal/types/typeerror_test.go internal/template/ internal/core/registry.go pkg/collage/types.go pkg/collage/typecheck_test.go
+git add internal/types/typeerror.go internal/types/typeerror_test.go internal/template/ internal/core/registry.go internal/render/placeholders_test.go pkg/collage/types.go pkg/collage/typecheck_test.go
 git commit -m "feat: RegisterPage checks every template against its data's type"
 ```
 
