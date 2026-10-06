@@ -77,7 +77,7 @@ func failingHandler(err error, tags ...string) types.DataHandlerFunc {
 func TestRender_SingleFragmentWithData(t *testing.T) {
 	engine := newEngine(t, Options{})
 	content := fragment("content", "simple.html")
-	content.DataHandler = dataHandler(map[string]string{"Title": "Tom & Jerry"})
+	content.SetDataSource(types.FetchedData(dataHandler(map[string]string{"Title": "Tom & Jerry"}), nil))
 
 	result, err := renderPage(t, engine, pageWith(content))
 	if err != nil {
@@ -161,12 +161,12 @@ func TestRender_DependencyTagsAreDeduplicatedAndSorted(t *testing.T) {
 	engine := newEngine(t, Options{})
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content", AllowMultiple: true})
-	layout.DataHandler = dataHandler(nil, "nav", "user:1")
+	layout.SetDataSource(types.FetchedData(dataHandler(nil, "nav", "user:1"), nil))
 
 	first := fragment("first", "a.html")
-	first.DataHandler = dataHandler(nil, "post:7", "nav", "")
+	first.SetDataSource(types.FetchedData(dataHandler(nil, "post:7", "nav", ""), nil))
 	second := fragment("second", "b.html")
-	second.DataHandler = dataHandler(nil, "post:7", "author:3")
+	second.SetDataSource(types.FetchedData(dataHandler(nil, "post:7", "author:3"), nil))
 	bind(t, layout, "content", first, second)
 
 	result, err := renderPage(t, engine, pageWith(layout, "site", "nav"))
@@ -198,7 +198,7 @@ func TestRender_Degraded(t *testing.T) {
 			name: "optional fragment failed",
 			build: func(*testing.T) *types.Fragment {
 				content := fragment("content", "plain.html")
-				content.DataHandler = failingHandler(boom)
+				content.SetDataSource(types.FetchedData(failingHandler(boom), nil))
 				return content
 			},
 			want: true,
@@ -207,7 +207,7 @@ func TestRender_Degraded(t *testing.T) {
 			name: "optional fragment failed but its fallback rendered",
 			build: func(*testing.T) *types.Fragment {
 				content := fragment("content", "plain.html")
-				content.DataHandler = failingHandler(boom)
+				content.SetDataSource(types.FetchedData(failingHandler(boom), nil))
 				content.Fallback = fragment("content-fallback", "fallback.html")
 				return content
 			},
@@ -218,7 +218,7 @@ func TestRender_Degraded(t *testing.T) {
 			build: func(t *testing.T) *types.Fragment {
 				layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 				child := fragment("child", "leaf.html")
-				child.DataHandler = failingHandler(boom)
+				child.SetDataSource(types.FetchedData(failingHandler(boom), nil))
 				bind(t, layout, "content", child)
 				return layout
 			},
@@ -255,10 +255,10 @@ func TestRender_MetadataTimings(t *testing.T) {
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	child := fragment("child", "leaf.html")
-	child.DataHandler = func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	child.SetDataSource(types.FetchedData(func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		time.Sleep(2 * time.Millisecond)
 		return nil, nil, nil
-	}
+	}, nil))
 	bind(t, layout, "content", child)
 
 	result, err := renderPage(t, engine, pageWith(layout))
@@ -302,7 +302,7 @@ func TestRender_ReportsMetrics(t *testing.T) {
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	child := fragment("child", "leaf.html")
-	child.DataHandler = failingHandler(boom)
+	child.SetDataSource(types.FetchedData(failingHandler(boom), nil))
 	bind(t, layout, "content", child)
 
 	if _, err := renderPage(t, engine, pageWith(layout)); err != nil {
@@ -382,10 +382,10 @@ func TestRender_FailedRenderStillReportsMetadata(t *testing.T) {
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	child := fragment("child", "leaf.html")
 	child.Required = true
-	child.DataHandler = func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	child.SetDataSource(types.FetchedData(func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		time.Sleep(time.Millisecond)
 		return nil, []string{"post:7"}, boom
-	}
+	}, nil))
 	bind(t, layout, "content", child)
 
 	result, err := renderPage(t, engine, pageWith(layout))
@@ -433,7 +433,7 @@ func TestRender_SuccessfulRenderCanProduceNoHTML(t *testing.T) {
 	engine := newEngine(t, Options{})
 
 	content := fragment("content", "plain.html")
-	content.DataHandler = failingHandler(errors.New("collage: boom"))
+	content.SetDataSource(types.FetchedData(failingHandler(errors.New("collage: boom")), nil))
 
 	result, err := renderPage(t, engine, pageWith(content))
 	if err != nil {

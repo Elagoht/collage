@@ -66,6 +66,13 @@ type homeData struct {
 // declared with it — with its own justification, since html/template renders
 // arbitrary data — and a function literal can only be assigned to that type by
 // restating its signature verbatim.
+// homeContentFragment is the home page's content fragment, fetching homeDataHandler.
+func homeContentFragment() *types.Fragment {
+	f := &types.Fragment{Name: "home-content", TemplatePath: "pages/home.html"}
+	f.SetDataSource(types.FetchedData(homeDataHandler, nil))
+	return f
+}
+
 func homeDataHandler(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 	return homeData{Title: "Welcome Home"}, []string{"homepage"}, nil
 }
@@ -168,16 +175,12 @@ func newLayout(name string) *types.Fragment {
 // dependency tag comes from the data handler, not from the Page.
 func newHomePage() *types.Page {
 	return &types.Page{
-		Name:        "home",
-		LayoutChain: []*types.Fragment{newLayout("layout")},
-		ContentFragment: &types.Fragment{
-			Name:         "home-content",
-			TemplatePath: "pages/home.html",
-			DataHandler:  homeDataHandler,
-		},
-		Paths:    map[string]string{"en": "/"},
-		Strategy: types.StrategyIncremental,
-		CacheTTL: 5 * time.Minute,
+		Name:            "home",
+		LayoutChain:     []*types.Fragment{newLayout("layout")},
+		ContentFragment: homeContentFragment(),
+		Paths:           map[string]string{"en": "/"},
+		Strategy:        types.StrategyIncremental,
+		CacheTTL:        5 * time.Minute,
 	}
 }
 

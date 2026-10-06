@@ -49,17 +49,15 @@ type Fragment struct {
 	// to a file holding it: an inline fragment. A fragment has exactly one of
 	// TemplatePath and Source. See TemplateName for how the engine addresses it.
 	Source string
-	// DataHandler fetches the data this fragment renders with. A nil DataHandler
-	// means the fragment renders with Data.
-	DataHandler DataHandlerFunc
-	// Data is what the fragment's template renders with when it has no
-	// DataHandler: data fixed when the program starts. Unlike a handler, it does
-	// not make a page with no declared strategy dynamic. Setting both is
-	// ErrConflictingData.
-	Data any // any: fragment data is opaque to the framework and flows straight into the template engine
+	// data is what the fragment renders with; see DataSource. Unexported so
+	// only collage's constructors set it, and its type always matches its data.
+	data DataSource
+	// SkipTypeCheck excludes the fragment's template from registration's type
+	// check, for a check that is wrong about it. See WithoutTypeCheck.
+	SkipTypeCheck bool
 	// Title, when set, declares the page's <title> as rc.HoistTitle would, before
-	// the fragment's DataHandler runs — so a handler of the same fragment that
-	// hoists a title of its own replaces it. Like Data, it is fixed, and does not
+	// the fragment's data handler runs — so a handler of the same fragment that
+	// hoists a title of its own replaces it. Like fixed data, it is fixed, and does not
 	// make a page dynamic.
 	Title string
 	// Guard, when set, is asked whether a request may reach this fragment
@@ -71,14 +69,14 @@ type Fragment struct {
 	// On any other fragment it is ignored: access policy belongs to routes,
 	// not to rendering parts. See GuardFunc.
 	Guard GuardFunc
-	// Static states that the fragment's DataHandler returns the same for every
+	// Static states that the fragment's data handler returns the same for every
 	// request to one URL: what it renders depends on the path's parameters and the
 	// locale, which are part of a cache key, and on nothing a request carries
 	// beyond them — no cookie, no header, no clock. Such a handler does not make a
 	// page that declares no strategy dynamic. It says nothing about slot resolvers:
 	// the fragments a resolver returns are not known until a render asks for them.
 	Static bool
-	// Shared states that the fragment's DataHandler returns the same for every
+	// Shared states that the fragment's data handler returns the same for every
 	// reader at one moment: it reads no cookie, no session, no header — nothing
 	// that tells one reader from another — though what it returns may change from
 	// one moment to the next. A render of it may be made once and sent to many
@@ -95,7 +93,7 @@ type Fragment struct {
 	// Fallback is the fragment rendered in place of this one when this fragment's
 	// render fails.
 	Fallback *Fragment
-	// Timeout bounds how long this fragment's DataHandler may run. Zero means no
+	// Timeout bounds how long this fragment's data handler may run. Zero means no
 	// fragment-specific timeout; see EffectiveTimeout.
 	Timeout time.Duration
 	// buildErr is what the builder that made this value recorded; see
@@ -294,9 +292,6 @@ func (f *Fragment) validate(stack map[*Fragment]bool) error {
 	}
 	if f.Timeout < 0 {
 		return fmt.Errorf("%w: fragment %q has negative timeout", ErrInvalidTimeout, f.Name)
-	}
-	if f.DataHandler != nil && f.Data != nil {
-		return fmt.Errorf("%w: fragment %q", ErrConflictingData, f.Name)
 	}
 
 	for _, key := range f.SlotNames() {

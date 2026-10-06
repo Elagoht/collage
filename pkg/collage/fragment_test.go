@@ -57,10 +57,10 @@ func TestFragmentBuilder_MinimalApp(t *testing.T) {
 	if homeContent.TemplatePath != "pages/home.html" {
 		t.Errorf("homeContent.TemplatePath = %q, want %q", homeContent.TemplatePath, "pages/home.html")
 	}
-	if homeContent.DataHandler == nil {
+	if homeContent.DataSource().Handler == nil {
 		t.Fatal("homeContent.DataHandler = nil, want set")
 	}
-	data, tags, err := homeContent.DataHandler(context.Background(), &RenderContext{})
+	data, tags, err := homeContent.DataSource().Handler(context.Background(), &RenderContext{})
 	if err != nil {
 		t.Fatalf("DataHandler() error = %v, want nil", err)
 	}
@@ -109,7 +109,7 @@ func TestFragmentBuilder_BlogPostContent(t *testing.T) {
 	}
 
 	rc := &RenderContext{PathParams: map[string]string{"slug": "hello-world"}}
-	data, tags, err := blogPostContent.DataHandler(context.Background(), rc)
+	data, tags, err := blogPostContent.DataSource().Handler(context.Background(), rc)
 	if err != nil {
 		t.Fatalf("DataHandler() error = %v, want nil for a known slug", err)
 	}
@@ -121,7 +121,7 @@ func TestFragmentBuilder_BlogPostContent(t *testing.T) {
 	}
 
 	rcMissing := &RenderContext{PathParams: map[string]string{}}
-	if _, _, err := blogPostContent.DataHandler(context.Background(), rcMissing); err == nil {
+	if _, _, err := blogPostContent.DataSource().Handler(context.Background(), rcMissing); err == nil {
 		t.Error("DataHandler() error = nil, want an error for a missing slug (triggers the 500 page)")
 	}
 }

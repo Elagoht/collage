@@ -325,3 +325,14 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 		})
 	}
 }
+
+// TestFragment_DataSetTwiceConflicts: a second WithData is as much a conflict as a
+// WithData followed by a handler.
+func TestFragment_DataSetTwiceConflicts(t *testing.T) {
+	app := strategyApp(t)
+	content := NewFragment("content", "pages/data.html").WithData("a").WithData("b").Build()
+	page := NewPage("p").WithLayouts(strategyLayout().Build()).WithContent(content).WithPath("en", "/").Build()
+	if err := app.RegisterPage(page); !errors.Is(err, ErrConflictingData) {
+		t.Fatalf("RegisterPage = %v, want ErrConflictingData", err)
+	}
+}

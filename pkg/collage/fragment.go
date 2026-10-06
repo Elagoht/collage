@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -87,7 +88,16 @@ func NewInlineFragment(name, html string) *FragmentBuilder {
 // or Cached, across renders: every fragment path is a render of its own, so
 // fragments refreshed separately share a fetch only through Cached.
 func (b *FragmentBuilder) WithDataHandler(h DataHandlerFunc) *FragmentBuilder {
-	b.fragment.DataHandler = h
+	return b.setData(types.FetchedData(h, nil))
+}
+
+// setData sets the fragment's data source, recording ErrConflictingData when
+// one is already set.
+func (b *FragmentBuilder) setData(d types.DataSource) *FragmentBuilder {
+	if b.fragment.DataSource().Kind != types.DataNone {
+		b.errs = append(b.errs, fmt.Errorf("%w: fragment %q", ErrConflictingData, b.fragment.Name))
+	}
+	b.fragment.SetDataSource(d)
 	return b
 }
 
@@ -102,8 +112,7 @@ func (b *FragmentBuilder) WithDataHandler(h DataHandlerFunc) *FragmentBuilder {
 // static. Data that changes while the program runs wants Load, or DataHandler to
 // report what it came from. Setting both is ErrConflictingData at registration.
 func (b *FragmentBuilder) WithData(v any) *FragmentBuilder { // any: fragment data is opaque to the framework and flows straight into the template engine
-	b.fragment.Data = v
-	return b
+	return b.setData(types.FixedData(v, reflect.TypeOf(v)))
 }
 
 // WithTitle declares the page's <title>, as rc.HoistTitle would, without a data

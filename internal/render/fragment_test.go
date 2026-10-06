@@ -20,7 +20,7 @@ func TestRender_LayoutAndContentThroughSlot(t *testing.T) {
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	content := fragment("content", "simple.html")
-	content.DataHandler = dataHandler(map[string]string{"Title": "Home"})
+	content.SetDataSource(types.FetchedData(dataHandler(map[string]string{"Title": "Home"}), nil))
 	bind(t, layout, "content", content)
 
 	result, err := renderPage(t, engine, pageWith(layout))
@@ -177,7 +177,7 @@ func TestRender_FragmentFailurePolicy(t *testing.T) {
 			name: "a failing fallback never escalates to a page failure",
 			configure: func(child *types.Fragment) {
 				child.Fallback = fragment("child-fallback", "fallback.html")
-				child.Fallback.DataHandler = failingHandler(fallbackBoom)
+				child.Fallback.SetDataSource(types.FetchedData(failingHandler(fallbackBoom), nil))
 			},
 			wantHTML: "<html><body></body></html>",
 			wantErrs: []error{boom, fallbackBoom},
@@ -187,7 +187,7 @@ func TestRender_FragmentFailurePolicy(t *testing.T) {
 			configure: func(child *types.Fragment) {
 				child.Fallback = fragment("child-fallback", "fallback.html")
 				child.Fallback.Required = true
-				child.Fallback.DataHandler = failingHandler(fallbackBoom)
+				child.Fallback.SetDataSource(types.FetchedData(failingHandler(fallbackBoom), nil))
 			},
 			wantHTML: "<html><body></body></html>",
 			wantErrs: []error{boom, fallbackBoom},
@@ -199,7 +199,7 @@ func TestRender_FragmentFailurePolicy(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 			child := fragment("child", "leaf.html")
-			child.DataHandler = failingHandler(boom)
+			child.SetDataSource(types.FetchedData(failingHandler(boom), nil))
 			test.configure(child)
 			bind(t, layout, "content", child)
 
@@ -290,12 +290,12 @@ func TestRender_RequiredInsideAFallbackDoesNotEscalate(t *testing.T) {
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 
 	child := fragment("child", "leaf.html")
-	child.DataHandler = failingHandler(boom)
+	child.SetDataSource(types.FetchedData(failingHandler(boom), nil))
 	child.Fallback = declare(fragment("child-fallback", "section.html"), &types.SlotDefinition{Name: "inner"})
 
 	grandchild := fragment("fallback-grandchild", "leaf.html")
 	grandchild.Required = true
-	grandchild.DataHandler = failingHandler(grandchildBoom)
+	grandchild.SetDataSource(types.FetchedData(failingHandler(grandchildBoom), nil))
 	bind(t, child.Fallback, "inner", grandchild)
 	bind(t, layout, "content", child)
 
@@ -334,12 +334,12 @@ func TestRender_RequiredFragmentSkipsItsOwnFallback(t *testing.T) {
 	fallbackRan := false
 	child := fragment("child", "leaf.html")
 	child.Required = true
-	child.DataHandler = failingHandler(boom)
+	child.SetDataSource(types.FetchedData(failingHandler(boom), nil))
 	child.Fallback = fragment("child-fallback", "fallback.html")
-	child.Fallback.DataHandler = func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	child.Fallback.SetDataSource(types.FetchedData(func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		fallbackRan = true
 		return nil, nil, nil
-	}
+	}, nil))
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	bind(t, layout, "content", child)
@@ -365,7 +365,7 @@ func TestRender_RequiredChildIsNotAbsorbedByAnAncestorFallback(t *testing.T) {
 	layout.Fallback = fragment("layout-fallback", "fallback.html")
 	child := fragment("child", "leaf.html")
 	child.Required = true
-	child.DataHandler = failingHandler(boom)
+	child.SetDataSource(types.FetchedData(failingHandler(boom), nil))
 	bind(t, layout, "content", child)
 
 	result, err := renderPage(t, engine, pageWith(layout))
@@ -382,7 +382,7 @@ func TestRender_FailedFragmentStillContributesItsTags(t *testing.T) {
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	child := fragment("child", "leaf.html")
-	child.DataHandler = failingHandler(errors.New("collage: boom"), "post:7")
+	child.SetDataSource(types.FetchedData(failingHandler(errors.New("collage: boom"), "post:7"), nil))
 	bind(t, layout, "content", child)
 
 	result, err := renderPage(t, engine, pageWith(layout))
@@ -402,7 +402,7 @@ func renderFailingChild(t *testing.T, devMode bool, childName string, childErr e
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	child := fragment(childName, "leaf.html")
-	child.DataHandler = failingHandler(childErr)
+	child.SetDataSource(types.FetchedData(failingHandler(childErr), nil))
 	bind(t, layout, "content", child)
 
 	result, err := renderPage(t, engine, pageWith(layout))
@@ -478,9 +478,9 @@ func TestRender_DataHandlerPanicIsContained(t *testing.T) {
 
 	content := fragment("content", "leaf.html")
 	content.Required = true
-	content.DataHandler = func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	content.SetDataSource(types.FetchedData(func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		panic("handler boom")
-	}
+	}, nil))
 
 	_, err := renderPage(t, engine, pageWith(content))
 
@@ -547,14 +547,14 @@ func TestRender_DataHandlerTimeout(t *testing.T) {
 			content := fragment("content", "leaf.html")
 			content.Required = true
 			content.Timeout = test.fragmentTimeout
-			content.DataHandler = func(ctx context.Context, _ *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+			content.SetDataSource(types.FetchedData(func(ctx context.Context, _ *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 				select {
 				case <-ctx.Done():
 					return nil, nil, ctx.Err()
 				case <-time.After(5 * time.Second):
 					return nil, nil, nil
 				}
-			}
+			}, nil))
 
 			start := time.Now()
 			_, err := renderPage(t, engine, pageWith(content))
@@ -670,7 +670,7 @@ func fragmentNames(result *Result) []string {
 // after "<b>partial" has gone out.
 func halfWritten(name string) *types.Fragment {
 	f := &types.Fragment{Name: name, Source: `<b>partial {{.Title.Nope}}</b>`}
-	f.DataHandler = dataHandler(map[string]string{"Title": "x"})
+	f.SetDataSource(types.FetchedData(dataHandler(map[string]string{"Title": "x"}), nil))
 	return f
 }
 

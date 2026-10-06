@@ -172,7 +172,7 @@ func (a *App) Inspect() Inspection {
 		slots := slices.Sorted(maps.Keys(f.Slots))
 		out.Fragments = append(out.Fragments, InspectedFragment{
 			Name: f.Name, Template: f.TemplatePath, Inline: types.IsInline(f), Slots: slots,
-			Handler: f.DataHandler != nil, Static: f.Static, Shared: f.Shared,
+			Handler: f.DataSource().Handler != nil, Static: f.Static, Shared: f.Shared,
 		})
 		return nil
 	}

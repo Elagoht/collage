@@ -83,12 +83,13 @@ func (e *realEndToEndEnv) get(path string) *httptest.ResponseRecorder {
 // blogFragment returns a required content fragment whose data handler always
 // reports ErrNotFound, as the primary content of a dynamic "/blog/{slug}"-style page.
 func blogFragment(name string) *types.Fragment {
-	return &types.Fragment{
+	f := &types.Fragment{
 		Name:         name,
 		TemplatePath: "blog.html",
 		Required:     true,
-		DataHandler:  notFoundDataHandler(),
 	}
+	f.SetDataSource(types.FetchedData(notFoundDataHandler(), nil))
+	return f
 }
 
 // TestNotFound_RequiredFragmentReachesPageOwnNotFoundPage is the end-to-end test

@@ -72,7 +72,7 @@ func TestPrefetch_SiblingHandlersRunAtTheSameTime(t *testing.T) {
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content", AllowMultiple: true})
 	for _, name := range []string{"one", "two", "three"} {
 		child := fragment(name, "leaf.html")
-		child.DataHandler = handler
+		child.SetDataSource(types.FetchedData(handler, nil))
 		bind(t, layout, "content", child)
 	}
 
@@ -91,18 +91,18 @@ func TestPrefetch_ParentRunsBeforeItsChild(t *testing.T) {
 	engine := newEngine(t, Options{})
 
 	parent := declare(fragment("parent", "section.html"), &types.SlotDefinition{Name: "inner"})
-	parent.DataHandler = func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	parent.SetDataSource(types.FetchedData(func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		rc.Set("from-parent", "value")
 		return nil, nil, nil
-	}
+	}, nil))
 
 	var seen atomic.Value
 	child := fragment("child", "leaf.html")
-	child.DataHandler = func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	child.SetDataSource(types.FetchedData(func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		v, _ := rc.Get("from-parent")
 		seen.Store(v == "value")
 		return nil, nil, nil
-	}
+	}, nil))
 	bind(t, parent, "inner", child)
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
@@ -127,7 +127,7 @@ func TestPrefetch_UnrenderedFragmentCannotFailThePage(t *testing.T) {
 	parent := declare(fragment("parent", "plain.html"), &types.SlotDefinition{Name: "inner"})
 	child := fragment("child", "leaf.html")
 	child.Required = true
-	child.DataHandler = failingHandler(errors.New("upstream is down"))
+	child.SetDataSource(types.FetchedData(failingHandler(errors.New("upstream is down")), nil))
 	bind(t, parent, "inner", child)
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
@@ -149,10 +149,10 @@ func TestPrefetch_OneFragmentBoundTwiceRunsTwice(t *testing.T) {
 	var calls atomic.Int64
 
 	child := fragment("child", "leaf.html")
-	child.DataHandler = func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	child.SetDataSource(types.FetchedData(func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		calls.Add(1)
 		return nil, nil, nil
-	}
+	}, nil))
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content", AllowMultiple: true})
 	bind(t, layout, "content", child, child)
@@ -172,7 +172,7 @@ func TestPrefetch_HandlerFailureStillFailsItsFragment(t *testing.T) {
 
 	child := fragment("child", "leaf.html")
 	child.Required = true
-	child.DataHandler = failingHandler(sentinel)
+	child.SetDataSource(types.FetchedData(failingHandler(sentinel), nil))
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	bind(t, layout, "content", child)
@@ -189,7 +189,7 @@ func TestPrefetch_TagsSurvive(t *testing.T) {
 	engine := newEngine(t, Options{})
 
 	child := fragment("child", "leaf.html")
-	child.DataHandler = dataHandler(nil, "article:7")
+	child.SetDataSource(types.FetchedData(dataHandler(nil, "article:7"), nil))
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	bind(t, layout, "content", child)
@@ -228,10 +228,10 @@ func TestPrefetch_UnusedHandlerIsCancelled(t *testing.T) {
 	declare(parent, &types.SlotDefinition{Name: "unused"})
 
 	used := fragment("used", "leaf.html")
-	used.DataHandler = func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	used.SetDataSource(types.FetchedData(func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		<-unusedStarted
 		return nil, nil, nil
-	}
+	}, nil))
 	bind(t, parent, "inner", used)
 
 	unused := fragment("unused", "leaf.html")
@@ -239,12 +239,12 @@ func TestPrefetch_UnusedHandlerIsCancelled(t *testing.T) {
 	// is the release. Without it the fragment's own timeout would eventually fire
 	// and the test would pass for the wrong reason, slowly.
 	unused.Timeout = time.Minute
-	unused.DataHandler = func(ctx context.Context, _ *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	unused.SetDataSource(types.FetchedData(func(ctx context.Context, _ *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		close(unusedStarted)
 		<-ctx.Done()
 		close(cancelled)
 		return nil, nil, ctx.Err()
-	}
+	}, nil))
 	bind(t, parent, "unused", unused)
 
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
@@ -272,16 +272,16 @@ func TestPrefetch_HoistingIsDeterministicAcrossConcurrentSiblings(t *testing.T) 
 	// assigned at launch, the finishing order would be the reverse of the
 	// declaration order and the wrong one would win.
 	first := fragment("first", "leaf.html")
-	first.DataHandler = func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	first.SetDataSource(types.FetchedData(func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		time.Sleep(20 * time.Millisecond)
 		rc.Hoist("head", "title", "<title>first</title>")
 		return nil, nil, nil
-	}
+	}, nil))
 	second := fragment("second", "leaf.html")
-	second.DataHandler = func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	second.SetDataSource(types.FetchedData(func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		rc.Hoist("head", "title", "<title>second</title>")
 		return nil, nil, nil
-	}
+	}, nil))
 
 	for range 5 {
 		layout := declare(fragment("layout", "hoisthead.html"), &types.SlotDefinition{Name: "content", AllowMultiple: true})
@@ -304,16 +304,16 @@ func TestPrefetch_InnermostStillWinsWhenHandlersOverlap(t *testing.T) {
 	// The deep one is slow, so a rule based on finishing order would pick the
 	// shallow one.
 	deep := fragment("deep", "leaf.html")
-	deep.DataHandler = func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	deep.SetDataSource(types.FetchedData(func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		time.Sleep(20 * time.Millisecond)
 		rc.Hoist("head", "title", "<title>deep</title>")
 		return nil, nil, nil
-	}
+	}, nil))
 	middle := declare(fragment("middle", "section.html"), &types.SlotDefinition{Name: "inner"})
-	middle.DataHandler = func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+	middle.SetDataSource(types.FetchedData(func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 		rc.Hoist("head", "title", "<title>middle</title>")
 		return nil, nil, nil
-	}
+	}, nil))
 	bind(t, middle, "inner", deep)
 
 	layout := declare(fragment("layout", "hoisthead.html"), &types.SlotDefinition{Name: "content"})
@@ -350,7 +350,7 @@ func TestPrefetch_OnceCollapsesTheSameFetch(t *testing.T) {
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content", AllowMultiple: true})
 	for _, name := range []string{"one", "two"} {
 		child := fragment(name, "leaf.html")
-		child.DataHandler = handler
+		child.SetDataSource(types.FetchedData(handler, nil))
 		bind(t, layout, "content", child)
 	}
 

@@ -156,7 +156,7 @@ func readerFree(f *types.Fragment) bool {
 func subtreeFree(f *types.Fragment, trusted func(*types.Fragment) bool) bool {
 	fetches := errors.New("fetches per render")
 	err := walkFragments(f, make(map[*types.Fragment]bool), func(f *types.Fragment) error {
-		if f.DataHandler != nil && !trusted(f) {
+		if f.DataSource().Handler != nil && !trusted(f) {
 			return fetches
 		}
 		for _, slot := range f.Slots {

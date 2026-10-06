@@ -147,14 +147,10 @@ func TestRegisterPage_SharedLayoutRendersEachPagesOwnContent(t *testing.T) {
 
 	pages := []*types.Page{
 		{
-			Name:        "home",
-			LayoutChain: []*types.Fragment{shared},
-			ContentFragment: &types.Fragment{
-				Name:         "home-content",
-				TemplatePath: "pages/home.html",
-				DataHandler:  homeDataHandler,
-			},
-			Paths: map[string]string{"en": "/"},
+			Name:            "home",
+			LayoutChain:     []*types.Fragment{shared},
+			ContentFragment: homeContentFragment(),
+			Paths:           map[string]string{"en": "/"},
 		},
 		{
 			Name:            "about",
@@ -474,10 +470,14 @@ func newBlogFixture() blogFixture {
 	fixture := blogFixture{
 		layout: layout,
 		post: &types.Page{
-			Name:            "blog-post",
-			LayoutChain:     []*types.Fragment{layout},
-			ContentFragment: &types.Fragment{Name: "blog-post-content", TemplatePath: "pages/home.html", DataHandler: homeDataHandler},
-			Paths:           map[string]string{"en": "/blog/{slug}"},
+			Name:        "blog-post",
+			LayoutChain: []*types.Fragment{layout},
+			ContentFragment: func() *types.Fragment {
+				f := homeContentFragment()
+				f.Name = "blog-post-content"
+				return f
+			}(),
+			Paths: map[string]string{"en": "/blog/{slug}"},
 		},
 		notFound: &types.Page{
 			Name:            "blog-404",

@@ -19,7 +19,7 @@ func TestRender_RequiredFragmentNotFoundSetsResult(t *testing.T) {
 	content := fragment("content", "leaf.html")
 	content.Required = true
 	notFoundErr := fmt.Errorf("blog: slug %q: %w", "no-such-slug", types.ErrNotFound)
-	content.DataHandler = failingHandler(notFoundErr)
+	content.SetDataSource(types.FetchedData(failingHandler(notFoundErr), nil))
 
 	result, err := renderPage(t, engine, pageWith(content))
 
@@ -50,7 +50,7 @@ func TestRender_NonRequiredFragmentNotFoundDoesNotSetResult(t *testing.T) {
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	sidebar := fragment("sidebar", "leaf.html")
 	notFoundErr := fmt.Errorf("sidebar: widget: %w", types.ErrNotFound)
-	sidebar.DataHandler = failingHandler(notFoundErr)
+	sidebar.SetDataSource(types.FetchedData(failingHandler(notFoundErr), nil))
 	bind(t, layout, "content", sidebar)
 
 	result, err := renderPage(t, engine, pageWith(layout))
@@ -89,7 +89,7 @@ func TestRender_OptionalAncestorFallbackCannotAbsorbNotFound(t *testing.T) {
 	child := fragment("child", "leaf.html")
 	child.Required = true
 	notFoundErr := fmt.Errorf("blog: slug %q: %w", "no-such-slug", types.ErrNotFound)
-	child.DataHandler = failingHandler(notFoundErr)
+	child.SetDataSource(types.FetchedData(failingHandler(notFoundErr), nil))
 	bind(t, ancestor, "content", child)
 
 	result, err := renderPage(t, engine, pageWith(ancestor))
@@ -122,7 +122,7 @@ func TestRender_OrdinaryErrorDoesNotSetResultNotFound(t *testing.T) {
 	content := fragment("content", "leaf.html")
 	content.Required = true
 	boom := errors.New("collage: data source down")
-	content.DataHandler = failingHandler(boom)
+	content.SetDataSource(types.FetchedData(failingHandler(boom), nil))
 
 	result, err := renderPage(t, engine, pageWith(content))
 

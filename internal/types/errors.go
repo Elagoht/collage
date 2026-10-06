@@ -42,10 +42,10 @@ var ErrMissingContent = errors.New("collage: missing content")
 // CacheTTL.
 var ErrMissingTTL = errors.New("collage: missing cache ttl for incremental strategy")
 
-// ErrConflictingData is returned when a fragment sets both fixed Data and a
-// DataHandler, or a document both a fixed Body and a Handler. One of them would be
-// ignored, and which one is not something a reader of the builder chain can tell.
-var ErrConflictingData = errors.New("collage: fixed data and a handler are both set")
+// ErrConflictingData is returned when a fragment's data is set twice, or a
+// document gets both a fixed Body and a Handler. One of them would be ignored,
+// and which one is not something a reader of the builder chain can tell.
+var ErrConflictingData = errors.New("collage: fragment data set twice")
 
 // ErrInvalidTimeout is returned when a fragment's Timeout is negative.
 var ErrInvalidTimeout = errors.New("collage: invalid timeout")

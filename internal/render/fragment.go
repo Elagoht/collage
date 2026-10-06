@@ -258,6 +258,7 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	if f.Title != "" && pre == nil {
 		rc.HoistTitle(f.Title)
 	}
+	ds := f.DataSource()
 	switch {
 	case pre != nil:
 		// Already running, started by this fragment's parent. Waiting for it is
@@ -272,12 +273,12 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 			return wrapFragment("data handler", f.Name, err)
 		}
 
-	case f.DataHandler != nil:
+	case ds.Handler != nil:
 		var tags []string
 		started := time.Now()
 		err := Execute(rc.Context(), f.EffectiveTimeout(e.defaultTimeout), func(ctx context.Context) error {
 			var handlerErr error
-			data, tags, handlerErr = f.DataHandler(ctx, rc.WithContext(ctx))
+			data, tags, handlerErr = ds.Handler(ctx, rc.WithContext(ctx))
 			return handlerErr
 		})
 		state.dataTime += time.Since(started)
@@ -289,7 +290,10 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		}
 
 	default:
-		data = f.Data
+		data = ds.Value
+	}
+	if ds.Kind == types.DataEffect {
+		data = nil // the handler ran for what it declares; the template gets no data
 	}
 
 	// After the handler, so a resolver can read what it fetched; before the
