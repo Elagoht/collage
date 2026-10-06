@@ -114,6 +114,17 @@ func (w *walker) node(node parse.Node, dot value, vars []variable) []variable {
 	switch n := node.(type) {
 	case *parse.ActionNode:
 		_, vars = w.pipe(n.Pipe, dot, vars)
+	case *parse.IfNode:
+		w.branch(&n.BranchNode, dot, vars, false)
+		vars = forget(vars, assignedIn(n))
+	case *parse.WithNode:
+		w.branch(&n.BranchNode, dot, vars, true)
+		vars = forget(vars, assignedIn(n))
+	case *parse.RangeNode:
+		w.rangeOver(n, dot, vars)
+		vars = forget(vars, assignedIn(n))
+	case *parse.TemplateNode:
+		w.include(n, dot, vars)
 	}
 	return vars
 }
