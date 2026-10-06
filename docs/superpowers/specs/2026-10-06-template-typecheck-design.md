@@ -125,14 +125,14 @@ unknown value is reported.
 | --- | --- |
 | `.Field`, `.A.B.C` | Pointers are followed. On a struct: a field first, promoted fields of embedded structs included, then a method. Neither found, or the field is unexported: **definite error**. |
 | `.Method` | A method of `T`. A method of `*T` is callable only when the value is addressable, as `text/template` reaches it through `Value.Addr`: data handed to the template, a field of a non-addressable struct, a map element and a function's result are not addressable; what a pointer points to, a slice element (by `range` or `index`), and fields of an addressable struct are. `{{.In.PM}}` with `PM` on `*Inner` and the data passed by value is a **definite error**. The result type is the method's first result; the argument count is checked. |
-| `.key` on `map[string]V` (or any map with a string-kind key) | Valid, type `V`. A missing key is the zero value at runtime, not an error. |
+| `.key` on a map | `text/template` looks `.key` up as a plain `string`, which must be assignable to the map's key type: `map[string]V`, or a map keyed by an interface type `string` implements (`map[any]V`), is valid, type `V`. A map keyed by a named string type (`map[Slug]V`), or by an interface `string` does not implement (`map[fmt.Stringer]V`), is a **definite error**. A key the map does not hold is not an error at runtime: it gives an invalid value that silently ends the chain. |
 | interface, `any` | Unknown. |
 | `{{range x}}` | Slice, array, map, channel, integer, `iter.Seq`/`iter.Seq2`. Inside, `.` is the element; `$i, $v :=` is typed. Ranging over a string, a struct or any other kind, or over an integer with two variables: **definite error**. `else` keeps the outer `.`. |
 | `{{with x}}` | Inside, `.` is `x`'s type; `else` keeps the outer `.`. |
-| `{{if}}`, `{{else if}}` | `.` unchanged; every branch is walked. |
+| `{{if}}`, `{{else if}}` | `.` unchanged; every branch is walked, except the side a literal condition (`false`, `0`, `""`, `true`, or `not` of a literal) never runs. |
 | `len x`, `index x …` | `len` of a kind other than array, chan, map, slice, string, and `index` into a kind other than array, slice, map, string: **definite error**. |
 | `$x := …`, `$x = …`, `$` | Variables are typed for their scope; `$` is the root type. |
-| Function calls | Signatures from the merged FuncMap (built-ins, collage's own, plugin render funcs, `TemplateConfig.Funcs`) by `reflect`. Argument count checked, result type propagated. Special rules for `index`, `slice`, `len`, `not`, `eq`/`ne`/`lt`/`le`/`gt`/`ge`, `print*`, `html`/`js`/`urlquery`. `call` is unknown; `and`/`or` are unknown when their operands differ in type. |
+| Function calls | Signatures from the merged FuncMap (built-ins, collage's own, plugin render funcs, `TemplateConfig.Funcs`) by `reflect`. Argument count checked, result type propagated. Special rules for `index`, `slice`, `len`, `not`, `eq`/`ne`/`lt`/`le`/`gt`/`ge`, `print*`, `html`/`js`/`urlquery`. `call` on a function type is typed through that function's signature like any other call; `and`/`or` are unknown when their operands differ in type. A call returning a `reflect.Value` is unknown, since `text/template` unwraps it and goes on with what it holds. |
 | `{{template "x" pipeline}}` | `x` is walked with the pipeline's type. A partial included with several types is walked once per type; `(template, type)` pairs are memoised. |
 | `{{block}}`, `{{define}}` | As `template`. |
 | `_html_template_*` identifiers | Ignored: they are the escaper's, inserted after parsing. |
@@ -149,7 +149,7 @@ that is not certain to fail.
 
 In `checkTemplates`, where slot calls are checked today, every fragment of the
 page (inline fragments and fallbacks included) is walked unless its data type is
-unknown or it was built `WithoutTypeCheck()`. Every finding of the page is returned at once, joined
+unknown or it was built `WithoutTypeCheck()`. Every finding of the page's own fragments is returned at once, joined
 with `errors.Join`, ordered by file, line and column, so ten mistakes are not ten
 restarts.
 

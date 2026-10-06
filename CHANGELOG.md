@@ -22,11 +22,16 @@
   `DataHandler` and `Data` fields: a plugin that read them, or built a
   `Fragment` with them, sets its data through the builder. The template's data
   type comes from the function's signature or the value, so a handler and the
-  type its template is checked against cannot disagree. Setting data twice is
-  still `collage.ErrConflictingData` (`fragment "x" has its data set twice`),
-  and `WithData(nil)`, like a constructor handed a nil function, is no data.
-  Tags, the data dropped on an error, timeouts, prefetching, `Static()` and
-  `Shared()` behave as before. See [docs/fragments.md](docs/fragments.md#data-handlers).
+  type its template is checked against cannot disagree. `WithData(nil)`, like a
+  constructor handed a nil function, is no data. Tags, the data dropped on an
+  error, timeouts, prefetching, `Static()` and `Shared()` behave as before. See
+  [docs/fragments.md](docs/fragments.md#data-handlers).
+- **Setting a fragment's data twice is now an error.** Before, two `WithData`
+  calls, or two `WithDataHandler` calls, silently kept the last one; only fixed
+  data together with a handler was `collage.ErrConflictingData`. Now any second
+  `WithData` on a builder records `collage.ErrConflictingData`
+  (`fragment "x" has its data set twice`), which `RegisterPage` returns. A
+  builder that set its data twice on purpose keeps only the call it meant.
 - **An application may now fail at startup over a template that would already
   fail when rendered.** `RegisterPage` checks each fragment's template against its
   data's Go type and refuses the page when an expression is certain to fail —
@@ -40,7 +45,9 @@
   collage: page "post": fragment "post-body" (post.html:1:6): {{.Titel}}: type blog.Post has no field or method Titel (did you mean Title?)
   ```
 
-  Every finding of the page arrives at once, joined. `WithoutTypeCheck()` on a
+  Every finding in the page's own fragments arrives at once, joined; its
+  not-found page and then its error page are checked only once the page itself
+  passes, so their findings come once the page's own are fixed. `WithoutTypeCheck()` on a
   fragment leaves it out of the check while it is fixed. Run against real
   applications before this release, the check reported nothing that would have
   rendered.

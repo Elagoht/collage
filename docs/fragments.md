@@ -220,7 +220,7 @@ Calling it in the template is all the declaring it needs:
 <!-- templates/layouts/default.html -->
 <!doctype html>
 <html lang="en">
-<head><title>{{.Site.Name}}</title></head>
+<head><title>{{.Name}}</title></head>
 <body>
   <main>{{slot "content"}}</main>
 </body>
@@ -228,8 +228,15 @@ Calling it in the template is all the declaring it needs:
 ```
 
 ```go
-layout := collage.NewFragment("layout", "layouts/default.html").Build()
+type site struct{ Name string }
+
+layout := collage.NewFragment("layout", "layouts/default.html").
+	WithData(collage.Value(site{Name: "My site"})).
+	Build()
 ```
+
+`{{.Name}}` is checked against `site` when the page registers (see
+[How templates are checked](#how-templates-are-checked)).
 
 A page's content goes into the layout's `"content"` slot at registration. Binding a
 child yourself:
@@ -534,7 +541,10 @@ variables keep the type they were given for their scope.
   and works on a `*Post`; the fix is to hand the template the pointer.
 - **A map keyed by a named string type** (`map[Slug]Post`): `.key` looks a key
   up as a plain `string`, which such a map does not accept. A map keyed by
-  `string` is fine, and a key it does not hold is the zero value, not an error.
+  `string` is fine. A key it does not hold is not an error either: it gives an
+  invalid value that silently ends the chain, so `{{.Meta.absent.Name}}` renders
+  nothing. The check, knowing only the map's element type, still reports a name
+  that element type lacks.
 - **Calls of the wrong shape**: a method, a template function or a built-in
   given the wrong number of arguments; a field or map key given arguments; a
   method or function returning more than a value and an error; `call` on
@@ -543,15 +553,23 @@ variables keep the type they were given for their scope.
   struct, or over an integer with two variables; `len` of a struct; `index` into
   a struct.
 
-`{{and}}` and `{{or}}` stop at the first operand that decides them, and an
-`{{if}}` or `{{with}}` on a literal boolean never runs its other branch, so what
-the render would never reach is not reported.
+What the render can never reach is not reported. An `{{if}}` or `{{with}}`
+whose condition is a literal — `true`, `false`, `0`, `1`, `""`, `"x"`, or `not`
+of one — never runs the side the literal rules out. `{{and}}` and `{{or}}` stop
+at an operand only when it is a literal that decides them, `false`, `0`, `""` or
+`nil` for `and`; `true`, a non-zero number or a non-empty string for `or`: `{{and 0 .Nope}}` reports nothing, while
+`{{and 1 .Nope}}` and `{{and .Title .Nope}}` report `.Nope`, since the render
+may reach it. `text/template`'s truth decides: `false`, zero, the empty string
+and `nil` are false.
 
 ### What is not
 
 - **What cannot be known before the render.** An interface — `any`, a
   `map[string]any`'s entries, an `error` — could hold anything, so nothing read
-  from one is reported; neither is what `call` returns.
+  from one is reported. Nor is anything read from a `reflect.Value` a method or
+  function returns, which `text/template` unwraps into whatever it holds. A
+  function `call` invokes is checked like any other: its argument count, and
+  what it returns.
 - **A fragment with no data.** Reading a field of nil data is not an error in
   `html/template`: `{{.Title}}` renders nothing. A fragment without `WithData`,
   or with `collage.Effect`, is still walked, but only its function calls and
@@ -564,26 +582,44 @@ the render would never reach is not reported.
 
 ### Reading the error
 
-`RegisterPage` returns every finding of the page at once, joined with
-`errors.Join` in a fixed order — by file, line and column — so ten mistakes are
-one restart rather than ten. Each is a `*collage.TemplateTypeError`, and each
-matches `collage.ErrTemplateType`:
+`RegisterPage` returns every finding in the page's own fragments at once,
+joined with `errors.Join` in a fixed order — by file, line and column — so ten
+mistakes are one restart rather than ten. The page's not-found page is checked
+once the page itself passes, and its error page once both have: their findings
+come wrapped in a `collage: page "post" not-found page: …` (or `error page: …`)
+error, on the start after the page's own are fixed. Each finding is a
+`*collage.TemplateTypeError`, and each matches `collage.ErrTemplateType`. Since
+a finding may sit under a wrapping error as well as a join, walk the whole tree
+to list them:
 
 ```go
-err := app.RegisterPage(page)
-if errors.Is(err, collage.ErrTemplateType) {
-	if joined, ok := err.(interface{ Unwrap() []error }); ok {
-		for _, e := range joined.Unwrap() {
-			var typeErr *collage.TemplateTypeError
-			if errors.As(e, &typeErr) {
-				fmt.Printf("%s:%d:%d %s\n", typeErr.Template, typeErr.Line, typeErr.Col, typeErr.Reason)
-			}
+// typeErrors collects every *collage.TemplateTypeError in err's tree.
+func typeErrors(err error) []*collage.TemplateTypeError {
+	switch e := err.(type) {
+	case nil:
+		return nil
+	case *collage.TemplateTypeError:
+		return []*collage.TemplateTypeError{e}
+	case interface{ Unwrap() []error }:
+		var found []*collage.TemplateTypeError
+		for _, inner := range e.Unwrap() {
+			found = append(found, typeErrors(inner)...)
 		}
+		return found
+	case interface{ Unwrap() error }:
+		return typeErrors(e.Unwrap())
+	}
+	return nil
+}
+
+if err := app.RegisterPage(page); errors.Is(err, collage.ErrTemplateType) {
+	for _, typeErr := range typeErrors(err) {
+		fmt.Printf("%s:%d:%d %s\n", typeErr.Template, typeErr.Line, typeErr.Col, typeErr.Reason)
 	}
 }
 ```
 
-`errors.As` on the joined error itself finds the first finding. The fields are
+`errors.As` on the returned error itself finds the first finding. The fields are
 `Page`, `Fragment`, `Template` (the file the expression is in — the fragment's
 own or a partial it includes — or `inline template of fragment "x"`), `Line`,
 `Col`, `Expr` (the expression as written, `{{.Titel}}`), `Reason` and
