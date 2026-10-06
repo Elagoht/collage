@@ -29,10 +29,8 @@ func (p *valuesHookPlugin) OnAfterRender(_ context.Context, ev *collage.AfterRen
 	return nil
 }
 
-// An AfterRender hook reads what the render stored, by key; a key nothing set,
-// and a nil Values, are simply absent.
-func TestAfterRenderValues(t *testing.T) {
-	p := &valuesHookPlugin{}
+func valuesApp(t *testing.T, p *valuesHookPlugin) *collage.App {
+	t.Helper()
 	app, err := collage.New(&collage.Config{
 		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{
@@ -50,16 +48,38 @@ func TestAfterRenderValues(t *testing.T) {
 	if err := app.RegisterPage(collage.NewPage("home").WithContent(frag).WithPath("en", "/").Build()); err != nil {
 		t.Fatal(err)
 	}
-	rec := httptest.NewRecorder()
-	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	return app
+}
 
+func checkValuesHook(t *testing.T, p *valuesHookPlugin) {
+	t.Helper()
 	if p.got != "from-render" || !p.ok {
 		t.Errorf("In(ev.Values) = %q, %v; want from-render, true", p.got, p.ok)
 	}
 	if p.missingOK {
 		t.Error("a key nothing set reported present")
 	}
+}
+
+// An AfterRender hook reads what the render stored, by key; a key nothing set,
+// and a nil Values, are simply absent.
+func TestAfterRenderValues(t *testing.T) {
+	p := &valuesHookPlugin{}
+	app := valuesApp(t, p)
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	checkValuesHook(t, p)
 	if _, ok := collage.NewKey[int]("x").In(nil); ok {
 		t.Error("In(nil) reported present")
 	}
+}
+
+// The static path (RenderPath, used by builds) hands the hook the same values.
+func TestAfterRenderValuesStaticPath(t *testing.T) {
+	p := &valuesHookPlugin{}
+	app := valuesApp(t, p)
+	if _, err := app.RenderPath(context.Background(), "/", "en", nil); err != nil {
+		t.Fatal(err)
+	}
+	checkValuesHook(t, p)
 }
