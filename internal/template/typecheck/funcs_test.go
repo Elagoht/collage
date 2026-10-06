@@ -46,7 +46,13 @@ func TestCheck_Funcs(t *testing.T) {
 		{"comparisons are bool", `{{if eq .Title "x"}}{{end}}`, nil},
 		{"print is string", `{{(print .Title).Nope}}`,
 			[]string{"t.html:1 type string has no field or method Nope"}},
-		{"call is unknown", `{{(call .Seq).Whatever}}`, nil},
+		{"call checks its function's shape", `{{(call .Seq).Whatever}}`,
+			[]string{"t.html:1 wrong number of arguments for call: want 1, got 0", "t.html:1 call returns 0 values; a template can call one that returns a value, or a value and an error"}},
+		{"call of an unknown value is unknown", `{{(call (stand 1)).Whatever}}`, nil},
+		{"builtin argument count", `{{len .Cards .Cards}}`,
+			[]string{"t.html:1 wrong number of arguments for len: want 1, got 2"}},
+		{"no findings inside a call of the wrong shape", `{{upper .Nope "b"}}`,
+			[]string{"t.html:1 wrong number of arguments for upper: want 1, got 2"}},
 		{"and/or are unknown", `{{(and .Title .Count).Whatever}}`, nil},
 	}
 	for _, test := range tests {

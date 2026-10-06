@@ -41,12 +41,13 @@ func literalBool(p *parse.PipeNode) (value, ok bool) {
 // outer dot.
 func (w *walker) rangeOver(r *parse.RangeNode, dot value, vars []variable) {
 	over := w.eval(r.Pipe, dot, vars)
-	// text/template names a range's failure where evaluating its pipeline
-	// left off; w.at is there until the body is walked.
 	last := lastCommand(r)
 	// A body may run again after an assignment later in it, so what it assigns
 	// is uncertain from its first statement.
 	vars = forget(vars, assignedIn(r))
+	// text/template names a range's failure where evaluating its pipeline left
+	// off, so the findings below are placed at w.at, which stays there until
+	// the body is walked.
 	key, elem, two := w.elements(r, over, len(r.Pipe.Decl))
 	inner := vars
 	switch len(r.Pipe.Decl) {

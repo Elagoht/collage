@@ -10,13 +10,38 @@ import (
 // call evaluates a call of the function ident names. A name the set was parsed
 // with comes first, as in text/template; then text/template's builtins. The
 // escaper's own functions, which html/template adds after parsing, and any name
-// neither knows, are unknown. Every argument is walked, except those and and or
-// skip. Findings are about node, the whole command.
+// neither knows, are unknown.
+//
+// As in text/template, the call's shape — how many arguments, how many results
+// — is checked at the identifier before any argument is evaluated, so a call of
+// the wrong shape reports nothing inside its arguments. Then every argument is
+// walked, except those and and or skip. A builtin's own failure is named at
+// node, the whole command; findings are about node.
 func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse.Node, dot value, vars []variable, hasFinal bool, final value) value {
 	name := ident.Ident
 	w.at = ident
-	_, overridden := w.c.Funcs[name]
-	values := make([]value, 0, len(args)+1)
+	argc := len(args)
+	if hasFinal {
+		argc++
+	}
+	ft, overridden := w.c.Funcs[name]
+	var result value
+	switch {
+	case strings.HasPrefix(name, "_html_template_"):
+		result = unknown
+	case overridden && ft != nil && ft.Kind() == reflect.Func:
+		before := w.reported
+		result = w.result(node, name, ft, argc, false)
+		if w.reported != before {
+			return unknown
+		}
+	case !overridden:
+		if !w.builtinArity(node, name, argc) {
+			return unknown
+		}
+	}
+	values := make([]value, 0, argc)
+	walked := w.reported
 	for _, arg := range args {
 		values = append(values, w.arg(arg, dot, vars))
 		// and and or stop at the first operand that decides them, so what
@@ -28,27 +53,74 @@ func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse
 	if hasFinal {
 		values = append(values, final)
 	}
-	if strings.HasPrefix(name, "_html_template_") {
+	if overridden || strings.HasPrefix(name, "_html_template_") {
+		return result
+	}
+	// An argument that failed stopped text/template before the call ran.
+	if w.reported != walked {
 		return unknown
 	}
-	// text/template checks the call's shape at the identifier, before it
-	// evaluates the arguments, and names a builtin's own failure at the whole
-	// command, after them. Either way the arguments' last mark stands after.
+	// A builtin fails after its arguments are evaluated, named at the
+	// command; after it the arguments' last mark stands.
 	last := w.at
 	defer func() { w.at = last }()
-	if ft, ok := w.c.Funcs[name]; ok && ft != nil && ft.Kind() == reflect.Func {
-		w.at = ident
-		return w.result(node, name, ft, len(values), false)
-	}
 	w.at = node
 	return w.builtin(node, name, values)
+}
+
+// builtinArgs holds how many arguments each of text/template's builtins takes:
+// at least min, and no more than max unless max is -1.
+var builtinArgs = map[string]struct{ min, max int }{
+	"and": {1, -1}, "or": {1, -1}, "not": {1, 1},
+	"call": {1, -1}, "index": {1, -1}, "slice": {1, -1}, "len": {1, 1},
+	"html": {0, -1}, "js": {0, -1}, "urlquery": {0, -1},
+	"print": {0, -1}, "printf": {1, -1}, "println": {0, -1},
+	"eq": {1, -1}, "ne": {2, 2}, "lt": {2, 2}, "le": {2, 2}, "gt": {2, 2}, "ge": {2, 2},
+}
+
+// builtinArity reports a builtin called with the wrong number of arguments at
+// its identifier, where text/template checks it, and says whether the count
+// is right. A name that is not a builtin is left alone.
+func (w *walker) builtinArity(node parse.Node, name string, argc int) bool {
+	want, ok := builtinArgs[name]
+	if !ok {
+		return true
+	}
+	switch {
+	case want.max < 0 && argc < want.min:
+		w.report(node, fmt.Sprintf("wrong number of arguments for %s: want at least %d, got %d", name, want.min, argc), "")
+	case want.max >= 0 && argc != want.min:
+		w.report(node, fmt.Sprintf("wrong number of arguments for %s: want %d, got %d", name, want.min, argc), "")
+	default:
+		return true
+	}
+	return false
 }
 
 func (w *walker) builtin(node parse.Node, name string, args []value) value {
 	str := typed(reflect.TypeFor[string](), false)
 	boolean := typed(reflect.TypeFor[bool](), false)
 	switch name {
-	case "not", "eq", "ne", "lt", "le", "gt", "ge":
+	case "eq":
+		// eq takes one argument, then fails when it runs with nothing to
+		// compare it to.
+		if len(args) == 1 {
+			w.report(node, "eq has nothing to compare its argument to: give it at least two", "")
+			return unknown
+		}
+		return boolean
+	case "call":
+		// call fails on anything but a function, and on a function called
+		// with the wrong number of arguments; a nil one fails too.
+		if len(args) == 0 || !args[0].known() {
+			return unknown
+		}
+		if fn := args[0].t; fn.Kind() == reflect.Func {
+			return w.result(node, "call", fn, len(args)-1, false)
+		}
+		w.report(node, fmt.Sprintf("call of type %s, which is not a function", args[0].t), "")
+		return unknown
+	case "not", "ne", "lt", "le", "gt", "ge":
 		return boolean
 	case "print", "printf", "println", "html", "js", "urlquery":
 		return str

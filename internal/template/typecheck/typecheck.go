@@ -25,7 +25,9 @@ type Dot struct {
 type Finding struct {
 	// Template is the file the node is in: a path, or an inline template's name.
 	Template string
-	// Line and Col locate the node as text/template's own errors do.
+	// Line and Col are where text/template names its error, which may lie
+	// inside Expr — at the last argument within its parentheses, say — rather
+	// than at its start.
 	Line, Col int
 	// Expr is the expression as written, "{{.Titel}}".
 	Expr string
@@ -79,9 +81,13 @@ type walker struct {
 	tree *parse.Tree
 	// at is the node text/template last marked while executing — where it
 	// names its error. A finding is placed there, as text/template's would be.
-	at       parse.Node
-	done     map[visit]bool
-	seen     map[Finding]bool
+	at   parse.Node
+	done map[visit]bool
+	seen map[Finding]bool
+	// reported counts every report, repeats included: text/template stops at
+	// its first error, so what an erring call would have evaluated next is
+	// not walked.
+	reported int
 	findings []Finding
 }
 
@@ -173,8 +179,9 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 		return w.call(ident, cmd, cmd.Args[1:], dot, vars, hasFinal, final)
 	}
 	// The receiver resolves before its arguments are evaluated, as in
-	// text/template, so a finding in it is placed before theirs.
+	// text/template; when it fails, its arguments are never evaluated.
 	var result value
+	before := w.reported
 	switch n := cmd.Args[0].(type) {
 	case *parse.FieldNode:
 		w.at = n
@@ -190,6 +197,9 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 			w.arg(arg, dot, vars)
 		}
 		return w.arg(cmd.Args[0], dot, vars)
+	}
+	if w.reported != before {
+		return unknown
 	}
 	for _, arg := range cmd.Args[1:] {
 		w.arg(arg, dot, vars)
@@ -267,6 +277,7 @@ func lookup(vars []variable, name string) value {
 // would name its error: the node it last marked, which for a chain such as
 // (index .Cards 0).Owner.Edit is the last argument inside the parentheses.
 func (w *walker) report(node parse.Node, reason, suggestion string) {
+	w.reported++
 	at := w.at
 	if at == nil {
 		at = node

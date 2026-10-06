@@ -57,6 +57,7 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 	boardPtr := func() any { b := filledBoard(); return &b } // any: case data
 
 	add(post,
+		`{{.Two .Nope}}`, `{{.Title .Nope}}`, `{{.Bad .Nope}}`, `{{.Nope .Titl}}`,
 		`{{(.Two "a" "b").Nope}}`, `{{.Join "," .Titl}}`, `{{(.Join "," "a" "b").Nope}}`,
 		`{{.Title}}`, `{{.Titel}}`, `{{.Promoted}}`, `{{.Author.Name}}`, `{{.Author.Nmae}}`,
 		`{{.URL}}`, `{{.Title.Len}}`, `{{.Title "x"}}`, `{{.Two "a"}}`, `{{.Two "a" "b"}}`,
@@ -107,6 +108,22 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 		`{{upper .Owner.Nope}}`, `{{with $x := .Owner}}{{$x.Nope}}{{end}}`, `{{$.Owner.Nope}}`,
 		`{{define "row"}}{{.Nme}}{{end}}{{range .Cards}}{{template "row" .}}{{end}}`,
 		`{{define "row"}}{{.Name}}{{end}}{{template "row" .Owner}}{{template "row" .}}`,
+
+		// Builtin argument counts, checked before the arguments run.
+		`{{len}}`, `{{len .Cards .Cards}}`, `{{not}}`, `{{not .Title}}`, `{{not .Title .Count}}`,
+		`{{and}}`, `{{and .Title}}`, `{{or}}`, `{{or .Title .Count}}`,
+		`{{index}}`, `{{index .Cards}}`, `{{slice}}`, `{{slice .Cards}}`, `{{slice .Cards 0 1}}`,
+		`{{call}}`, `{{call .Seq (index .Cards 0) | not}}`, `{{call .Seq}}`, `{{call .Title}}`,
+		`{{(call .Seq).Whatever}}`,
+		`{{eq}}`, `{{eq .Count}}`, `{{eq .Count 1}}`, `{{eq .Count 1 2}}`,
+		`{{ne .Count}}`, `{{ne .Count 1}}`, `{{ne .Count 1 2}}`, `{{lt .Count}}`, `{{lt .Count 1}}`,
+		`{{le .Count 1 2}}`, `{{le .Count 1}}`, `{{gt}}`, `{{gt .Count 1}}`, `{{ge .Count}}`, `{{ge .Count 1}}`,
+		`{{print}}`, `{{print .Title 1}}`, `{{printf}}`, `{{printf "%s" .Title}}`, `{{println}}`,
+		`{{.Title | len}}`, `{{.Title | len .Title}}`, `{{.Title | not .Count}}`, `{{.Count | eq}}`,
+		`{{js}}`, `{{js .Title 1}}`,
+
+		// A call of the wrong shape never evaluates its arguments.
+		`{{upper .Nope "b"}}`, `{{len .Nope .Nada}}`, `{{not (index .Owner 0) 1}}`, `{{eq .Nope}}`,
 
 		// Positions on later lines, and inside actions that span lines.
 		"x\n{{range .Cards}}\n  {{.Nam}}{{end}}", "\n{{(index .ByCol\n  \"a\").Owner.Edit}}",
