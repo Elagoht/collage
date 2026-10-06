@@ -30,8 +30,8 @@
   calls, or two `WithDataHandler` calls, silently kept the last one; only fixed
   data together with a handler was `collage.ErrConflictingData`. Now any second
   `WithData` on a builder records `collage.ErrConflictingData`
-  (`fragment "x" has its data set twice`), which `RegisterPage` returns. A
-  builder that set its data twice on purpose keeps only the call it meant.
+  (`fragment "x" has its data set twice`), which `RegisterPage` returns: keep
+  the one call you mean and drop the other.
 - **An application may now fail at startup over a template that would already
   fail when rendered.** `RegisterPage` checks each fragment's template against its
   data's Go type and refuses the page when an expression is certain to fail —

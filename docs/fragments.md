@@ -611,7 +611,11 @@ func typeErrors(err error) []*collage.TemplateTypeError {
 	}
 	return nil
 }
+```
 
+and, where the page is registered:
+
+```go
 if err := app.RegisterPage(page); errors.Is(err, collage.ErrTemplateType) {
 	for _, typeErr := range typeErrors(err) {
 		fmt.Printf("%s:%d:%d %s\n", typeErr.Template, typeErr.Line, typeErr.Col, typeErr.Reason)
