@@ -8,6 +8,9 @@ import (
 	"errors"
 	"html/template"
 	"io"
+	"reflect"
+
+	"github.com/Elagoht/collage/internal/template/typecheck"
 )
 
 // ErrTemplateRootMissing is returned when an Engine's configured root directory does
@@ -67,6 +70,10 @@ type Engine interface {
 	// renders, so registration can check a fragment's bindings against them
 	// before anything renders.
 	SlotCalls(path string) (names []string, dynamic bool)
+	// TypeCheck walks the template at path against dot, the Go type its data
+	// will have — nil when unknown — and returns what is certain to fail when it
+	// renders.
+	TypeCheck(path string, dot reflect.Type) []typecheck.Finding
 	// Calls returns every call of the functions named funcs in every loaded
 	// template, with the arguments written as string literals, so a check can see
 	// what the templates link to without rendering them.

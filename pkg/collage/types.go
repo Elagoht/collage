@@ -95,6 +95,14 @@ var ErrNilFragment = types.ErrNilFragment
 // template never calls — a fill that could never render.
 var ErrUnknownSlot = types.ErrUnknownSlot
 
+// TemplateTypeError is one expression in a fragment's template that does not fit
+// the fragment's data type, reported by RegisterPage. A page's findings come back
+// joined; read each with errors.As.
+type TemplateTypeError = types.TemplateTypeError
+
+// ErrTemplateType matches every TemplateTypeError.
+var ErrTemplateType = types.ErrTemplateType
+
 // ErrSlotOccupied is returned when binding a fragment to a slot that already has a
 // fill and does not allow multiple.
 var ErrSlotOccupied = types.ErrSlotOccupied

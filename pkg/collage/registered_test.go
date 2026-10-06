@@ -131,16 +131,23 @@ func TestDev500_NamesTheBrokenFragment(t *testing.T) {
 		Server:  collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{
 			"t/layout.html": {Data: []byte(`<main>{{slot "content"}}</main>`)},
-			"t/recipe.html": {Data: []byte(`{{.Missing}}`)},
+			"t/recipe.html": {Data: []byte(`{{.Chef.Name}}`)},
 		}, Root: "t"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
+	// A nil Chef fits the template's type, so registration passes, and the
+	// template fails only when it renders.
+	type chef struct{ Name string }
+	type recipe struct {
+		Name string
+		Chef *chef
+	}
 	content := collage.NewFragment("recipe-content", "recipe.html").WithData(collage.DataHandler(
-		func(context.Context, *collage.RenderContext) (struct{ Name string }, []string, error) {
-			return struct{ Name string }{"soup"}, nil, nil
+		func(context.Context, *collage.RenderContext) (recipe, []string, error) {
+			return recipe{Name: "soup"}, nil, nil
 		})).
 		Required().Build()
 	if err := app.RegisterPage(collage.NewPage("recipe").WithLayouts(layout).WithContent(content).WithPath("en", "/").Dynamic().Build()); err != nil {

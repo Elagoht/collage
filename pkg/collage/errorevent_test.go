@@ -79,9 +79,12 @@ func errorEventApp(t *testing.T, rec *eventRecorder, logs *lockedBuffer) *collag
 	return app
 }
 
+// eventData is what p.html reads; failingData never gets as far as returning one.
+type eventData struct{ Data string }
+
 func failingData() collage.Data {
-	return collage.Load(func(context.Context, *collage.RenderContext) (string, error) {
-		return "", errors.New("boom")
+	return collage.Load(func(context.Context, *collage.RenderContext) (eventData, error) {
+		return eventData{}, errors.New("boom")
 	})
 }
 

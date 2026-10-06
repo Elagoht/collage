@@ -118,7 +118,10 @@ func TestInlineFragment_ParseErrorNamesPageAndFragment(t *testing.T) {
 // template that is the fragment, not a hash nobody wrote.
 func TestInlineFragment_DevOverlayNamesTheFragment(t *testing.T) {
 	app := inlineApp(t, true)
-	bad := collage.NewInlineFragment("bad", `<p>{{.Nope.X}}</p>`).WithData(collage.Value("s")).Build()
+	// A nil pointer the template reaches through: it fits the data's type, so
+	// registration passes, and fails only when it renders.
+	type inner struct{ X string }
+	bad := collage.NewInlineFragment("bad", `<p>{{.Nope.X}}</p>`).WithData(collage.Value(struct{ Nope *inner }{})).Build()
 	if err := app.RegisterPage(collage.NewPage("b").WithContent(bad).WithPath("en", "/b").Build()); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}

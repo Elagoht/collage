@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"sort"
 
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/types"
@@ -326,7 +327,9 @@ func describeTemplate(f *types.Fragment) string {
 // checkTemplates reports ErrTemplateNotFound for the first fragment of p whose
 // TemplatePath the engine has not loaded, naming the page, the fragment, and the
 // path — and types.ErrUnknownSlot for the first with something bound into a slot
-// its template never calls.
+// its template never calls. When neither occurs, it reports, joined, every
+// types.TemplateTypeError found by checking each fragment's template against
+// the type of its data, in the fixed order joinTypeErrors gives them.
 //
 // It walks the layout tree and the content tree separately rather than just
 // p.Root(): p is not always a page being registered in its own right — it may be
@@ -335,6 +338,7 @@ func describeTemplate(f *types.Fragment) string {
 // The shared visited set means a fragment reachable both ways is still checked once.
 func (a *App) checkTemplates(p *types.Page) error {
 	visited := make(map[*types.Fragment]bool)
+	var findings []*types.TemplateTypeError
 	visit := func(f *types.Fragment) error {
 		// An inline fragment's template reaches the engine here, so everything
 		// below checks it exactly as it checks a file.
@@ -353,6 +357,9 @@ func (a *App) checkTemplates(p *types.Page) error {
 			return fmt.Errorf("%w: page %q fragment %q references %s",
 				ErrTemplateNotFound, p.Name, f.Name, describeTemplate(f))
 		}
+		// The type check runs before the slot check, whose early return for a
+		// slot called by a dynamic name would otherwise skip it.
+		findings = append(findings, a.typeFindings(p, f, name)...)
 		// A slot with something bound into it that the template never calls
 		// renders nothing, every time. A template calling a slot by a name it
 		// works out as it renders may call any of them, so it is not checked.
@@ -395,7 +402,56 @@ func (a *App) checkTemplates(p *types.Page) error {
 			return err
 		}
 	}
-	return nil
+	return joinTypeErrors(findings)
+}
+
+// typeFindings checks f's template against its data's type. A fragment built
+// WithoutTypeCheck, or whose data type is unknown, is not walked; a fragment
+// with no data is walked with an unknown dot, which still checks its function
+// calls.
+func (a *App) typeFindings(p *types.Page, f *types.Fragment, name string) []*types.TemplateTypeError {
+	if f.SkipTypeCheck {
+		return nil
+	}
+	ds := f.DataSource()
+	if (ds.Kind == types.DataFixed || ds.Kind == types.DataFetched) && ds.Type == nil {
+		return nil
+	}
+	var out []*types.TemplateTypeError
+	for _, found := range a.tmpl.TypeCheck(name, ds.Type) {
+		out = append(out, &types.TemplateTypeError{
+			Page: p.Name, Fragment: f.Name, Template: types.HumanizeTemplateNames(found.Template),
+			Line: found.Line, Col: found.Col, Expr: found.Expr, Reason: found.Reason, Suggestion: found.Suggestion,
+		})
+	}
+	return out
+}
+
+// joinTypeErrors joins a page's findings into one error in a fixed order —
+// template, line, column, fragment — whatever order the fragments were
+// visited in. Nil when there are none.
+func joinTypeErrors(found []*types.TemplateTypeError) error {
+	if len(found) == 0 {
+		return nil
+	}
+	sort.SliceStable(found, func(i, j int) bool {
+		a, b := found[i], found[j]
+		if a.Template != b.Template {
+			return a.Template < b.Template
+		}
+		if a.Line != b.Line {
+			return a.Line < b.Line
+		}
+		if a.Col != b.Col {
+			return a.Col < b.Col
+		}
+		return a.Fragment < b.Fragment
+	})
+	errs := make([]error, len(found))
+	for i, e := range found {
+		errs[i] = e
+	}
+	return errors.Join(errs...)
 }
 
 // walkFragments calls visit on f and on every fragment reachable from it, through
