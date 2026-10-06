@@ -211,7 +211,8 @@ Tell the runtime what it has with `GOMEMLIMIT`, a little under the container's
 limit, and it collects harder as it approaches it instead of being killed:
 
 ```dockerfile
-ENV GOMEMLIMIT=400MiB   # in a 512 MiB container
+# In a 512 MiB container.
+ENV GOMEMLIMIT=400MiB
 ```
 
 The same run with `GOMEMLIMIT=320MiB` stayed at about 430 MB. The limit is soft:

@@ -4,17 +4,17 @@
 
 ### Changed
 
-- **A dynamic render allocates about 40% less.** Each fragment's template used to
+- **A nested render copies its markup less.** Each fragment's template used to
   execute into a buffer of its own, which was then copied into the fragment's
   buffer and again into its slot's, every one of them grown from nothing. A
   fragment now executes straight into its slot's buffer, the slot buffers are
   reused across renders, and a template that fails partway is cut back out of the
-  shared buffer, so a failed fragment still leaves nothing of itself behind. A page
-  of a layout, a content fragment and three 50-row listings (about 14 KB) went
-  from 312 KiB to 185 KiB per render, against 136 KiB for the same markup from
-  `html/template` alone; `BenchmarkPage_DynamicNested` measures both. A
-  `template.Engine` given a `*bytes.Buffer` now writes into it directly and
-  truncates it on failure instead of buffering on the side.
+  shared buffer, so a failed fragment still leaves nothing of itself behind. The
+  saving follows the markup: a page of a layout, a content fragment and three
+  50-row listings (about 14 KB) went from 312 KiB to 185 KiB per render and 8%
+  less time, against 136 KiB for the same markup from `html/template` alone;
+  `BenchmarkPage_DynamicNested` measures both. Pages of a few small fragments
+  allocate 1–5% less and take the same time.
 
 ### Docs
 
