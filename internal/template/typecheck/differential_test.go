@@ -32,7 +32,8 @@ func filledPost() post {
 	return post{
 		Title: "t", secret: "s", Author: &user{Name: "a"}, Owner: user{Name: "o"}, Tags: []string{"x"},
 		Comments: []comment{{Body: "b"}}, Meta: map[string]string{"anything": "m"},
-		ByID: map[slug]comment{"first": {}}, Loose: map[string]any{"a": map[string]any{"b": map[string]any{"c": 1}}},
+		ByID:  map[slug]comment{"first": {}},
+		Loose: map[string]any{"a": map[string]any{"b": map[string]any{"c": 1}}}, // any: the field's own type
 		Extra: user{Name: "e"}, embedded: embedded{Promoted: "p"},
 	}
 }
@@ -106,6 +107,10 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 		`{{upper .Owner.Nope}}`, `{{with $x := .Owner}}{{$x.Nope}}{{end}}`, `{{$.Owner.Nope}}`,
 		`{{define "row"}}{{.Nme}}{{end}}{{range .Cards}}{{template "row" .}}{{end}}`,
 		`{{define "row"}}{{.Name}}{{end}}{{template "row" .Owner}}{{template "row" .}}`,
+
+		// Positions on later lines, and inside actions that span lines.
+		"x\n{{range .Cards}}\n  {{.Nam}}{{end}}", "\n{{(index .ByCol\n  \"a\").Owner.Edit}}",
+		"\n{{upper\n \"a\" \"b\"}}", "\n\n{{range $i, $v :=\n  .Count}}{{end}}", "{{len\n\n .Owner}}",
 	)
 	add(boardPtr, `{{range .Fixed}}{{.Owner.Edit}}{{end}}`, `{{(index .Fixed 0).Owner.Edit}}`, `{{.Owner.Edit}}`)
 
