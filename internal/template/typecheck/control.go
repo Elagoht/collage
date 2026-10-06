@@ -41,6 +41,8 @@ func literalBool(p *parse.PipeNode) (value, ok bool) {
 // outer dot.
 func (w *walker) rangeOver(r *parse.RangeNode, dot value, vars []variable) {
 	over := w.eval(r.Pipe, dot, vars)
+	// text/template names a range's failure where evaluating its pipeline
+	// left off; w.at is there until the body is walked.
 	last := lastCommand(r)
 	// A body may run again after an assignment later in it, so what it assigns
 	// is uncertain from its first statement.
@@ -61,7 +63,7 @@ func (w *walker) rangeOver(r *parse.RangeNode, dot value, vars []variable) {
 	w.list(r.ElseList, dot, vars)
 }
 
-// lastCommand is the node text/template points range errors at.
+// lastCommand is the expression a range finding is about.
 func lastCommand(r *parse.RangeNode) parse.Node {
 	return r.Pipe.Cmds[len(r.Pipe.Cmds)-1]
 }

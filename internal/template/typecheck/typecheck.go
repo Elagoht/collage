@@ -75,8 +75,11 @@ type variable struct {
 }
 
 type walker struct {
-	c        *Checker
-	tree     *parse.Tree
+	c    *Checker
+	tree *parse.Tree
+	// at is the node text/template last marked while executing — where it
+	// names its error. A finding is placed there, as text/template's would be.
+	at       parse.Node
 	done     map[visit]bool
 	seen     map[Finding]bool
 	findings []Finding
@@ -111,6 +114,7 @@ func (w *walker) list(list *parse.ListNode, dot value, vars []variable) {
 // node walks one node and returns the variables in scope after it: an action
 // declaring a variable adds it for the nodes that follow it in the same list.
 func (w *walker) node(node parse.Node, dot value, vars []variable) []variable {
+	w.at = node
 	switch n := node.(type) {
 	case *parse.ActionNode:
 		_, vars = w.pipe(n.Pipe, dot, vars)
@@ -148,6 +152,7 @@ func (w *walker) eval(p *parse.PipeNode, dot value, vars []variable) value {
 	if p == nil {
 		return unknown
 	}
+	w.at = p
 	result, hasFinal := unknown, false
 	for _, cmd := range p.Cmds {
 		result = w.command(cmd, dot, vars, hasFinal, result)
@@ -167,22 +172,34 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 	if ident, ok := cmd.Args[0].(*parse.IdentifierNode); ok {
 		return w.call(ident, cmd, cmd.Args[1:], dot, vars, hasFinal, final)
 	}
+	// The receiver resolves before its arguments are evaluated, as in
+	// text/template, so a finding in it is placed before theirs.
+	var result value
+	switch n := cmd.Args[0].(type) {
+	case *parse.FieldNode:
+		w.at = n
+		result = w.chain(n, dot, n.Ident, argc)
+	case *parse.ChainNode:
+		w.at = n
+		result = w.chain(n, w.arg(n.Node, dot, vars), n.Field, argc)
+	case *parse.VariableNode:
+		w.at = n
+		result = w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], argc)
+	default:
+		for _, arg := range cmd.Args[1:] {
+			w.arg(arg, dot, vars)
+		}
+		return w.arg(cmd.Args[0], dot, vars)
+	}
 	for _, arg := range cmd.Args[1:] {
 		w.arg(arg, dot, vars)
 	}
-	switch n := cmd.Args[0].(type) {
-	case *parse.FieldNode:
-		return w.chain(n, dot, n.Ident, argc)
-	case *parse.ChainNode:
-		return w.chain(n, w.arg(n.Node, dot, vars), n.Field, argc)
-	case *parse.VariableNode:
-		return w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], argc)
-	}
-	return w.arg(cmd.Args[0], dot, vars)
+	return result
 }
 
 // arg evaluates a node used as an argument, or as a command on its own.
 func (w *walker) arg(node parse.Node, dot value, vars []variable) value {
+	w.at = node
 	switch n := node.(type) {
 	case *parse.FieldNode:
 		return w.chain(n, dot, n.Ident, 0)
@@ -246,11 +263,17 @@ func lookup(vars []variable, name string) value {
 	return unknown
 }
 
-// report records a finding at node, once.
+// report records a finding about node, once. It is placed where text/template
+// would name its error: the node it last marked, which for a chain such as
+// (index .Cards 0).Owner.Edit is the last argument inside the parentheses.
 func (w *walker) report(node parse.Node, reason, suggestion string) {
+	at := w.at
+	if at == nil {
+		at = node
+	}
 	// ErrorContext gives the location; its context is cut at twenty characters,
 	// so the expression is the node's own text.
-	location, _ := w.tree.ErrorContext(node)
+	location, _ := w.tree.ErrorContext(at)
 	name, line, col := splitLocation(location)
 	f := Finding{Template: name, Line: line, Col: col, Expr: "{{" + node.String() + "}}", Reason: reason, Suggestion: suggestion}
 	if w.seen[f] {

@@ -11,9 +11,10 @@ import (
 // with comes first, as in text/template; then text/template's builtins. The
 // escaper's own functions, which html/template adds after parsing, and any name
 // neither knows, are unknown. Every argument is walked, except those and and or
-// skip. Findings are reported at node, the whole command.
+// skip. Findings are about node, the whole command.
 func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse.Node, dot value, vars []variable, hasFinal bool, final value) value {
 	name := ident.Ident
+	w.at = ident
 	_, overridden := w.c.Funcs[name]
 	values := make([]value, 0, len(args)+1)
 	for _, arg := range args {
@@ -30,9 +31,16 @@ func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse
 	if strings.HasPrefix(name, "_html_template_") {
 		return unknown
 	}
+	// text/template checks the call's shape at the identifier, before it
+	// evaluates the arguments, and names a builtin's own failure at the whole
+	// command, after them. Either way the arguments' last mark stands after.
+	last := w.at
+	defer func() { w.at = last }()
 	if ft, ok := w.c.Funcs[name]; ok && ft != nil && ft.Kind() == reflect.Func {
+		w.at = ident
 		return w.result(node, name, ft, len(values), false)
 	}
+	w.at = node
 	return w.builtin(node, name, values)
 }
 
