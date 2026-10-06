@@ -217,7 +217,7 @@ func TestInspectJSONDataTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := collage.NewFragment("b", "b.html").WithoutTypeCheck().WithData(collage.Load(
-		func(context.Context, *collage.RenderContext) (any, error) { return nil, nil })).Build()
+		func(context.Context, *collage.RenderContext) (any, error) { return nil, nil })).Build() // any: data of unknown type, which inspect writes as null
 	c := collage.NewFragment("c", "c.html").WithData(collage.Value(inspectUser{})).Build()
 	a := collage.NewFragment("a", "a.html").WithSlotFragment("b", b).WithSlotFragment("c", c).Build()
 	if err := app.RegisterPage(collage.NewPage("p").WithContent(a).WithPath("en", "/").Build()); err != nil {
