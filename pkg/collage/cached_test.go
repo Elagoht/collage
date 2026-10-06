@@ -20,6 +20,9 @@ type author struct{ Name string }
 // authorIDKey carries a post's author ID down to the author card it fills.
 var authorIDKey = collage.NewKey[string]("author")
 
+// authorKey is what Cached keeps one author under: authorKey.With(id).
+var authorKey = collage.NewKey[author]("author")
+
 // authorSite is thirty posts, twenty by A and ten by B, each showing an author
 // card whose data handler fetches through Cached and counts what it fetched.
 type authorSite struct {
@@ -47,7 +50,7 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 	card := collage.NewFragment("author", "author.html").WithData(collage.DataHandler(
 		func(_ context.Context, rc *collage.RenderContext) (author, []string, error) {
 			id, _ := authorIDKey.Get(rc)
-			a, err := collage.Cached(rc, "author:"+id, time.Hour, []string{"author:" + id},
+			a, err := collage.Cached(rc, authorKey.With(id), time.Hour, []string{"author:" + id},
 				func(context.Context) (author, error) {
 					site.mu.Lock()
 					defer site.mu.Unlock()
@@ -189,7 +192,7 @@ func TestCached_InADocument(t *testing.T) {
 	site := newAuthorSite(t, false)
 	doc := collage.NewDocument("authors", "text/plain").WithPath("en", "/authors.txt").Dynamic().
 		WithHandler(func(ctx context.Context, rc *collage.RenderContext) ([]byte, []string, error) {
-			a, err := collage.Cached(rc, "author:A", time.Hour, []string{"author:A"}, func(context.Context) (author, error) {
+			a, err := collage.Cached(rc, authorKey.With("A"), time.Hour, []string{"author:A"}, func(context.Context) (author, error) {
 				site.mu.Lock()
 				defer site.mu.Unlock()
 				site.calls["A"]++

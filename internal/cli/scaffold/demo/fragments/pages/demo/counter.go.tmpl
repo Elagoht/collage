@@ -21,6 +21,9 @@ func Counter() *collage.Fragment {
 		Build()
 }
 
+// countKey is what Cached keeps the count under.
+var countKey = collage.NewKey[int64]("demo:count")
+
 const counterBlock collage.InlineHTML = `<output class="count">{{.Count}}</output>`
 
 // Reads the count through Cached. count.Current stands in for a database query:
@@ -31,7 +34,7 @@ func counterData(
 	_ context.Context,
 	rc *collage.RenderContext,
 ) (counterView, []string, error) {
-	current, err := collage.Cached(rc, "demo:count", time.Hour, []string{count.Tag},
+	current, err := collage.Cached(rc, countKey, time.Hour, []string{count.Tag},
 		func(context.Context) (int64, error) { return count.Current(), nil })
 	return counterView{Count: current}, nil, err
 }

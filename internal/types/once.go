@@ -10,7 +10,8 @@ type onceCall struct {
 }
 
 // Once runs fetch at most once per render for a given key, and hands its result to
-// every fragment that asks for the same key.
+// every fragment that asks for the same key. A key is its name and its type, so
+// two keys of one name and different types are two fetches.
 //
 // It exists because the obvious way to share work between fragments has a hole in
 // it. The usual shape —
@@ -34,7 +35,7 @@ type onceCall struct {
 //
 // A caller whose own context ends stops waiting and returns that error, rather than
 // holding a fragment open for work that is no longer wanted.
-func Once[T any](rc *RenderContext, key string, fetch func(context.Context) (T, error)) (T, error) {
+func Once[T any](rc *RenderContext, key Key[T], fetch func(context.Context) (T, error)) (T, error) {
 	var zero T
 	if rc == nil || rc.state == nil {
 		// No render to share within: fetching directly is the honest answer, and
@@ -45,8 +46,9 @@ func Once[T any](rc *RenderContext, key string, fetch func(context.Context) (T, 
 		return fetch(context.Background())
 	}
 
+	id := key.id()
 	rc.state.mu.Lock()
-	if call, running := rc.state.once[key]; running {
+	if call, running := rc.state.once[id]; running {
 		rc.state.mu.Unlock()
 
 		select {
@@ -58,18 +60,14 @@ func Once[T any](rc *RenderContext, key string, fetch func(context.Context) (T, 
 		if call.err != nil {
 			return zero, call.err
 		}
-		value, ok := call.value.(T)
-		if !ok {
-			// The same key asked for as two different types. Returning the zero
-			// value of the wrong type would be a silently empty section; saying so
-			// names the fragment that disagreed.
-			return zero, ErrOnceTypeMismatch
-		}
+		// The entry is keyed by T too, so its value was a T. The assertion fails
+		// only for a nil under an interface T, whose zero is that nil.
+		value, _ := call.value.(T)
 		return value, nil
 	}
 
 	call := &onceCall{done: make(chan struct{})}
-	rc.state.once[key] = call
+	rc.state.once[id] = call
 	rc.state.mu.Unlock()
 
 	if fetch != nil {

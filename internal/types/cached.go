@@ -2,7 +2,7 @@ package types
 
 import (
 	"context"
-	"errors"
+	"fmt"
 	"time"
 )
 
@@ -12,9 +12,6 @@ import (
 type DataCache interface {
 	Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (any, error)) (any, error) // any: the store holds every caller's type
 }
-
-// ErrCachedTypeMismatch reports one Cached key asked for as two different types.
-var ErrCachedTypeMismatch = errors.New("collage: Cached key holds a value of a different type")
 
 // BindDataCache gives rc — and every copy of it the render makes — the store behind
 // Cached. The render engine calls it.
@@ -47,8 +44,8 @@ func DeclaredTags(rc *RenderContext) []string {
 }
 
 // Cached returns the value stored under key, fetching it when there is none. Unlike
-// Once, what it stores outlives the render: every page that asks for "author:A"
-// shares one fetch until ttl passes or one of tags is invalidated.
+// Once, what it stores outlives the render: every page that asks for one author's
+// key shares one fetch until ttl passes or one of tags is invalidated.
 //
 // tags are also added to the render's own dependency tags, so a page built from
 // the value is invalidated with it — one InvalidateTags("author:A") drops the
@@ -57,7 +54,7 @@ func DeclaredTags(rc *RenderContext) []string {
 // Where there is no store to keep it in — development, a preview, a render the
 // application built by hand, or a cache that is not enabled — it is Once: shared
 // within the render, fetched fresh by the next.
-func Cached[T any](rc *RenderContext, key string, ttl time.Duration, tags []string, fetch func(context.Context) (T, error)) (T, error) {
+func Cached[T any](rc *RenderContext, key Key[T], ttl time.Duration, tags []string, fetch func(context.Context) (T, error)) (T, error) {
 	var zero T
 	if rc == nil || rc.state == nil {
 		if fetch == nil {
@@ -73,19 +70,32 @@ func Cached[T any](rc *RenderContext, key string, ttl time.Duration, tags []stri
 
 	if store == nil || uncached {
 		// Namespaced, so a Cached key and a Once key the application happens to
-		// spell alike are not one entry holding two types.
-		return Once(rc, "collage:cached:"+key, fetch)
+		// spell alike do not share a fetch.
+		return Once(rc, Key[T]{name: "collage:cached:" + key.name}, fetch)
 	}
 
-	value, err := store.Load(rc.Context(), key, ttl, tags, func(ctx context.Context) (any, error) { // any: see DataCache
+	value, err := store.Load(rc.Context(), storeKey(key.id()), ttl, tags, func(ctx context.Context) (any, error) { // any: see DataCache
 		return fetch(ctx)
 	})
 	if err != nil {
 		return zero, err
 	}
+	if value == nil {
+		// A nil stored under an interface T: present, and nil.
+		return zero, nil
+	}
 	typed, ok := value.(T)
 	if !ok {
-		return zero, ErrCachedTypeMismatch
+		// The store key carries T, so only a store handing back what it was not
+		// given gets here. Saying so beats an empty section.
+		return zero, fmt.Errorf("collage: Cached %q: the store returned a %T, want %s", key.name, value, key.id().typ)
 	}
 	return typed, nil
+}
+
+// storeKey is the string the store keeps a value under: the key's name and its
+// type, so two keys of one name never share an entry. The type's pointer is
+// unique within the process, which is all the store spans.
+func storeKey(id keyID) string {
+	return id.name + "\x00" + fmt.Sprintf("%p", id.typ)
 }

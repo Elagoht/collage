@@ -50,7 +50,7 @@ type RenderContext struct {
 type renderShared struct {
 	// mu guards the Once table and the fields after it.
 	mu   sync.Mutex
-	once map[string]*onceCall
+	once map[keyID]*onceCall
 	// assets resolves a mounted file's content-addressed URL, bound by the
 	// render engine; see BindAssets.
 	assets func(urlPath string) (string, error)
@@ -88,7 +88,7 @@ func NewRenderContext(ctx context.Context, req *http.Request, page *Page, locale
 		values:     &Values{},
 		ctx:        ctx,
 		hoisted:    NewHoisted(),
-		state:      &renderShared{once: make(map[string]*onceCall)},
+		state:      &renderShared{once: make(map[keyID]*onceCall)},
 	}
 }
 

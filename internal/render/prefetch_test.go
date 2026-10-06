@@ -342,7 +342,7 @@ func TestPrefetch_OnceCollapsesTheSameFetch(t *testing.T) {
 		// Both handlers are inside this call at the same time, which is exactly
 		// the window a Get-then-Set leaves open.
 		g.arrive(2, 5*time.Second)
-		article, err := types.Once(rc, "article:7", func(context.Context) (string, error) {
+		article, err := types.Once(rc, types.NewKey[string]("article:7"), func(context.Context) (string, error) {
 			calls.Add(1)
 			return "the article", nil
 		})
