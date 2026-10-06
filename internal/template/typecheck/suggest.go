@@ -2,7 +2,8 @@ package typecheck
 
 import (
 	"sort"
-	"strings"
+
+	"github.com/Elagoht/collage/internal/ascii"
 )
 
 // suggest returns the candidate closest to name: an exact match ignoring case,
@@ -18,10 +19,10 @@ func suggest(name string, candidates []string) string {
 	sort.Strings(sorted)
 	best, bestDistance := "", limit+1
 	for _, c := range sorted {
-		if strings.EqualFold(c, name) {
+		if ascii.EqualFold(c, name) {
 			return c
 		}
-		if d := distance(strings.ToLower(name), strings.ToLower(c)); d < bestDistance {
+		if d := distance(ascii.LowerString(name), ascii.LowerString(c)); d < bestDistance {
 			best, bestDistance = c, d
 		}
 	}
