@@ -429,8 +429,22 @@ func (a *App) typeFindings(p *types.Page, f *types.Fragment, name string) []*typ
 
 // joinTypeErrors joins a page's findings into one error in a fixed order —
 // template, line, column, fragment — whatever order the fragments were
-// visited in. Nil when there are none.
+// visited in, each once. Nil when there are none.
+//
+// A finding can arrive twice: checkTemplates visits a registered page's
+// layouts both as their per-page copies in LayoutFragment and as the
+// originals in LayoutChain, which are different fragments with the same name
+// and template.
 func joinTypeErrors(found []*types.TemplateTypeError) error {
+	seen := make(map[types.TemplateTypeError]bool, len(found))
+	unique := found[:0]
+	for _, e := range found {
+		if !seen[*e] {
+			seen[*e] = true
+			unique = append(unique, e)
+		}
+	}
+	found = unique
 	if len(found) == 0 {
 		return nil
 	}

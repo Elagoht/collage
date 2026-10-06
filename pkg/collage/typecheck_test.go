@@ -164,3 +164,67 @@ func TestRegister_TemplateTypeCheckSeesDynamicSlotCallers(t *testing.T) {
 		t.Errorf("RegisterPage = %v, want the finding for {{.Titel}}", err)
 	}
 }
+
+// A fragment with no data, or an Effect, has no dot type, yet its function calls
+// are still checked: a wrong argument count fails at registration.
+func TestRegister_DataLessFragmentsStillCheckCalls(t *testing.T) {
+	files := fstest.MapFS{
+		"t/layout.html": {Data: []byte(`<main>{{asset}}{{slot "content"}}</main>`)},
+		"t/effect.html": {Data: []byte(`{{slot "a" "b"}}`)},
+	}
+	app := tcApp(t, files)
+	layout := collage.NewFragment("layout", "layout.html").Build()
+	effect := collage.NewFragment("effect", "effect.html").WithData(collage.Effect(func(context.Context, *collage.RenderContext) error {
+		return nil
+	})).Build()
+	err := app.RegisterPage(collage.NewPage("p").WithLayouts(layout).WithContent(effect).WithPath("en", "/").Build())
+	got := map[string]int{}
+	for _, e := range unwrapAll(err) {
+		var te *collage.TemplateTypeError
+		if errors.As(e, &te) {
+			got[te.Fragment]++
+		}
+	}
+	if got["layout"] != 1 || got["effect"] != 1 || len(got) != 2 {
+		t.Errorf("findings by fragment = %v (%v), want one each for layout and effect", got, err)
+	}
+}
+
+// Fragments reached only through a fragment path, a page's not-found page or its
+// error page are checked too, and their findings name that page and fragment.
+func TestRegister_TemplateTypeCheckSeesEveryReachableFragment(t *testing.T) {
+	files := fstest.MapFS{
+		"t/ok.html":  {Data: []byte(`ok`)},
+		"t/bad.html": {Data: []byte(`{{.Titel}}`)},
+	}
+	bad := func() *collage.Fragment {
+		return collage.NewFragment("bad", "bad.html").WithData(collage.Load(loadPost)).Build()
+	}
+	ok := func() *collage.Fragment { return collage.NewFragment("ok", "ok.html").Build() }
+	tests := []struct {
+		name, page string
+		build      func() *collage.Page
+	}{
+		{"fragment path", "p", func() *collage.Page {
+			return collage.NewPage("p").WithContent(ok()).WithPath("en", "/").WithFragmentPath("en", "/bad", bad()).Build()
+		}},
+		{"not-found page", "missing", func() *collage.Page {
+			return collage.NewPage("p").WithContent(ok()).WithPath("en", "/").
+				WithNotFoundPage(collage.NewPage("missing").WithContent(bad()).Build()).Build()
+		}},
+		{"error page", "oops", func() *collage.Page {
+			return collage.NewPage("p").WithContent(ok()).WithPath("en", "/").
+				WithErrorPage(collage.NewPage("oops").WithContent(bad()).Build()).Build()
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			app := tcApp(t, files)
+			err := app.RegisterPage(test.build())
+			var te *collage.TemplateTypeError
+			if !errors.As(err, &te) || te.Page != test.page || te.Fragment != "bad" || te.Suggestion != "Title" {
+				t.Errorf("RegisterPage = %v, want a finding in page %q fragment \"bad\"", err, test.page)
+			}
+		})
+	}
+}
