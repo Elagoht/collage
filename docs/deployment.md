@@ -198,6 +198,30 @@ app.InvalidateTags(ctx, "article:"+slug)
 
 See [caching](caching.md).
 
+### A memory cache and the container's limit
+
+A `"memory"` cache is bounded by `MaxBytes` — 256 MiB of stored pages unless you
+set it — and the bound holds: the live heap stops growing once the cache is full.
+The process does not stop there. Go's collector lets the heap grow to about twice
+what was live after the last collection before it runs again, so a full 256 MiB
+cache can mean a process well past 512 MiB. Measured on a page of about 14 KB
+asked for under 30,000 distinct URLs, the process settled at about 720 MB.
+
+Tell the runtime what it has with `GOMEMLIMIT`, a little under the container's
+limit, and it collects harder as it approaches it instead of being killed:
+
+```dockerfile
+ENV GOMEMLIMIT=400MiB   # in a 512 MiB container
+```
+
+The same run with `GOMEMLIMIT=320MiB` stayed at about 430 MB. The limit is soft:
+it is what the runtime aims for, not a cap it enforces, so leave `MaxBytes` well
+below it — what the cache holds is live and cannot be collected however hard the
+runtime tries. A cache sized at a third to a half of the limit leaves room for the
+renders themselves — in a 512 MiB container, lower `MaxBytes` from its default to
+128–192 MiB. A `"disk"` cache, which is what a scaffolded project uses,
+keeps its pages on disk and does not need this.
+
 ## Health checks
 
 A project scaffolded with the demos (`collage new --template demo`)

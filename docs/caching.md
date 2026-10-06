@@ -434,7 +434,9 @@ hook adjusted, so the value a client sees does not change from request to reques
   page asked for under thousands of invented queries fills the cache with copies
   of it. `MaxBytes: 0` means 256 MiB for memory and 1 GiB for disk; a negative
   value means unlimited. A page larger than the whole cap is served but not
-  stored. A custom `Store` bounds itself and ignores it.
+  stored. A custom `Store` bounds itself and ignores it. The cap bounds what the
+  cache holds, not the process: in a container, set `GOMEMLIMIT` too — see
+  [deployment](deployment.md#a-memory-cache-and-the-containers-limit).
 
 The same `MaxEntries` bounds the `collage.Cached` data store, which evicts the
 other way: least recently used, so a value read on every page stays. Two caches,
