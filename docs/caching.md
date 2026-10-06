@@ -43,11 +43,11 @@ page := collage.NewPage("blog-post").
 A page that calls none of the three is resolved when it is registered:
 
 - **Dynamic** if anything it renders fetches per render — a data handler
-  (`WithDataHandler`, including `Load` and `Effect`) or a slot resolver, in its
+  (`WithData` with `collage.DataHandler`, `Load` or `Effect`) or a slot resolver, in its
   layout, its content, anything bound into their slots, their fallbacks, or a
   fragment opened with `WithFragmentPath`.
 - **Static** otherwise: a page rendering templates and fixed values —
-  `WithData(v)`, `WithTitle(s)` — renders the same for every reader.
+  `WithData(collage.Value(v))`, `WithTitle(s)` — renders the same for every reader.
 
 A handler means dynamic because it may read the request, a cookie, the clock, and
 nothing outside the function can tell whether it does. The guess costs a render
@@ -63,7 +63,7 @@ with `Static()` on the fragment, and then it does not make a page dynamic:
 
 ```go
 more := collage.NewFragment("more-recipes", "fragments/more-recipes.html").
-	WithDataHandler(loadMore). // the recipes, minus rc.Param("slug")
+	WithData(collage.Load(loadMore)). // the recipes, minus rc.Param("slug")
 	Static().
 	Build()
 ```
@@ -83,7 +83,7 @@ the first promise and not the second. Mark it `Shared()` instead:
 
 ```go
 cpu := collage.NewFragment("cpu", "fragments/cpu.html").
-	WithDataHandler(cpuUsage). // the same for everyone, different every second
+	WithData(collage.Load(cpuUsage)). // the same for everyone, different every second
 	Shared().
 	Build()
 ```
@@ -212,8 +212,8 @@ unioned, de-duplicated, and sorted:
 // From the page:
 WithDependency("blog:posts")
 
-// From a data handler, per render:
-return data, []string{"post:" + slug}, nil
+// From a collage.DataHandler, per render:
+return post, []string{"post:" + slug}, nil
 ```
 
 The union is stored with the cache entry and recorded in the dependency tracker,

@@ -1,5 +1,83 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- **A fragment's data is a `collage.Data`, not `any`.** `WithData` now takes a
+  sealed `collage.Data`, made only by `collage.Load`, `collage.DataHandler`,
+  `collage.Value` and `collage.Effect`, and `WithDataHandler` is gone. Every
+  fragment that has data changes one call:
+
+  | Before | After |
+  | --- | --- |
+  | `WithDataHandler(collage.Load(fn))` | `WithData(collage.Load(fn))` |
+  | `WithDataHandler(collage.DataHandler(fn))` | `WithData(collage.DataHandler(fn))` |
+  | `WithDataHandler(collage.Effect(fn))` | `WithData(collage.Effect(fn))` |
+  | `WithDataHandler(fn)`, `fn` returning `(any, []string, error)` | `WithData(collage.DataHandler(fn))`, with `fn` returning its real type |
+  | `WithData(v)` | `WithData(collage.Value(v))` |
+  | a factory returning `collage.DataHandlerFunc` | returns `collage.Data` |
+
+  `collage.DataHandlerFunc` is gone with it, and so are `Fragment`'s exported
+  `DataHandler` and `Data` fields: a plugin that read them, or built a
+  `Fragment` with them, sets its data through the builder. The template's data
+  type comes from the function's signature or the value, so a handler and the
+  type its template is checked against cannot disagree. Setting data twice is
+  still `collage.ErrConflictingData` (`fragment "x" has its data set twice`),
+  and `WithData(nil)`, like a constructor handed a nil function, is no data.
+  Tags, the data dropped on an error, timeouts, prefetching, `Static()` and
+  `Shared()` behave as before. See [docs/fragments.md](docs/fragments.md#data-handlers).
+- **An application may now fail at startup over a template that would already
+  fail when rendered.** `RegisterPage` checks each fragment's template against its
+  data's Go type and refuses the page when an expression is certain to fail —
+  `{{.Titel}}` on a type with no such field, a pointer-receiver method on data
+  passed by value, a `range` over a string, the wrong number of arguments to a
+  method. Each such template already failed every render that reached it; it now
+  fails before the first request instead. The error names the page, the
+  fragment, the file, the line and the column, and suggests the closest name:
+
+  ```
+  collage: page "post": fragment "post-body" (post.html:1:6): {{.Titel}}: type blog.Post has no field or method Titel (did you mean Title?)
+  ```
+
+  Every finding of the page arrives at once, joined. `WithoutTypeCheck()` on a
+  fragment leaves it out of the check while it is fixed. Run against real
+  applications before this release, the check reported nothing that would have
+  rendered.
+
+### Added
+
+- **Template type checking at registration.** Every fragment a page reaches —
+  layouts, content, slot fills, fallbacks, inline fragments, fragment paths and
+  the `NotFoundPage` and `ErrorPage` — is walked against its data's type, partials
+  once per type they are handed. Reported: fields and methods the type does not
+  have or does not export, pointer-receiver methods on values that are not
+  addressable, `.key` on a map keyed by a named string type, wrong argument counts
+  and result shapes of methods, functions and built-ins, `range`, `len` and
+  `index` on the wrong kind, `call` of a non-function. Not reported: anything read
+  from an interface or a `map[string]any`, nil data, nil pointers inside data,
+  and argument types. A fragment with no data, or with `collage.Effect`, is
+  checked for its function calls only. Fragments a slot resolver returns at
+  render time are not checked. See
+  [docs/fragments.md](docs/fragments.md#how-templates-are-checked).
+- **`collage.TemplateTypeError` and `collage.ErrTemplateType`.** Each finding is a
+  `*TemplateTypeError` — `Page`, `Fragment`, `Template`, `Line`, `Col`, `Expr`,
+  `Reason`, `Suggestion` — and matches `ErrTemplateType` with `errors.Is`.
+  `Line` and `Col` are where `text/template` would name the error, which may lie
+  inside `Expr`.
+- **`FragmentBuilder.WithoutTypeCheck()`**, leaving one fragment's template out of
+  the check. A handler declared to return an interface — `collage.Load[any]` —
+  leaves its type unknown, and its template is not walked either.
+- **`collage.Value(v)`**, data fixed when the program starts, replacing
+  `WithData(v)`. When `v`'s static type is an interface, the template is checked
+  against the type it holds; a nil interface value is no data.
+- **`collage inspect` describes fragment data.** Each fragment gains `dataType`
+  (the Go type, `"nil"` for none, `null` when unknown) and, when built
+  `WithoutTypeCheck()`, `"typeCheck": false`; the root gains `types`, the
+  exported fields and methods of every named type the data reaches, standard
+  library types left opaque. The format's `version` stays `1`. See
+  [docs/cli.md](docs/cli.md#collage-inspect).
+
 ## v0.48.0
 
 ### Changed

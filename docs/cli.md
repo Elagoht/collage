@@ -378,6 +378,43 @@ editor's completion reads: the Collage Snippets & Highlighter extension for VS C
 offers page names in `{{pageURL "…"}}`, slots in `{{slot "…"}}` and files in
 `{{asset "…"}}` from it.
 
+Each fragment carries the Go type its template sees as `.`, and the root carries
+a `types` table describing the types those reach, so an editor can complete
+`{{.` and check a field name the way registration does (see
+[how templates are checked](fragments.md#how-templates-are-checked)):
+
+```json
+"fragments": [
+  {"name": "post-body", "template": "pages/post.html", "handler": true, "dataType": "*blog.Post"},
+  {"name": "layout", "template": "layouts/default.html", "dataType": "nil"},
+  {"name": "legacy", "template": "pages/legacy.html", "handler": true, "dataType": null, "typeCheck": false}
+],
+"types": {
+  "blog.Post": {
+    "kind": "struct",
+    "fields": [{"name": "Title", "type": "string"}, {"name": "Author", "type": "*blog.User"}],
+    "methods": [{"name": "URL", "args": 0, "returns": "string"}]
+  },
+  "blog.User": {"kind": "struct", "fields": [{"name": "Name", "type": "string"}]}
+}
+```
+
+- `dataType` is always written: the Go type, `"nil"` for a fragment with no data
+  or with `collage.Effect`, and `null` when the type is an interface and so
+  unknown until the page renders — a handler declared to return `any`.
+- `typeCheck: false` appears only on a fragment built `WithoutTypeCheck()`.
+- `types` holds every named type reachable from some fragment's data type —
+  through fields, element and key types, and method results — keyed by its Go
+  name, with its exported fields (promoted ones included) and the exported
+  methods of it and its pointer that return something. A type is listed once and
+  named everywhere else, so a recursive type ends. An unnamed struct is listed
+  under its Go spelling; other unnamed composites are written inline in a type
+  string (`[]blog.Comment`); standard library types such as
+  `time.Time` and `template.HTML` are named, not described. It is left out when no
+  fragment has a known data type.
+
+These are additions: the output's `version` is still `1`.
+
 ## `collage check`
 
 Checks every template's links without rendering anything. A link built by name —

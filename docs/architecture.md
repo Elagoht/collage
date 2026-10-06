@@ -15,6 +15,7 @@ pkg/collage        the only package you import: builders, config, and type alias
 cmd/collage        the CLI binary
 internal/types     the domain types: Fragment, Page, Document, Redirect, RenderContext
 internal/template  html/template loading, the function map, per-render funcs
+internal/template/typecheck  walks a template against its data's Go type
 internal/render    the fragment tree walk, the failure policy, timeouts, panics
 internal/cache     the Cache interface, the cache key, the memory and disk caches
 internal/datacache the store behind collage.Cached: values kept across renders
@@ -36,6 +37,14 @@ The dependency arrow points one way: `pkg/collage` depends on `internal/*`, and 
 type aliases, so a `*collage.Page` and an `*internal/types.Page` are literally the
 same type — there is no conversion layer, no wrapper, and no `interface{}`
 boundary between the public API and the engine.
+
+The one exception is a fragment's data. `collage.Data` is a sealed interface
+whose only implementations are made by `collage.Load`, `DataHandler`, `Value` and
+`Effect`, each wrapping the engine's data source together with the Go type its
+template will see. The seal is the point: since no other value can be a `Data`,
+every fragment's data type is known at registration, which is what lets
+`RegisterPage` check a template against it. Inside the engine the handler still
+returns `any`, which is `html/template`'s own parameter type.
 
 The HTTP layer lives in `internal/httpx` rather than `internal/http` because a
 package named `http` would shadow `net/http` at every call site that imports both.
@@ -211,6 +220,14 @@ Everything that can be checked at startup is checked at startup, and
   nothing: calling it is what declares it. In development a template edited after
   startup is not checked again: its failure shows on the error page, template,
   line and cause first;
+- a template that reads its data in a way certain to fail — a field its data's
+  type does not have, a pointer-receiver method on a value passed by value, a
+  `range` over something that cannot be ranged over — is rejected with every such
+  finding of the page at once, each naming the fragment, the file, the line and
+  the expression (`collage.TemplateTypeError`). Only what `text/template` would
+  fail on when it reached that node is reported; a value whose type is an
+  interface is unknown and reports nothing. See
+  [how templates are checked](fragments.md#how-templates-are-checked);
 - a page that does not validate — no content fragment, a path not starting with
   `/`, `Incremental` with no TTL, a fragment cycle, an unfilled required slot — is
   rejected by name;

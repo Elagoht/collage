@@ -109,9 +109,9 @@ func main() {
 	layout := collage.NewFragment("layout", "layouts/default.html").Build()
 
 	homeContent := collage.NewFragment("home-content", "pages/home.html").
-		WithDataHandler(func(_ context.Context, _ *collage.RenderContext) (any, []string, error) {
+		WithData(collage.DataHandler(func(_ context.Context, _ *collage.RenderContext) (homeData, []string, error) {
 			return homeData{Title: "Welcome home"}, []string{"homepage"}, nil
-		}).
+		})).
 		Build()
 
 	homePage := collage.NewPage("home").
@@ -176,9 +176,10 @@ contribute pages, documents, mounts and template functions of its own. See
 ## What it guarantees
 
 - **No silent failures.** A fragment naming a template that does not exist, a
-  fragment bound into a slot its template never calls, a page that does not
-  validate, a page referencing an error page that was never registered — all of
-  these fail at startup, by name, not on the first request.
+  fragment bound into a slot its template never calls, a template reading a
+  field its data's type does not have, a page that does not validate, a page
+  referencing an error page that was never registered — all of these fail at
+  startup, by name, not on the first request.
 - **Deterministic output.** Templates execute in order, depth-first; sibling
   fragments fetch their data concurrently, but what they hoist is placed by
   declaration order, not by which finished first. So the same page rendered twice
