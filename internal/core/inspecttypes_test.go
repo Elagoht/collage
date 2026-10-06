@@ -16,7 +16,8 @@ type itPost struct {
 	Title    string
 	At       time.Time
 	Comments []itComment
-	hidden   string
+	//lint:ignore U1000 an unexported field is what the table must leave out.
+	hidden string
 }
 
 func (p itPost) URL() string              { return "/" }
