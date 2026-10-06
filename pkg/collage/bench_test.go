@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -143,6 +144,59 @@ func BenchmarkPage_DynamicParts(b *testing.B) {
 			benchServe(b, h, http.StatusOK, benchGet("/"))
 		})
 	}
+}
+
+// benchRow is one line of a listing, with text the escaper has work to do on.
+type benchRow struct {
+	ID         int
+	Name, Desc string
+}
+
+func benchRows(seed int) []benchRow {
+	rows := make([]benchRow, 50)
+	for i := range rows {
+		rows[i] = benchRow{seed*100 + i, "Item " + strconv.Itoa(i), "desc <b>escaped</b> & stuff"}
+	}
+	return rows
+}
+
+const (
+	benchList    = `<ul>{{range .}}<li><a href="/x/{{.ID}}">{{.Name}}</a> <span>{{.Desc}}</span></li>{{end}}</ul>`
+	benchContent = `<main><h1>{{.}}</h1><section>{{slot "a"}}</section><section>{{slot "b"}}</section><section>{{slot "c"}}</section></main>`
+	benchLayout  = `<!doctype html><html><head><title>b</title></head><body><header>nav</header>{{slot "content"}}<footer>f</footer></body></html>`
+)
+
+// A page the size of a real one, nested the way a real one is: a layout around a
+// content fragment around three listings of fifty rows, about 14 KB of markup.
+// The html/template run renders the same markup with nothing around it, so the
+// pair says what the framework costs on top of the templating it is built on.
+func BenchmarkPage_DynamicNested(b *testing.B) {
+	b.Run("collage", func(b *testing.B) {
+		list := func(name string, seed int) *collage.Fragment {
+			return collage.NewInlineFragment(name, benchList).
+				WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) ([]benchRow, error) {
+					return benchRows(seed), nil
+				})).Build()
+		}
+		content := collage.NewInlineFragment("content", benchContent).WithData("nested").
+			WithSlotFragment("a", list("a", 1)).WithSlotFragment("b", list("b", 2)).WithSlotFragment("c", list("c", 3)).Build()
+		layout := collage.NewInlineFragment("layout", benchLayout).Build()
+		app := benchApp(b, false)
+		benchRegister(b, app, collage.NewPage("p").WithLayouts(layout).WithContent(content).WithPath("en", "/").Dynamic().Build())
+		benchServe(b, app.Handler(), http.StatusOK, benchGet("/"))
+	})
+	b.Run("html-template", func(b *testing.B) {
+		page := template.Must(template.New("page").Parse(`{{define "list"}}` + benchList + `{{end}}` +
+			`<!doctype html><html><head><title>b</title></head><body><header>nav</header>` +
+			`<main><h1>nested</h1><section>{{template "list" index . 0}}</section><section>{{template "list" index . 1}}</section><section>{{template "list" index . 2}}</section></main>` +
+			`<footer>f</footer></body></html>`))
+		h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if err := page.Execute(w, [][]benchRow{benchRows(1), benchRows(2), benchRows(3)}); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		})
+		benchServe(b, h, http.StatusOK, benchGet("/"))
+	})
 }
 
 // A real project holds many templates and a page renders a few of them. What a

@@ -9,6 +9,7 @@
 package render
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
@@ -301,7 +302,9 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	}
 
 	start := time.Now()
-	html, err := e.renderFragment(rc, root, state, nil)
+	var buf bytes.Buffer
+	err := e.renderFragment(rc, root, state, nil, &buf)
+	html := buf.Bytes()
 	// Resolved on the finished tree, so a declaration made anywhere below a marker
 	// still reaches it — which is the whole reason a marker is written rather than
 	// the content itself.

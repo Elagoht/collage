@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Elagoht/collage/internal/template"
@@ -121,11 +122,15 @@ func (s *renderState) chain() string {
 // Either way the failure is recorded in the fragment's metadata, which is what makes
 // Result.Degraded true, and any tags the fragment's handler had already produced are
 // kept: a fragment that failed halfway still describes what its output depended on.
-func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, state *renderState, pre *prefetch) ([]byte, error) {
+//
+// The markup is appended to dst, which the caller shares with whatever it rendered
+// before this fragment; a failed attempt cuts dst back to where it started, so a
+// template that failed halfway leaves nothing of itself behind.
+func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, state *renderState, pre *prefetch, dst *bytes.Buffer) error {
 	if f == nil {
 		// Fatal for the same reason as the depth limit: a nil entry in a Fill slice
 		// is a malformed tree, and rendering the page around the hole would hide it.
-		return nil, fatal(fmt.Errorf("%w: page %q below %q", types.ErrNilFragment, state.page, state.chain()))
+		return fatal(fmt.Errorf("%w: page %q below %q", types.ErrNilFragment, state.page, state.chain()))
 	}
 
 	state.stack = append(state.stack, f.Name)
@@ -135,7 +140,7 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 		// Fatal rather than absorbable: hitting the depth limit means the tree is
 		// malformed — almost always a fragment bound into one of its own slots —
 		// and quietly rendering the page without that subtree would hide it.
-		return nil, fatal(fmt.Errorf("%w: limit %d reached at %s", ErrMaxDepthExceeded, e.maxDepth, state.chain()))
+		return fatal(fmt.Errorf("%w: limit %d reached at %s", ErrMaxDepthExceeded, e.maxDepth, state.chain()))
 	}
 
 	ctx, span := e.tracer.StartSpan(rc.Context(), "collage.fragment")
@@ -164,14 +169,14 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 	start := time.Now()
 	childTotalBefore := state.childTotal
 
-	out, err := e.attempt(rc, f, state, pre)
+	mark := dst.Len()
+	err := e.attempt(rc, f, state, pre, dst)
 	meta := FragmentMetadata{Name: f.Name}
 	propagate := false
 
 	if err != nil {
 		meta.Failed = true
 		meta.Err = err
-		out = nil
 
 		switch {
 		case f.Required || isFatal(err):
@@ -189,8 +194,7 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 		case f.Fallback != nil:
 			// No prefetch for a fallback: it exists precisely because the primary
 			// failed, which is not known until it has.
-			fallbackOut, fallbackErr := e.attempt(rc, f.Fallback, state, nil)
-			if fallbackErr != nil {
+			if fallbackErr := e.attempt(rc, f.Fallback, state, nil, dst); fallbackErr != nil {
 				// A fallback exists to contain a failure, so its own failure is
 				// contained here rather than escalated: the page loses this
 				// fragment's output and records both errors. This holds however the
@@ -202,7 +206,6 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 				// page it exists to protect.
 				meta.Err = fmt.Errorf("%w: fallback %q also failed: %w", err, f.Fallback.Name, fallbackErr)
 			} else {
-				out = fallbackOut
 				meta.UsedFallback = true
 			}
 		}
@@ -215,8 +218,8 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 					"page", state.page, "fragment", f.Name, "locale", rc.Locale,
 					"fallback", meta.UsedFallback, "error", meta.Err)
 			}
-			if len(out) == 0 && e.devMode {
-				out = devComment(f.Name, meta.Err)
+			if dst.Len() == mark && e.devMode {
+				dst.Write(devComment(f.Name, meta.Err))
 			}
 		}
 	}
@@ -232,9 +235,9 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 	}
 
 	if propagate {
-		return nil, fatal(err)
+		return fatal(err)
 	}
-	return out, nil
+	return nil
 }
 
 // attempt renders one fragment's data and template with no failure policy applied: it
@@ -243,7 +246,10 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 // fallback is rendered, which is precisely why the policy lives in renderFragment
 // instead — a fallback must not get a fallback of its own, and a required fragment
 // inside a fallback must not escalate past it.
-func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *renderState, pre *prefetch) ([]byte, error) {
+//
+// Its markup is appended to dst, and on failure dst is cut back to its length on
+// entry: whatever the template wrote before it failed is not the fragment's output.
+func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *renderState, pre *prefetch, dst *bytes.Buffer) error {
 	var data any // any: fragment data is opaque to the framework and flows straight into the template engine, whose parameter is already any
 	// Before the handler, so one of this fragment's own that hoists a title
 	// replaces the fixed one: at the same depth, the later declaration wins. A
@@ -263,7 +269,7 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		state.dataTime += elapsed
 		state.addTags(tags)
 		if err != nil {
-			return nil, wrapFragment("data handler", f.Name, err)
+			return wrapFragment("data handler", f.Name, err)
 		}
 
 	case f.DataHandler != nil:
@@ -279,7 +285,7 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		// then failed has still told us what would invalidate this page.
 		state.addTags(tags)
 		if err != nil {
-			return nil, wrapFragment("data handler", f.Name, err)
+			return wrapFragment("data handler", f.Name, err)
 		}
 
 	default:
@@ -290,10 +296,10 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	// children start, so what it returns is prefetched like anything bound.
 	fills, err := resolveSlots(rc, f)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := requiredSlotsFilled(f, fills); err != nil {
-		return nil, err
+		return err
 	}
 
 	// Started before the template runs, not after: the whole point is that a
@@ -312,17 +318,17 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		// timer, so parsing is not billed as template time.
 		if !e.tmpl.Lookup(name) {
 			if failed, ok := e.failedSources.Load(name); ok {
-				return nil, wrapFragment(label, f.Name, failed.(error))
+				return wrapFragment(label, f.Name, failed.(error))
 			}
 			if err := e.tmpl.AddSource(name, f.Source); err != nil {
 				err = types.HumanizeTemplateError(err)
 				e.failedSources.Store(name, err)
-				return nil, wrapFragment(label, f.Name, err)
+				return wrapFragment(label, f.Name, err)
 			}
 		}
 	}
 
-	var buf bytes.Buffer
+	mark := dst.Len()
 	childTotalBefore := state.childTotal
 	renderStarted := time.Now()
 	// Template execution goes through Execute as well: a template function can
@@ -331,16 +337,19 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	// the part that talks to the outside world — but the render's context still
 	// applies.
 	err = Execute(rc.Context(), 0, func(ctx context.Context) error {
-		return e.tmpl.RenderWithFuncs(ctx, &buf, name, data, e.slotFuncs(rc, f, state, started, fills))
+		return e.tmpl.RenderWithFuncs(ctx, dst, name, data, e.slotFuncs(rc, f, state, started, fills))
 	})
 	state.templateTime += time.Since(renderStarted) - (state.childTotal - childTotalBefore)
 	if err != nil {
+		// The engine cuts back what a failed execution wrote, but a panic that
+		// escapes the template reaches here past it.
+		dst.Truncate(mark)
 		if types.IsInline(f) {
 			err = types.HumanizeTemplateError(err)
 		}
-		return nil, wrapFragment(label, f.Name, err)
+		return wrapFragment(label, f.Name, err)
 	}
-	return buf.Bytes(), nil
+	return nil
 }
 
 // slotFuncs builds the FuncMap for one fragment's template execution. The slot
@@ -414,15 +423,40 @@ func (e *SlotEngine) renderSlot(
 		return "", fmt.Errorf("%w: fragment %q slot %q is nil", types.ErrInvalidSlotDefinition, f.Name, name)
 	}
 
-	var buf strings.Builder
+	buf := slotBuffer()
+	defer releaseSlotBuffer(buf)
 	for _, child := range fills.of(slot) {
-		out, err := e.renderFragment(rc, child, state, take(started, taken, child))
-		if err != nil {
+		if err := e.renderFragment(rc, child, state, take(started, taken, child), buf); err != nil {
 			return "", err
 		}
-		buf.Write(out)
 	}
 	return htmltemplate.HTML(buf.String()), nil
+}
+
+// slotBuffers holds the buffers a slot's children render into. A slot's markup
+// leaves its buffer as a string, which is a copy, so nothing a render keeps points
+// into one and the next slot can take it as soon as this one is done. Without
+// them every slot of every render grows a buffer from nothing to the size of its
+// markup, and that growth was most of what a dynamic page allocated.
+var slotBuffers sync.Pool
+
+// maxPooledSlotBuffer is the largest buffer handed back to slotBuffers. One huge
+// slot should not pin its memory for as long as the pool keeps it.
+const maxPooledSlotBuffer = 1 << 20
+
+func slotBuffer() *bytes.Buffer {
+	if buf, ok := slotBuffers.Get().(*bytes.Buffer); ok {
+		return buf
+	}
+	return new(bytes.Buffer)
+}
+
+func releaseSlotBuffer(buf *bytes.Buffer) {
+	if buf.Cap() > maxPooledSlotBuffer {
+		return
+	}
+	buf.Reset()
+	slotBuffers.Put(buf)
 }
 
 // slotFills is what each resolved slot of one fragment holds for one render, by

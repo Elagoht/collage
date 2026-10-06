@@ -112,9 +112,9 @@ func (e *HTMLEngine) Lookup(path string) bool {
 // attempted, and funcs passed here for such a name are simply never consulted.
 //
 // If cfg.DevMode is true, RenderWithFuncs reloads the template set from disk before
-// rendering. Execution happens into an internal buffer; w only receives output once
-// the template has executed successfully, so a failing template never emits a
-// partial page.
+// rendering. A failing template never emits a partial page: a *bytes.Buffer is
+// written to directly and cut back to its earlier length if execution fails, and
+// any other w only receives output once the template has executed successfully.
 func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path string, data any, funcs template.FuncMap) error { // any: template data
 	if err := ctx.Err(); err != nil {
 		return err
@@ -145,8 +145,16 @@ func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path stri
 		clone = clone.Funcs(funcs)
 	}
 
-	var buf bytes.Buffer
-	if err := clone.ExecuteTemplate(&buf, path, data); err != nil {
+	// A buffer is already the staging area a writer would need: the render engine
+	// hands one in for every fragment, and executing straight into it saves copying
+	// each fragment's markup out of a buffer of our own.
+	out, direct := w.(*bytes.Buffer)
+	if !direct {
+		out = new(bytes.Buffer)
+	}
+	mark := out.Len()
+	if err := clone.ExecuteTemplate(out, path, data); err != nil {
+		out.Truncate(mark)
 		return err
 	}
 	if funcs != nil {
@@ -154,7 +162,10 @@ func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path stri
 	}
 	idle.Put(clone)
 
-	_, err := w.Write(buf.Bytes())
+	if direct {
+		return nil
+	}
+	_, err := w.Write(out.Bytes())
 	return err
 }
 

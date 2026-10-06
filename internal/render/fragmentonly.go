@@ -111,7 +111,9 @@ func (e *SlotEngine) RenderFragmentResult(ctx context.Context, rc *types.RenderC
 	}
 
 	start := time.Now()
-	markup, err := e.renderFragment(rc, f, state, nil)
+	var buf bytes.Buffer
+	err := e.renderFragment(rc, f, state, nil, &buf)
+	markup := buf.Bytes()
 	placed := markedAreas(markup, state.hoistToken)
 	markup = resolveHoists(markup, state.hoistToken, rc.Hoisted())
 	total := time.Since(start)

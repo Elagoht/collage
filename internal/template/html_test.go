@@ -529,3 +529,23 @@ func TestAddSource_ReAddsWhenTheLiveSetLacksIt(t *testing.T) {
 		t.Fatal("AddSource of a kept source missing from the live set left it missing")
 	}
 }
+
+func TestHTMLEngine_Render_FailureKeepsWhatTheBufferAlreadyHeld(t *testing.T) {
+	engine, err := NewHTML(HTMLConfig{Root: "testdata/valid", Extension: ".html"})
+	if err != nil {
+		t.Fatalf("NewHTML() error = %v", err)
+	}
+
+	type partialData struct {
+		Name string
+	}
+
+	buf := bytes.NewBufferString("<i>sibling</i>")
+	err = engine.Render(context.Background(), buf, "partial.html", partialData{Name: "x"})
+	if err == nil {
+		t.Fatal("Render() error = nil, want an execution error from the missing field")
+	}
+	if buf.String() != "<i>sibling</i>" {
+		t.Errorf("buffer = %q, want only what it held before the failed render", buf.String())
+	}
+}

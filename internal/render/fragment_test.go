@@ -664,3 +664,87 @@ func fragmentNames(result *Result) []string {
 	}
 	return names
 }
+
+// halfWritten is an inline fragment whose template writes markup and then fails:
+// .Title is a string, so asking it for a field is an execution error reached only
+// after "<b>partial" has gone out.
+func halfWritten(name string) *types.Fragment {
+	f := &types.Fragment{Name: name, Source: `<b>partial {{.Title.Nope}}</b>`}
+	f.DataHandler = dataHandler(map[string]string{"Title": "x"})
+	return f
+}
+
+func TestRender_FragmentFailingMidTemplateLeavesNoPartialMarkup(t *testing.T) {
+	tests := []struct {
+		name     string
+		fallback *types.Fragment
+		want     string
+	}{
+		{
+			name: "no fallback",
+			want: "<html><body><i>A</i><i>B</i></body></html>",
+		},
+		{
+			name:     "fallback renders in its place",
+			fallback: fragment("broken-fallback", "fallback.html"),
+			want:     "<html><body><i>A</i><p>fallback</p><i>B</i></body></html>",
+		},
+		{
+			name:     "fallback fails midway too",
+			fallback: halfWritten("broken-fallback"),
+			want:     "<html><body><i>A</i><i>B</i></body></html>",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			engine := newEngine(t, Options{})
+			layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content", AllowMultiple: true})
+			broken := halfWritten("broken")
+			broken.Fallback = test.fallback
+			bind(t, layout, "content", fragment("a", "a.html"), broken, fragment("b", "b.html"))
+
+			result, err := renderPage(t, engine, pageWith(layout))
+			if err != nil {
+				t.Fatalf("Render() error = %v", err)
+			}
+			if string(result.HTML) != test.want {
+				t.Errorf("Render() HTML = %q, want %q", result.HTML, test.want)
+			}
+		})
+	}
+}
+
+func TestRender_FragmentFailingMidTemplateInDevModeLeavesOnlyTheComment(t *testing.T) {
+	engine := newEngine(t, Options{DevMode: true})
+	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content", AllowMultiple: true})
+	bind(t, layout, "content", fragment("a", "a.html"), halfWritten("broken"), fragment("b", "b.html"))
+
+	result, err := renderPage(t, engine, pageWith(layout))
+	if err != nil {
+		t.Fatalf("Render() error = %v", err)
+	}
+	html := string(result.HTML)
+	if strings.Contains(html, "partial") {
+		t.Errorf("Render() HTML = %q, carries the failed fragment's partial markup", html)
+	}
+	if !strings.HasPrefix(html, "<html><body><i>A</i><!-- collage: fragment broken failed:") || !strings.HasSuffix(html, "--><i>B</i></body></html>") {
+		t.Errorf("Render() HTML = %q, want A, the dev comment, then B", html)
+	}
+}
+
+func TestRender_RequiredFragmentFailingMidTemplateFailsThePage(t *testing.T) {
+	engine := newEngine(t, Options{})
+	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content", AllowMultiple: true})
+	broken := halfWritten("broken")
+	broken.Required = true
+	bind(t, layout, "content", fragment("a", "a.html"), broken)
+
+	result, err := renderPage(t, engine, pageWith(layout))
+	if err == nil {
+		t.Fatal("Render() error = nil, want the required fragment's failure")
+	}
+	if result != nil && len(result.HTML) != 0 {
+		t.Errorf("Render() HTML = %q, want none from a failed render", result.HTML)
+	}
+}
