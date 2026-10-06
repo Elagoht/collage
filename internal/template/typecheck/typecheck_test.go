@@ -16,6 +16,20 @@ func (u *user) Edit() string   { return "edit" }
 
 type slug string
 
+type layout struct{ U user }
+
+type page struct{ *layout }
+
+type pm map[string]string
+
+func (m *pm) Foo() string { return "foo" }
+
+type inner struct{ Edit string }
+
+type outer struct{ inner }
+
+func (o *outer) Edit() string { return "edit" }
+
 type comment struct {
 	Body string
 	By   user
@@ -136,6 +150,9 @@ func TestCheck_FieldsMethodsMaps(t *testing.T) {
 		{"value method on a map element", `{{.x.By.Display}}`, reflect.TypeFor[map[string]comment](), nil},
 		{"pointer method on a string-map element", `{{.x.By.Edit}}`, reflect.TypeFor[map[string]comment](),
 			[]string{"t.html:1 method Edit has a pointer receiver, and this typecheck.user is not addressable: pass the data as a pointer, or reach the value through a slice"}},
+		{"pointer method through an embedded pointer", `{{.U.Edit}}`, reflect.TypeFor[page](), nil},
+		{"pointer method on a map falls back to the key", `{{.Foo}}`, reflect.TypeFor[pm](), nil},
+		{"pointer method shadowed by a promoted field", `{{.Edit}}`, reflect.TypeFor[outer](), nil},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

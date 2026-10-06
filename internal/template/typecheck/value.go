@@ -46,18 +46,27 @@ func (w *walker) field(node parse.Node, recv value, name string, argc int) value
 	if m, ok := t.MethodByName(name); ok && m.IsExported() {
 		return w.result(node, name, m.Type, argc, true)
 	}
+	// A pointer-receiver method of an unaddressable value is invisible to
+	// text/template, which goes on to a struct field or map key of that name.
+	hidden := false
 	if m, ok := reflect.PointerTo(t).MethodByName(name); ok && m.IsExported() {
-		if !addr {
-			w.report(node, fmt.Sprintf("method %s has a pointer receiver, and this %s is not addressable: pass the data as a pointer, or reach the value through a slice", name, t), "")
-			return unknown
+		if addr {
+			return w.result(node, name, m.Type, argc, true)
 		}
-		return w.result(node, name, m.Type, argc, true)
+		hidden = true
+	}
+	missing := func() {
+		if hidden {
+			w.report(node, fmt.Sprintf("method %s has a pointer receiver, and this %s is not addressable: pass the data as a pointer, or reach the value through a slice", name, t), "")
+			return
+		}
+		w.report(node, fmt.Sprintf("type %s has no field or method %s", t, name), suggest(name, members(t)))
 	}
 	switch t.Kind() {
 	case reflect.Struct:
 		f, ok := t.FieldByName(name)
 		if !ok {
-			w.report(node, fmt.Sprintf("type %s has no field or method %s", t, name), suggest(name, members(t)))
+			missing()
 			return unknown
 		}
 		if !f.IsExported() {
@@ -67,6 +76,14 @@ func (w *walker) field(node parse.Node, recv value, name string, argc int) value
 		if argc > 0 {
 			w.report(node, fmt.Sprintf("%s is a field of type %s, not a method, and takes no arguments", name, t), "")
 			return unknown
+		}
+		// Anything reached through an embedded pointer is addressable.
+		ft := t
+		for _, i := range f.Index[:len(f.Index)-1] {
+			ft = ft.Field(i).Type
+			if ft.Kind() == reflect.Pointer {
+				addr, ft = true, ft.Elem()
+			}
 		}
 		return typed(f.Type, addr)
 	case reflect.Map:
@@ -80,7 +97,7 @@ func (w *walker) field(node parse.Node, recv value, name string, argc int) value
 		}
 		return typed(t.Elem(), false)
 	}
-	w.report(node, fmt.Sprintf("type %s has no field or method %s", t, name), suggest(name, members(t)))
+	missing()
 	return unknown
 }
 
