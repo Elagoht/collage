@@ -52,15 +52,16 @@ func nextjsGet(h http.Handler, path string, header http.Header) *httptest.Respon
 // nothing outside the handler can tell whether it read a cookie.
 func TestNextjs_AHandlerThatMayReadTheRequestIsNotShared(t *testing.T) {
 	app := nextjsApp(t, false)
-	reader := collage.NewInlineFragment("who", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	reader := collage.NewInlineFragment("who", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			c, err := rc.Request.Cookie("user")
 			if err != nil {
 				return "nobody", nil
 			}
 			return c.Value, nil
-		})).Build()
-	fixed := collage.NewInlineFragment("fixed", `<p>{{.}}</p>`).WithData("same").Build()
+		})).
+		Build()
+	fixed := collage.NewInlineFragment("fixed", `<p>{{.}}</p>`).WithData(collage.Value("same")).Build()
 	for _, page := range []*collage.Page{
 		collage.NewPage("reads").WithContent(reader).WithPath("en", "/reads").Build(),
 		collage.NewPage("fixed").WithContent(fixed).WithPath("en", "/fixed").Build(),
@@ -90,11 +91,12 @@ func TestNextjs_AHandlerThatMayReadTheRequestIsNotShared(t *testing.T) {
 func TestNextjs_TheQueryIsPartOfACachedPagesKey(t *testing.T) {
 	app := nextjsApp(t, false)
 	var renders atomic.Int32
-	echo := collage.NewInlineFragment("echo", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	echo := collage.NewInlineFragment("echo", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			renders.Add(1)
 			return rc.Request.URL.Query().Get("q"), nil
-		})).Build()
+		})).
+		Build()
 	if err := app.RegisterPage(collage.NewPage("search").WithContent(echo).WithPath("en", "/search").
 		Incremental(time.Hour).Build()); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -129,13 +131,14 @@ func TestNextjs_APreviewIsNeitherServedFromNorWrittenToTheCache(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Use: %v", err)
 	}
-	article := collage.NewInlineFragment("article", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	article := collage.NewInlineFragment("article", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			if rc.Request.Header.Get("X-Preview") == "1" {
 				return "draft", nil
 			}
 			return "published", nil
-		})).Build()
+		})).
+		Build()
 	if err := app.RegisterPage(collage.NewPage("article").WithContent(article).WithPath("en", "/a").
 		Incremental(time.Hour).Build()); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -231,16 +234,18 @@ func TestNextjs_ErrorDetailIsDevelopmentOnly(t *testing.T) {
 	const secret = "dial tcp 10.0.0.7:5432: password authentication failed"
 	build := func(dev bool) http.Handler {
 		app := nextjsApp(t, dev)
-		broken := collage.NewInlineFragment("broken", `<p>never</p>`).
-			WithDataHandler(collage.Effect(func(context.Context, *collage.RenderContext) error {
+		broken := collage.NewInlineFragment("broken", `<p>never</p>`).WithData(collage.Effect(
+			func(context.Context, *collage.RenderContext) error {
 				return errors.New(secret)
-			})).Build()
+			})).
+			Build()
 		host := collage.NewInlineFragment("host", `<html><body><main>ok</main>{{slot "side"}}</body></html>`).
 			WithSlotFragment("side", broken).Build()
-		fatal := collage.NewInlineFragment("fatal", `<p>never</p>`).
-			WithDataHandler(collage.Effect(func(context.Context, *collage.RenderContext) error {
+		fatal := collage.NewInlineFragment("fatal", `<p>never</p>`).WithData(collage.Effect(
+			func(context.Context, *collage.RenderContext) error {
 				return errors.New(secret)
-			})).Required().Build()
+			})).
+			Required().Build()
 		for _, page := range []*collage.Page{
 			collage.NewPage("degraded").WithContent(host).WithPath("en", "/degraded").Build(),
 			collage.NewPage("fatal").WithContent(fatal).WithPath("en", "/fatal").Build(),
@@ -295,12 +300,13 @@ func TestNextjs_DataInAnInlineScriptCannotBreakOut(t *testing.T) {
 	const payload = `</script><script>window.__xss=true</script>`
 	app := nextjsApp(t, false)
 	layout := collage.NewInlineFragment("layout", `<html><head>{{hoist "head"}}</head><body>{{slot "content"}}</body></html>`).Build()
-	page := collage.NewInlineFragment("page", `<script>var v = {{.}};</script><p title="{{.}}">{{.}}</p>`).
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	page := collage.NewInlineFragment("page", `<script>var v = {{.}};</script><p title="{{.}}">{{.}}</p>`).WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			rc.HoistTitle(payload)
 			rc.HoistMeta("description", payload)
 			return payload, nil
-		})).Build()
+		})).
+		Build()
 	if err := app.RegisterPage(collage.NewPage("xss").WithLayouts(layout).WithContent(page).WithPath("en", "/xss").Build()); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}

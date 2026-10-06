@@ -81,10 +81,11 @@ func benchGet(path string) func(int) *http.Request {
 // greeting is a fragment whose handler the strategy cannot see through, as most
 // real fragments are.
 func greeting(name string) *collage.Fragment {
-	return collage.NewInlineFragment(name, `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(_ context.Context, _ *collage.RenderContext) (string, error) {
+	return collage.NewInlineFragment(name, `<p>{{.}}</p>`).WithData(collage.Load(
+		func(_ context.Context, _ *collage.RenderContext) (string, error) {
 			return "hello", nil
-		})).Build()
+		})).
+		Build()
 }
 
 // withParts is a page content of n child fragments, each in a slot of its own.
@@ -173,12 +174,13 @@ const (
 func BenchmarkPage_DynamicNested(b *testing.B) {
 	b.Run("collage", func(b *testing.B) {
 		list := func(name string, seed int) *collage.Fragment {
-			return collage.NewInlineFragment(name, benchList).
-				WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) ([]benchRow, error) {
+			return collage.NewInlineFragment(name, benchList).WithData(collage.Load(
+				func(context.Context, *collage.RenderContext) ([]benchRow, error) {
 					return benchRows(seed), nil
-				})).Build()
+				})).
+				Build()
 		}
-		content := collage.NewInlineFragment("content", benchContent).WithData("nested").
+		content := collage.NewInlineFragment("content", benchContent).WithData(collage.Value("nested")).
 			WithSlotFragment("a", list("a", 1)).WithSlotFragment("b", list("b", 2)).WithSlotFragment("c", list("c", 3)).Build()
 		layout := collage.NewInlineFragment("layout", benchLayout).Build()
 		app := benchApp(b, false)
@@ -239,11 +241,12 @@ func BenchmarkPage_VariedHit(b *testing.B) {
 	}); err != nil {
 		b.Fatal(err)
 	}
-	lang := collage.NewInlineFragment("lang", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	lang := collage.NewInlineFragment("lang", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			v, _ := collage.Varied(rc, "Accept-Language")
 			return v, nil
-		})).Build()
+		})).
+		Build()
 	benchRegister(b, app, collage.NewPage("p").WithContent(lang).WithPath("en", "/").Incremental(time.Hour).Build())
 	h := app.Handler()
 	langs := []string{"en", "tr", "de", "fr"}

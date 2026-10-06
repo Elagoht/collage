@@ -57,7 +57,7 @@ func TestAutoStrategy_FixedPageIsStatic(t *testing.T) {
 	app := strategyApp(t)
 	page := NewPage("fixed").
 		WithLayouts(strategyLayout().WithTitle("Site").Build()).
-		WithContent(NewFragment("content", "pages/data.html").WithData("hello").Build()).
+		WithContent(NewFragment("content", "pages/data.html").WithData(Value("hello")).Build()).
 		WithPath("en", "/").
 		Build()
 	if page.Strategy != StrategyAuto {
@@ -89,16 +89,16 @@ func TestAutoStrategy_HandlerMakesDynamic(t *testing.T) {
 	tests := map[string]func() *Page{
 		"handler in the content": func() *Page {
 			return NewPage("p").WithLayouts(strategyLayout().Build()).
-				WithContent(NewFragment("content", "pages/data.html").WithDataHandler(effect).Build()).
+				WithContent(NewFragment("content", "pages/data.html").WithData(effect).Build()).
 				WithPath("en", "/").Build()
 		},
 		"handler in the layout": func() *Page {
-			return NewPage("p").WithLayouts(strategyLayout().WithDataHandler(effect).Build()).
+			return NewPage("p").WithLayouts(strategyLayout().WithData(effect).Build()).
 				WithContent(NewFragment("content", "pages/data.html").Build()).
 				WithPath("en", "/").Build()
 		},
 		"handler in a bound child": func() *Page {
-			child := NewFragment("child", "pages/data.html").WithDataHandler(effect).Build()
+			child := NewFragment("child", "pages/data.html").WithData(effect).Build()
 			layout := strategyLayout().WithSlot("aside", false, false).WithSlotFragment("aside", child).Build()
 			return NewPage("p").WithLayouts(layout).
 				WithContent(NewFragment("content", "pages/data.html").Build()).
@@ -135,8 +135,9 @@ func TestAutoStrategy_DeclaredStrategyIsKept(t *testing.T) {
 		WithContent(NewFragment("content", "pages/data.html").Build()).
 		WithPath("en", "/fixed").Dynamic().Build()
 	handled := NewPage("handled").WithLayouts(strategyLayout().Build()).
-		WithContent(NewFragment("content", "pages/data.html").
-			WithDataHandler(Load(func(context.Context, *RenderContext) (string, error) { return "x", nil })).Build()).
+		WithContent(NewFragment("content", "pages/data.html").WithData(Load(
+			func(context.Context, *RenderContext) (string, error) { return "x", nil })).
+			Build()).
 		WithPath("en", "/handled").Static().Build()
 	for _, page := range []*Page{fixed, handled} {
 		if err := app.RegisterPage(page); err != nil {
@@ -152,9 +153,10 @@ func TestAutoStrategy_DeclaredStrategyIsKept(t *testing.T) {
 // both is refused at registration rather than resolved by a rule nobody reads.
 func TestFragment_DataAndHandlerConflict(t *testing.T) {
 	app := strategyApp(t)
-	content := NewFragment("content", "pages/data.html").
-		WithData("fixed").
-		WithDataHandler(Load(func(context.Context, *RenderContext) (string, error) { return "fetched", nil })).
+	content := NewFragment("content", "pages/data.html").WithData(Value(
+		"fixed")).WithData(Load(
+
+		func(context.Context, *RenderContext) (string, error) { return "fetched", nil })).
 		Build()
 	page := NewPage("p").WithLayouts(strategyLayout().Build()).WithContent(content).WithPath("en", "/").Build()
 	if err := app.RegisterPage(page); !errors.Is(err, ErrConflictingData) {
@@ -168,8 +170,9 @@ func TestFragment_DataAndHandlerConflict(t *testing.T) {
 func TestFragment_HandlerTitleReplacesFixedTitle(t *testing.T) {
 	app := strategyApp(t)
 	content := NewFragment("content", "pages/data.html").
-		WithTitle("Fixed").
-		WithDataHandler(Effect(func(_ context.Context, rc *RenderContext) error {
+		WithTitle("Fixed").WithData(Effect(
+
+		func(_ context.Context, rc *RenderContext) error {
 			rc.HoistTitle("From handler")
 			return nil
 		})).
@@ -227,10 +230,10 @@ func TestDocument_BodyAndHandlerConflict(t *testing.T) {
 func TestSlots_NeedNoDeclaring(t *testing.T) {
 	app := strategyApp(t)
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlotFragment("aside", NewFragment("note", "pages/data.html").WithData("note").Build()).
+		WithSlotFragment("aside", NewFragment("note", "pages/data.html").WithData(Value("note")).Build()).
 		Build()
 	page := NewPage("p").WithLayouts(layout).
-		WithContent(NewFragment("content", "pages/data.html").WithData("content").Build()).
+		WithContent(NewFragment("content", "pages/data.html").WithData(Value("content")).Build()).
 		WithPath("en", "/").Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -274,7 +277,7 @@ func TestWithSlot_ConstrainsInEitherOrder(t *testing.T) {
 func TestAutoStrategy_StaticFragment(t *testing.T) {
 	load := Load(func(_ context.Context, rc *RenderContext) (string, error) { return "more:" + rc.Param("slug"), nil })
 	shared := func() *Fragment {
-		return NewFragment("more", "pages/data.html").WithDataHandler(load).Static().Build()
+		return NewFragment("more", "pages/data.html").WithData(load).Static().Build()
 	}
 	tests := map[string]struct {
 		page func() *Page
@@ -283,7 +286,7 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 		"static fragment alone": {
 			page: func() *Page {
 				return NewPage("p").WithLayouts(strategyLayout().WithSlotFragment("aside", shared()).Build()).
-					WithContent(NewFragment("content", "pages/data.html").WithData("home").Build()).
+					WithContent(NewFragment("content", "pages/data.html").WithData(Value("home")).Build()).
 					WithPath("en", "/").Build()
 			},
 			want: StrategyStatic,
@@ -291,14 +294,14 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 		"beside another fragment's handler": {
 			page: func() *Page {
 				return NewPage("p").WithLayouts(strategyLayout().WithSlotFragment("aside", shared()).Build()).
-					WithContent(NewFragment("content", "pages/data.html").WithDataHandler(load).Build()).
+					WithContent(NewFragment("content", "pages/data.html").WithData(load).Build()).
 					WithPath("en", "/").Build()
 			},
 			want: StrategyDynamic,
 		},
 		"with a resolver of its own": {
 			page: func() *Page {
-				more := NewFragment("more", "pages/slotted.html").WithDataHandler(load).Static().
+				more := NewFragment("more", "pages/slotted.html").WithData(load).Static().
 					WithSlotResolver("x", func(*RenderContext) ([]*Fragment, error) { return nil, nil }).Build()
 				return NewPage("p").WithLayouts(strategyLayout().WithSlotFragment("aside", more).Build()).
 					WithContent(NewFragment("content", "pages/data.html").Build()).
@@ -333,7 +336,7 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 // WithData followed by a handler.
 func TestFragment_DataSetTwiceConflicts(t *testing.T) {
 	app := strategyApp(t)
-	content := NewFragment("content", "pages/data.html").WithData("a").WithData("b").Build()
+	content := NewFragment("content", "pages/data.html").WithData(Value("a")).WithData(Value("b")).Build()
 	page := NewPage("p").WithLayouts(strategyLayout().Build()).WithContent(content).WithPath("en", "/").Build()
 	if err := app.RegisterPage(page); !errors.Is(err, ErrConflictingData) {
 		t.Fatalf("RegisterPage = %v, want ErrConflictingData", err)
@@ -345,9 +348,9 @@ func TestFragment_DataSetTwiceConflicts(t *testing.T) {
 func TestFragment_NilDataIsNoData(t *testing.T) {
 	h := Load(func(context.Context, *RenderContext) (string, error) { return "x", nil })
 	cases := map[string]*FragmentBuilder{
-		"handler then nil handler": NewFragment("a", "pages/data.html").WithDataHandler(h).WithDataHandler(nil),
-		"handler then nil data":    NewFragment("b", "pages/data.html").WithDataHandler(h).WithData(nil),
-		"data then nil handler":    NewFragment("c", "pages/data.html").WithData("v").WithDataHandler(nil),
+		"handler then nil handler": NewFragment("a", "pages/data.html").WithData(h).WithData(Load[string](nil)),
+		"handler then nil data":    NewFragment("b", "pages/data.html").WithData(h).WithData(Value[error](nil)),
+		"data then nil handler":    NewFragment("c", "pages/data.html").WithData(Value("v")).WithData(nil),
 	}
 	wantKind := map[string]types.DataKind{
 		"handler then nil handler": types.DataFetched,
@@ -367,7 +370,7 @@ func TestFragment_NilDataIsNoData(t *testing.T) {
 // TestFragment_WithDataRecordsType: the template's dot type is the value's own type.
 func TestFragment_WithDataRecordsType(t *testing.T) {
 	type view struct{ N int }
-	f := NewFragment("v", "pages/data.html").WithData(view{N: 1}).Build()
+	f := NewFragment("v", "pages/data.html").WithData(Value(view{N: 1})).Build()
 	if got := f.DataSource().Type; got != reflect.TypeOf(view{}) {
 		t.Errorf("Type = %v, want %v", got, reflect.TypeOf(view{}))
 	}

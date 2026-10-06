@@ -90,12 +90,13 @@ func TestStress_ACrowdOnAColdPageRendersItOnce(t *testing.T) {
 	skipShort(t)
 	app := stressApp(t, memoryCache)
 	var renders atomic.Int32
-	slow := collage.NewInlineFragment("slow", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) (string, error) {
+	slow := collage.NewInlineFragment("slow", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(context.Context, *collage.RenderContext) (string, error) {
 			renders.Add(1)
 			time.Sleep(50 * time.Millisecond)
 			return "rendered", nil
-		})).Build()
+		})).
+		Build()
 	if err := app.RegisterPage(collage.NewPage("p").WithContent(slow).WithPath("en", "/").Incremental(time.Hour).Build()); err != nil {
 		t.Fatal(err)
 	}
@@ -116,15 +117,16 @@ func TestStress_AFailedSharedRenderIsTriedAgain(t *testing.T) {
 	app := stressApp(t, memoryCache)
 	var renders atomic.Int32
 	entered, release := make(chan struct{}), make(chan struct{})
-	failing := collage.NewInlineFragment("failing", `<p>{{.}}</p>`).Required().
-		WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) (string, error) {
+	failing := collage.NewInlineFragment("failing", `<p>{{.}}</p>`).Required().WithData(collage.Load(
+		func(context.Context, *collage.RenderContext) (string, error) {
 			if renders.Add(1) == 1 {
 				close(entered)
 				<-release
 				return "", errors.New("upstream down")
 			}
 			return "recovered", nil
-		})).Build()
+		})).
+		Build()
 	if err := app.RegisterPage(collage.NewPage("p").WithContent(failing).WithPath("en", "/").Incremental(time.Hour).Build()); err != nil {
 		t.Fatal(err)
 	}
@@ -201,20 +203,23 @@ func TestStress_TheDiskCacheStaysInsideItsCap(t *testing.T) {
 func TestStress_AbandonedAndFailedRequestsLeaveNothingRunning(t *testing.T) {
 	skipShort(t)
 	app := stressApp(t, collage.CacheConfig{})
-	waits := collage.NewInlineFragment("waits", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(ctx context.Context, _ *collage.RenderContext) (string, error) {
+	waits := collage.NewInlineFragment("waits", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(ctx context.Context, _ *collage.RenderContext) (string, error) {
 			<-ctx.Done()
 			return "", ctx.Err()
-		})).Build()
-	late := collage.NewInlineFragment("late", `<p>{{.}}</p>`).WithTimeout(10 * time.Millisecond).
-		WithDataHandler(collage.Load(func(ctx context.Context, _ *collage.RenderContext) (string, error) {
+		})).
+		Build()
+	late := collage.NewInlineFragment("late", `<p>{{.}}</p>`).WithTimeout(10 * time.Millisecond).WithData(collage.Load(
+		func(ctx context.Context, _ *collage.RenderContext) (string, error) {
 			<-ctx.Done()
 			return "", ctx.Err()
-		})).Build()
-	panics := collage.NewInlineFragment("panics", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) (string, error) {
+		})).
+		Build()
+	panics := collage.NewInlineFragment("panics", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(context.Context, *collage.RenderContext) (string, error) {
 			panic("handler bug")
-		})).Build()
+		})).
+		Build()
 	for path, content := range map[string]*collage.Fragment{"/waits": waits, "/late": late, "/panics": panics} {
 		if err := app.RegisterPage(collage.NewPage(strings.TrimPrefix(path, "/")).WithContent(content).WithPath("en", path).Dynamic().Build()); err != nil {
 			t.Fatal(err)
@@ -262,12 +267,13 @@ func TestStress_ShutdownLetsTheRequestsInFlightFinish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	slow := collage.NewInlineFragment("slow", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) (string, error) {
+	slow := collage.NewInlineFragment("slow", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(context.Context, *collage.RenderContext) (string, error) {
 			entered <- struct{}{}
 			time.Sleep(300 * time.Millisecond)
 			return "finished", nil
-		})).Build()
+		})).
+		Build()
 	if err := app.RegisterPage(collage.NewPage("p").WithContent(slow).WithPath("en", "/").Dynamic().Build()); err != nil {
 		t.Fatal(err)
 	}

@@ -22,7 +22,7 @@ type clockView struct {
 // a URL of its own with WithFragmentPath.
 func Clock() *collage.Fragment {
 	return collage.NewInlineFragment("demo-clock", clockBlock).
-		WithDataHandler(collage.Load(clockData)).
+		WithData(collage.Load(clockData)).
 		Build()
 }
 

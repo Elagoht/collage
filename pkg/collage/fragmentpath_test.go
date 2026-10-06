@@ -188,8 +188,8 @@ func hoistingSite(t *testing.T) *collage.App {
 		rc.Hoist("head", "stylesheet:/static/chart.css", template.HTML(`<link rel="stylesheet" href="/static/chart.css">`))
 		return nil
 	})
-	chart := collage.NewFragment("chart", "chart.html").WithDataHandler(hoister).Build()
-	own := collage.NewFragment("own", "own.html").WithDataHandler(hoister).Build()
+	chart := collage.NewFragment("chart", "chart.html").WithData(hoister).Build()
+	own := collage.NewFragment("own", "own.html").WithData(hoister).Build()
 	page := collage.NewFragment("page", "page.html").WithSlotFragment("chart", chart).WithSlotFragment("own", own).Build()
 	if err := app.RegisterPage(collage.NewPage("home").WithContent(page).WithPath("en", "/").
 		WithFragmentPath("en", "/live/chart", chart).
@@ -250,10 +250,11 @@ func TestRenderFragment_Parts(t *testing.T) {
 		"a.html":    `<p>{{.}}</p>`,
 		"b.html":    `<p>fixed</p>`,
 	})
-	a := collage.NewFragment("a", "a.html").WithDataHandler(func(_ context.Context, rc *collage.RenderContext) (any, []string, error) {
+	a := collage.NewFragment("a", "a.html").WithData(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 		rc.Hoist("head", "k", template.HTML(`<meta name="k">`))
 		return "cpu 12%", []string{"system:cpu"}, nil
-	}).Build()
+	})).
+		Build()
 	b := collage.NewFragment("b", "b.html").Build()
 	page := collage.NewFragment("page", "page.html").WithSlotFragment("a", a).WithSlotFragment("b", b).Build()
 	if err := app.RegisterPage(collage.NewPage("home").WithContent(page).WithPath("en", "/").
@@ -296,9 +297,10 @@ func TestRenderFragment_ByPath(t *testing.T) {
 		"page.html":    `<main>{{slot "results"}}</main>`,
 		"results.html": `<p>{{.}}</p>`,
 	})
-	results := collage.NewFragment("results", "results.html").WithDataHandler(func(_ context.Context, rc *collage.RenderContext) (any, []string, error) {
+	results := collage.NewFragment("results", "results.html").WithData(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 		return rc.Locale + ":" + rc.Param("slug") + ":" + rc.Request.URL.Query().Get("q"), nil, nil
-	}).Build()
+	})).
+		Build()
 	page := collage.NewFragment("page", "page.html").WithSlotFragment("results", results).Build()
 	if err := app.RegisterPage(collage.NewPage("search").WithContent(page).
 		WithPath("en", "/search/{slug}").WithPath("tr", "/ara/{slug}").
@@ -336,10 +338,11 @@ func TestShared_SharesTheRenderAndLeavesThePageDynamic(t *testing.T) {
 		"cpu.html":  `<p>{{.}}</p>`,
 	})
 	var n int
-	cpu := collage.NewFragment("cpu", "cpu.html").WithDataHandler(func(context.Context, *collage.RenderContext) (any, []string, error) {
+	cpu := collage.NewFragment("cpu", "cpu.html").WithData(collage.DataHandler(func(context.Context, *collage.RenderContext) (int, []string, error) {
 		n++
 		return n, []string{"system:cpu"}, nil
-	}).Shared().Build()
+	})).
+		Shared().Build()
 	page := collage.NewFragment("page", "page.html").WithSlotFragment("cpu", cpu).Build()
 	if err := app.RegisterPage(collage.NewPage("home").WithContent(page).WithPath("en", "/").
 		WithFragmentPath("en", "/live/cpu", cpu).Build()); err != nil {
@@ -384,14 +387,16 @@ func TestRenderFragment_ETagMatchesTheFragmentPath(t *testing.T) {
 // for either.
 func TestFragmentPath_NotFoundIsA404(t *testing.T) {
 	app := newFragmentApp(t, map[string]string{"p.html": `<p>{{.}}</p>`})
-	missing := collage.NewFragment("missing", "p.html").
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	missing := collage.NewFragment("missing", "p.html").WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			return "", fmt.Errorf("thing %s: %w", rc.Param("id"), collage.ErrNotFound)
-		})).Required().Build()
-	broken := collage.NewFragment("broken", "p.html").
-		WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) (string, error) {
+		})).
+		Required().Build()
+	broken := collage.NewFragment("broken", "p.html").WithData(collage.Load(
+		func(context.Context, *collage.RenderContext) (string, error) {
 			return "", errors.New("database is down")
-		})).Required().Build()
+		})).
+		Required().Build()
 	if err := app.RegisterPage(collage.NewPage("missing").WithPath("en", "/things/{id}").WithContent(missing).
 		WithFragmentPath("en", "/things/{id}/part", missing).Build()); err != nil {
 		t.Fatal(err)

@@ -79,7 +79,7 @@ func errorEventApp(t *testing.T, rec *eventRecorder, logs *lockedBuffer) *collag
 	return app
 }
 
-func failingData() collage.DataHandlerFunc {
+func failingData() collage.Data {
 	return collage.Load(func(context.Context, *collage.RenderContext) (string, error) {
 		return "", errors.New("boom")
 	})
@@ -93,12 +93,12 @@ func TestErrorEvent_CarriesStatusAndRequest(t *testing.T) {
 	app := errorEventApp(t, rec, logs)
 
 	page := collage.NewPage("broken").
-		WithContent(collage.NewFragment("body", "p.html").WithDataHandler(failingData()).Build()).
+		WithContent(collage.NewFragment("body", "p.html").WithData(failingData()).Build()).
 		WithPath("en", "/broken").Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatal(err)
 	}
-	live := collage.NewFragment("live", "p.html").WithDataHandler(failingData()).Required().Build()
+	live := collage.NewFragment("live", "p.html").WithData(failingData()).Required().Build()
 	host := collage.NewPage("host").
 		WithContent(collage.NewFragment("ok", "p.html").Build()).
 		WithPath("en", "/host").WithFragmentPath("en", "/host/live", live).Build()
@@ -208,12 +208,12 @@ func TestErrorEvent_ErrorPageFailureIsA500(t *testing.T) {
 	app := errorEventApp(t, rec, &lockedBuffer{})
 
 	errorPage := collage.NewPage("oops").
-		WithContent(collage.NewFragment("oops", "p.html").WithDataHandler(failingData()).Build()).Build()
+		WithContent(collage.NewFragment("oops", "p.html").WithData(failingData()).Build()).Build()
 	if err := app.RegisterErrorPage(errorPage); err != nil {
 		t.Fatal(err)
 	}
 	page := collage.NewPage("broken").
-		WithContent(collage.NewFragment("body", "p.html").WithDataHandler(failingData()).Build()).
+		WithContent(collage.NewFragment("body", "p.html").WithData(failingData()).Build()).
 		WithPath("en", "/broken").Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatal(err)

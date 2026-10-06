@@ -17,7 +17,7 @@ type counterView struct {
 // Returns the count, rendered into the features page's counter slot.
 func Counter() *collage.Fragment {
 	return collage.NewInlineFragment("demo-counter", counterBlock).
-		WithDataHandler(collage.DataHandler(counterData)).
+		WithData(collage.DataHandler(counterData)).
 		Build()
 }
 

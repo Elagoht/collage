@@ -12,7 +12,7 @@
 // from every WithX call, because they are meant to be used in a single fluent chain,
 // as in:
 //
-//	f := collage.NewFragment("home", "pages/home.html").WithDataHandler(h).Build()
+//	f := collage.NewFragment("home", "pages/home.html").WithData(collage.Load(loadHome)).Build()
 //
 // A WithX method that can fail records the error on the builder and keeps returning
 // the builder unchanged in every other respect; call BuildErr to retrieve whatever was
@@ -42,14 +42,6 @@ type SlotDefinition = types.SlotDefinition
 // SlotResolverFunc returns the fragments a slot holds for one render. See
 // FragmentBuilder.WithSlotResolver.
 type SlotResolverFunc = types.SlotResolverFunc
-
-// DataHandlerFunc fetches the data a fragment renders with.
-//
-// Several fragments needing the same slow value should fetch it through Once or
-// Cached rather than each on its own. Once shares it among the fragments of one
-// render; Cached shares it across renders — across pages, and across fragment
-// paths, each of which is a render of its own that Once cannot reach across.
-type DataHandlerFunc = types.DataHandlerFunc
 
 // GuardFunc decides whether a request may reach what it guards. See
 // FragmentBuilder.WithGuard.
@@ -119,8 +111,7 @@ var ErrFragmentCycle = types.ErrFragmentCycle
 var ErrMissingContent = types.ErrMissingContent
 
 // ErrConflictingData is returned when a fragment's data is set twice (WithData
-// and WithDataHandler, or either one twice), or a document sets both WithBody
-// and WithHandler.
+// called twice with data), or a document sets both WithBody and WithHandler.
 var ErrConflictingData = types.ErrConflictingData
 
 // ErrMissingTTL is returned when a page uses StrategyIncremental without a positive

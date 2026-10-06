@@ -19,7 +19,7 @@ type helloView struct {
 // form posted, or for a stranger.
 func Hello() *collage.Fragment {
 	return collage.NewInlineFragment("hello", helloBlock).
-		WithDataHandler(collage.Load(helloData)).
+		WithData(collage.Load(helloData)).
 		Build()
 }
 

@@ -17,10 +17,10 @@ func TestPageBuilder_MinimalApp(t *testing.T) {
 		WithSlot("content", true, false).
 		Build()
 
-	homeContent := NewFragment("home-content", "pages/home.html").
-		WithDataHandler(func(ctx context.Context, rc *RenderContext) (any, []string, error) {
-			return map[string]any{"Title": "Welcome Home"}, []string{"homepage"}, nil
-		}).
+	homeContent := NewFragment("home-content", "pages/home.html").WithData(DataHandler(
+		func(ctx context.Context, rc *RenderContext) (map[string]string, []string, error) {
+			return map[string]string{"Title": "Welcome Home"}, []string{"homepage"}, nil
+		})).
 		Build()
 
 	homePage := NewPage("home").
@@ -83,15 +83,15 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		return &fetchedPost{Slug: slug}, nil
 	}
 
-	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").
-		WithDataHandler(func(ctx context.Context, rc *RenderContext) (any, []string, error) {
+	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").WithData(DataHandler(
+		func(ctx context.Context, rc *RenderContext) (*fetchedPost, []string, error) {
 			slug := rc.PathParams["slug"]
 			post, err := fetchPost(slug)
 			if err != nil {
-				return nil, nil, err // Will trigger custom 500 page
+				return nil, nil, err
 			}
 			return post, []string{fmt.Sprintf("post:%s", slug)}, nil
-		}).
+		})).
 		Required().
 		Build()
 

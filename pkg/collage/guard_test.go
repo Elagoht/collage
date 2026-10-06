@@ -47,8 +47,8 @@ func guardedApp(t *testing.T, strategy func(*collage.PageBuilder), cache bool) (
 		}, nil
 	}
 	layout := collage.NewFragment("private", "layouts/private.html").WithGuard(guard).Build()
-	content := collage.NewFragment("panel", "pages/panel.html").
-		WithDataHandler(collage.Effect(func(ctx context.Context, rc *collage.RenderContext) error {
+	content := collage.NewFragment("panel", "pages/panel.html").WithData(collage.Effect(
+		func(ctx context.Context, rc *collage.RenderContext) error {
 			renderCount++
 			return nil
 		})).
@@ -237,8 +237,8 @@ func TestGuardSkippedOnFallbackRender(t *testing.T) {
 	}
 	// The public page whose render fails.
 	broken := collage.NewPage("broken").
-		WithContent(collage.NewFragment("broken", "pages/broken.html").
-			WithDataHandler(collage.Load(func(ctx context.Context, rc *collage.RenderContext) (string, error) {
+		WithContent(collage.NewFragment("broken", "pages/broken.html").WithData(collage.Load(
+			func(ctx context.Context, rc *collage.RenderContext) (string, error) {
 				return "", errBoom
 			})).
 			Required().

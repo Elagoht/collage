@@ -138,10 +138,11 @@ func TestDev500_NamesTheBrokenFragment(t *testing.T) {
 		t.Fatal(err)
 	}
 	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
-	content := collage.NewFragment("recipe-content", "recipe.html").
-		WithDataHandler(collage.DataHandler(func(context.Context, *collage.RenderContext) (struct{ Name string }, []string, error) {
+	content := collage.NewFragment("recipe-content", "recipe.html").WithData(collage.DataHandler(
+		func(context.Context, *collage.RenderContext) (struct{ Name string }, []string, error) {
 			return struct{ Name string }{"soup"}, nil, nil
-		})).Required().Build()
+		})).
+		Required().Build()
 	if err := app.RegisterPage(collage.NewPage("recipe").WithLayouts(layout).WithContent(content).WithPath("en", "/").Dynamic().Build()); err != nil {
 		t.Fatal(err)
 	}

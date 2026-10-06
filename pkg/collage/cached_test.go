@@ -41,8 +41,8 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	card := collage.NewFragment("author", "author.html").
-		WithDataHandler(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (author, []string, error) {
+	card := collage.NewFragment("author", "author.html").WithData(collage.DataHandler(
+		func(_ context.Context, rc *collage.RenderContext) (author, []string, error) {
 			id, _ := collage.Get[string](rc, "author")
 			a, err := collage.Cached(rc, "author:"+id, time.Hour, []string{"author:" + id},
 				func(context.Context) (author, error) {
@@ -52,14 +52,15 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 					return author{Name: site.names[id]}, nil
 				})
 			return a, nil, err
-		})).Build()
+		})).
+		Build()
 	for i := range 30 {
 		id := "A"
 		if i >= 20 {
 			id = "B"
 		}
-		post := collage.NewFragment(fmt.Sprintf("post-%d", i), "post.html").
-			WithDataHandler(collage.Effect(func(_ context.Context, rc *collage.RenderContext) error { rc.Set("author", id); return nil })).
+		post := collage.NewFragment(fmt.Sprintf("post-%d", i), "post.html").WithData(collage.Effect(
+			func(_ context.Context, rc *collage.RenderContext) error { rc.Set("author", id); return nil })).
 			WithSlot("author", true, false).WithSlotFragment("author", card).Build()
 		page := collage.NewPage(fmt.Sprintf("p%d", i)).WithContent(post).
 			WithPath("en", fmt.Sprintf("/p/%d", i)).Incremental(time.Hour).Build()

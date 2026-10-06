@@ -34,15 +34,15 @@ func TestHead_HelpersAndStylesheets(t *testing.T) {
 	}
 
 	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
-	content := collage.NewFragment("article", "article.html").
-		WithDataHandler(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
+	content := collage.NewFragment("article", "article.html").WithData(collage.DataHandler(
+		func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 			rc.HoistTitle(`Tom & "Jerry" <3`)
 			rc.HoistMeta("description", `a "quoted" summary`)
 			rc.HoistProperty("og:title", "Tom & Jerry")
 			rc.HoistLink("canonical", "/articles/tom?x=1&y=2")
 			rc.HoistAlternate("tr", "/tr/makaleler/tom")
 			rc.HoistAlternate("en", "/articles/tom")
-			// Declared again from Go: one link, not two.
+
 			if err := rc.HoistStylesheet("/static/article.css"); err != nil {
 				return "", nil, err
 			}
@@ -100,12 +100,13 @@ func TestHead_SiblingsDeclareInTreeOrderWhoeverFinishesFirst(t *testing.T) {
 			t.Fatal(err)
 		}
 		part := func(name string, delay time.Duration) *collage.Fragment {
-			return collage.NewFragment(name, "part.html").
-				WithDataHandler(collage.Effect(func(_ context.Context, rc *collage.RenderContext) error {
+			return collage.NewFragment(name, "part.html").WithData(collage.Effect(
+				func(_ context.Context, rc *collage.RenderContext) error {
 					time.Sleep(delay)
 					rc.HoistMeta(name, name)
 					return nil
-				})).Build()
+				})).
+				Build()
 		}
 		root := collage.NewFragment("root", "layout.html").
 			WithSlot("a", true, false).WithSlotFragment("a", part("A", delayA)).

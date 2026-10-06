@@ -33,8 +33,8 @@ func sectionsApp(t *testing.T, order *[]string, mu *sync.Mutex, required, multip
 	}
 
 	section := func(name string) *collage.Fragment {
-		return collage.NewFragment("section-"+name, "section.html").
-			WithDataHandler(collage.DataHandler(func(context.Context, *collage.RenderContext) (string, []string, error) {
+		return collage.NewFragment("section-"+name, "section.html").WithData(collage.DataHandler(
+			func(context.Context, *collage.RenderContext) (string, []string, error) {
 				return name, []string{"section:" + name}, nil
 			})).
 			Build()
@@ -42,8 +42,8 @@ func sectionsApp(t *testing.T, order *[]string, mu *sync.Mutex, required, multip
 	known := map[string]*collage.Fragment{"hero": section("hero"), "posts": section("posts"), "about": section("about")}
 
 	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
-	builder := collage.NewFragment("sections", "sections.html").
-		WithDataHandler(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (struct{}, []string, error) {
+	builder := collage.NewFragment("sections", "sections.html").WithData(collage.DataHandler(
+		func(_ context.Context, rc *collage.RenderContext) (struct{}, []string, error) {
 			mu.Lock()
 			rc.Set("order", append([]string(nil), (*order)...))
 			mu.Unlock()

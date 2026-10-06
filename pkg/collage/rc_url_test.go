@@ -38,7 +38,7 @@ func rcURLApp(t *testing.T) http.Handler {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	home := collage.NewFragment("home", "home.html").WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (links, error) {
+	home := collage.NewFragment("home", "home.html").WithData(collage.Load(func(_ context.Context, rc *collage.RenderContext) (links, error) {
 		var view links
 		var err error
 		if view.Story, err = rc.URL("story", map[string]string{"id": "42"}); err != nil {
@@ -56,7 +56,8 @@ func rcURLApp(t *testing.T) http.Handler {
 		_, missing := rc.URL("nope", nil)
 		view.Missing = "missing: " + errorName(missing)
 		return view, nil
-	})).Build()
+	})).
+		Build()
 
 	goStory := func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
 		location, err := rc.URL("story", map[string]string{"id": rc.Request.FormValue("id")})

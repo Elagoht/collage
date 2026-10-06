@@ -37,8 +37,8 @@ func staticBlog(t *testing.T, posts map[string][]string) (*App, *Page) {
 		t.Fatalf("New: %v", err)
 	}
 
-	content := NewFragment("post", "pages/post.html").
-		WithDataHandler(Load(func(_ context.Context, rc *RenderContext) (string, error) {
+	content := NewFragment("post", "pages/post.html").WithData(Load(
+		func(_ context.Context, rc *RenderContext) (string, error) {
 			return rc.Locale + ":" + rc.Param("slug"), nil
 		})).
 		Build()

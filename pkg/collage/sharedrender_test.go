@@ -38,10 +38,11 @@ func TestSharedRender_SeesOnlyWhatItsKeyHolds(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	seen := collage.NewInlineFragment("seen", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	seen := collage.NewInlineFragment("seen", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			return requestSeen(rc), nil
-		})).Build()
+		})).
+		Build()
 	for _, page := range []*collage.Page{
 		collage.NewPage("inc").WithContent(seen).WithPath("en", "/inc").Incremental(time.Hour).WithCacheParams("page").Build(),
 		collage.NewPage("live").WithContent(seen).WithPath("en", "/live").Dynamic().Build(),
@@ -82,11 +83,12 @@ func TestSharedRender_SeesOnlyWhatItsKeyHolds(t *testing.T) {
 func TestSharedRender_TheHostIsPartOfTheKey(t *testing.T) {
 	app := nextjsApp(t, false)
 	var renders atomic.Int32
-	canonical := collage.NewInlineFragment("canonical", `<link rel="canonical" href="https://{{.}}/">`).
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	canonical := collage.NewInlineFragment("canonical", `<link rel="canonical" href="https://{{.}}/">`).WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			renders.Add(1)
 			return rc.Request.Host, nil
-		})).Build()
+		})).
+		Build()
 	if err := app.RegisterPage(collage.NewPage("home").WithContent(canonical).WithPath("en", "/").Incremental(time.Hour).Build()); err != nil {
 		t.Fatal(err)
 	}

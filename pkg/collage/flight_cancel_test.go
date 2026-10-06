@@ -31,7 +31,7 @@ func TestSharedRender_OutlivesTheRequestThatStartedIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	panel := collage.NewFragment("panel", "panel.html").Static().WithDataHandler(func(ctx context.Context, _ *collage.RenderContext) (any, []string, error) {
+	panel := collage.NewFragment("panel", "panel.html").Static().WithData(collage.DataHandler(func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
 		select {
 		case started <- struct{}{}:
 		default:
@@ -41,9 +41,10 @@ func TestSharedRender_OutlivesTheRequestThatStartedIt(t *testing.T) {
 			return "measured", nil, nil
 		case <-ctx.Done():
 			cancelled.Store(true)
-			return nil, nil, ctx.Err()
+			return "", nil, ctx.Err()
 		}
-	}).Build()
+	})).
+		Build()
 	page := collage.NewFragment("page", "page.html").WithSlotFragment("panel", panel).Build()
 	if err := app.RegisterPage(collage.NewPage("home").WithContent(page).WithPath("en", "/").Build()); err != nil {
 		t.Fatal(err)

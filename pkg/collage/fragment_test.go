@@ -21,14 +21,14 @@ func TestFragmentBuilder_MinimalApp(t *testing.T) {
 		WithSlot("content", true, false).
 		Build()
 
-	homeContent := NewFragment("home-content", "pages/home.html").
-		WithDataHandler(func(ctx context.Context, rc *RenderContext) (any, []string, error) {
-			data := map[string]any{
+	homeContent := NewFragment("home-content", "pages/home.html").WithData(DataHandler(
+		func(ctx context.Context, rc *RenderContext) (map[string]string, []string, error) {
+			data := map[string]string{
 				"Title": "Welcome Home",
 			}
 			tags := []string{"homepage"}
 			return data, tags, nil
-		}).
+		})).
 		Build()
 
 	if layout.Name != "layout" {
@@ -64,7 +64,7 @@ func TestFragmentBuilder_MinimalApp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DataHandler() error = %v, want nil", err)
 	}
-	dataMap, ok := data.(map[string]any)
+	dataMap, ok := data.(map[string]string)
 	if !ok || dataMap["Title"] != "Welcome Home" {
 		t.Errorf("DataHandler() data = %v, want map[Title:Welcome Home]", data)
 	}
@@ -86,15 +86,15 @@ func TestFragmentBuilder_BlogPostContent(t *testing.T) {
 		return &fetchedPost{Slug: slug}, nil
 	}
 
-	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").
-		WithDataHandler(func(ctx context.Context, rc *RenderContext) (any, []string, error) {
+	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").WithData(DataHandler(
+		func(ctx context.Context, rc *RenderContext) (*fetchedPost, []string, error) {
 			slug := rc.PathParams["slug"]
 			post, err := fetchPost(slug)
 			if err != nil {
-				return nil, nil, err // Will trigger custom 500 page
+				return nil, nil, err
 			}
 			return post, []string{fmt.Sprintf("post:%s", slug)}, nil
-		}).
+		})).
 		Required().
 		Build()
 
@@ -225,7 +225,7 @@ func TestDataHandler_PassesTheTypedValueThrough(t *testing.T) {
 		return clockView{Hour: 9}, []string{"clock"}, nil
 	})
 
-	data, tags, err := handler(context.Background(), &RenderContext{})
+	data, tags, err := handler.source().Handler(context.Background(), &RenderContext{})
 	if err != nil {
 		t.Fatalf("handler() error = %v, want nil", err)
 	}
@@ -245,7 +245,7 @@ func TestDataHandler_DropsDataOnError(t *testing.T) {
 		return nil, []string{"clock"}, failure
 	})
 
-	data, tags, err := handler(context.Background(), &RenderContext{})
+	data, tags, err := handler.source().Handler(context.Background(), &RenderContext{})
 	if !errors.Is(err, failure) {
 		t.Fatalf("handler() error = %v, want %v", err, failure)
 	}
@@ -267,7 +267,7 @@ func TestDataHandler_NilIsNil(t *testing.T) {
 func TestLoad(t *testing.T) {
 	data, tags, err := Load(func(context.Context, *RenderContext) (clockView, error) {
 		return clockView{Hour: 9}, nil
-	})(context.Background(), &RenderContext{})
+	}).source().Handler(context.Background(), &RenderContext{})
 	if err != nil || tags != nil {
 		t.Fatalf("Load handler = _, %v, %v; want no tags and no error", tags, err)
 	}
@@ -278,7 +278,7 @@ func TestLoad(t *testing.T) {
 	failure := errors.New("upstream down")
 	data, _, err = Load(func(context.Context, *RenderContext) (*clockView, error) {
 		return nil, failure
-	})(context.Background(), &RenderContext{})
+	}).source().Handler(context.Background(), &RenderContext{})
 	if !errors.Is(err, failure) {
 		t.Fatalf("error = %v, want %v", err, failure)
 	}
@@ -295,12 +295,12 @@ func TestLoad(t *testing.T) {
 func TestEffect(t *testing.T) {
 	ran := false
 	handler := Effect(func(context.Context, *RenderContext) error { ran = true; return nil })
-	data, tags, err := handler(context.Background(), &RenderContext{})
+	data, tags, err := handler.source().Handler(context.Background(), &RenderContext{})
 	if err != nil || data != nil || tags != nil || !ran {
 		t.Errorf("Effect handler = %v, %v, %v (ran %v); want it run with nothing returned", data, tags, err, ran)
 	}
 	failure := errors.New("emit failed")
-	if _, _, err := Effect(func(context.Context, *RenderContext) error { return failure })(context.Background(), &RenderContext{}); !errors.Is(err, failure) {
+	if _, _, err := Effect(func(context.Context, *RenderContext) error { return failure }).source().Handler(context.Background(), &RenderContext{}); !errors.Is(err, failure) {
 		t.Errorf("error = %v, want the function's own", err)
 	}
 	var fn func(context.Context, *RenderContext) error

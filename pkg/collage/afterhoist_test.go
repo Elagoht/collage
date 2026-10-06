@@ -50,10 +50,11 @@ func hoistSite(t *testing.T, plugins ...collage.Plugin) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frag := collage.NewFragment("p", "p.html").WithDataHandler(collage.Effect(func(_ context.Context, rc *collage.RenderContext) error {
+	frag := collage.NewFragment("p", "p.html").WithData(collage.Effect(func(_ context.Context, rc *collage.RenderContext) error {
 		rc.Hoist("head", "declared", template.HTML(`<meta name="early">`))
 		return nil
-	})).Build()
+	})).
+		Build()
 	if err := app.RegisterPage(collage.NewPage("home").WithContent(frag).WithPath("en", "/").Build()); err != nil {
 		t.Fatal(err)
 	}

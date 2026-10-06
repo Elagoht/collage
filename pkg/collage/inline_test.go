@@ -49,8 +49,9 @@ func inlineBody(t *testing.T, h http.Handler, path string) string {
 
 func TestInlineFragment_RendersInAFileLayout(t *testing.T) {
 	app := inlineApp(t, false)
-	row := collage.NewInlineFragment("row", `{{stylesheet "/static/row.css"}}<p>{{template "partials/name.html" .}}</p>`).
-		WithData("Ada").Build()
+	row := collage.NewInlineFragment("row", `{{stylesheet "/static/row.css"}}<p>{{template "partials/name.html" .}}</p>`).WithData(collage.Value(
+		"Ada")).
+		Build()
 	layout := collage.NewFragment("layout", "layouts/default.html").Build()
 	if err := app.RegisterPage(collage.NewPage("home").WithLayouts(layout).WithContent(row).WithPath("en", "/").Build()); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -117,7 +118,7 @@ func TestInlineFragment_ParseErrorNamesPageAndFragment(t *testing.T) {
 // template that is the fragment, not a hash nobody wrote.
 func TestInlineFragment_DevOverlayNamesTheFragment(t *testing.T) {
 	app := inlineApp(t, true)
-	bad := collage.NewInlineFragment("bad", `<p>{{.Nope.X}}</p>`).WithData("s").Build()
+	bad := collage.NewInlineFragment("bad", `<p>{{.Nope.X}}</p>`).WithData(collage.Value("s")).Build()
 	if err := app.RegisterPage(collage.NewPage("b").WithContent(bad).WithPath("en", "/b").Build()); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
@@ -237,7 +238,7 @@ const inlineRow collage.InlineHTML = `<p>{{template "partials/name.html" .}}</p>
 
 func TestInlineFragment_TakesAnInlineHTMLConstant(t *testing.T) {
 	app := inlineApp(t, false)
-	row := collage.NewInlineFragment("row", inlineRow).WithData("Ada").Build()
+	row := collage.NewInlineFragment("row", inlineRow).WithData(collage.Value("Ada")).Build()
 	layout := collage.NewFragment("layout", "layouts/default.html").Build()
 	if err := app.RegisterPage(collage.NewPage("home").WithLayouts(layout).WithContent(row).WithPath("en", "/").Build()); err != nil {
 		t.Fatalf("RegisterPage: %v", err)

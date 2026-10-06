@@ -39,10 +39,11 @@ func TestNextjs_DevelopmentPagesAreNoStore(t *testing.T) {
 // handed to every shared cache in front of it either.
 func TestNextjs_ADegradedRenderIsNotPublic(t *testing.T) {
 	app := nextjsApp(t, false)
-	broken := collage.NewInlineFragment("broken", `<p>never</p>`).
-		WithDataHandler(collage.Effect(func(context.Context, *collage.RenderContext) error {
+	broken := collage.NewInlineFragment("broken", `<p>never</p>`).WithData(collage.Effect(
+		func(context.Context, *collage.RenderContext) error {
 			return errors.New("upstream down")
-		})).Build()
+		})).
+		Build()
 	host := collage.NewInlineFragment("host", `<main>ok</main>{{slot "side"}}`).WithSlotFragment("side", broken).Build()
 	if err := app.RegisterPage(collage.NewPage("p").WithContent(host).WithPath("en", "/p").Incremental(time.Hour).Build()); err != nil {
 		t.Fatal(err)

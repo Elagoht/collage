@@ -23,8 +23,8 @@ type secretKey struct{}
 // straight from the context, or through collage.Varied.
 func cacheablePage(t *testing.T, vary bool, read func(context.Context, *collage.RenderContext) string) http.Handler {
 	t.Helper()
-	content := collage.NewFragment("secret", "s.html").
-		WithDataHandler(collage.DataHandler(func(ctx context.Context, rc *collage.RenderContext) (string, []string, error) {
+	content := collage.NewFragment("secret", "s.html").WithData(collage.DataHandler(
+		func(ctx context.Context, rc *collage.RenderContext) (string, []string, error) {
 			return read(ctx, rc), nil, nil
 		})).
 		Build()
@@ -93,8 +93,8 @@ func TestSharedRender_DoesNotLeakContextBetweenReaders(t *testing.T) {
 // per-reader — is visible rather than silent.
 func TestSharedRender_DevModeWarnsOnHiddenContextRead(t *testing.T) {
 	var logs bytes.Buffer
-	content := collage.NewFragment("secret", "s.html").
-		WithDataHandler(collage.DataHandler(func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
+	content := collage.NewFragment("secret", "s.html").WithData(collage.DataHandler(
+		func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
 			secret, _ := ctx.Value(secretKey{}).(string)
 			return secret, nil, nil
 		})).

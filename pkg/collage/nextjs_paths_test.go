@@ -370,18 +370,20 @@ func xssApp(t *testing.T, dev bool) *collage.App {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	tag := collage.NewPage("tag").WithContent(collage.NewFragment("tag", "tag.html").
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	tag := collage.NewPage("tag").WithContent(collage.NewFragment("tag", "tag.html").WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			return rc.Param("tag"), nil
-		})).Build()).
+		})).
+		Build()).
 		WithPath("en", "/{tag}").WithPath("tr", "/{tag}").Dynamic().Build()
 	if err := app.RegisterPage(tag); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
-	notFound := collage.NewPage("notfound").WithContent(collage.NewFragment("notfound", "notfound.html").
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	notFound := collage.NewPage("notfound").WithContent(collage.NewFragment("notfound", "notfound.html").WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			return rc.Request.URL.String(), nil
-		})).Build()).Dynamic().Build()
+		})).
+		Build()).Dynamic().Build()
 	if err := app.RegisterNotFoundPage(notFound); err != nil {
 		t.Fatalf("RegisterNotFoundPage: %v", err)
 	}
@@ -449,10 +451,11 @@ func TestNextjs_AFailingPageIsNotTheNotFoundPage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	failing := collage.NewPage("err").WithContent(collage.NewFragment("err", "err.html").
-		WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) (string, error) {
+	failing := collage.NewPage("err").WithContent(collage.NewFragment("err", "err.html").WithData(collage.Load(
+		func(context.Context, *collage.RenderContext) (string, error) {
 			return "", errors.New("oops")
-		})).Build()).WithPath("en", "/err").Dynamic().Build()
+		})).
+		Build()).WithPath("en", "/err").Dynamic().Build()
 	if err := app.RegisterPage(failing); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
@@ -488,10 +491,11 @@ func queryApp(t *testing.T) *collage.App {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	page := collage.NewPage("q").WithContent(collage.NewFragment("q", "q.html").
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	page := collage.NewPage("q").WithContent(collage.NewFragment("q", "q.html").WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			return strconv.Quote(rc.Request.URL.Query().Get("test")), nil
-		})).Build()).
+		})).
+		Build()).
 		WithPath("en", "/").Incremental(time.Minute).WithCacheParams("test").Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -542,14 +546,16 @@ func paramApp(t *testing.T, values ...string) *collage.App {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	home := collage.NewPage("home").WithContent(collage.NewFragment("home", "home.html").
-		WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) ([]string, error) {
+	home := collage.NewPage("home").WithContent(collage.NewFragment("home", "home.html").WithData(collage.Load(
+		func(context.Context, *collage.RenderContext) ([]string, error) {
 			return values, nil
-		})).Build()).WithPath("en", "/").Static().Build()
-	post := collage.NewPage("post").WithContent(collage.NewFragment("post", "post.html").
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+		})).
+		Build()).WithPath("en", "/").Static().Build()
+	post := collage.NewPage("post").WithContent(collage.NewFragment("post", "post.html").WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			return strconv.Quote(rc.Param("slug")), nil
-		})).Build()).WithPath("en", "/blog/{slug}").Static().
+		})).
+		Build()).WithPath("en", "/blog/{slug}").Static().
 		WithStaticParams(func(context.Context, string) ([]map[string]string, error) {
 			var sets []map[string]string
 			for _, value := range values {

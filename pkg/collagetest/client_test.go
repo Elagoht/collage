@@ -71,8 +71,8 @@ func newApp(t *testing.T) http.Handler {
 		}).
 		Build()
 
-	panel := collage.NewInlineFragment("panel", `<p>Hoş geldin, {{.Name}}</p>`).
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (panelView, error) {
+	panel := collage.NewInlineFragment("panel", `<p>Hoş geldin, {{.Name}}</p>`).WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (panelView, error) {
 			cookie, err := rc.Request.Cookie(session)
 			if err != nil {
 				return panelView{}, errNoSession
@@ -86,8 +86,8 @@ func newApp(t *testing.T) http.Handler {
 		Required().
 		Build()
 
-	search := collage.NewInlineFragment("search", `<p>{{.}}</p>`).
-		WithDataHandler(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+	search := collage.NewInlineFragment("search", `<p>{{.}}</p>`).WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
 			return rc.Request.URL.Query().Get("kaynak") + ":" + rc.Request.URL.Query().Get("q"), nil
 		})).
 		Build()

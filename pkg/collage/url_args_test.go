@@ -50,9 +50,10 @@ func argsApp(t *testing.T, tmpl string, logs *bytes.Buffer) (http.Handler, *coll
 	}
 	// home is the one under test. It sits in an optional slot, as a slot
 	// resolver's fragment does, so its failure is contained.
-	home := collage.NewFragment("home", "home.html").WithDataHandler(collage.Load(func(context.Context, *collage.RenderContext) (storyView, error) {
+	home := collage.NewFragment("home", "home.html").WithData(collage.Load(func(context.Context, *collage.RenderContext) (storyView, error) {
 		return storyView{ID: 42, Rank: 7, Code: 3, Score: 1.5}, nil
-	})).Build()
+	})).
+		Build()
 	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).
 		WithSlot("aside", false, false).WithSlotFragment("aside", home).Build()
 	noop := func(context.Context, *collage.RenderContext) (*collage.ActionResult, error) { return nil, nil }

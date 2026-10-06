@@ -38,11 +38,9 @@ func langApp(t *testing.T, vary bool, extra func(*collage.App)) *collage.App {
 	}
 
 	layout := collage.NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()
-	content := collage.NewFragment("home-content", "pages/home.html").
-		WithDataHandler(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
-			// Read the varied dimension through the framework, not from the
-			// context: on a cacheable page the context value is stripped from the
-			// shared render, while the vary value is safe because it is in the key.
+	content := collage.NewFragment("home-content", "pages/home.html").WithData(collage.DataHandler(
+		func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
+
 			lang, _ := collage.Varied(rc, "Accept-Language")
 			return lang, nil, nil
 		})).
@@ -280,8 +278,8 @@ func TestSkipCache_Preview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	content := collage.NewFragment("post", "post.html").
-		WithDataHandler(collage.DataHandler(func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
+	content := collage.NewFragment("post", "post.html").WithData(collage.DataHandler(
+		func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
 			if drafts, _ := ctx.Value(langKey{}).(bool); drafts {
 				return "draft", nil, nil
 			}
@@ -348,12 +346,13 @@ func TestVary_TooLateEvenOnADynamicPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := collage.NewFragment("p", "p.html").
-		WithDataHandler(collage.Effect(func(_ context.Context, rc *collage.RenderContext) error {
+	content := collage.NewFragment("p", "p.html").WithData(collage.Effect(
+		func(_ context.Context, rc *collage.RenderContext) error {
 			varyErr = collage.Vary(rc.Request, "Accept-Language", "tr")
 			skipErr = collage.SkipCache(rc.Request)
 			return nil
-		})).Build()
+		})).
+		Build()
 	if err := app.RegisterPage(collage.NewPage("p").WithContent(content).WithPath("en", "/").Dynamic().Build()); err != nil {
 		t.Fatal(err)
 	}

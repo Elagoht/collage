@@ -44,9 +44,10 @@ func TestInvalidation_NamesThePaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	post := collage.NewFragment("post", "p.html").WithDataHandler(func(_ context.Context, rc *collage.RenderContext) (any, []string, error) {
+	post := collage.NewFragment("post", "p.html").WithData(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 		return rc.Param("slug"), []string{"post:" + rc.Param("slug"), "posts"}, nil
-	}).Static().Build()
+	})).
+		Static().Build()
 	if err := app.RegisterPage(collage.NewPage("post").WithContent(post).WithPath("en", "/posts/{slug}").WithPath("tr", "/yazilar/{slug}").Build()); err != nil {
 		t.Fatal(err)
 	}
@@ -102,10 +103,11 @@ func TestInvalidation_EntriesCarryTheHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	post := collage.NewFragment("post", "p.html").WithDataHandler(collage.DataHandler(
+	post := collage.NewFragment("post", "p.html").WithData(collage.DataHandler(
 		func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 			return rc.Param("slug"), []string{"posts"}, nil
-		})).Static().Build()
+		})).
+		Static().Build()
 	if err := app.RegisterPage(collage.NewPage("post").WithContent(post).WithPath("en", "/posts/{slug}").Build()); err != nil {
 		t.Fatal(err)
 	}

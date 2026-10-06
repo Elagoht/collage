@@ -1,10 +1,8 @@
 package collage
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -54,7 +52,7 @@ type InlineHTML = string
 //
 //	row := collage.NewInlineFragment("post-row", `
 //	  <tr><td>{{.Title}}</td><td>{{.Date}}</td></tr>`).
-//		WithDataHandler(loadRow).
+//		WithData(collage.Load(loadRow)).
 //		Build()
 //
 // It renders exactly as a file template does: slots, hoist, every template
@@ -66,7 +64,7 @@ type InlineHTML = string
 // html is template code, so it must be a constant. Never build it from data — a
 // title, a user's input, a CMS field: whatever {{…}} such text holds would
 // execute, and every distinct string becomes a template kept for the life of the
-// program. Data goes in WithData or a data handler, and the template reads it.
+// program. Data goes in WithData, and the template reads it.
 func NewInlineFragment(name, html string) *FragmentBuilder {
 	b := &FragmentBuilder{
 		fragment: &Fragment{
@@ -79,16 +77,6 @@ func NewInlineFragment(name, html string) *FragmentBuilder {
 		b.errs = append(b.errs, fmt.Errorf("%w: inline fragment %q has no template", ErrEmptyTemplatePath, name))
 	}
 	return b
-}
-
-// WithDataHandler sets the fragment's data handler. A page rendering a fragment
-// with a handler, and declaring no strategy, is dynamic.
-//
-// A value several handlers need is fetched once through Once, within one render,
-// or Cached, across renders: every fragment path is a render of its own, so
-// fragments refreshed separately share a fetch only through Cached.
-func (b *FragmentBuilder) WithDataHandler(h DataHandlerFunc) *FragmentBuilder {
-	return b.setData(types.FetchedData(h, nil))
 }
 
 // setData sets the fragment's data source, recording ErrConflictingData when
@@ -107,21 +95,26 @@ func (b *FragmentBuilder) setData(d types.DataSource) *FragmentBuilder {
 	return b
 }
 
-// WithData hands the fragment's template v on every render — for data fixed when
-// the program starts, a list of links or a heading — with no function to write:
+// WithData sets what the fragment renders with — collage.Load, DataHandler,
+// Value or Effect. A page rendering a fragment with a handler, and declaring
+// no strategy, is dynamic. Setting data twice records ErrConflictingData. A
+// nil d leaves the fragment with no data.
 //
-//	collage.NewFragment("home-content", "pages/home.html").
-//		WithData(homeView{Links: links}).
-//		Build()
-//
-// Unlike a data handler, fixed data leaves a page that declares no strategy
-// static. Data that changes while the program runs wants Load, or DataHandler to
-// report what it came from. Setting data twice records ErrConflictingData.
-func (b *FragmentBuilder) WithData(v any) *FragmentBuilder { // any: fragment data is opaque to the framework and flows straight into the template engine
-	if v == nil {
-		return b // nil is no data, as it always was
+// A value several handlers need is fetched once through Once, within one
+// render, or Cached, across renders.
+func (b *FragmentBuilder) WithData(d Data) *FragmentBuilder {
+	if d == nil {
+		return b
 	}
-	return b.setData(types.FixedData(v, reflect.TypeOf(v)))
+	return b.setData(d.source())
+}
+
+// WithoutTypeCheck leaves the fragment's template out of registration's check
+// against its data's type — for the rare check that is wrong, until it is
+// fixed. The fragment renders as before.
+func (b *FragmentBuilder) WithoutTypeCheck() *FragmentBuilder {
+	b.fragment.SkipTypeCheck = true
+	return b
 }
 
 // WithTitle declares the page's <title>, as rc.HoistTitle would, without a data
@@ -162,82 +155,6 @@ func (b *FragmentBuilder) WithGuard(g GuardFunc) *FragmentBuilder {
 	}
 	b.fragment.Guard = g
 	return b
-}
-
-// DataHandler adapts a data handler that returns a concrete type to
-// DataHandlerFunc, so an application's handlers can be written against its own
-// view types rather than against any:
-//
-//	collage.NewFragment("clock", "fragments/clock.html").
-//		WithDataHandler(collage.DataHandler(clockData)).
-//		Build()
-//
-// where clockData returns (clockView, []string, error).
-//
-// It is a function rather than a method because Go methods cannot take type
-// parameters. On an error the data is dropped rather than boxed: a nil *view
-// returned alongside an error would otherwise become a non-nil interface value, a
-// typed nil that reads as present. A nil fn is a nil handler.
-func DataHandler[T any](fn func(context.Context, *RenderContext) (T, []string, error)) DataHandlerFunc {
-	if fn == nil {
-		return nil
-	}
-	return func(ctx context.Context, rc *RenderContext) (any, []string, error) { // any: restates DataHandlerFunc's own declaration
-		data, tags, err := fn(ctx, rc)
-		if err != nil {
-			return nil, tags, err
-		}
-		return data, tags, nil
-	}
-}
-
-// Load adapts a data handler that fetches its data but reports no dependency
-// tags to DataHandlerFunc — DataHandler without the tags, for a page that is not
-// cached or whose data does not change:
-//
-//	collage.NewFragment("clock", "fragments/clock.html").
-//		WithDataHandler(collage.Load(func(ctx context.Context, rc *collage.RenderContext) (clockView, error) {
-//			return clockView{Now: time.Now()}, nil
-//		})).
-//		Build()
-//
-// A handler whose page is cached and whose data changes — a post, a count —
-// should report that data's tags, which is DataHandler's shape. As with
-// DataHandler, the data is dropped on an error. A nil fn is a nil handler.
-func Load[T any](fn func(context.Context, *RenderContext) (T, error)) DataHandlerFunc {
-	if fn == nil {
-		return nil
-	}
-	return func(ctx context.Context, rc *RenderContext) (any, []string, error) { // any: restates DataHandlerFunc's own declaration
-		data, err := fn(ctx, rc)
-		if err != nil {
-			return nil, nil, err
-		}
-		return data, nil, nil
-	}
-}
-
-// Effect adapts a data handler that renders nothing to DataHandlerFunc: one that
-// only declares things for the page, through rc.HoistTitle or a plugin's Emit.
-//
-//	collage.NewFragment("seo", "fragments/seo.html").
-//		WithDataHandler(collage.Effect(func(ctx context.Context, rc *collage.RenderContext) error {
-//			rc.HoistTitle(post.Title)
-//			return nil
-//		}))
-//
-// The fragment's template receives no data, and it reports no dependency tags: a
-// handler whose declarations come from data that changes — a post's title — and
-// whose page is cached should return that data's tags, which is DataHandler's
-// shape, or the page should declare them with WithDependency. A nil fn is a nil
-// handler.
-func Effect(fn func(context.Context, *RenderContext) error) DataHandlerFunc {
-	if fn == nil {
-		return nil
-	}
-	return func(ctx context.Context, rc *RenderContext) (any, []string, error) { // any: restates DataHandlerFunc's own declaration
-		return nil, nil, fn(ctx, rc)
-	}
 }
 
 // WithSlot constrains the slot named name on the fragment being built: required,
@@ -290,7 +207,7 @@ func (b *FragmentBuilder) WithSlotFragment(slotName string, child *Fragment) *Fr
 // time: resolve returns the fragments it holds for one request.
 //
 //	sections := collage.NewFragment("sections", "pages/sections.html").
-//		WithDataHandler(collage.DataHandler(loadSections)). // puts the section list in SharedData
+//		WithData(collage.DataHandler(loadSections)). // puts the section list in SharedData
 //		WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
 //			list, _ := rc.Get("sections")
 //			return fragmentsFor(list), nil
@@ -332,7 +249,7 @@ func (b *FragmentBuilder) WithSlotResolver(slotName string, resolve SlotResolver
 // dynamic — for a fragment many pages share whose data is fixed per URL:
 //
 //	collage.NewFragment("more-recipes", "fragments/more-recipes.html").
-//		WithDataHandler(loadMore). // reads the recipes and rc.Param("slug")
+//		WithData(collage.Load(loadMore)). // reads the recipes and rc.Param("slug")
 //		Static().
 //		Build()
 //
@@ -355,7 +272,7 @@ func (b *FragmentBuilder) Static() *FragmentBuilder {
 // tells one reader from another — though what it returns changes over time:
 //
 //	collage.NewFragment("cpu", "fragments/cpu.html").
-//		WithDataHandler(cpuUsage). // a measurement, the same for everyone
+//		WithData(collage.Load(cpuUsage)). // a measurement, the same for everyone
 //		Shared().
 //		Build()
 //

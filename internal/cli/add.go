@@ -528,7 +528,7 @@ func (g generator) fragment(forPage bool) ([]fileChange, error) {
 	} else {
 		fmt.Fprintf(&b, "\treturn collage.NewInlineFragment(%q, %sBlock).\n", g.req.ident, g.camel)
 	}
-	fmt.Fprintf(&b, "\t\tWithDataHandler(collage.Load(%sData)).\n\t\tBuild()\n}\n\n", g.camel)
+	fmt.Fprintf(&b, "\t\tWithData(collage.Load(%sData)).\n\t\tBuild()\n}\n\n", g.camel)
 	if !g.req.file {
 		fmt.Fprintf(&b, "const %sBlock collage.InlineHTML = `%s`\n\n", g.camel, strings.TrimSuffix(markup, "\n"))
 	}
