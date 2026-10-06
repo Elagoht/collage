@@ -187,3 +187,16 @@ func TestInspectSharedLayoutOnce(t *testing.T) {
 		t.Errorf("fragment counts = %v, want master and auth once each", count)
 	}
 }
+
+func TestInspectDataType(t *testing.T) {
+	got := map[string]*string{}
+	for _, f := range inspectedApp(t).Inspect().Fragments {
+		got[f.Name] = f.DataType
+	}
+	if p := got["post"]; p == nil || *p != "nil" {
+		t.Errorf("post (no data) dataType = %v, want \"nil\"", p)
+	}
+	if c := got["comments"]; c == nil || *c != "string" {
+		t.Errorf("comments dataType = %v, want string", c)
+	}
+}

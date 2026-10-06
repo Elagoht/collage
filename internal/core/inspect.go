@@ -3,6 +3,7 @@ package core
 import (
 	"io/fs"
 	"maps"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -33,6 +34,8 @@ type Inspection struct {
 	TemplateFuncs     []string            `json:"templateFuncs"`
 	Plugins           []InspectedPlugin   `json:"plugins"`
 	Mounts            []InspectedMount    `json:"mounts"`
+	// Types describes the named types the fragments' data reaches, by Go name.
+	Types map[string]InspectedType `json:"types,omitempty"`
 }
 
 // InspectedPage is one registered page.
@@ -72,6 +75,11 @@ type InspectedFragment struct {
 	// Inline reports a template given as text with NewInlineFragment; Template
 	// is then empty.
 	Inline bool `json:"inline,omitempty"`
+	// DataType is the Go type the template sees as dot: "blog.Post", "nil"
+	// when the fragment has no data, null when the type is unknown.
+	DataType *string `json:"dataType"`
+	// TypeCheck is false when the fragment was built WithoutTypeCheck.
+	TypeCheck *bool `json:"typeCheck,omitempty"`
 }
 
 // InspectedDocument is one registered document.
@@ -168,11 +176,29 @@ func (a *App) Inspect() Inspection {
 	}
 
 	seen := make(map[*types.Fragment]bool)
+	var dataTypes []reflect.Type
 	addFragment := func(f *types.Fragment) error {
+		ds := f.DataSource()
+		var dataType *string
+		switch {
+		case ds.Kind == types.DataNone || ds.Kind == types.DataEffect:
+			s := "nil"
+			dataType = &s
+		case ds.Type != nil:
+			s := ds.Type.String()
+			dataType = &s
+			dataTypes = append(dataTypes, ds.Type)
+		}
+		var typeCheck *bool
+		if f.SkipTypeCheck {
+			off := false
+			typeCheck = &off
+		}
 		slots := slices.Sorted(maps.Keys(f.Slots))
 		out.Fragments = append(out.Fragments, InspectedFragment{
 			Name: f.Name, Template: f.TemplatePath, Inline: types.IsInline(f), Slots: slots,
 			Handler: f.DataSource().Handler != nil, Static: f.Static, Shared: f.Shared,
+			DataType: dataType, TypeCheck: typeCheck,
 		})
 		return nil
 	}
@@ -215,6 +241,9 @@ func (a *App) Inspect() Inspection {
 		for _, root := range append(roots, p.PathFragments()...) {
 			_ = walkFragments(root, seen, addFragment)
 		}
+	}
+	if len(dataTypes) > 0 {
+		out.Types = typeTable(dataTypes)
 	}
 	sort.SliceStable(out.Fragments, func(i, j int) bool { return out.Fragments[i].Name < out.Fragments[j].Name })
 
