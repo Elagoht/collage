@@ -82,6 +82,24 @@ string-keyed `Once`/`Cached`, `ErrOnceTypeMismatch`, `ErrCachedTypeMismatch`.
 `RenderContext.SharedData` becomes unexported. `AfterRenderEvent.Data` is
 removed: a plugin reads only what it holds a key for.
 
+**Reading a render's values after it.** An `AfterRender` hook has no
+`RenderContext`, yet elagoht/highlight, i18n and ogimage hand state from their
+render functions to their hook through `ev.Data`. The event carries the render's
+values instead, opaque, and a key reads from them:
+
+```go
+type RenderValues struct{ /* unexported */ }        // collage.RenderValues
+func (k Key[T]) In(v *RenderValues) (T, bool)       // nil v: false
+
+// AfterRenderEvent gains:
+Values *RenderValues
+
+st, ok := stateKey.In(ev.Values)
+```
+
+A `RenderContext` holds its values in one `*RenderValues` (its own lock), shared
+by every copy the render makes, exactly as `SharedData` was.
+
 **Plugins** that share values export their keys, for example
 `validate.ErrorsKey` and `validate.ValuesKey`, and the application reads them
 with those keys. Actions that hand a form its errors write through keys the same
@@ -109,8 +127,13 @@ cfg, err := collage.PluginConfig(host, Config{Limit: 10, Window: time.Minute})
 - No section for the plugin: `defaults` comes back unchanged. A section: it is
   decoded over a copy of `defaults`, so unset fields keep their defaults. Today's
   meaning, without the pointer.
-- `Host.Config` and `ConfigHost.Config` are removed. `ConfigReader` is satisfied
-  by both hosts through an unexported method, so only collage can implement it.
+- `Host.Config` and `ConfigHost.Config` are removed. `ConfigReader` is an
+  interface in `internal/plugin` with one unexported method; `Host` and
+  `ConfigHost` embed it. collage's hosts satisfy it by embedding
+  `plugin.ConfigSource`, a struct in that package whose method reads the plugin's
+  section, so only collage can implement it. `collage.ConfigReader` is an alias.
+  A map or slice inside `defaults` is decoded into in place, as `Config(&opts)`
+  did: defaults are a literal per call in practice.
 - Malformed JSON and unknown keys are reported as today (`CheckConfigKeys`
   unchanged).
 
@@ -144,8 +167,10 @@ cfg, err := collage.PluginConfig(host, Config{Limit: 10, Window: time.Minute})
 ## Release
 
 - collage **v0.50.0**, breaking; the changelog leads with the table above.
-- Plugins: every plugin reading its config moves to `PluginConfig`, and the ones
-  sharing values export keys. Order as in every release: tag collage, then each
+- Plugins: every plugin reading its config moves to `PluginConfig` — 36 of the
+  39 call `host.Config` — and the ones sharing values export keys (validate) or
+  move their hook state to `In` (highlight, i18n, ogimage). Every one is
+  re-released. Order as in every release: tag collage, then each
   plugin drops its `replace`, `go get`s the tag, tests, tags. The tag's CI run
   builds each plugin's latest *tag* against collage, so it fails until the
   plugins are re-released; rerun it (`gh workflow run ci.yml --ref v0.50.0`)
