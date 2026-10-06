@@ -100,8 +100,9 @@ func (b *FragmentBuilder) setData(d types.DataSource) *FragmentBuilder {
 // no strategy, is dynamic. Setting data twice records ErrConflictingData. A
 // nil d leaves the fragment with no data.
 //
-// A value several handlers need is fetched once through Once, within one
-// render, or Cached, across renders.
+// A value several handlers need is fetched once through Once, within one render,
+// or Cached, across renders: every fragment path is a render of its own, so
+// fragments refreshed separately share a fetch only through Cached.
 func (b *FragmentBuilder) WithData(d Data) *FragmentBuilder {
 	if d == nil {
 		return b

@@ -22,7 +22,8 @@ type data struct{ s types.DataSource }
 func (d data) source() types.DataSource { return d.s }
 
 // templateType is T as the template's dot: unknown, and so not checked, when T
-// is an interface — collage.Load[any] written on purpose.
+// is an interface — collage.Load[any] written on purpose. Value, whose data is
+// in hand, falls back to the value's own dynamic type instead.
 func templateType[T any]() reflect.Type {
 	t := reflect.TypeFor[T]()
 	if t.Kind() == reflect.Interface {
@@ -80,20 +81,42 @@ func DataHandler[T any](fn func(context.Context, *RenderContext) (T, []string, e
 }
 
 // Value hands the fragment's template v on every render — data fixed when the
-// program starts, a list of links or a heading. Unlike a handler, it leaves a
-// page that declares no strategy static. A nil interface value is a nil Data,
-// as WithData(nil) is no data.
+// program starts, a list of links or a heading:
+//
+//	collage.NewFragment("home-content", "pages/home.html").
+//		WithData(collage.Value(homeView{Links: links})).
+//		Build()
+//
+// Unlike a handler, it leaves a page that declares no strategy static. The
+// template's data type is v's own: T, or, when T is an interface — a value
+// taken from a map[string]any — the dynamic type v holds, which fixed data
+// never changes. A nil interface value is a nil Data, as WithData(nil) is no
+// data.
 func Value[T any](v T) Data {
-	if any(v) == nil { // any: only a nil interface value boxes to nil
+	boxed := any(v) // any: only a nil interface value boxes to nil, and the dynamic type is read from the box
+	if boxed == nil {
 		return nil
 	}
-	return data{types.FixedData(v, templateType[T]())}
+	t := templateType[T]()
+	if t == nil {
+		t = reflect.TypeOf(boxed)
+	}
+	return data{types.FixedData(v, t)}
 }
 
 // Effect runs fn on every render for what it declares — rc.HoistTitle, a
-// plugin's Emit — and gives the template no data. It reports no dependency
-// tags; see DataHandler for a handler whose declarations come from data that
-// changes. A nil fn is a nil Data.
+// plugin's Emit — and gives the template no data:
+//
+//	collage.NewFragment("seo", "fragments/seo.html").
+//		WithData(collage.Effect(func(ctx context.Context, rc *collage.RenderContext) error {
+//			rc.HoistTitle(post.Title)
+//			return nil
+//		}))
+//
+// It reports no dependency tags: a handler whose declarations come from data
+// that changes — a post's title — and whose page is cached should report that
+// data's tags, which is DataHandler's shape, or the page should declare them
+// with WithDependency. A nil fn is a nil Data.
 func Effect(fn func(context.Context, *RenderContext) error) Data {
 	if fn == nil {
 		return nil

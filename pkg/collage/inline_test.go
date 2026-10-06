@@ -49,8 +49,8 @@ func inlineBody(t *testing.T, h http.Handler, path string) string {
 
 func TestInlineFragment_RendersInAFileLayout(t *testing.T) {
 	app := inlineApp(t, false)
-	row := collage.NewInlineFragment("row", `{{stylesheet "/static/row.css"}}<p>{{template "partials/name.html" .}}</p>`).WithData(collage.Value(
-		"Ada")).
+	row := collage.NewInlineFragment("row", `{{stylesheet "/static/row.css"}}<p>{{template "partials/name.html" .}}</p>`).
+		WithData(collage.Value("Ada")).
 		Build()
 	layout := collage.NewFragment("layout", "layouts/default.html").Build()
 	if err := app.RegisterPage(collage.NewPage("home").WithLayouts(layout).WithContent(row).WithPath("en", "/").Build()); err != nil {

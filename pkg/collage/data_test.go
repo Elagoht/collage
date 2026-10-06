@@ -61,6 +61,20 @@ func TestData_HandlersKeepTheirBehaviour(t *testing.T) {
 	}
 }
 
+func TestData_ValueOfAnInterfaceRecordsTheDynamicType(t *testing.T) {
+	src := Value[any](dataView{}).source() // any: the interface a map[string]any hands over
+	if src.Kind != types.DataFixed || src.Type != reflect.TypeFor[dataView]() {
+		t.Errorf("source = kind %v type %v, want fixed data of dataView", src.Kind, src.Type)
+	}
+	if Value[error](nil) != nil {
+		t.Error("a nil interface value must stay a nil Data")
+	}
+	loose := Load(func(context.Context, *RenderContext) (any, error) { return dataView{}, nil }) // any: a handler's interface T stays unknown
+	if typ := loose.source().Type; typ != nil {
+		t.Errorf("Load[any] type = %v, want unknown", typ)
+	}
+}
+
 func TestData_SetTwiceIsAConflict(t *testing.T) {
 	b := NewFragment("f", "f.html").WithData(Value(1)).WithData(Value(2))
 	if err := b.BuildErr(); !errors.Is(err, ErrConflictingData) {

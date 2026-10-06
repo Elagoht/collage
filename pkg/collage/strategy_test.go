@@ -153,10 +153,9 @@ func TestAutoStrategy_DeclaredStrategyIsKept(t *testing.T) {
 // both is refused at registration rather than resolved by a rule nobody reads.
 func TestFragment_DataAndHandlerConflict(t *testing.T) {
 	app := strategyApp(t)
-	content := NewFragment("content", "pages/data.html").WithData(Value(
-		"fixed")).WithData(Load(
-
-		func(context.Context, *RenderContext) (string, error) { return "fetched", nil })).
+	content := NewFragment("content", "pages/data.html").
+		WithData(Value("fixed")).
+		WithData(Load(func(context.Context, *RenderContext) (string, error) { return "fetched", nil })).
 		Build()
 	page := NewPage("p").WithLayouts(strategyLayout().Build()).WithContent(content).WithPath("en", "/").Build()
 	if err := app.RegisterPage(page); !errors.Is(err, ErrConflictingData) {
@@ -170,9 +169,8 @@ func TestFragment_DataAndHandlerConflict(t *testing.T) {
 func TestFragment_HandlerTitleReplacesFixedTitle(t *testing.T) {
 	app := strategyApp(t)
 	content := NewFragment("content", "pages/data.html").
-		WithTitle("Fixed").WithData(Effect(
-
-		func(_ context.Context, rc *RenderContext) error {
+		WithTitle("Fixed").
+		WithData(Effect(func(_ context.Context, rc *RenderContext) error {
 			rc.HoistTitle("From handler")
 			return nil
 		})).
