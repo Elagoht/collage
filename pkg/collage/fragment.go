@@ -93,9 +93,15 @@ func (b *FragmentBuilder) WithDataHandler(h DataHandlerFunc) *FragmentBuilder {
 
 // setData sets the fragment's data source, recording ErrConflictingData when
 // one is already set.
+//
+// A source of kind DataNone (a nil handler) is no data: it neither conflicts
+// with nor replaces what is set.
 func (b *FragmentBuilder) setData(d types.DataSource) *FragmentBuilder {
+	if d.Kind == types.DataNone {
+		return b
+	}
 	if b.fragment.DataSource().Kind != types.DataNone {
-		b.errs = append(b.errs, fmt.Errorf("%w: fragment %q", ErrConflictingData, b.fragment.Name))
+		b.errs = append(b.errs, fmt.Errorf("%w: fragment %q has its data set twice", ErrConflictingData, b.fragment.Name))
 	}
 	b.fragment.SetDataSource(d)
 	return b
@@ -110,8 +116,11 @@ func (b *FragmentBuilder) setData(d types.DataSource) *FragmentBuilder {
 //
 // Unlike a data handler, fixed data leaves a page that declares no strategy
 // static. Data that changes while the program runs wants Load, or DataHandler to
-// report what it came from. Setting both is ErrConflictingData at registration.
+// report what it came from. Setting data twice records ErrConflictingData.
 func (b *FragmentBuilder) WithData(v any) *FragmentBuilder { // any: fragment data is opaque to the framework and flows straight into the template engine
+	if v == nil {
+		return b // nil is no data, as it always was
+	}
 	return b.setData(types.FixedData(v, reflect.TypeOf(v)))
 }
 

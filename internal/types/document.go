@@ -118,7 +118,7 @@ func (d *Document) Validate() error {
 		return fmt.Errorf("%w: document %q", ErrNoDocumentHandler, d.Name)
 	}
 	if d.Handler != nil && len(d.Body) > 0 {
-		return fmt.Errorf("%w: document %q", ErrConflictingData, d.Name)
+		return fmt.Errorf("%w: document %q has both a body and a handler", ErrConflictingData, d.Name)
 	}
 	for _, locale := range d.Locales() {
 		if pattern := d.Paths[locale]; !strings.HasPrefix(pattern, "/") {

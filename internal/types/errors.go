@@ -44,8 +44,9 @@ var ErrMissingTTL = errors.New("collage: missing cache ttl for incremental strat
 
 // ErrConflictingData is returned when a fragment's data is set twice, or a
 // document gets both a fixed Body and a Handler. One of them would be ignored,
-// and which one is not something a reader of the builder chain can tell.
-var ErrConflictingData = errors.New("collage: fragment data set twice")
+// and which one is not something a reader of the builder chain can tell. The
+// wrapping error says which clashed.
+var ErrConflictingData = errors.New("collage: conflicting data")
 
 // ErrInvalidTimeout is returned when a fragment's Timeout is negative.
 var ErrInvalidTimeout = errors.New("collage: invalid timeout")

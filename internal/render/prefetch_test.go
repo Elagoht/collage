@@ -361,3 +361,38 @@ func TestPrefetch_OnceCollapsesTheSameFetch(t *testing.T) {
 		t.Errorf("fetches = %d, want 1: two fragments asking for one article must ask the upstream once", got)
 	}
 }
+
+// An effect handler runs for what it declares; whatever it returns, the template's
+// dot stays empty. Both the direct path and the prefetched path honour that.
+func TestEffectData_TemplateGetsNoData(t *testing.T) {
+	handler := func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+		return "LEAKED", nil, nil
+	}
+	newChild := func() *types.Fragment {
+		f := &types.Fragment{Name: "child", Source: `<b>[{{.}}]</b>`}
+		f.SetDataSource(types.EffectData(handler))
+		return f
+	}
+
+	t.Run("direct", func(t *testing.T) {
+		result, err := renderPage(t, newEngine(t, Options{}), pageWith(newChild()))
+		if err != nil {
+			t.Fatalf("Render() error = %v", err)
+		}
+		if got := string(result.HTML); got != "<b>[]</b>" {
+			t.Errorf("HTML = %q, want an empty dot", got)
+		}
+	})
+
+	t.Run("prefetched", func(t *testing.T) {
+		layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
+		bind(t, layout, "content", newChild())
+		result, err := renderPage(t, newEngine(t, Options{}), pageWith(layout))
+		if err != nil {
+			t.Fatalf("Render() error = %v", err)
+		}
+		if got := string(result.HTML); !strings.Contains(got, "<b>[]</b>") || strings.Contains(got, "LEAKED") {
+			t.Errorf("HTML = %q, want an empty dot", got)
+		}
+	})
+}

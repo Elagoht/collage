@@ -436,7 +436,7 @@ func walkFragments(f *types.Fragment, visited map[*types.Fragment]bool, visit fu
 // It is a guess about code it cannot see into, so it guesses in the direction that
 // costs a render rather than one that serves a reader someone else's page: a handler
 // may read the request, a cookie, the clock, so a handler means dynamic. What a page
-// renders from fixed values — Fragment.Data, Fragment.Title — cannot, which is what
+// renders from fixed values — a fragment's fixed data, Fragment.Title — cannot, which is what
 // lets a site of pages without handlers be static, and exported, without saying so
 // on every one of them. A fragment marked Static has made that promise for its own
 // handler, so its handler does not count.

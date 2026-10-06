@@ -7,9 +7,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // strategyApp is an application over a layout that hoists its head, and a page
@@ -334,5 +337,38 @@ func TestFragment_DataSetTwiceConflicts(t *testing.T) {
 	page := NewPage("p").WithLayouts(strategyLayout().Build()).WithContent(content).WithPath("en", "/").Build()
 	if err := app.RegisterPage(page); !errors.Is(err, ErrConflictingData) {
 		t.Fatalf("RegisterPage = %v, want ErrConflictingData", err)
+	}
+}
+
+// TestFragment_NilDataIsNoData: a nil handler or nil value is "unset", as before: it
+// neither conflicts with data already set nor replaces it.
+func TestFragment_NilDataIsNoData(t *testing.T) {
+	h := Load(func(context.Context, *RenderContext) (string, error) { return "x", nil })
+	cases := map[string]*FragmentBuilder{
+		"handler then nil handler": NewFragment("a", "pages/data.html").WithDataHandler(h).WithDataHandler(nil),
+		"handler then nil data":    NewFragment("b", "pages/data.html").WithDataHandler(h).WithData(nil),
+		"data then nil handler":    NewFragment("c", "pages/data.html").WithData("v").WithDataHandler(nil),
+	}
+	wantKind := map[string]types.DataKind{
+		"handler then nil handler": types.DataFetched,
+		"handler then nil data":    types.DataFetched,
+		"data then nil handler":    types.DataFixed,
+	}
+	for name, b := range cases {
+		if len(b.errs) != 0 {
+			t.Errorf("%s: recorded %v, want no conflict", name, b.errs)
+		}
+		if got := b.fragment.DataSource().Kind; got != wantKind[name] {
+			t.Errorf("%s: kind = %v, want %v (existing source kept)", name, got, wantKind[name])
+		}
+	}
+}
+
+// TestFragment_WithDataRecordsType: the template's dot type is the value's own type.
+func TestFragment_WithDataRecordsType(t *testing.T) {
+	type view struct{ N int }
+	f := NewFragment("v", "pages/data.html").WithData(view{N: 1}).Build()
+	if got := f.DataSource().Type; got != reflect.TypeOf(view{}) {
+		t.Errorf("Type = %v, want %v", got, reflect.TypeOf(view{}))
 	}
 }

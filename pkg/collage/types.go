@@ -118,8 +118,9 @@ var ErrFragmentCycle = types.ErrFragmentCycle
 // ErrMissingContent is returned when a page has no content fragment.
 var ErrMissingContent = types.ErrMissingContent
 
-// ErrConflictingData is returned when a fragment sets both WithData and
-// WithDataHandler, or a document both WithBody and WithHandler.
+// ErrConflictingData is returned when a fragment's data is set twice (WithData
+// and WithDataHandler, or either one twice), or a document sets both WithBody
+// and WithHandler.
 var ErrConflictingData = types.ErrConflictingData
 
 // ErrMissingTTL is returned when a page uses StrategyIncremental without a positive
