@@ -37,22 +37,8 @@ func typeTable(roots []reflect.Type) map[string]InspectedType {
 	table := make(map[string]InspectedType)
 	seen := make(map[reflect.Type]bool)
 	var visit func(t reflect.Type)
-	visit = func(t reflect.Type) {
-		for {
-			switch t.Kind() {
-			case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Chan:
-				t = t.Elem()
-				continue
-			case reflect.Map:
-				visit(t.Key())
-				t = t.Elem()
-				continue
-			}
-			break
-		}
-		if seen[t] || t.Name() == "" || isStandard(t) {
-			return
-		}
+	// register lists t (a named type, or an unnamed struct) and visits what it reaches.
+	register := func(t reflect.Type) {
 		seen[t] = true
 		entry := InspectedType{Kind: t.Kind().String()}
 		if t.Kind() == reflect.Struct {
@@ -74,6 +60,28 @@ func typeTable(roots []reflect.Type) map[string]InspectedType {
 		}
 		sort.Slice(entry.Methods, func(i, j int) bool { return entry.Methods[i].Name < entry.Methods[j].Name })
 		table[t.String()] = entry
+	}
+	visit = func(t reflect.Type) {
+		if seen[t] {
+			return
+		}
+		if t.Name() != "" && isStandard(t) {
+			return
+		}
+		named := t.Name() != ""
+		if named || t.Kind() == reflect.Struct {
+			register(t)
+		} else {
+			seen[t] = true
+		}
+		// A container, named or not, also reaches its element and key types.
+		switch t.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Chan:
+			visit(t.Elem())
+		case reflect.Map:
+			visit(t.Key())
+			visit(t.Elem())
+		}
 	}
 	for _, root := range roots {
 		if root != nil {

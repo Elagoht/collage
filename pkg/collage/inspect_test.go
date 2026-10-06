@@ -200,3 +200,37 @@ func TestInspectDataType(t *testing.T) {
 		t.Errorf("comments dataType = %v, want string", c)
 	}
 }
+
+type inspectUser struct{ Name string }
+
+func TestInspectJSONDataTypes(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{
+			"t/a.html": {Data: []byte(`{{slot "b"}}{{slot "c"}}`)},
+			"t/b.html": {Data: []byte(`x`)},
+			"t/c.html": {Data: []byte(`{{.}}`)},
+		}, Root: "t"},
+		Locale: collage.LocaleConfig{Default: "en", Supported: []string{"en"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := collage.NewFragment("b", "b.html").WithoutTypeCheck().WithData(collage.Load(
+		func(context.Context, *collage.RenderContext) (any, error) { return nil, nil })).Build()
+	c := collage.NewFragment("c", "c.html").WithData(collage.Value(inspectUser{})).Build()
+	a := collage.NewFragment("a", "a.html").WithSlotFragment("b", b).WithSlotFragment("c", c).Build()
+	if err := app.RegisterPage(collage.NewPage("p").WithContent(a).WithPath("en", "/").Build()); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(app.Inspect())
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(raw)
+	for _, want := range []string{`"dataType":null`, `"dataType":"nil"`, `"typeCheck":false`, `"dataType":"collage_test.inspectUser"`, `"types":{"collage_test.inspectUser"`} {
+		if !strings.Contains(js, want) {
+			t.Errorf("inspect JSON lacks %s:\n%s", want, js)
+		}
+	}
+}

@@ -56,3 +56,58 @@ func TestIsStandard(t *testing.T) {
 		t.Error("a type of this module is not standard")
 	}
 }
+
+type itBase struct{ ID int }
+
+func (itBase) Label() string { return "" }
+
+type itChildX struct {
+	itBase
+	Name string
+}
+type itPosts []itComment
+
+func (p itPosts) Count() int { return len(p) }
+
+type itMapped struct {
+	M map[itUser]itComment
+	C chan itBase
+}
+
+func TestTypeTableShapes(t *testing.T) {
+	// promoted fields and methods; the embedded struct itself is not a field
+	tb := typeTable([]reflect.Type{reflect.TypeFor[itChildX]()})
+	c := tb["core.itChildX"]
+	if len(c.Fields) != 2 || c.Fields[0].Name != "ID" || len(c.Methods) != 1 || c.Methods[0].Name != "Label" {
+		t.Errorf("itChildX = %+v", c)
+	}
+	// map key and elem, chan elem
+	tb = typeTable([]reflect.Type{reflect.TypeFor[itMapped]()})
+	for _, k := range []string{"core.itUser", "core.itComment", "core.itBase"} {
+		if _, ok := tb[k]; !ok {
+			t.Errorf("%s missing from %v", k, tb)
+		}
+	}
+	// named slice with a method keeps its own entry
+	tb = typeTable([]reflect.Type{reflect.TypeFor[itPosts]()})
+	if e, ok := tb["core.itPosts"]; !ok || e.Kind != "slice" || len(e.Methods) != 1 || e.Methods[0].Name != "Count" {
+		t.Errorf("itPosts = %+v (%v)", e, ok)
+	}
+	if _, ok := tb["core.itComment"]; !ok {
+		t.Error("element of a named slice missing")
+	}
+	// anonymous struct root
+	anon := reflect.TypeFor[struct{ Posts []itUser }]()
+	tb = typeTable([]reflect.Type{anon})
+	if e, ok := tb[anon.String()]; !ok || len(e.Fields) != 1 {
+		t.Errorf("anonymous root = %+v (%v)", e, ok)
+	}
+	if _, ok := tb["core.itUser"]; !ok {
+		t.Error("named type under an anonymous struct missing")
+	}
+	// anonymous struct nested in a slice
+	tb = typeTable([]reflect.Type{reflect.TypeFor[[]struct{ By itUser }]()})
+	if _, ok := tb["core.itUser"]; !ok {
+		t.Errorf("named type under []struct missing: %v", tb)
+	}
+}
