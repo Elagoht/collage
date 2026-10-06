@@ -27,14 +27,14 @@ func (w *walker) rangeOver(r *parse.RangeNode, dot value, vars []variable) {
 	// A body may run again after an assignment later in it, so what it assigns
 	// is uncertain from its first statement.
 	vars = forget(vars, assignedIn(r))
-	key, elem, two := w.elements(r, over)
+	key, elem, two := w.elements(r, over, len(r.Pipe.Decl))
 	inner := vars
 	switch len(r.Pipe.Decl) {
 	case 1:
 		inner = declare(inner, r.Pipe.Decl[0].Ident[0], elem)
 	case 2:
 		if !two {
-			w.report(last, fmt.Sprintf("range over type %s cannot declare two variables", over.t), "")
+			w.report(last, fmt.Sprintf("range over type %s cannot declare two variables", derefType(over.t)), "")
 		}
 		inner = declare(inner, r.Pipe.Decl[0].Ident[0], key)
 		inner = declare(inner, r.Pipe.Decl[1].Ident[0], elem)
@@ -62,8 +62,10 @@ func assignedIn(node parse.Node) []string {
 		}
 	}
 	pipe := func(p *parse.PipeNode) {
-		if p != nil && p.IsAssign && len(p.Decl) > 0 {
-			names = append(names, p.Decl[0].Ident[0])
+		if p != nil && p.IsAssign {
+			for _, d := range p.Decl {
+				names = append(names, d.Ident[0])
+			}
 		}
 	}
 	visit = func(n parse.Node) {
@@ -100,7 +102,7 @@ func forget(vars []variable, names []string) []variable {
 // elements returns what ranging over v yields — the key and the element — and
 // whether it may declare two variables. It reports a type range cannot iterate
 // over.
-func (w *walker) elements(r *parse.RangeNode, v value) (key, elem value, two bool) {
+func (w *walker) elements(r *parse.RangeNode, v value, decls int) (key, elem value, two bool) {
 	if !v.known() {
 		return unknown, unknown, true
 	}
@@ -117,12 +119,12 @@ func (w *walker) elements(r *parse.RangeNode, v value) (key, elem value, two boo
 	case reflect.Map:
 		return typed(t.Key(), false), typed(t.Elem(), false), true
 	case reflect.Chan:
-		return unknown, typed(t.Elem(), false), false
+		return typed(intType, false), typed(t.Elem(), false), true
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return unknown, typed(t, false), false
 	case reflect.Func:
-		return seqElements(t)
+		return seqElements(t, decls)
 	case reflect.Interface:
 		return unknown, unknown, true
 	}
@@ -132,7 +134,7 @@ func (w *walker) elements(r *parse.RangeNode, v value) (key, elem value, two boo
 
 // seqElements reads the element types of an iter.Seq or iter.Seq2 shaped
 // function; any other function is left unknown rather than judged.
-func seqElements(t reflect.Type) (key, elem value, two bool) {
+func seqElements(t reflect.Type, decls int) (key, elem value, two bool) {
 	if t.NumIn() != 1 || t.NumOut() != 0 {
 		return unknown, unknown, true
 	}
@@ -144,6 +146,10 @@ func seqElements(t reflect.Type) (key, elem value, two bool) {
 	case 1:
 		return unknown, typed(yield.In(0), false), false
 	case 2:
+		// With fewer than two variables text/template takes the first value.
+		if decls < 2 {
+			return unknown, typed(yield.In(0), false), true
+		}
 		return typed(yield.In(0), false), typed(yield.In(1), false), true
 	}
 	return unknown, unknown, true
@@ -157,4 +163,12 @@ func (w *walker) include(n *parse.TemplateNode, dot value, vars []variable) {
 		passed = w.eval(n.Pipe, dot, vars)
 	}
 	w.template(n.Name, passed)
+}
+
+// derefType is t with any pointers removed.
+func derefType(t reflect.Type) reflect.Type {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t
 }

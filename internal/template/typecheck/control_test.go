@@ -15,6 +15,10 @@ type board struct {
 	Seq   iter.Seq[card]
 	Title string
 	Owner user
+	Ch    chan card
+	Seq2  iter.Seq2[card, int]
+	PS    *[]card
+	PFix  *[2]card
 }
 
 type card struct {
@@ -55,6 +59,15 @@ func TestCheck_Control(t *testing.T) {
 			[]string{"t.html:1 type typecheck.board has no field or method Nope", "t.html:1 type typecheck.board has no field or method Nada"}},
 		{"variable assigned in a branch is uncertain", `{{$x := .Owner}}{{if .Title}}{{$x = .Title}}{{end}}{{$x.Name}}`, nil},
 		{"variable assigned later in a range body is uncertain", `{{$x := .Title}}{{range .Cards}}{{$x.Name}}{{$x = .Owner}}{{end}}`, nil},
+		{"range chan two variables", `{{range $i, $c := .Ch}}{{$c.Name}}{{$i}}{{end}}`, nil},
+		{"range Seq2 no variable", `{{range .Seq2}}{{.Name}}{{end}}`, nil},
+		{"range Seq2 one variable", `{{range $k := .Seq2}}{{$k.Name}}{{end}}`, nil},
+		{"range Seq2 two variables", `{{range $k, $v := .Seq2}}{{$k.Name}}{{$v}}{{end}}`, nil},
+		{"range assigns both variables", `{{$i := 0}}{{$x := .Title}}{{range $i, $x = .Cards}}{{end}}{{$x.Name}}`, nil},
+		{"array by value is not addressable", `{{range .Fixed}}{{.Owner.Edit}}{{end}}`,
+			[]string{"t.html:1 method Edit has a pointer receiver, and this typecheck.user is not addressable: pass the data as a pointer, or reach the value through a slice"}},
+		{"array by pointer is addressable", `{{range .PFix}}{{.Owner.Edit}}{{end}}`, nil},
+		{"pointer to slice", `{{range .PS}}{{.Owner.Edit}}{{.Name}}{{end}}`, nil},
 		{"variable in scope", `{{$o := .Owner}}{{$o.Name}}`, nil},
 		{"variable wrong field", `{{$o := .Owner}}{{$o.Nme}}`,
 			[]string{"t.html:1 type typecheck.user has no field or method Nme [Name]"}},
