@@ -13,6 +13,9 @@ import (
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
+// orderKey carries the section order from the builder's handler to its resolver.
+var orderKey = collage.NewKey[[]string]("order")
+
 // sectionsApp renders a page whose sections, and their order, come from content
 // that changes between requests — what a CMS's block list is.
 func sectionsApp(t *testing.T, order *[]string, mu *sync.Mutex, required, multiple bool) (*collage.App, error) {
@@ -45,14 +48,13 @@ func sectionsApp(t *testing.T, order *[]string, mu *sync.Mutex, required, multip
 	builder := collage.NewFragment("sections", "sections.html").WithData(collage.DataHandler(
 		func(_ context.Context, rc *collage.RenderContext) (struct{}, []string, error) {
 			mu.Lock()
-			rc.Set("order", append([]string(nil), (*order)...))
+			orderKey.Set(rc, append([]string(nil), (*order)...))
 			mu.Unlock()
 			return struct{}{}, nil, nil
 		})).
 		WithSlot("sections", required, multiple).
 		WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
-			value, _ := rc.Get("order")
-			names, _ := value.([]string)
+			names, _ := orderKey.Get(rc)
 			var fragments []*collage.Fragment
 			for _, name := range names {
 				if name == "broken" {

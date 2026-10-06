@@ -871,11 +871,7 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 	page := newHomePage()
 	page.DependencyTags = []string{"homepage"}
 	page.Redirects = []*types.Redirect{{From: "/old", To: "/", Permanent: true}}
-	// Page.SEO is a map[string]any, and this test may not spell that type.
-	// RenderContext.SharedData is the same type, so borrowing one is how a
-	// populated SEO map is built here without declaring the forbidden type.
-	page.SEO = types.NewRenderContext(context.Background(), nil, nil, "", nil).SharedData
-	page.SEO["title"] = "Original"
+	page.SEO = map[string]any{"title": "Original"} // any: Page.SEO's own value type
 
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)

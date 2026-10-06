@@ -15,6 +15,9 @@ import (
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
+// nonceKey carries the nonce OnBeforeRender makes to the render function that prints it.
+var nonceKey = collage.NewKey[string]("nonce")
+
 // checker is a plugin exercising what v0.21 hands plugins: findings, a build hook,
 // a render function, middleware, and the host's URLs.
 type checker struct {
@@ -35,7 +38,7 @@ func (c *checker) Shutdown(context.Context) error { return nil }
 
 func (c *checker) Configure(_ context.Context, host collage.ConfigHost) error {
 	return host.AddRenderFunc("nonce", func(rc *collage.RenderContext) any {
-		v, _ := collage.Get[string](rc, "nonce")
+		v, _ := nonceKey.Get(rc)
 		return func() string { return v }
 	})
 }
@@ -63,7 +66,7 @@ func (c *checker) Init(ctx context.Context, host collage.Host) error {
 }
 
 func (c *checker) OnBeforeRender(_ context.Context, ev *collage.BeforeRenderEvent) error {
-	ev.Context.Set("nonce", fmt.Sprintf("n%d", c.nonces.Add(1)))
+	nonceKey.Set(ev.Context, fmt.Sprintf("n%d", c.nonces.Add(1)))
 	return nil
 }
 

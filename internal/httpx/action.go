@@ -116,7 +116,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 
 	// One RenderContext for the whole action, handed to the handler and then to
 	// whatever renders the response. That is what makes the ordinary validation
-	// flow work: the handler puts what went wrong into SharedData and returns the
+	// flow work: the handler stores what went wrong under a Key and returns the
 	// form's own page, which reads it while rendering.
 	//
 	// Its Page is the page whose URL the action answers on, so that return is
@@ -313,7 +313,7 @@ const bareRefusalMessage = "collage: action answered 422 with no body — a form
 	"rc.Page is set only for an action on a page's URL; elsewhere answer with the registered page itself"
 
 // writeActionPage renders a whole page as the response body: the shape a validation
-// failure takes, where the handler puts what went wrong in SharedData and hands back
+// failure takes, where the handler stores what went wrong under a Key and hands back
 // the form's own page to read it.
 func (h *Handler) writeActionPage(
 	w http.ResponseWriter,
@@ -354,7 +354,7 @@ func (h *Handler) writeActionPage(
 		Degraded:       rendered.Degraded(),
 		Fragments:      rendered.FragmentReports(),
 		DependencyTags: append([]string(nil), rendered.DependencyTags...),
-		Data:           rc.SharedData,
+		Values:         types.ValuesOf(rc),
 		HTML:           rendered.HTML,
 	}
 	plugin.PrepareHoist(afterRender, rendered.HoistEnds, rc.Hoisted())

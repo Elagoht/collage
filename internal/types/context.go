@@ -21,14 +21,10 @@ type RenderContext struct {
 	// URL the action answers on — the page a form posted to, which is what a
 	// validation failure answers with — and nil for an action at a URL of its own.
 	Page *Page
-	// SharedData lets fragments exchange arbitrary values within a single render.
-	//
-	// Read and write it through Get and Set, not directly. Sibling fragments' data
-	// handlers run concurrently, so a bare map write from one and a read from
-	// another is a data race; Get and Set hold the lock that makes them safe. The
-	// field itself remains reachable for what happens after the render, such as
-	// AfterRenderEvent.Data, where nothing is running any more.
-	SharedData map[string]any // any: fragments exchange arbitrary values
+	// values are what this render's fragments share through Key.Set and
+	// Key.Get. A pointer, so the copies WithContext and WithFragment make all
+	// reach the same ones.
+	values *Values
 	// ctx is the underlying context for cancellation, deadlines, and request-scoped
 	// values. It is unexported; use Context and WithContext to read and derive it.
 	ctx context.Context
@@ -36,8 +32,8 @@ type RenderContext struct {
 	// shared by every fragment in one render, which is what WithContext's shallow
 	// copy preserves.
 	hoisted *Hoisted
-	// state is everything one render shares across the fragments running in it:
-	// the lock guarding SharedData, and the single-flight table behind Once. It is
+	// state is everything else one render shares across the fragments running in
+	// it: the single-flight table behind Once and what collage binds. It is
 	// a pointer so the shallow copies WithContext and WithFragment make all reach
 	// the same one — and so that copying a RenderContext never copies a mutex.
 	state *renderShared
@@ -52,6 +48,7 @@ type RenderContext struct {
 // renderShared is the state one render's fragments share. Its zero value is not
 // usable; NewRenderContext builds it.
 type renderShared struct {
+	// mu guards the Once table and the fields after it.
 	mu   sync.Mutex
 	once map[string]*onceCall
 	// assets resolves a mounted file's content-addressed URL, bound by the
@@ -73,8 +70,8 @@ type renderShared struct {
 
 // NewRenderContext builds a RenderContext for one render. It copies params into a
 // fresh map rather than aliasing the caller's — mutating the caller's map after
-// construction never affects the returned RenderContext — initialises SharedData,
-// and defaults a nil ctx to context.Background().
+// construction never affects the returned RenderContext — gives the render its
+// values, and defaults a nil ctx to context.Background().
 func NewRenderContext(ctx context.Context, req *http.Request, page *Page, locale string, params map[string]string) *RenderContext {
 	if ctx == nil {
 		ctx = context.Background()
@@ -88,7 +85,7 @@ func NewRenderContext(ctx context.Context, req *http.Request, page *Page, locale
 		Locale:     locale,
 		PathParams: copied,
 		Page:       page,
-		SharedData: make(map[string]any), // any: fragments exchange arbitrary values
+		values:     &Values{},
 		ctx:        ctx,
 		hoisted:    NewHoisted(),
 		state:      &renderShared{once: make(map[string]*onceCall)},
@@ -102,9 +99,9 @@ func (rc *RenderContext) Context() context.Context {
 
 // WithContext returns a shallow copy of rc with ctx replacing the underlying
 // context — used to give an individual fragment a derived, per-fragment timeout.
-// PathParams and SharedData are shared with the original by design: the copy is not
-// a deep clone, so mutations made through either the copy or the original are
-// visible on both.
+// PathParams and the render's values are shared with the original by design: the
+// copy is not a deep clone, so mutations made through either the copy or the
+// original are visible on both.
 func (rc *RenderContext) WithContext(ctx context.Context) *RenderContext {
 	cp := *rc
 	cp.ctx = ctx
@@ -114,42 +111,6 @@ func (rc *RenderContext) WithContext(ctx context.Context) *RenderContext {
 // Param returns the path parameter named name, or the empty string if absent.
 func (rc *RenderContext) Param(name string) string {
 	return rc.PathParams[name]
-}
-
-// Get returns the value stored under key in SharedData and whether it was present.
-//
-// It takes the render's lock, because sibling fragments' data handlers run
-// concurrently and one of them may be writing.
-func (rc *RenderContext) Get(key string) (any, bool) { // any: SharedData values are opaque, fragment inter-communication
-	if rc.state == nil {
-		v, ok := rc.SharedData[key]
-		return v, ok
-	}
-	rc.state.mu.Lock()
-	defer rc.state.mu.Unlock()
-	v, ok := rc.SharedData[key]
-	return v, ok
-}
-
-// Set stores value under key in SharedData, initialising the map first if it is nil.
-//
-// Note what it does not do: a Get that misses, followed by work, followed by a Set
-// is two fragments doing that work twice when they run at the same time. Once is
-// the form that does not have that gap.
-func (rc *RenderContext) Set(key string, value any) { // any: SharedData values are opaque, fragment inter-communication
-	if rc.state == nil {
-		if rc.SharedData == nil {
-			rc.SharedData = make(map[string]any) // any: fragments exchange arbitrary values
-		}
-		rc.SharedData[key] = value
-		return
-	}
-	rc.state.mu.Lock()
-	defer rc.state.mu.Unlock()
-	if rc.SharedData == nil {
-		rc.SharedData = make(map[string]any) // any: fragments exchange arbitrary values
-	}
-	rc.SharedData[key] = value
 }
 
 // Hoist declares html for the page's area, under key.
@@ -191,7 +152,7 @@ func (rc *RenderContext) Hoisted() *Hoisted { return rc.hoisted }
 // deep it sits in the tree and order is the number it was launched with. The render
 // engine calls it as it walks; an application has no reason to.
 //
-// Everything a render shares — SharedData, the hoist collector, the Once table — is
+// Everything a render shares — the render's values, the hoist collector, the Once table — is
 // reached through pointers the copy keeps, so a fragment's context sees the same
 // render as every other fragment's.
 func (rc *RenderContext) WithFragment(depth, order int) *RenderContext {

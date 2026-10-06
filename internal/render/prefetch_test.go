@@ -85,21 +85,23 @@ func TestPrefetch_SiblingHandlersRunAtTheSameTime(t *testing.T) {
 }
 
 // A child's handler must not start before its parent's has returned. Fragments talk
-// to each other through SharedData, and a parent putting something there for its
-// children to read is the ordinary way to do it.
+// to each other through keys, and a parent storing something for its children to
+// read is the ordinary way to do it.
+var fromParentKey = types.NewKey[string]("from-parent")
+
 func TestPrefetch_ParentRunsBeforeItsChild(t *testing.T) {
 	engine := newEngine(t, Options{})
 
 	parent := declare(fragment("parent", "section.html"), &types.SlotDefinition{Name: "inner"})
 	parent.SetDataSource(types.FetchedData(func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
-		rc.Set("from-parent", "value")
+		fromParentKey.Set(rc, "value")
 		return nil, nil, nil
 	}, nil))
 
 	var seen atomic.Value
 	child := fragment("child", "leaf.html")
 	child.SetDataSource(types.FetchedData(func(_ context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
-		v, _ := rc.Get("from-parent")
+		v, _ := fromParentKey.Get(rc)
 		seen.Store(v == "value")
 		return nil, nil, nil
 	}, nil))

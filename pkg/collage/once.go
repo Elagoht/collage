@@ -16,7 +16,7 @@ import (
 //	})
 //
 // It exists because the obvious way to share work between fragments has a hole in
-// it. The usual shape — read SharedData, fetch on a miss, write it back — is a check
+// it. The usual shape — Get a key, fetch on a miss, Set it back — is a check
 // and then an act, with the fetch in between. Sibling fragments' data handlers run
 // concurrently, so two of them can both miss and both make the same call: the page
 // renders correctly and quietly asks the upstream twice for one article.
@@ -37,24 +37,6 @@ func Once[T any](rc *RenderContext, key string, fetch func(context.Context) (T, 
 // ErrOnceTypeMismatch reports that one Once key was asked for as two different types
 // within a single render.
 var ErrOnceTypeMismatch = types.ErrOnceTypeMismatch
-
-// Get reads the value a fragment stored under key with rc.Set, as the type it was
-// stored as:
-//
-//	post, ok := collage.Get[Post](rc, "post")
-//
-// ok is false when nothing is stored under key, and when what is stored is not a T
-// — the same answer, because to the caller both mean the value it wanted is not
-// there. It replaces the type assertion every read of shared data otherwise needs.
-func Get[T any](rc *RenderContext, key string) (T, bool) {
-	stored, ok := rc.Get(key)
-	if !ok {
-		var zero T
-		return zero, false
-	}
-	value, ok := stored.(T)
-	return value, ok
-}
 
 // Cached returns the value stored under key, fetching it when there is none, and
 // keeps it across renders — every page that shows author A shares one fetch:

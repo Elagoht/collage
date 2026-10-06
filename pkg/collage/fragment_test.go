@@ -309,18 +309,24 @@ func TestEffect(t *testing.T) {
 	}
 }
 
-func TestGet(t *testing.T) {
+// The aliases reach the same keys and values as the types package's own.
+func TestNewKey(t *testing.T) {
 	rc := types.NewRenderContext(context.Background(), nil, nil, "en", nil)
-	rc.Set("count", 3)
+	var count Key[int] = NewKey[int]("count")
+	count.Set(rc, 3)
 
-	if got, ok := Get[int](rc, "count"); !ok || got != 3 {
-		t.Errorf("Get[int] = %d, %v; want 3, true", got, ok)
+	if got, ok := count.Get(rc); !ok || got != 3 {
+		t.Errorf("Get = %d, %v; want 3, true", got, ok)
 	}
-	if got, ok := Get[string](rc, "count"); ok || got != "" {
-		t.Errorf("Get[string] of an int = %q, %v; want the zero value and false", got, ok)
+	if got, ok := NewKey[string]("count").Get(rc); ok || got != "" {
+		t.Errorf("a string key of the same name = %q, %v; want the zero value and false", got, ok)
 	}
-	if _, ok := Get[int](rc, "missing"); ok {
+	if _, ok := NewKey[int]("missing").Get(rc); ok {
 		t.Error("Get of a missing key reported ok")
+	}
+	var values *RenderValues = types.ValuesOf(rc)
+	if got, ok := types.NewKey[int]("count").In(values); !ok || got != 3 {
+		t.Errorf("In = %d, %v; want 3, true", got, ok)
 	}
 }
 

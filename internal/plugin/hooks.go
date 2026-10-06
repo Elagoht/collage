@@ -431,19 +431,16 @@ type AfterRenderEvent struct {
 	// replace this slice to add a post-process step; the replaced value is what
 	// the caller serves and, unless a CacheWriteHook suppresses it, caches.
 	HTML []byte
-	// Data is the render's SharedData: whatever the page's fragments exchanged
-	// while producing HTML.
+	// Values are the render's shared values: what its fragments stored with
+	// Key.Set. A plugin reads what it holds a key for — its own, or one an
+	// application or another plugin exports — with Key.In:
 	//
-	// It is how a plugin reaches what the page was built *from* rather than what
-	// it was rendered *into* — a structured-data plugin wants the article, not the
-	// markup it would otherwise have to parse back. What is in it is entirely the
-	// application's convention; the framework puts nothing there.
+	//	st, ok := stateKey.In(ev.Values)
 	//
-	// It is the live map rather than a copy, for the same reason Page is: copying
-	// it on every render would cost the hot path. Writing to it from a hook races
-	// nothing (the render has finished) but is pointless, and a plugin that keeps
-	// a reference past the hook is holding request-scoped state.
-	Data map[string]any // any: SharedData's own value type, which fragments define
+	// They are the render's own, not a copy; the render has finished, so nothing
+	// is writing to them. A plugin that keeps them past the hook is holding
+	// request-scoped state.
+	Values *types.Values
 }
 
 // CacheWriteEvent describes a render result about to be written to the cache.

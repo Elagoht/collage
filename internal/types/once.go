@@ -15,9 +15,9 @@ type onceCall struct {
 // It exists because the obvious way to share work between fragments has a hole in
 // it. The usual shape —
 //
-//	if v, ok := rc.Get(key); ok { return v.(Article), nil }
+//	if article, ok := articleKey.With(slug).Get(rc); ok { return article, nil }
 //	article, err := api.Article(ctx, slug)
-//	rc.Set(key, article)
+//	articleKey.With(slug).Set(rc, article)
 //
 // is a check and then an act, with the fetch in between. When one fragment ran at a
 // time that was fine. Sibling fragments now run concurrently, so two of them can

@@ -208,9 +208,9 @@ func (b *FragmentBuilder) WithSlotFragment(slotName string, child *Fragment) *Fr
 // time: resolve returns the fragments it holds for one request.
 //
 //	sections := collage.NewFragment("sections", "pages/sections.html").
-//		WithData(collage.DataHandler(loadSections)). // puts the section list in SharedData
+//		WithData(collage.DataHandler(loadSections)). // stores the section list under sectionsKey
 //		WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
-//			list, _ := rc.Get("sections")
+//			list, _ := sectionsKey.Get(rc)
 //			return fragmentsFor(list), nil
 //		}).
 //		Build()

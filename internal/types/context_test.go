@@ -38,20 +38,13 @@ func TestNewRenderContext_DefaultsNilContext(t *testing.T) {
 	}
 }
 
-func TestNewRenderContext_InitialisesSharedData(t *testing.T) {
-	rc := NewRenderContext(context.Background(), nil, nil, "en", nil)
-	rc.Set("k", "v")
-	got, ok := rc.Get("k")
-	if !ok || got != "v" {
-		t.Fatalf("Get(k) = (%v, %v), want (v, true)", got, ok)
-	}
-}
+var kKey, k2Key = NewKey[string]("k"), NewKey[string]("k2")
 
 func TestRenderContext_WithContext(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	page := &Page{Name: "home"}
 	rc := NewRenderContext(context.Background(), req, page, "en", map[string]string{"id": "1"})
-	rc.Set("k", "v")
+	kKey.Set(rc, "v")
 
 	type ctxKey string
 	newCtx := context.WithValue(context.Background(), ctxKey("k"), "v")
@@ -66,15 +59,15 @@ func TestRenderContext_WithContext(t *testing.T) {
 	if got := rc2.Param("id"); got != "1" {
 		t.Fatalf("WithContext() copy lost PathParams: Param(id) = %q", got)
 	}
-	if got, ok := rc2.Get("k"); !ok || got != "v" {
-		t.Fatalf("WithContext() copy lost SharedData: Get(k) = (%v, %v)", got, ok)
+	if got, ok := kKey.Get(rc2); !ok || got != "v" {
+		t.Fatalf("WithContext() copy lost the render's values: Get(k) = (%v, %v)", got, ok)
 	}
 
-	// Maps are shared with the original by design: a write through the copy must be
-	// visible on the original.
-	rc2.Set("k2", "v2")
-	if _, ok := rc.Get("k2"); !ok {
-		t.Fatal("WithContext() copy's SharedData is not shared with the original, contradicting its documented shallow-copy behaviour")
+	// The values are shared with the original by design: a write through the copy
+	// must be visible on the original.
+	k2Key.Set(rc2, "v2")
+	if _, ok := k2Key.Get(rc); !ok {
+		t.Fatal("WithContext() copy's values are not shared with the original, contradicting its documented shallow-copy behaviour")
 	}
 }
 
@@ -85,26 +78,5 @@ func TestRenderContext_Param(t *testing.T) {
 	}
 	if got := rc.Param("missing"); got != "" {
 		t.Fatalf("Param(missing) = %q, want empty string", got)
-	}
-}
-
-func TestRenderContext_GetSet(t *testing.T) {
-	rc := NewRenderContext(context.Background(), nil, nil, "en", nil)
-	if _, ok := rc.Get("missing"); ok {
-		t.Fatal("Get(missing) reported ok = true, want false")
-	}
-	rc.Set("key", 42)
-	got, ok := rc.Get("key")
-	if !ok || got != 42 {
-		t.Fatalf("Get(key) = (%v, %v), want (42, true)", got, ok)
-	}
-}
-
-func TestRenderContext_SetIsNilMapSafe(t *testing.T) {
-	rc := &RenderContext{}
-	rc.Set("key", "value")
-	got, ok := rc.Get("key")
-	if !ok || got != "value" {
-		t.Fatalf("Set() on a nil SharedData map failed: Get(key) = (%v, %v)", got, ok)
 	}
 }

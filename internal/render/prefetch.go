@@ -18,7 +18,7 @@ import (
 // So a fragment starts its declared children's data handlers before executing its
 // own template, and the children collect results that are already on their way.
 // Parent before child is preserved exactly as it was — a child's handler starts only
-// after its parent's has returned — so a parent that puts something in SharedData
+// after its parent's has returned — so a parent that stores something with Key.Set
 // for its children to read still works. What now overlaps is siblings, which is
 // where the waiting actually was.
 //

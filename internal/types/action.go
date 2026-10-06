@@ -8,8 +8,8 @@ import (
 // ActionHandlerFunc handles one request to an action and says what to answer with.
 //
 // It receives the same RenderContext a fragment's data handler does, so it reads path
-// parameters, the locale and the request the same way — and writes into SharedData
-// the same way, which is how a handler that re-renders a page hands that page what it
+// parameters, the locale and the request the same way — and stores the render's
+// values with Key.Set the same way, which is how a handler that re-renders a page hands that page what it
 // learned. The request body is on rc.Request, already bounded; see Action.MaxBodyBytes.
 //
 // A nil result with a nil error answers 204 No Content, which is the honest answer for
@@ -36,7 +36,7 @@ type ActionResult struct {
 	// from a page that wants only the changed part back.
 	Fragment *Fragment
 	// Page renders a whole page as the body — the shape a validation failure takes:
-	// the handler puts what went wrong in SharedData and returns the form's own
+	// the handler stores what went wrong under a Key and returns the form's own
 	// page, which reads it while rendering. For an action on a page's URL that
 	// page is rc.Page.
 	Page *Page

@@ -17,6 +17,9 @@ import (
 
 type author struct{ Name string }
 
+// authorIDKey carries a post's author ID down to the author card it fills.
+var authorIDKey = collage.NewKey[string]("author")
+
 // authorSite is thirty posts, twenty by A and ten by B, each showing an author
 // card whose data handler fetches through Cached and counts what it fetched.
 type authorSite struct {
@@ -43,7 +46,7 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 	}
 	card := collage.NewFragment("author", "author.html").WithData(collage.DataHandler(
 		func(_ context.Context, rc *collage.RenderContext) (author, []string, error) {
-			id, _ := collage.Get[string](rc, "author")
+			id, _ := authorIDKey.Get(rc)
 			a, err := collage.Cached(rc, "author:"+id, time.Hour, []string{"author:" + id},
 				func(context.Context) (author, error) {
 					site.mu.Lock()
@@ -60,7 +63,7 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 			id = "B"
 		}
 		post := collage.NewFragment(fmt.Sprintf("post-%d", i), "post.html").WithData(collage.Effect(
-			func(_ context.Context, rc *collage.RenderContext) error { rc.Set("author", id); return nil })).
+			func(_ context.Context, rc *collage.RenderContext) error { authorIDKey.Set(rc, id); return nil })).
 			WithSlot("author", true, false).WithSlotFragment("author", card).Build()
 		page := collage.NewPage(fmt.Sprintf("p%d", i)).WithContent(post).
 			WithPath("en", fmt.Sprintf("/p/%d", i)).Incremental(time.Hour).Build()

@@ -105,11 +105,13 @@ func TestAction_FormPostRedirects(t *testing.T) {
 // A validation failure re-renders the form's own page, with a status that says so,
 // and what the handler learned reaches the page through the shared data they both
 // hold.
+var formErrorKey = types.NewKey[string]("error")
+
 func TestAction_ValidationFailureRendersThePageAgain(t *testing.T) {
 	page := testPage("new", "/posts/new", types.StrategyDynamic)
 	create := action("create", "/posts/new", []string{http.MethodPost},
 		func(_ context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
-			rc.Set("error", "a title is required")
+			formErrorKey.Set(rc, "a title is required")
 			return &types.ActionResult{Status: http.StatusUnprocessableEntity, Page: page}, nil
 		})
 

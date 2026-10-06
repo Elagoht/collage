@@ -65,6 +65,25 @@ type Redirect = types.Redirect
 // RenderContext carries request-scoped state to every fragment in one render.
 type RenderContext = types.RenderContext
 
+// Key names a value one render's fragments share and fixes its type. See
+// NewKey.
+type Key[T any] = types.Key[T]
+
+// NewKey returns the key named name for values of type T:
+//
+//	var confirmKey = collage.NewKey[confirmView]("confirm")
+//
+//	confirmKey.Set(rc, view)
+//	view, ok := confirmKey.Get(rc)
+//
+// A key is its name and its type, so two keys of one name never read each
+// other's values. An empty name panics.
+func NewKey[T any](name string) Key[T] { return types.NewKey[T](name) }
+
+// RenderValues are a finished render's shared values, as an AfterRender hook
+// receives them in AfterRenderEvent.Values. A Key reads them with In.
+type RenderValues = types.Values
+
 // RenderStrategy selects how a page's output is cached and regenerated.
 type RenderStrategy = types.RenderStrategy
 

@@ -1301,7 +1301,7 @@ func (a *App) renderResolved(
 		Fragments:      result.FragmentReports(),
 		DependencyTags: append([]string(nil), result.DependencyTags...),
 		HTML:           result.HTML,
-		Data:           rc.SharedData,
+		Values:         types.ValuesOf(rc),
 		Static:         true,
 	}
 	plugin.PrepareHoist(event, result.HoistEnds, rc.Hoisted())

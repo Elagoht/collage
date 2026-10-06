@@ -289,7 +289,7 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 		Degraded:       result.Degraded(),
 		Fragments:      result.FragmentReports(),
 		DependencyTags: append([]string(nil), result.DependencyTags...),
-		Data:           rc.SharedData,
+		Values:         types.ValuesOf(rc),
 		HTML:           result.HTML,
 	}
 	plugin.PrepareHoist(afterRender, result.HoistEnds, rc.Hoisted())

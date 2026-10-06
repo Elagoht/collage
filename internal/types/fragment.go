@@ -29,7 +29,7 @@ type SlotDefinition struct {
 	// Resolve, when set, decides the slot's fragments per render instead of Fill:
 	// a page whose sections come from content — a CMS's list of blocks, in the
 	// order an editor chose — rather than from the code. It runs after its own
-	// fragment's data handler, so it can read what that handler put in SharedData,
+	// fragment's data handler, so it can read what that handler stored with Key.Set,
 	// and before the fragments it returns start their own handlers, which still
 	// run concurrently. A slot has either Fill or Resolve, never both.
 	Resolve SlotResolverFunc

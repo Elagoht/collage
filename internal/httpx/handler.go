@@ -986,7 +986,7 @@ func (h *Handler) renderPage(
 		Degraded:       result.Degraded(),
 		Fragments:      result.FragmentReports(),
 		DependencyTags: append([]string(nil), result.DependencyTags...),
-		Data:           rc.SharedData,
+		Values:         types.ValuesOf(rc),
 		HTML:           result.HTML,
 	}
 	plugin.PrepareHoist(afterRender, result.HoistEnds, rc.Hoisted())
