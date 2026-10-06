@@ -2058,7 +2058,6 @@ func TestRegister_TemplateTypeErrorsInAFixedOrder(t *testing.T) {
 		"t/a.html":      {Data: []byte(`{{.Zz}}`)},
 		"t/b.html":      {Data: []byte(`{{.Aa}}`)},
 	}
-	var first []string
 	for run := range 20 {
 		app := tcApp(t, files)
 		layout := collage.NewFragment("layout", "layout.html").
@@ -2076,9 +2075,7 @@ func TestRegister_TemplateTypeErrorsInAFixedOrder(t *testing.T) {
 		if strings.Join(order, ",") != "a.html,b.html" {
 			t.Fatalf("run %d: order = %v, want a.html then b.html", run, order)
 		}
-		first = order
 	}
-	_ = first
 }
 ```
 
