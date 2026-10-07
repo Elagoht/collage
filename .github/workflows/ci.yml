@@ -145,6 +145,7 @@ jobs:
           - collage-favicon
           - collage-feed
           - collage-flash
+          - collage-health
           - collage-highlight
           - collage-honeypot
           - collage-htmlcheck
