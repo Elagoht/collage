@@ -8,13 +8,18 @@
 // server uses, by way of Renderer.RenderPath — the same template set, the same
 // fragment tree, the same data handlers, and the same walk.
 //
-// It does not go through the HTTP handler, but it does go through startup:
+// It does not render through the HTTP handler, but it does go through startup:
 // RenderPath and RenderDocumentPath run plugin Init first, memoised, and fire
 // BeforeRender and AfterRender around every page and DocumentRendered on every
 // document, so what a plugin contributes to a served page it contributes to a built
-// one. What does not fire is what is about a request or a cache rather than a
-// render: PageResolvedHook (a build is not a request) and CacheWriteHook (a build
-// writes files, not cache entries).
+// one. What does not fire for those renders is what is about a request or a cache
+// rather than a render: PageResolvedHook (a build is not a request) and
+// CacheWriteHook (a build writes files, not cache entries).
+//
+// Once every file is written, a Renderer that is a ResponseCapturer — the
+// application — is asked for each file's path twice through its real handler, to
+// record the headers a static host should send with it. Those are ordinary
+// requests: middleware, every request hook, and the response cache see them.
 package build
 
 import (
@@ -27,6 +32,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -494,13 +500,28 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	errs = append(errs, assetErrs...)
 
 	// Last, so the checks see the build as it will be deployed.
-	if finisher, ok := b.app.(BuildFinisher); ok {
-		event := &plugin.BuildFinishedEvent{
-			OutDir: outDirResolved,
-			Files:  b.builtFiles(outDirResolved, tasks, written, docWritten, assetWritten, report.Written),
+	capturer, captures := b.app.(ResponseCapturer)
+	finisher, finishes := b.app.(BuildFinisher)
+	if captures || finishes {
+		event := &plugin.BuildFinishedEvent{OutDir: outDirResolved}
+		files := b.builtFiles(outDirResolved, tasks, written, docWritten, assetWritten, report.Written)
+		if captures {
+			// The root redirect and the 404 pages are the build's own: the
+			// application answers neither path with the file that was written.
+			synthesized := make(map[string]bool, len(rootWritten)+len(notFoundWritten))
+			for _, f := range rootWritten {
+				synthesized[f] = true
+			}
+			for _, f := range notFoundWritten {
+				synthesized[f] = true
+			}
+			captureHeaders(ctx, capturer, files, synthesized, event)
 		}
-		if err := finisher.BuildFinished(ctx, event); err != nil {
-			errs = append(errs, err)
+		event.Files = files
+		if finishes {
+			if err := finisher.BuildFinished(ctx, event); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		report.Findings = append(report.Findings, event.Findings...)
 	}
@@ -527,6 +548,71 @@ type Starter interface {
 // The application is one; a Renderer without plugins need not be.
 type BuildFinisher interface {
 	BuildFinished(ctx context.Context, ev *plugin.BuildFinishedEvent) error
+}
+
+// ResponseCapturer is implemented by a Renderer that can say what it answers a
+// built file's path with: the application, through its own HTTP handler. The
+// build asks it once, for every file it wrote but the ones it made up itself,
+// and puts the answers on each BuiltFile.
+type ResponseCapturer interface {
+	CaptureResponses(ctx context.Context, paths []string) (map[string]types.CapturedResponse, error)
+}
+
+// captureHeaders asks capturer for every file in files but the synthesized ones,
+// sets each file's Status and Headers from the answer, and warns on ev about
+// headers that changed between two responses and paths not answered with a 2xx.
+// A capture that fails is warned too: the files were written, and headers are
+// what a deploy adds to them, not what makes them.
+func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plugin.BuiltFile, synthesized map[string]bool, ev *plugin.BuildFinishedEvent) {
+	var paths []string
+	for _, f := range files {
+		if !synthesized[f.File] && f.Path != "" {
+			paths = append(paths, f.Path)
+		}
+	}
+	if len(paths) == 0 {
+		return
+	}
+	captured, err := capturer.CaptureResponses(ctx, paths)
+	if err != nil {
+		ev.Warn("", "capture-failed", fmt.Sprintf("the build could not ask the application for its files' headers: %v", err))
+	}
+
+	type unstableHeader struct {
+		count int
+		first string
+	}
+	unstable := make(map[string]*unstableHeader)
+	var names []string
+	for i := range files {
+		f := &files[i]
+		if synthesized[f.File] {
+			continue
+		}
+		resp, ok := captured[f.Path]
+		if !ok {
+			continue
+		}
+		f.Status = resp.Status
+		f.Headers = resp.Headers
+		if resp.Status < 200 || resp.Status > 299 {
+			ev.Warn(f.Path, "capture-status", fmt.Sprintf("the application answered %s with %d; its headers are what that answer carried", f.Path, resp.Status))
+		}
+		for _, name := range resp.Unstable {
+			u := unstable[name]
+			if u == nil {
+				u = &unstableHeader{first: f.Path}
+				unstable[name] = u
+				names = append(names, name)
+			}
+			u.count++
+		}
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		u := unstable[name]
+		ev.Warn("", "unstable-header", fmt.Sprintf("%s differs between two responses on %d path(s) (e.g. %s); a static host cannot carry it", name, u.count, u.first))
+	}
 }
 
 // ErrFindings is in a build's errors when a plugin reported an error-level

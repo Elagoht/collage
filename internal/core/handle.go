@@ -61,7 +61,10 @@ func (a *App) Handle(prefix string, handler http.Handler) error {
 // answer the request itself, or pass on a request of its own; whatever it puts in
 // that request's context is what data handlers read from rc.Context().
 //
-// A static build renders without a request, so no middleware runs for it.
+// A static build renders without a request, so no middleware runs for its
+// renders. It then asks for each file's path through the handler to record its
+// response headers (see CaptureResponses), and middleware runs for those
+// requests: a header it sets is one the built file is deployed with.
 func (a *App) Use(middleware func(http.Handler) http.Handler) error {
 	if middleware == nil {
 		return ErrNilHandler

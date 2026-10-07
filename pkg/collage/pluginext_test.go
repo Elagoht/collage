@@ -236,8 +236,10 @@ func TestFindings_Build(t *testing.T) {
 	if c.built == nil {
 		t.Fatal("OnBuildFinished did not run")
 	}
-	if c.static.Load() == 0 || c.served.Load() != 0 {
-		t.Errorf("a build's renders: %d static, %d served; want all static", c.static.Load(), c.served.Load())
+	// Every file is rendered statically; the only served renders are the header
+	// capture's, which asks the handler for each page twice.
+	if c.static.Load() == 0 || c.served.Load() != 2*c.static.Load() {
+		t.Errorf("a build's renders: %d static, %d served; want every file static and two captures each", c.static.Load(), c.served.Load())
 	}
 	paths := map[string]string{}
 	for _, f := range c.built.Files {
