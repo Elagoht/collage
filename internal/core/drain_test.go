@@ -84,16 +84,28 @@ func TestDrain_ServesAndClosesKeepAlives(t *testing.T) {
 	shut := make(chan error, 1)
 	start := time.Now()
 	go func() { shut <- app.Shutdown(context.Background()) }()
-	time.Sleep(50 * time.Millisecond)
 
-	res, err := client.Get(base + "/")
-	if err != nil {
-		t.Fatalf("request during the drain: %v", err)
-	}
-	_, _ = io.Copy(io.Discard, res.Body)
-	_ = res.Body.Close()
-	if res.StatusCode != http.StatusOK || !res.Close {
-		t.Fatalf("during the drain: status %d, Close %v; want 200 and Connection: close", res.StatusCode, res.Close)
+	// Every request is answered; once the drain has turned keep-alives off, the
+	// answer also tells the client to reconnect. The loop ends well inside the
+	// 300ms drain, so a refused connection here is a real failure.
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for {
+		res, err := client.Get(base + "/")
+		if err != nil {
+			t.Fatalf("request during the drain: %v", err)
+		}
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("during the drain: status %d, want 200", res.StatusCode)
+		}
+		if res.Close {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no response carried Connection: close within 200ms of the drain starting")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 	if err := <-shut; err != nil {
 		t.Fatalf("Shutdown: %v", err)
@@ -143,6 +155,24 @@ func TestDrain_SecondSignalCutsTheWait(t *testing.T) {
 	if n := spy.drained.Load(); n != 1 {
 		t.Fatalf("OnDrain called %d times, want 1", n)
 	}
+}
+
+// An application that traps the signal itself and calls Shutdown with its own
+// deadline, while ListenAndServe's signal-started drain is waiting: the caller's
+// ctx must end that wait, not sit out the whole DrainDelay.
+func TestDrain_ShutdownCtxCutsASignalDrain(t *testing.T) {
+	app, _, served := startServing(t, func(c *Config) { c.Server.DrainDelay = 3 * time.Second })
+	signalSelf(t)
+	time.Sleep(100 * time.Millisecond) // the signal path is now waiting in the drain
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_ = app.Shutdown(ctx) // the expired ctx may be reported; only the time matters
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Shutdown with a 200ms ctx took %v during a signal-started 3s drain", elapsed)
+	}
+	waitServed(t, served)
 }
 
 // One signal with a short delay: the signal path's own drain and Shutdown's drain

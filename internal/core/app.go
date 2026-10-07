@@ -1093,6 +1093,12 @@ func cleanStop(err error) error {
 // started a server shuts the plugins down and prevents a later ListenAndServe from
 // serving.
 func (a *App) Shutdown(ctx context.Context) error {
+	// A caller's deadline ends a drain's wait even when the drain is not its own:
+	// an application that traps the signal itself calls Shutdown while
+	// ListenAndServe's signal-started drain is waiting, and blocks behind it in
+	// drainOnce, where its ctx is never read.
+	stop := context.AfterFunc(ctx, a.hurryNow)
+	defer stop()
 	a.shutdownOnce.Do(func() {
 		a.shutdownErr = a.shutdown(ctx)
 	})

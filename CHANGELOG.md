@@ -12,8 +12,9 @@
   `ShutdownTimeout` starts after the drain, so a stop can take
   `DrainDelay + ShutdownTimeout`. A second signal, or a done `Shutdown` ctx,
   ends the wait early; development mode ignores it. A negative value fails
-  `Validate` with `ErrNegativeDuration`, and a `DrainDelay` with a zero
-  `ShutdownTimeout` logs a warning.
+  `Validate` with `ErrNegativeDuration`. When you call `App.Shutdown(ctx)`
+  yourself, that ctx bounds the drain and the in-flight requests together, and
+  a ctx that is done ends a drain already under way.
 - **`DrainHook`.** A plugin implementing `OnDrain()` is told once, when the drain
   starts, even with no delay; a panic in one is contained.
 

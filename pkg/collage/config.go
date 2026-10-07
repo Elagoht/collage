@@ -52,7 +52,7 @@ var ErrLocaleDefaultNotSupported = errors.New("collage: default locale not in su
 // Server.ShutdownTimeout, Server.DrainDelay, Template.Timeout, Cache.DefaultTTL): unlike
 // types.ErrInvalidTimeout and types.ErrInvalidTTL, which mean genuinely different
 // things to a caller (a fragment's data-fetch deadline versus a page's cache
-// lifetime), a negative value in any of these six fields is the same failure mode —
+// lifetime), a negative value in any of these seven fields is the same failure mode —
 // "you passed a negative duration" — differing only in which field tripped. Validate
 // names the offending field in the wrapped message (%w: %s); callers that need to
 // distinguish which field failed should inspect that message rather than expect a

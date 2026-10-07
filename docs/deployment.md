@@ -98,9 +98,9 @@ traffic.
 `App.Shutdown(ctx)` does the same when you call it yourself. The order is fixed:
 
 1. **Drain.** Every plugin implementing `DrainHook` hears `OnDrain()`, once — a
-   health plugin turns its readiness check false here. Keep-alives are turned off,
-   so each kept-alive connection closes after its next response and its client
-   reconnects through the balancer. The port stays open and requests are served as
+   health plugin turns its readiness check false here. Keep-alives are turned off:
+   idle kept-alive connections close at once, busy ones after their current
+   response, and their clients reconnect through the balancer. The port stays open and requests are served as
    normal, for `Server.DrainDelay`.
 2. **Streams.** Development reload streams and plugin streams are closed; they
    never end on their own.
@@ -124,7 +124,10 @@ app, err := collage.New(&collage.Config{
 ```
 
 The two add up. On a signal, `ShutdownTimeout` starts when the drain ends, so a
-stop can take `DrainDelay + ShutdownTimeout`. Whatever stops the process has to
+stop can take `DrainDelay + ShutdownTimeout`. When you call `App.Shutdown(ctx)`
+yourself, one ctx covers both the drain and the wait for requests in flight, and
+`ShutdownTimeout` is not used: give it a deadline of at least `DrainDelay` plus
+the time your requests need, or the drain uses up the time they would have had. Whatever stops the process has to
 wait longer than that sum before it kills it:
 
 - **systemd:** `TimeoutStopSec` greater than the sum. The unit
