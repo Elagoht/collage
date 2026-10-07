@@ -534,7 +534,13 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		}
 		event.Files = files
 		event.Redirects = redirects
-		if finishes {
+		// A build whose context ended is not finished: a plugin handed it
+		// would write host files from a partial build. The capture has
+		// already returned the context's error when it was what stopped.
+		if err := ctx.Err(); err != nil && !slices.ContainsFunc(errs, func(e error) bool { return errors.Is(e, err) }) {
+			errs = append(errs, fmt.Errorf("collage: build: %w", err))
+		}
+		if finishes && ctx.Err() == nil {
 			if err := finisher.BuildFinished(ctx, event); err != nil {
 				errs = append(errs, err)
 			}
@@ -594,8 +600,9 @@ type devModer interface {
 // makes them. Only the build's own context ending is returned as an error.
 func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plugin.BuiltFile, synthesized map[string]bool, devMode bool, ev *plugin.BuildFinishedEvent) error {
 	var paths []string
-	for _, f := range files {
-		if !synthesized[f.File] && f.Path != "" {
+	for i := range files {
+		if f := &files[i]; !synthesized[f.File] && f.Path != "" {
+			f.Captured = true
 			paths = append(paths, f.Path)
 		}
 	}

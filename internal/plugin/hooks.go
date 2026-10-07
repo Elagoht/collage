@@ -300,8 +300,16 @@ type BuiltFile struct {
 	// the content is needed: holding every page of a large site in memory to
 	// hand over here would cost what few checks need.
 	File string
+	// Captured reports that the build asked the application for the file's
+	// path: every file it wrote from the application's answer, whether that
+	// capture succeeded, failed, or was never reached because the capture
+	// stopped. It is false for the files the build made itself — the 404 pages
+	// and the root redirect — which the application never answers with.
+	Captured bool
 	// Status is the status the application answered the file's path with
-	// when the build asked for it, or 0 when it was not asked.
+	// when the build asked for it. It is 0 when the file was not captured, and
+	// also when it was but the capture failed or was never reached: a Captured
+	// file with Status 0 has headers nobody knows.
 	Status int
 	// Headers are the response headers the application sends for the file's
 	// path that a static host can carry: request-specific ones and any that

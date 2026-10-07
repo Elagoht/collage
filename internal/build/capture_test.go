@@ -301,3 +301,103 @@ func TestBuild_AStoppedCaptureWarnsOnceMore(t *testing.T) {
 		t.Errorf("capture-failed = %+v, want the stop naming 2 paths left, then /en's timeout", f)
 	}
 }
+
+// TestBuild_CapturedMarksEveryFileTheBuildAskedFor: a file the build asked the
+// application for is Captured whether the answer came, failed, or was never
+// reached because the capture stopped; the files the build made itself are not.
+func TestBuild_CapturedMarksEveryFileTheBuildAskedFor(t *testing.T) {
+	t.Run("failed", func(t *testing.T) {
+		app := newCapturingRenderer(t)
+		app.failed = map[string]bool{"/static/app.css": true}
+		finisher := &capturingFinisher{capturingRenderer: app}
+		b, err := New(finisher, Options{OutDir: resolvedTempDir(t)})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if _, err := b.Build(context.Background()); err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		assertCaptured(t, finisher.files)
+		for _, f := range finisher.files {
+			if f.Path == "/static/app.css" && f.Status != 0 {
+				t.Errorf("the failed capture's Status = %d, want 0", f.Status)
+			}
+		}
+	})
+	t.Run("stopped", func(t *testing.T) {
+		finisher := &stoppingFinisher{capturingFinisher: &capturingFinisher{capturingRenderer: newCapturingRenderer(t)}}
+		b, err := New(finisher, Options{OutDir: resolvedTempDir(t)})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		if _, err := b.Build(context.Background()); err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		assertCaptured(t, finisher.files)
+		for _, f := range finisher.files {
+			if f.Status != 0 {
+				t.Errorf("%s Status = %d after a stopped capture, want 0", f.Path, f.Status)
+			}
+		}
+	})
+}
+
+// assertCaptured checks that every file but the root redirect and the 404 page
+// is Captured.
+func assertCaptured(t *testing.T, files []plugin.BuiltFile) {
+	t.Helper()
+	if len(files) == 0 {
+		t.Fatal("no files reached BuildFinished")
+	}
+	for _, f := range files {
+		synthesized := f.Path == "/" || strings.HasSuffix(f.Path, "/404.html")
+		if f.Captured == synthesized {
+			t.Errorf("%s Captured = %v, want %v", f.Path, f.Captured, !synthesized)
+		}
+	}
+}
+
+// stoppingFinisher is a capturingFinisher whose capture gives up after the first
+// path.
+type stoppingFinisher struct{ *capturingFinisher }
+
+func (s *stoppingFinisher) CaptureResponses(ctx context.Context, paths []string) (map[string]types.CapturedResponse, error) {
+	return stoppingCapturer{s.capturingRenderer}.CaptureResponses(ctx, paths)
+}
+
+// cancellingFinisher is a capturingFinisher that cancels the build's context as
+// the capture begins, and records whether BuildFinished ran.
+type cancellingFinisher struct {
+	*capturingFinisher
+	cancel   context.CancelFunc
+	finished bool
+}
+
+func (c *cancellingFinisher) CaptureResponses(ctx context.Context, paths []string) (map[string]types.CapturedResponse, error) {
+	c.cancel()
+	return c.capturingRenderer.CaptureResponses(ctx, paths)
+}
+
+func (c *cancellingFinisher) BuildFinished(ctx context.Context, ev *plugin.BuildFinishedEvent) error {
+	c.finished = true
+	return c.capturingFinisher.BuildFinished(ctx, ev)
+}
+
+// TestBuild_ACancelledBuildIsNotFinished: once the build's context has ended,
+// the plugins that check a finished build are not handed the partial one; the
+// build returns the context's error.
+func TestBuild_ACancelledBuildIsNotFinished(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	app := &cancellingFinisher{capturingFinisher: &capturingFinisher{capturingRenderer: newCapturingRenderer(t)}, cancel: cancel}
+	b, err := New(app, Options{OutDir: resolvedTempDir(t)})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := b.Build(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Build = %v, want context.Canceled", err)
+	}
+	if app.finished {
+		t.Error("BuildFinished ran on a cancelled build")
+	}
+}
