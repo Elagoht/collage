@@ -253,10 +253,13 @@ func TestRender_Degraded(t *testing.T) {
 func TestRender_MetadataTimings(t *testing.T) {
 	engine := newEngine(t, Options{})
 
+	// The child sleeps far longer than a template takes to run, even under -race,
+	// so a template time that absorbed the sleep cannot be mistaken for a slow one.
+	const sleep = 50 * time.Millisecond
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	child := fragment("child", "leaf.html")
 	child.SetDataSource(types.FetchedData(func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
-		time.Sleep(2 * time.Millisecond)
+		time.Sleep(sleep)
 		return nil, nil, nil
 	}, nil))
 	bind(t, layout, "content", child)
@@ -270,16 +273,17 @@ func TestRender_MetadataTimings(t *testing.T) {
 	if timing.Total <= 0 {
 		t.Errorf("Timing.Total = %v, want a positive duration", timing.Total)
 	}
-	if timing.Data < 2*time.Millisecond {
-		t.Errorf("Timing.Data = %v, want at least the 2ms the handler slept", timing.Data)
+	if timing.Data < sleep {
+		t.Errorf("Timing.Data = %v, want at least the %v the handler slept", timing.Data, sleep)
 	}
 	if timing.Template <= 0 {
 		t.Errorf("Timing.Template = %v, want a positive duration", timing.Template)
 	}
 	// Template time excludes the nested work that happens inside a parent's
-	// template, so it must not have absorbed the child's sleep.
-	if timing.Template >= timing.Data {
-		t.Errorf("Timing.Template = %v, want it well under Timing.Data = %v: nested time is double counted", timing.Template, timing.Data)
+	// template, so it must not have absorbed the child's sleep. Had it, it would
+	// be at least the whole sleep; half of it leaves room for a slow machine.
+	if timing.Template >= sleep/2 {
+		t.Errorf("Timing.Template = %v, want it well under the child's %v sleep: nested time is double counted", timing.Template, sleep)
 	}
 	if timing.Total < timing.Data {
 		t.Errorf("Timing.Total = %v, want at least Timing.Data = %v", timing.Total, timing.Data)
