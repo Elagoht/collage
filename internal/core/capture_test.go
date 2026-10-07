@@ -144,7 +144,13 @@ func TestCaptureResponses_NonOKStatusIsRecorded(t *testing.T) {
 // page is answered at "/a/" and its other spelling redirects there; the capture
 // records the page's answer, not the redirect, and leaves a document alone.
 func TestCaptureResponses_FollowsTheTrailingSlashSpelling(t *testing.T) {
-	app := newTestApp(t, func(cfg *Config) { cfg.TrailingSlash = true })
+	for name, base := range map[string]string{"no BaseURL": "", "https": "https://example.com"} {
+		t.Run(name, func(t *testing.T) { followsTheTrailingSlashSpelling(t, base) })
+	}
+}
+
+func followsTheTrailingSlashSpelling(t *testing.T, base string) {
+	app := newTestApp(t, func(cfg *Config) { cfg.TrailingSlash, cfg.BaseURL = true, base })
 	page := newHomePage()
 	page.Paths = map[string]string{"en": "/a"}
 	if err := app.RegisterPage(page); err != nil {
@@ -490,5 +496,60 @@ func TestCaptureResponses_StopsAfterTooManyTimeoutsInARow(t *testing.T) {
 	}
 	if _, ok := got["/feed.xml"]; ok {
 		t.Error("a path after the capture stopped was asked for")
+	}
+}
+
+// TestCaptureResponses_AsksOverHTTPSForAnHTTPSBaseURL: a middleware that sends a
+// header only over HTTPS, as collage-secure sends Strict-Transport-Security, is
+// captured for an https BaseURL — every static host serves HTTPS — and not for
+// an http one.
+func TestCaptureResponses_AsksOverHTTPSForAnHTTPSBaseURL(t *testing.T) {
+	for _, tc := range []struct {
+		base string
+		want string
+	}{
+		{"https://example.com", "max-age=63072000"},
+		{"http://example.com", ""},
+		{"", ""},
+	} {
+		app := newTestApp(t, func(cfg *Config) { cfg.BaseURL = tc.base })
+		page := newHomePage()
+		page.Paths = map[string]string{"en": "/a"}
+		if err := app.RegisterPage(page); err != nil {
+			t.Fatalf("RegisterPage: %v", err)
+		}
+		var schemes []string
+		err := app.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				schemes = append(schemes, r.URL.Scheme)
+				if r.TLS != nil {
+					w.Header().Set("Strict-Transport-Security", "max-age=63072000")
+				}
+				next.ServeHTTP(w, r)
+			})
+		})
+		if err != nil {
+			t.Fatalf("Use: %v", err)
+		}
+		got, err := app.CaptureResponses(context.Background(), []string{"/a"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		a := got["/a"]
+		if a.Status != http.StatusOK {
+			t.Errorf("%q: /a = %+v, want 200", tc.base, a)
+		}
+		if h := a.Headers.Get("Strict-Transport-Security"); h != tc.want {
+			t.Errorf("%q: Strict-Transport-Security = %q, want %q", tc.base, h, tc.want)
+		}
+		wantScheme := ""
+		if tc.want != "" {
+			wantScheme = "https"
+		}
+		for _, s := range schemes {
+			if s != wantScheme {
+				t.Errorf("%q: asked with URL.Scheme %q, want %q", tc.base, s, wantScheme)
+			}
+		}
 	}
 }

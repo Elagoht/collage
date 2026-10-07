@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/http"
@@ -33,7 +34,8 @@ const captureMaxTimeouts = 5
 
 // CaptureResponses asks the application's handler for each path twice, in
 // process, as a static export would be asked for it — GET, no cookies, no
-// Accept-Encoding, the host of Config.BaseURL or "localhost" — and keeps the
+// Accept-Encoding, the host of Config.BaseURL or "localhost", over HTTPS when
+// Config.BaseURL's scheme is https — and keeps the
 // headers both responses agree on, as they were when the status was written. A
 // header the two responses disagree on, or that only one of them carries, is
 // named in Unstable instead.
@@ -57,9 +59,12 @@ func (a *App) CaptureResponses(ctx context.Context, paths []string) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	host := "localhost"
-	if u, err := url.Parse(a.cfg.BaseURL); err == nil && u.Host != "" {
-		host = u.Host
+	target := captureTarget{host: "localhost"}
+	if u, err := url.Parse(a.cfg.BaseURL); err == nil {
+		if u.Host != "" {
+			target.host = u.Host
+		}
+		target.https = u.Scheme == "https"
 	}
 	out := make(map[string]types.CapturedResponse, len(paths))
 	timeouts := 0
@@ -67,7 +72,7 @@ func (a *App) CaptureResponses(ctx context.Context, paths []string) (map[string]
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		resp, err := captureTwice(ctx, handler, host, p)
+		resp, err := captureTwice(ctx, handler, target, p)
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return out, ctxErr
 		}
@@ -87,10 +92,19 @@ func (a *App) CaptureResponses(ctx context.Context, paths []string) (map[string]
 	return out, nil
 }
 
+// captureTarget is where a capture request is addressed: the host of
+// Config.BaseURL, and whether it is served over HTTPS. Every static host serves
+// HTTPS, and middleware that sends a header only over it —
+// Strict-Transport-Security — has to see the request as one.
+type captureTarget struct {
+	host  string
+	https bool
+}
+
 // captureTwice asks for urlPath twice and compares the answers.
-func captureTwice(ctx context.Context, handler http.Handler, host, urlPath string) (types.CapturedResponse, error) {
+func captureTwice(ctx context.Context, handler http.Handler, target captureTarget, urlPath string) (types.CapturedResponse, error) {
 	asked := urlPath
-	first, err := captureOnce(ctx, handler, host, asked)
+	first, err := captureOnce(ctx, handler, target, asked)
 	if err != nil {
 		return types.CapturedResponse{}, err
 	}
@@ -99,11 +113,11 @@ func captureTwice(ctx context.Context, handler http.Handler, host, urlPath strin
 		// TrailingSlash, which is how the static host serves about/index.html
 		// too — and its headers are that answer's, not the redirect's.
 		asked = other
-		if first, err = captureOnce(ctx, handler, host, asked); err != nil {
+		if first, err = captureOnce(ctx, handler, target, asked); err != nil {
 			return types.CapturedResponse{}, err
 		}
 	}
-	second, err := captureOnce(ctx, handler, host, asked)
+	second, err := captureOnce(ctx, handler, target, asked)
 	if err != nil {
 		return types.CapturedResponse{}, err
 	}
@@ -159,12 +173,14 @@ func slashSpelling(w *captureWriter, urlPath string) (string, bool) {
 // captureOnce serves one GET for urlPath through handler, marked as a capture
 // and bounded by captureTimeout. The request is built from a URL rather than
 // parsed from a request line, so a path with a space or a non-ASCII byte in it
-// is asked for as it is rather than refused.
+// is asked for as it is rather than refused. For an HTTPS target it carries a
+// TLS connection state and the "https" scheme, as httptest.NewRequest gives a
+// request for an https:// URL.
 //
 // The handler runs on a goroutine of its own so that one ignoring its context
 // cannot hold the build: past the deadline it is left to finish alone, and its
 // writer is never read again.
-func captureOnce(ctx context.Context, handler http.Handler, host, urlPath string) (*captureWriter, error) {
+func captureOnce(ctx context.Context, handler http.Handler, target captureTarget, urlPath string) (*captureWriter, error) {
 	ctx, cancel := context.WithTimeout(types.WithCapture(ctx), captureTimeout)
 	defer cancel()
 
@@ -172,7 +188,11 @@ func captureOnce(ctx context.Context, handler http.Handler, host, urlPath string
 	req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
 	req.URL = u
 	req.RequestURI = u.RequestURI()
-	req.Host = host
+	req.Host = target.host
+	if target.https {
+		u.Scheme, u.Host = "https", target.host
+		req.TLS = &tls.ConnectionState{}
+	}
 
 	w := &captureWriter{header: http.Header{}}
 	done := make(chan error, 1)
