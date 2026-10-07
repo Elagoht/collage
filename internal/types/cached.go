@@ -56,6 +56,7 @@ func DeclaredTags(rc *RenderContext) []string {
 // within the render, fetched fresh by the next.
 func Cached[T any](rc *RenderContext, key Key[T], ttl time.Duration, tags []string, fetch func(context.Context) (T, error)) (T, error) {
 	var zero T
+	id := key.id()
 	if rc == nil || rc.state == nil {
 		if fetch == nil {
 			return zero, nil
@@ -74,7 +75,7 @@ func Cached[T any](rc *RenderContext, key Key[T], ttl time.Duration, tags []stri
 		return Once(rc, Key[T]{name: "collage:cached:" + key.name}, fetch)
 	}
 
-	value, err := store.Load(rc.Context(), storeKey(key.id()), ttl, tags, func(ctx context.Context) (any, error) { // any: see DataCache
+	value, err := store.Load(rc.Context(), storeKey(id), ttl, tags, func(ctx context.Context) (any, error) { // any: see DataCache
 		return fetch(ctx)
 	})
 	if err != nil {
@@ -88,7 +89,7 @@ func Cached[T any](rc *RenderContext, key Key[T], ttl time.Duration, tags []stri
 	if !ok {
 		// The store key carries T, so only a store handing back what it was not
 		// given gets here. Saying so beats an empty section.
-		return zero, fmt.Errorf("collage: Cached %q: the store returned a %T, want %s", key.name, value, key.id().typ)
+		return zero, fmt.Errorf("collage: Cached %q: the store returned a %T, want %s", key.name, value, id.typ)
 	}
 	return typed, nil
 }

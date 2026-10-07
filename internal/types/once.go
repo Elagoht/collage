@@ -37,6 +37,7 @@ type onceCall struct {
 // holding a fragment open for work that is no longer wanted.
 func Once[T any](rc *RenderContext, key Key[T], fetch func(context.Context) (T, error)) (T, error) {
 	var zero T
+	id := key.id()
 	if rc == nil || rc.state == nil {
 		// No render to share within: fetching directly is the honest answer, and
 		// is what a hand-built RenderContext in a test would want.
@@ -46,7 +47,6 @@ func Once[T any](rc *RenderContext, key Key[T], fetch func(context.Context) (T, 
 		return fetch(context.Background())
 	}
 
-	id := key.id()
 	rc.state.mu.Lock()
 	if call, running := rc.state.once[id]; running {
 		rc.state.mu.Unlock()

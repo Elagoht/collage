@@ -77,7 +77,8 @@ type Key[T any] = types.Key[T]
 //	view, ok := confirmKey.Get(rc)
 //
 // A key is its name and its type, so two keys of one name never read each
-// other's values. An empty name panics.
+// other's values. An empty name panics. Always make a key with NewKey: using a
+// zero Key, which has no name, panics too.
 func NewKey[T any](name string) Key[T] { return types.NewKey[T](name) }
 
 // RenderValues are a finished render's shared values, as an AfterRender hook

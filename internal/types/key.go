@@ -12,6 +12,10 @@ import (
 // A key is its name and its type. NewKey[A]("x") and NewKey[B]("x") are two
 // keys; two keys equal in both are one, wherever and however often each was
 // made. Declare keys as package variables and derive per-value ones with With.
+//
+// Always make a key with NewKey. A zero Key — a struct field nothing set — has
+// no name, and using it panics rather than share one nameless value with every
+// other zero key of its type.
 type Key[T any] struct {
 	name string
 }
@@ -28,7 +32,7 @@ func NewKey[T any](name string) Key[T] {
 // With returns the key named k's name, a colon and part, for the same type:
 // articleKey.With(slug) for one article among many.
 func (k Key[T]) With(part string) Key[T] {
-	return Key[T]{name: k.name + ":" + part}
+	return Key[T]{name: k.id().name + ":" + part}
 }
 
 // Name returns the key's name, for logs and errors.
@@ -41,6 +45,9 @@ type keyID struct {
 }
 
 func (k Key[T]) id() keyID {
+	if k.name == "" {
+		panic("collage: a Key used without NewKey")
+	}
 	return keyID{name: k.name, typ: reflect.TypeFor[T]()}
 }
 
@@ -54,25 +61,27 @@ func (k Key[T]) Get(rc *RenderContext) (T, bool) {
 // by work and a Set, is two fragments doing that work twice — Once is the form
 // without that gap.
 func (k Key[T]) Set(rc *RenderContext, v T) {
+	id := k.id()
 	bag := rc.bag(true)
 	bag.mu.Lock()
 	defer bag.mu.Unlock()
 	if bag.m == nil {
 		bag.m = make(map[keyID]any) // any: the bag holds every key's type; Key restores it
 	}
-	bag.m[k.id()] = v
+	bag.m[id] = v
 }
 
 // In returns the value stored under k in values — a finished render's, as an
 // AfterRender hook receives them — and whether one was. A nil values has none.
 func (k Key[T]) In(values *Values) (T, bool) {
 	var zero T
+	id := k.id()
 	if values == nil {
 		return zero, false
 	}
 	values.mu.Lock()
 	defer values.mu.Unlock()
-	v, ok := values.m[k.id()]
+	v, ok := values.m[id]
 	if !ok {
 		return zero, false
 	}

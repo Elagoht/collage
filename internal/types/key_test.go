@@ -57,6 +57,35 @@ func TestKey_EmptyNamePanics(t *testing.T) {
 	NewKey[int]("")
 }
 
+// A zero Key never went through NewKey, so it has no name; every use of it
+// panics instead of sharing one nameless value with every other zero key.
+func TestKey_ZeroKeyPanics(t *testing.T) {
+	var zero Key[int]
+	rc := NewRenderContext(context.Background(), nil, nil, "en", nil)
+	uses := map[string]func(){
+		"Set":  func() { zero.Set(rc, 1) },
+		"Get":  func() { zero.Get(rc) },
+		"In":   func() { zero.In(nil) },
+		"With": func() { zero.With("x") },
+		"Once": func() {
+			_, _ = Once(rc, zero, func(context.Context) (int, error) { return 1, nil })
+		},
+		"Cached": func() {
+			_, _ = Cached(rc, zero, 0, nil, func(context.Context) (int, error) { return 1, nil })
+		},
+	}
+	for name, use := range uses {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if r := recover(); r != "collage: a Key used without NewKey" {
+					t.Errorf("recovered %v, want the NewKey panic", r)
+				}
+			}()
+			use()
+		})
+	}
+}
+
 func TestKey_SharedAcrossCopiesAndConcurrent(t *testing.T) {
 	rc := NewRenderContext(context.Background(), nil, nil, "en", nil)
 	k := NewKey[int]("n")

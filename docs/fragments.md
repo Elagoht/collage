@@ -103,7 +103,8 @@ are two keys holding two values, and two `NewKey[Post]("post")` made in differen
 files are one. `With` derives a key per value from a declared one —
 `articleKey.With(slug)` is named `article:<slug>` and holds the same type — and chains,
 `boardKey.With(id).With("filter")`. `NewKey` panics on an empty name, at the line
-that declared it.
+that declared it, and a zero `Key` — a struct field nothing set, never made with
+`NewKey` — panics where it is used rather than share one nameless value.
 
 *Prefer `Once` to a read-then-write.* This shape has a hole in it:
 
