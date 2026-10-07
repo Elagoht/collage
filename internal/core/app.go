@@ -1393,6 +1393,12 @@ func (a *App) BuildFinished(ctx context.Context, ev *plugin.BuildFinishedEvent) 
 	return a.plugins.BuildFinished(ctx, ev)
 }
 
+// PluginRedirects returns every RedirectSource plugin's redirects, for the
+// static build.
+func (a *App) PluginRedirects() ([]plugin.BuiltRedirect, error) {
+	return a.plugins.PluginRedirects()
+}
+
 // syntheticRequest builds the GET request RenderPath resolves and renders through.
 // It is assembled by hand rather than parsed from a URL string: path is already a
 // path, there is no host to invent, and a hand-built request has no error path to

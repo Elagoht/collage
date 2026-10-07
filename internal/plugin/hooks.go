@@ -269,6 +269,10 @@ type BuildFinishedEvent struct {
 	Files []BuiltFile
 	// Findings are what the plugins that ran so far reported.
 	Findings []types.Finding
+	// Redirects are every redirect the site declares — its pages', its
+	// documents' and each RedirectSource plugin's — for a deploy adapter to
+	// write in its host's form.
+	Redirects []BuiltRedirect
 }
 
 // Warn reports a warning-level finding about the build, about the page at path
@@ -296,6 +300,13 @@ type BuiltFile struct {
 	// the content is needed: holding every page of a large site in memory to
 	// hand over here would cost what few checks need.
 	File string
+	// Status is the status the application answered the file's path with
+	// when the build asked for it, or 0 when it was not asked.
+	Status int
+	// Headers are the response headers the application sends for the file's
+	// path that a static host can carry: request-specific ones and any that
+	// differ from one response to the next are left out.
+	Headers http.Header
 }
 
 // ErrorHook is implemented by a plugin that wants to observe a failure encountered

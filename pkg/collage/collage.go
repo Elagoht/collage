@@ -92,6 +92,12 @@ type BuildFinishedEvent = plugin.BuildFinishedEvent
 // BuiltFile is one file a static build wrote.
 type BuiltFile = plugin.BuiltFile
 
+// BuiltRedirect is one redirect a static export carries; see RedirectSource.
+type BuiltRedirect = plugin.BuiltRedirect
+
+// RedirectSource is a plugin whose redirects a static export carries.
+type RedirectSource = plugin.RedirectSource
+
 // PathTag is the dependency tag every cached page and document carries for the
 // URL path it was rendered for: InvalidateTags(ctx, PathTag("/blog")) drops what
 // is cached for that path, whatever else it depends on.
