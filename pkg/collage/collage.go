@@ -154,6 +154,11 @@ func ClientIP(r *http.Request) netip.Addr { return httpx.ClientIP(r) }
 // begins, before the server waits for open requests, which a stream never ends.
 type StreamCloser = plugin.StreamCloser
 
+// DrainHook is implemented by a plugin that must know the server is about to
+// stop taking traffic. OnDrain is called once, when the drain starts and before
+// ServerConfig.DrainDelay; it must not block.
+type DrainHook = plugin.DrainHook
+
 // PageResolvedHook is implemented by a plugin that wants to observe a request
 // having been resolved to a page, before rendering begins.
 type PageResolvedHook = plugin.PageResolvedHook

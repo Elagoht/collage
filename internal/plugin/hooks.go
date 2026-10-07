@@ -172,6 +172,14 @@ type StreamCloser interface {
 	CloseStreams()
 }
 
+// DrainHook is implemented by a plugin that must know the server is about to
+// stop taking traffic: readiness turns false, new work is refused. OnDrain is
+// called once, when the drain starts and before ServerConfig.DrainDelay; the
+// server still serves requests until the delay ends. It must not block.
+type DrainHook interface {
+	OnDrain()
+}
+
 // Hoist adds html to the page's hoist area under key, after the render — what a
 // plugin that only learns what the page needs from its finished markup would
 // otherwise splice in by hand: a stylesheet for the code blocks it highlighted.

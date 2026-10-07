@@ -241,6 +241,17 @@ func (r *Registry) CloseStreams() {
 	}
 }
 
+// Drain tells every plugin implementing DrainHook that the drain has started, in
+// registration order. A panic in one is contained, so the others still hear of
+// it. A nil Registry does nothing.
+func (r *Registry) Drain() {
+	for _, p := range r.snapshot() {
+		if hook, ok := p.(DrainHook); ok {
+			_ = safeCall(func() error { hook.OnDrain(); return nil })
+		}
+	}
+}
+
 // PageResolved dispatches ev to every registered plugin implementing
 // PageResolvedHook, in registration order. It stops and returns a wrapped error at
 // the first hook failure, including a contained panic. A nil Registry, or a
