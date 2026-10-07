@@ -241,3 +241,17 @@ func TestRegister_TemplateTypeCheckSeesEveryReachableFragment(t *testing.T) {
 		})
 	}
 }
+
+// A number constant has the type text/template gives it, int here, so a field
+// read from it fails when it renders and fails registration.
+func TestRegister_NumberConstantIsTyped(t *testing.T) {
+	files := fstest.MapFS{
+		"t/post.html": {Data: []byte(`{{$n := 1}}{{$n.Nope}}`)},
+	}
+	app := tcApp(t, files)
+	content := collage.NewFragment("post-body", "post.html").WithData(collage.Load(loadPost)).Build()
+	err := app.RegisterPage(collage.NewPage("post").WithContent(content).WithPath("en", "/").Build())
+	if !errors.Is(err, collage.ErrTemplateType) {
+		t.Fatalf("RegisterPage error = %v, want ErrTemplateType", err)
+	}
+}

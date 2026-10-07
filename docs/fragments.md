@@ -571,6 +571,12 @@ variables keep the type they were given for their scope.
 - **`range`, `len` and `index` on the wrong kind**: ranging over a string or a
   struct, or over an integer with two variables; `len` of a struct; `index` into
   a struct.
+- **Number constants**, typed as `text/template` types them where nothing else
+  does: `1`, `'a'` and `0x10` are `int`, `1.5`, `1e3` and `0x1p4` are
+  `float64`, `1i` is `complex128`. So `{{$n := 1}}{{$n.Name}}`, `{{len 1}}` and
+  `{{range $i, $v := 3}}` are reported, as is a number too large for an `int`,
+  and `nil` used as a command rather than an argument. A number passed to a
+  function's `int8` or `float64` parameter is converted to it, and not judged.
 
 What the render can never reach is not reported. An `{{if}}` or `{{with}}`
 whose condition is a literal — `true`, `false`, `0`, `1`, `""`, `"x"`, or `not`

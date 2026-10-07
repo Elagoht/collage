@@ -74,7 +74,7 @@ func numberTruth(n *parse.NumberNode) (truth, ok bool) {
 	switch {
 	case n.IsComplex:
 		return n.Complex128 != 0, true
-	case n.IsFloat && !isHexInt(n.Text) && !strings.HasPrefix(n.Text, "'") && strings.ContainsAny(n.Text, ".eEpP"):
+	case idealFloat(n):
 		return n.Float64 != 0, true
 	case n.IsInt:
 		if int64(int(n.Int64)) != n.Int64 {
@@ -83,6 +83,32 @@ func numberTruth(n *parse.NumberNode) (truth, ok bool) {
 		return n.Int64 != 0, true
 	}
 	return false, false
+}
+
+// constant is the value text/template's idealConstant makes of n where nothing
+// gives it a type — a command, or an argument whose parameter is any or a
+// reflect.Value: complex128 for a complex number, float64 for one written with a
+// point, an exponent or a binary exponent, int for any other. A number that
+// overflows int is an error there.
+func (w *walker) constant(n *parse.NumberNode) value {
+	w.at = n
+	switch {
+	case n.IsComplex:
+		return typed(reflect.TypeFor[complex128](), false)
+	case idealFloat(n):
+		return typed(reflect.TypeFor[float64](), false)
+	case n.IsInt && int64(int(n.Int64)) == n.Int64:
+		return typed(reflect.TypeFor[int](), false)
+	case n.IsInt, n.IsUint:
+		w.report(n, fmt.Sprintf("%s overflows int", n.Text), "")
+	}
+	return unknown
+}
+
+// idealFloat is idealConstant's test for a float64: a hexadecimal integer's e
+// and a rune's text do not make one.
+func idealFloat(n *parse.NumberNode) bool {
+	return n.IsFloat && !isHexInt(n.Text) && !strings.HasPrefix(n.Text, "'") && strings.ContainsAny(n.Text, ".eEpP")
 }
 
 // isHexInt is text/template's: a hexadecimal integer, whose e or E is a digit.

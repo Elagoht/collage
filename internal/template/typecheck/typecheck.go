@@ -192,6 +192,13 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 	case *parse.VariableNode:
 		w.at = n
 		result = w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], argc)
+	case *parse.NilNode:
+		// nil is a value only as an argument; as a command it always fails.
+		w.at = n
+		w.report(n, "nil is not a command", "")
+		return unknown
+	case *parse.NumberNode:
+		return w.constant(n)
 	default:
 		for _, arg := range cmd.Args[1:] {
 			w.arg(arg, dot, vars)
@@ -202,6 +209,12 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 		return unknown
 	}
 	for _, arg := range cmd.Args[1:] {
+		// A number given to a method is converted to its parameter's type,
+		// which is not followed here, so it is not judged.
+		if num, ok := arg.(*parse.NumberNode); ok {
+			w.at = num
+			continue
+		}
 		w.arg(arg, dot, vars)
 	}
 	return result
@@ -227,6 +240,8 @@ func (w *walker) arg(node parse.Node, dot value, vars []variable) value {
 		return typed(reflect.TypeFor[string](), false)
 	case *parse.BoolNode:
 		return typed(reflect.TypeFor[bool](), false)
+	case *parse.NumberNode:
+		return w.constant(n)
 	}
 	return unknown
 }

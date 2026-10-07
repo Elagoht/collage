@@ -62,7 +62,13 @@ func filledPost() post {
 }
 
 func TestCheck_AgreesWithTextTemplate(t *testing.T) {
-	funcs := template.FuncMap{"pick": pick, "upper": strings.ToUpper, "wrap": wrap}
+	funcs := template.FuncMap{
+		"pick": pick, "upper": strings.ToUpper, "wrap": wrap,
+		"i8":   func(n int8) int8 { return n },
+		"f64":  func(n float64) float64 { return n },
+		"u64":  func(n uint64) uint64 { return n },
+		"anyf": func(v any) any { return v }, // any: a parameter text/template fills with an ideal constant
+	}
 	type differential struct {
 		src  string
 		data func() reflect.Value
@@ -169,6 +175,20 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 		// A call of the wrong shape never evaluates its arguments.
 		`{{upper .Nope "b"}}`, `{{len .Nope .Nada}}`, `{{not (index .Owner 0) 1}}`, `{{eq .Nope}}`,
 
+		// Number constants are typed as text/template's idealConstant types
+		// them; as an argument to a typed parameter they are converted instead.
+		`{{$x := 1}}{{$x.Nope}}`, `{{(1).Nope}}`, `{{(1.5).Nope}}`, `{{(1i).Nope}}`, `{{('a').Nope}}`,
+		`{{(0x10).Nope}}`, `{{(0x1p4).Nope}}`, `{{(1e3).Nope}}`, `{{(1_000).Nope}}`,
+		`{{$x := 1}}{{len $x}}`, `{{$x := 1}}{{printf "%d" $x}}`, `{{$x := 1}}{{range $x}}{{.}}{{end}}`,
+		`{{$x := 2}}{{range $i, $v := $x}}{{end}}`, `{{index (1) 0}}`, `{{1 | len}}`, `{{len 1}}`,
+		`{{with 1}}{{.Nope}}{{end}}`, `{{with 1.5}}{{.Nope}}{{end}}`, `{{range 3}}{{.Nope}}{{end}}`,
+		`{{range 3}}{{.}}{{end}}`, `{{$x := 1}}{{$x = 2}}{{$x.Nope}}`, `{{$x := 1}}{{$x}}`,
+		`{{i8 1}}`, `{{f64 1}}`, `{{u64 18446744073709551615}}`, `{{(i8 1).Nope}}`, `{{anyf 1}}`,
+		`{{9223372036854775808}}`, `{{print 9223372036854775808}}`, `{{anyf 9223372036854775808}}`,
+		`{{len 9223372036854775808}}`, `{{eq 9223372036854775808 1}}`, `{{and 9223372036854775808 1}}`,
+		`{{print 1 9223372036854775808 .Nope}}`,
+		`{{call 1}}`, `{{index "ab" 1}}`, `{{slice "abc" 1 2}}`, `{{nil}}`, `{{(nil).X}}`, `{{$x := nil}}`, `{{nil | print}}`, `{{print nil}}`, `{{anyf nil}}`,
+
 		// Positions on later lines, and inside actions that span lines.
 		"x\n{{range .Cards}}\n  {{.Nam}}{{end}}", "\n{{(index .ByCol\n  \"a\").Owner.Edit}}",
 		"\n{{upper\n \"a\" \"b\"}}", "\n\n{{range $i, $v :=\n  .Count}}{{end}}", "{{len\n\n .Owner}}",
@@ -176,6 +196,10 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 	add(func() any { return filledWrapper() }, // any: case data
 		`{{.RV.Name}}`, `{{.RVErr.Name}}`, `{{(wrap).Name}}`, `{{.RV}}`, `{{wrap | print}}`,
 		`{{.F.Name}}`, `{{(call .Fn).Name}}`, `{{call .Fn}}`,
+	)
+	add(func() any { return numeric{} }, // any: case data
+		`{{.U 18446744073709551615}}`, `{{.F 9223372036854775808}}`, `{{.I8 1}}`, `{{.F 1.5}}`,
+		`{{(.U 1).Nope}}`, `{{(.I8 (1)).Nope}}`,
 	)
 	add(boardPtr, `{{range .Fixed}}{{.Owner.Edit}}{{end}}`, `{{(index .Fixed 0).Owner.Edit}}`, `{{.Owner.Edit}}`)
 
@@ -212,3 +236,10 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 		})
 	}
 }
+
+// numeric has methods whose parameters a number argument is converted to.
+type numeric struct{}
+
+func (numeric) U(n uint64) uint64   { return n }
+func (numeric) F(n float64) float64 { return n }
+func (numeric) I8(n int8) int8      { return n }

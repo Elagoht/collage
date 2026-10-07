@@ -42,7 +42,14 @@ func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse
 	}
 	values := make([]value, 0, argc)
 	walked := w.reported
-	for _, arg := range args {
+	for i, arg := range args {
+		// A number given to a typed parameter is converted to it, not made an
+		// ideal constant; whether it converts is not judged.
+		if num, ok := arg.(*parse.NumberNode); ok && !w.idealParam(name, ft, overridden, i) {
+			w.at = num
+			values = append(values, unknown)
+			continue
+		}
 		values = append(values, w.arg(arg, dot, vars))
 		// and and or stop at the first operand that decides them, so what
 		// follows a literal that is false (and) or true (or) never runs.
@@ -68,6 +75,33 @@ func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse
 	defer func() { w.at = last }()
 	w.at = node
 	return w.builtin(node, name, values)
+}
+
+// idealParam says whether the i'th argument of the call of name is an any or a
+// reflect.Value, where text/template makes an ideal constant of a number. Every
+// builtin's parameters are, but printf's format, a string; a function the set
+// was not parsed with is not known to take one.
+func (w *walker) idealParam(name string, ft reflect.Type, overridden bool, i int) bool {
+	if !overridden {
+		if _, builtin := builtinArgs[name]; builtin {
+			return name != "printf" || i != 0
+		}
+		// The escaper's functions take ...any; a name neither knows is unknown.
+		return strings.HasPrefix(name, "_html_template_")
+	}
+	if ft == nil || ft.Kind() != reflect.Func {
+		return false
+	}
+	var p reflect.Type
+	switch n := ft.NumIn(); {
+	case ft.IsVariadic() && i >= n-1:
+		p = ft.In(n - 1).Elem()
+	case i < n:
+		p = ft.In(i)
+	default:
+		return false
+	}
+	return p == reflectValueType || p.Kind() == reflect.Interface && p.NumMethod() == 0
 }
 
 // builtinArgs holds how many arguments each of text/template's builtins takes:

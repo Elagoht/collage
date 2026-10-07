@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.50.2
+
+### Fixed
+
+- **The template type checker knows the type of a number constant.** A number
+  was unknown to it, so nothing read from one was reported:
+  `{{$n := 1}}{{$n.Nope}}`, `{{(1.5).Nope}}`, `{{len 1}}`, `{{index (1) 0}}`
+  and `{{range $i, $v := 2}}` passed `RegisterPage` and failed when they
+  rendered. A number is now typed as `text/template` types it — `int`,
+  `float64` for one written with a point or an exponent, `complex128` — and one
+  that overflows `int`, or `nil` used as a command, is reported too. A number
+  given to a function's typed parameter is still not judged.
+
 ## v0.50.1
 
 ### Fixed
