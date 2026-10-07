@@ -74,12 +74,18 @@ func VariedContext(ctx context.Context, header string) (string, bool) {
 
 // IsCapture reports whether ctx belongs to a request a static build sent to its
 // own handler to record a written file's response headers. Each file's path is
-// asked for twice, after the file is written, and nothing is cached for it.
+// asked for after the file is written, twice — three times when the first
+// answer is the trailing-slash redirect to the spelling the page is served at.
+// It is the response cache that is not written for such a request, and it
+// never shares a reader's render; the data cache may still fill from it.
 //
 // A plugin that counts or limits traffic — analytics, a rate limiter, a ban
 // list — should leave such a request alone: it is the build, not a visitor. A
 // middleware that sets response headers must not: what it sets on a capture is
-// what the deployed file is served with.
+// what the deployed file is served with. Nor must anything change what a page
+// renders on a capture — an AfterRender hook injecting markup, say: the
+// headers captured belong to a body the build did not write, and are deployed
+// with the one it did.
 func IsCapture(ctx context.Context) bool {
 	return types.IsCapture(ctx)
 }

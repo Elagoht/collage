@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,11 @@ var requestSpecific = []string{
 // captureTimeout bounds one capture request. A variable so a test can shorten it.
 var captureTimeout = 10 * time.Second
 
+// captureMaxTimeouts is how many paths in a row may time out before the capture
+// gives up on the rest: an application that answers nothing would otherwise
+// cost captureTimeout for every file on the site.
+const captureMaxTimeouts = 5
+
 // CaptureResponses asks the application's handler for each path twice, in
 // process, as a static export would be asked for it — GET, no cookies, no
 // Accept-Encoding, the host of Config.BaseURL or "localhost" — and keeps the
@@ -32,10 +38,15 @@ var captureTimeout = 10 * time.Second
 // header the two responses disagree on, or that only one of them carries, is
 // named in Unstable instead.
 //
-// Each request's context is marked with types.WithCapture: nothing is written to
-// the response cache for it, and a plugin can tell it from a reader's. Each is
-// bounded by captureTimeout, and a path not answered within it is recorded with
-// Err. The bodies are discarded.
+// Each request's context is marked with types.WithCapture: it renders outside
+// any reader's shared render, nothing is written to the response cache for it,
+// and a plugin can tell it from a reader's. Each is bounded by captureTimeout,
+// and a path not answered within it is recorded with an Err wrapping
+// types.ErrCaptureTimeout; a handler that ignores its context is left running
+// past that deadline, on a goroutine of its own, until it returns. After
+// captureMaxTimeouts such paths in a row the rest are not asked for, and the
+// error wraps types.ErrCaptureStopped and names how many were left. The bodies
+// are discarded.
 //
 // It starts the application, as Handler does, and returns the error startup
 // produced rather than capturing a 503 for every path. It returns ctx's error
@@ -51,7 +62,8 @@ func (a *App) CaptureResponses(ctx context.Context, paths []string) (map[string]
 		host = u.Host
 	}
 	out := make(map[string]types.CapturedResponse, len(paths))
-	for _, p := range paths {
+	timeouts := 0
+	for i, p := range paths {
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
@@ -63,6 +75,14 @@ func (a *App) CaptureResponses(ctx context.Context, paths []string) (map[string]
 			resp = types.CapturedResponse{Err: err}
 		}
 		out[p] = resp
+		if !errors.Is(err, types.ErrCaptureTimeout) {
+			timeouts = 0
+			continue
+		}
+		if timeouts++; timeouts == captureMaxTimeouts && i+1 < len(paths) {
+			return out, fmt.Errorf("%w: %d paths in a row were not answered within %s; %d path(s) left uncaptured",
+				types.ErrCaptureStopped, timeouts, captureTimeout, len(paths)-i-1)
+		}
 	}
 	return out, nil
 }
@@ -174,11 +194,11 @@ func captureOnce(ctx context.Context, handler http.Handler, host, urlPath string
 		if ctx.Err() != nil {
 			// Answered, but only once the deadline had cancelled it: what it
 			// answered with is the cancellation's, not the file's.
-			return nil, fmt.Errorf("collage: %s was not answered within %s", urlPath, captureTimeout)
+			return nil, fmt.Errorf("%w: %s, %s", types.ErrCaptureTimeout, urlPath, captureTimeout)
 		}
 		return w, nil
 	case <-ctx.Done():
-		return nil, fmt.Errorf("collage: %s was not answered within %s", urlPath, captureTimeout)
+		return nil, fmt.Errorf("%w: %s, %s", types.ErrCaptureTimeout, urlPath, captureTimeout)
 	}
 }
 

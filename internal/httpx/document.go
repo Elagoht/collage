@@ -149,8 +149,11 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 
 	// Concurrent misses on one key share one run of the handler, as a page's do:
 	// an expiring feed that everyone polls costs one render, not one per poller.
+	//
+	// Not a static build's header capture, which renders on its own: see the
+	// page path.
 	var out *outcome
-	if key != "" {
+	if key != "" && !types.IsCapture(ctx) {
 		var shared bool
 		out, shared = h.flight.do(ctx, key, produce)
 		if shared {

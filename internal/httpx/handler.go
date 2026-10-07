@@ -769,12 +769,21 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// directly (match.Locale); a trace carried in the context does lose its
 		// parent here, since a shared render is nobody's request to trace. The
 		// render stays bounded by its fragments' own timeouts.
-		renderCtx := h.renderSafeContext(context.WithoutCancel(ctx))
 		shareable := sharedRequest(r, page.CacheParams)
 		shareable = shareable.WithContext(h.renderSafeContext(shareable.Context()))
-		out, shared = h.flight.do(ctx, key, func() *outcome {
-			return h.renderPage(renderCtx, shareable, page, match, key, cacheable)
-		})
+		if types.IsCapture(ctx) {
+			// A static build's header capture renders on its own, as a shared
+			// render would see it but outside the flight: joined to a reader's,
+			// it would take that render's cache write as its own, and leading
+			// one, it would hand its mark to every reader waiting on it. It
+			// keeps its own deadline, too.
+			out = h.renderPage(h.renderSafeContext(ctx), shareable, page, match, key, cacheable)
+		} else {
+			renderCtx := h.renderSafeContext(context.WithoutCancel(ctx))
+			out, shared = h.flight.do(ctx, key, func() *outcome {
+				return h.renderPage(renderCtx, shareable, page, match, key, cacheable)
+			})
+		}
 	} else {
 		out = h.renderPage(ctx, r, page, match, key, cacheable)
 	}

@@ -2,8 +2,17 @@ package types
 
 import (
 	"context"
+	"errors"
 	"net/http"
 )
+
+// ErrCaptureTimeout is a CapturedResponse's Err when the application did not
+// answer the path within the capture's deadline.
+var ErrCaptureTimeout = errors.New("collage: not answered within the capture deadline")
+
+// ErrCaptureStopped is returned by a capture that gave up after too many paths
+// in a row were not answered in time, with what it captured before that.
+var ErrCaptureStopped = errors.New("collage: header capture stopped")
 
 // CapturedResponse is what the application answers a static file's path with,
 // as a static host can carry it. The static build asks for every file it wrote

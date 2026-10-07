@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -317,5 +319,176 @@ func TestCaptureResponses_ADifferentSecondStatusIsRecorded(t *testing.T) {
 	}
 	if r := got["/a"]; r.Status != http.StatusOK || r.OtherStatus != http.StatusTooManyRequests {
 		t.Errorf("/a = %+v, want 200 then 429", r)
+	}
+}
+
+// TestCaptureResponses_NeverSharesAReadersRender: a capture and a reader asking
+// for one page at once each render on their own, whichever came first. The
+// reader's render is unmarked and cached; the capture's writes nothing. Each
+// render waits on a gate until both have entered, so without the separation
+// the second would join the first's flight and never enter at all.
+func TestCaptureResponses_NeverSharesAReadersRender(t *testing.T) {
+	for _, readerFirst := range []bool{true, false} {
+		name := "capture first"
+		if readerFirst {
+			name = "reader first"
+		}
+		t.Run(name, func(t *testing.T) {
+			entered := make(chan bool, 8)
+			gate := make(chan struct{})
+			content := &types.Fragment{Name: "gated", TemplatePath: "pages/home.html"}
+			content.SetDataSource(types.FetchedData(func(ctx context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+				entered <- types.IsCapture(rc.Context())
+				<-gate
+				return homeData{Title: "Gated"}, nil, nil
+			}, nil))
+			// The capture's Host is BaseURL's, the reader's httptest's: one
+			// cache key, so one flight they could share.
+			app := newTestApp(t, func(cfg *Config) { cfg.BaseURL = "http://example.com" })
+			page := newHomePage()
+			page.ContentFragment = content
+			page.Paths = map[string]string{"en": "/a"}
+			if err := app.RegisterPage(page); err != nil {
+				t.Fatalf("RegisterPage: %v", err)
+			}
+			counter := &cacheWriteCounter{}
+			if err := app.RegisterPlugin(counter); err != nil {
+				t.Fatalf("RegisterPlugin: %v", err)
+			}
+			handler := app.Handler()
+
+			var wg sync.WaitGroup
+			var readerCode int
+			reader := func() {
+				defer wg.Done()
+				readerCode = get(handler, "/a").Code
+			}
+			var captured map[string]types.CapturedResponse
+			var captureErr error
+			capture := func() {
+				defer wg.Done()
+				captured, captureErr = app.CaptureResponses(context.Background(), []string{"/a"})
+			}
+			first, second := capture, reader
+			if readerFirst {
+				first, second = reader, capture
+			}
+			wait := func(what string) bool {
+				select {
+				case marked := <-entered:
+					return marked
+				case <-time.After(5 * time.Second):
+					t.Fatalf("%s never rendered: it joined the other's render", what)
+					return false
+				}
+			}
+			wg.Add(2)
+			go first()
+			firstMarked := wait("the first request")
+			go second()
+			secondMarked := wait("the second request")
+			if firstMarked == secondMarked {
+				t.Fatalf("marks %v and %v: want one capture and one reader", firstMarked, secondMarked)
+			}
+			close(gate)
+			wg.Wait()
+			// The capture's second request renders too, past the open gate.
+			for len(entered) > 0 {
+				if !<-entered {
+					t.Error("an unexpected reader render")
+				}
+			}
+
+			if captureErr != nil || captured["/a"].Status != http.StatusOK || readerCode != http.StatusOK {
+				t.Fatalf("capture %+v %v, reader %d", captured["/a"], captureErr, readerCode)
+			}
+			if n := app.store.(*cache.MemoryCache).Stats().Entries; n != 1 || counter.n.Load() != 1 {
+				t.Errorf("%d entries, %d CacheWrite calls; want the reader's one and one", n, counter.n.Load())
+			}
+		})
+	}
+}
+
+// TestCaptureResponses_NeverSharesAReadersDocument is the document path's
+// TestCaptureResponses_NeverSharesAReadersRender, with the reader first.
+func TestCaptureResponses_NeverSharesAReadersDocument(t *testing.T) {
+	entered := make(chan bool, 8)
+	gate := make(chan struct{})
+	app := newTestApp(t, func(cfg *Config) { cfg.BaseURL = "http://example.com" })
+	doc := newSitemapDocument()
+	doc.Strategy = types.StrategyIncremental
+	doc.CacheTTL = time.Minute
+	doc.Handler = func(ctx context.Context, _ *types.RenderContext) ([]byte, []string, error) {
+		entered <- types.IsCapture(ctx)
+		<-gate
+		return []byte("<urlset/>"), nil, nil
+	}
+	if err := app.RegisterDocument(doc); err != nil {
+		t.Fatalf("RegisterDocument: %v", err)
+	}
+	counter := &cacheWriteCounter{}
+	if err := app.RegisterPlugin(counter); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+	handler := app.Handler()
+	wait := func(what string) bool {
+		select {
+		case marked := <-entered:
+			return marked
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s never rendered: it joined the other's render", what)
+			return false
+		}
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); get(handler, "/sitemap.xml") }()
+	if wait("the reader") {
+		t.Fatal("the reader's render is marked")
+	}
+	go func() {
+		defer wg.Done()
+		_, _ = app.CaptureResponses(context.Background(), []string{"/sitemap.xml"})
+	}()
+	if !wait("the capture") {
+		t.Fatal("the capture's render is unmarked")
+	}
+	close(gate)
+	wg.Wait()
+	if n := app.store.(*cache.MemoryCache).Stats().Entries; n != 1 || counter.n.Load() != 1 {
+		t.Errorf("%d entries, %d CacheWrite calls; want the reader's one and one", n, counter.n.Load())
+	}
+}
+
+// TestCaptureResponses_StopsAfterTooManyTimeoutsInARow: five paths in a row not
+// answered in time end the capture, naming how many were left; an answered path
+// between timeouts starts the count again.
+func TestCaptureResponses_StopsAfterTooManyTimeoutsInARow(t *testing.T) {
+	shortCaptureTimeout(t, 20*time.Millisecond)
+	app := newCaptureApp(t, func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/slow") {
+				<-r.Context().Done()
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	paths := []string{"/slow1", "/slow2", "/slow3", "/slow4", "/a", "/slow5", "/slow6", "/slow7", "/slow8", "/slow9", "/feed.xml", "/slow10"}
+	got, err := app.CaptureResponses(context.Background(), paths)
+	if !errors.Is(err, types.ErrCaptureStopped) || !strings.Contains(err.Error(), "2 path(s) left uncaptured") {
+		t.Fatalf("err = %v, want ErrCaptureStopped with 2 paths left", err)
+	}
+	if len(got) != 10 || got["/a"].Status != http.StatusOK {
+		t.Errorf("captured %d paths, /a = %+v; want the first ten, /a answered", len(got), got["/a"])
+	}
+	for _, p := range []string{"/slow1", "/slow9"} {
+		if !errors.Is(got[p].Err, types.ErrCaptureTimeout) {
+			t.Errorf("%s Err = %v, want ErrCaptureTimeout", p, got[p].Err)
+		}
+	}
+	if _, ok := got["/feed.xml"]; ok {
+		t.Error("a path after the capture stopped was asked for")
 	}
 }

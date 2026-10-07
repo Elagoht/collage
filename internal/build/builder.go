@@ -18,7 +18,8 @@
 //
 // Once every file is written, a Renderer that is a ResponseCapturer — the
 // application — is asked for each file's path twice through its real handler, to
-// record the headers a static host should send with it. Middleware and the
+// record the headers a static host should send with it, each request under a
+// deadline (a handler ignoring its context keeps running past it). Middleware and the
 // request hooks see those requests, marked so a plugin can tell them from a
 // reader's (collage.IsCapture); nothing is written to the response cache for
 // them.
@@ -562,6 +563,12 @@ type BuildFinisher interface {
 // built file's path with: the application, through its own HTTP handler. The
 // build asks it once, for every file it wrote but the ones it made up itself,
 // and puts the answers on each BuiltFile.
+//
+// Each request is bounded by a deadline, and a path not answered within it is
+// warned as capture-failed; a handler that ignores its context keeps running
+// after that deadline until it returns, since a handler cannot be stopped from
+// outside. After a few such paths in a row the application's capturer stops
+// asking, and one capture-failed warning names how many paths were left.
 type ResponseCapturer interface {
 	CaptureResponses(ctx context.Context, paths []string) (map[string]types.CapturedResponse, error)
 }

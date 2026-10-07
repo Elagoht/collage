@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -272,4 +273,31 @@ type cancelOnCapture struct {
 func (c *cancelOnCapture) CaptureResponses(ctx context.Context, paths []string) (map[string]types.CapturedResponse, error) {
 	c.cancel()
 	return c.capturingRenderer.CaptureResponses(ctx, paths)
+}
+
+// stoppingCapturer is a capturingRenderer whose capture gives up after the first
+// path.
+type stoppingCapturer struct{ *capturingRenderer }
+
+func (s stoppingCapturer) CaptureResponses(_ context.Context, paths []string) (map[string]types.CapturedResponse, error) {
+	return map[string]types.CapturedResponse{paths[0]: {Err: types.ErrCaptureTimeout}},
+		fmt.Errorf("%w: %d path(s) left uncaptured", types.ErrCaptureStopped, len(paths)-1)
+}
+
+// TestBuild_AStoppedCaptureWarnsOnceMore: a capture that gave up is one more
+// warning naming what was left, on top of the timed-out path's, and not a failed
+// build.
+func TestBuild_AStoppedCaptureWarnsOnceMore(t *testing.T) {
+	b, err := New(stoppingCapturer{newCapturingRenderer(t)}, Options{OutDir: resolvedTempDir(t)})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	f := findingsBy(report, "capture-failed")
+	if len(f) != 2 || f[0].Path != "" || !strings.Contains(f[0].Message, "2 path(s) left uncaptured") || f[1].Path != "/en" {
+		t.Errorf("capture-failed = %+v, want the stop naming 2 paths left, then /en's timeout", f)
+	}
 }
