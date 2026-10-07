@@ -47,9 +47,9 @@ var ErrEmptyLocaleDefault = errors.New("collage: empty default locale")
 var ErrLocaleDefaultNotSupported = errors.New("collage: default locale not in supported locales")
 
 // ErrNegativeDuration is returned when a Config duration field is negative. It is
-// shared deliberately across all six duration fields Validate checks
+// shared deliberately across all seven duration fields Validate checks
 // (Server.ReadTimeout, Server.WriteTimeout, Server.IdleTimeout,
-// Server.ShutdownTimeout, Template.Timeout, Cache.DefaultTTL): unlike
+// Server.ShutdownTimeout, Server.DrainDelay, Template.Timeout, Cache.DefaultTTL): unlike
 // types.ErrInvalidTimeout and types.ErrInvalidTTL, which mean genuinely different
 // things to a caller (a fragment's data-fetch deadline versus a page's cache
 // lifetime), a negative value in any of these six fields is the same failure mode —
@@ -170,6 +170,13 @@ type ServerConfig struct {
 	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight requests.
 	// Defaults to 10s.
 	ShutdownTimeout time.Duration
+	// DrainDelay is how long the server keeps serving after a shutdown starts,
+	// so a load balancer can see readiness fail and stop sending traffic before
+	// the port closes. Plugins implementing DrainHook are told when it starts.
+	// It comes before ShutdownTimeout, which then bounds the in-flight requests,
+	// so a stop can take DrainDelay + ShutdownTimeout. Zero, the default, does
+	// not wait. It is ignored in development mode.
+	DrainDelay time.Duration
 	// MaxBodyBytes bounds an action's request body when the action declares no
 	// bound of its own. Defaults to four megabytes; a negative value means
 	// unbounded, which is a decision worth making deliberately, because an
@@ -539,6 +546,7 @@ func (c *Config) Validate() error {
 		{"server.write_timeout", c.Server.WriteTimeout},
 		{"server.idle_timeout", c.Server.IdleTimeout},
 		{"server.shutdown_timeout", c.Server.ShutdownTimeout},
+		{"server.drain_delay", c.Server.DrainDelay},
 		{"template.timeout", c.Template.Timeout},
 		{"cache.default_ttl", c.Cache.DefaultTTL},
 	}

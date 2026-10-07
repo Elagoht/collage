@@ -165,6 +165,7 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 			WriteTimeout:    2 * time.Second,
 			IdleTimeout:     3 * time.Second,
 			ShutdownTimeout: 4 * time.Second,
+			DrainDelay:      5 * time.Second,
 			TrustedProxies:  []string{"10.0.0.0/8", "127.0.0.1"},
 		},
 		Template: TemplateConfig{
@@ -211,6 +212,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	}
 	if core.Server.ShutdownTimeout != 4*time.Second {
 		t.Errorf("Server.ShutdownTimeout = %v, want 4s", core.Server.ShutdownTimeout)
+	}
+	if core.Server.DrainDelay != 5*time.Second {
+		t.Errorf("Server.DrainDelay = %v, want 5s", core.Server.DrainDelay)
 	}
 	if got := fmt.Sprint(core.Server.TrustedProxies); got != "[10.0.0.0/8 127.0.0.1/32]" {
 		t.Errorf("Server.TrustedProxies = %s, want the parsed [10.0.0.0/8 127.0.0.1/32]", got)

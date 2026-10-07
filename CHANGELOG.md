@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`ServerConfig.DrainDelay`: a drain phase before shutdown.** On a shutdown,
+  whether from `SIGINT`/`SIGTERM` or `App.Shutdown`, the server first turns
+  keep-alives off and goes on serving for `DrainDelay`, so a load balancer can
+  see readiness fail and stop sending traffic before the port closes. Only then
+  do the streams close, the server stop and the plugins shut down, as before.
+  `ShutdownTimeout` starts after the drain, so a stop can take
+  `DrainDelay + ShutdownTimeout`. A second signal, or a done `Shutdown` ctx,
+  ends the wait early; development mode ignores it. A negative value fails
+  `Validate` with `ErrNegativeDuration`, and a `DrainDelay` with a zero
+  `ShutdownTimeout` logs a warning.
+- **`DrainHook`.** A plugin implementing `OnDrain()` is told once, when the drain
+  starts, even with no delay; a panic in one is contained.
+
+Nothing changes by default: `DrainDelay` is 0, which does not wait. The signal
+path now logs `collage: draining` before `collage: shutting down`.
+
 ## v0.52.0
 
 ### Breaking

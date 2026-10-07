@@ -92,15 +92,65 @@ carrying a form renders again on its next request — pages without one are
 unaffected. That is correct, and worth knowing before you rotate it during
 traffic.
 
-## Signals and shutdown
+## Graceful shutdown and draining
 
-`ListenAndServe` traps `SIGINT` and `SIGTERM` and shuts down gracefully on either:
-it stops accepting connections, waits up to `Server.ShutdownTimeout` (10s by
-default) for requests in flight, and then returns. A container that sends `SIGTERM`
-and waits gets a clean drain without anything added.
+`ListenAndServe` traps `SIGINT` and `SIGTERM` and shuts down gracefully on either.
+`App.Shutdown(ctx)` does the same when you call it yourself. The order is fixed:
 
-Every plugin's `Shutdown` runs as part of that, which is where a plugin flushes
-whatever it was holding.
+1. **Drain.** Every plugin implementing `DrainHook` hears `OnDrain()`, once — a
+   health plugin turns its readiness check false here. Keep-alives are turned off,
+   so each kept-alive connection closes after its next response and its client
+   reconnects through the balancer. The port stays open and requests are served as
+   normal, for `Server.DrainDelay`.
+2. **Streams.** Development reload streams and plugin streams are closed; they
+   never end on their own.
+3. **Server.** The port closes and requests in flight get up to
+   `Server.ShutdownTimeout` (10s by default) to finish.
+4. **Plugins.** Every plugin's `Shutdown` runs, which is where a plugin flushes
+   whatever it was holding.
+
+`DrainDelay` is 0 by default: no wait, and a single instance behind nginx, Caddy
+or Cloudflare stops as fast as it always has. Set it when a load balancer has to
+notice the instance is leaving before the port closes — a few seconds longer than
+its readiness check takes to fail:
+
+```go
+app, err := collage.New(&collage.Config{
+	Server: collage.ServerConfig{
+		DrainDelay:      10 * time.Second,
+		ShutdownTimeout: 10 * time.Second,
+	},
+})
+```
+
+The two add up. On a signal, `ShutdownTimeout` starts when the drain ends, so a
+stop can take `DrainDelay + ShutdownTimeout`. Whatever stops the process has to
+wait longer than that sum before it kills it:
+
+- **systemd:** `TimeoutStopSec` greater than the sum. The unit
+  `collage build -i` writes uses 30s, which covers the defaults; raise it with
+  `DrainDelay`.
+- **Kubernetes:** `terminationGracePeriodSeconds` greater than the sum. Point the
+  probes at the [`elagoht/health`](https://github.com/Elagoht/collage-health)
+  plugin's endpoints, so readiness fails as soon as the drain starts:
+
+```yaml
+spec:
+  terminationGracePeriodSeconds: 30   # > DrainDelay + ShutdownTimeout
+  containers:
+    - name: app
+      readinessProbe:
+        httpGet: { path: /readyz, port: 8080 }
+        periodSeconds: 2
+      livenessProbe:
+        httpGet: { path: /healthz, port: 8080 }
+```
+
+Pressing Ctrl-C twice — a second `SIGINT` or `SIGTERM` — ends the drain's wait at
+once and goes straight on to stopping the server. A `Shutdown(ctx)` whose ctx is
+done ends it too. In development mode `DrainDelay` is ignored, so restarts stay
+instant; `OnDrain` still fires. A `Shutdown` before anything serves tells the
+plugins and does not wait, since there is no traffic to drain.
 
 ## TLS, and what serves it
 

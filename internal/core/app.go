@@ -191,6 +191,13 @@ type ServerConfig struct {
 	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight
 	// requests.
 	ShutdownTimeout time.Duration
+	// DrainDelay is how long the server keeps serving after a shutdown starts,
+	// so a load balancer can see readiness fail and stop sending traffic before
+	// the port closes. Plugins implementing DrainHook are told when it starts.
+	// It comes before ShutdownTimeout, which then bounds the in-flight requests,
+	// so a stop can take DrainDelay + ShutdownTimeout. Zero, the default, does
+	// not wait. It is ignored in development mode.
+	DrainDelay time.Duration
 	// TrustedProxies are the proxies whose X-Forwarded-For collage.ClientIP
 	// believes, parsed from pkg/collage's strings. Empty trusts none.
 	TrustedProxies []netip.Prefix
@@ -400,6 +407,10 @@ type App struct {
 	// server is the running http.Server, or nil before ListenAndServe has started
 	// one.
 	server *http.Server
+	// listenAddr is the address the server's listener is bound to, set with
+	// server. With a configured port of 0 it is the only place the port the
+	// kernel chose is recorded, which is what lets a test dial the server.
+	listenAddr net.Addr
 	// listening is closed once ListenAndServe has finished deciding whether to
 	// serve — either because the server is accepting connections, or because the
 	// App was already shut down and it will not serve at all. Both paths close it,
@@ -427,6 +438,15 @@ type App struct {
 	shutdownOnce sync.Once
 	// shutdownErr is the result of the one shutdown, returned to every caller.
 	shutdownErr error
+
+	// drainOnce makes the drain run once. ListenAndServe's signal path drains
+	// before calling Shutdown, which drains again; the Once makes the second a
+	// no-op, so a DrainHook hears of the drain exactly once.
+	drainOnce sync.Once
+	// hurry is closed by a second SIGINT or SIGTERM, which ends the drain's wait
+	// at once. hurryOnce guards closing it.
+	hurry     chan struct{}
+	hurryOnce sync.Once
 }
 
 // App deliberately carries no plugin.Host assertion of its own. Plugins receive a
@@ -466,6 +486,9 @@ func New(cfg Config) (*App, error) {
 		logger = defaultLogger()
 	}
 	warnTrustEverything(cfg.Server.TrustedProxies, logger)
+	if cfg.Server.DrainDelay > 0 && cfg.Server.ShutdownTimeout == 0 {
+		logger.Warn("collage: DrainDelay is set but ShutdownTimeout is 0; in-flight requests get no time to finish")
+	}
 
 	// The App exists before the template engine because plugins get to influence
 	// it. Only the fields Configure can reach are filled in here; the rest are set
@@ -620,6 +643,7 @@ func New(cfg Config) (*App, error) {
 	app.documents = make(map[string]*types.Document)
 	app.actions = make(map[string]*types.Action)
 	app.listening = make(chan struct{})
+	app.hurry = make(chan struct{})
 
 	return app, nil
 }
@@ -919,8 +943,14 @@ func (a *App) buildFailed(err error) (http.Handler, error) {
 // because it was asked to stop did not fail. A failure to bind the port, or a
 // plugin Init that failed, is returned as an error.
 //
-// The one goroutine it starts sends to a buffered channel and exits as soon as the
-// server stops, so it cannot outlive this call.
+// On the first signal it drains: DrainHook plugins are told, keep-alives are
+// turned off, and the server goes on serving for ServerConfig.DrainDelay. A
+// second signal ends that wait at once. Only then does ShutdownTimeout start, so
+// the drain does not eat into the time in-flight requests get.
+//
+// The goroutine that serves sends to a buffered channel and exits as soon as the
+// server stops; the one that waits for a second signal exits when this call
+// returns. Neither can outlive it.
 func (a *App) ListenAndServe() error {
 	handler, err := a.buildHandler()
 	if err != nil {
@@ -959,6 +989,7 @@ func (a *App) ListenAndServe() error {
 		return listener.Close()
 	}
 	a.server = server
+	a.listenAddr = listener.Addr()
 	a.mu.Unlock()
 	a.listenOnce.Do(func() { close(a.listening) })
 
@@ -980,6 +1011,20 @@ func (a *App) ListenAndServe() error {
 	case err := <-served:
 		return cleanStop(err)
 	case <-signals:
+		a.Logger().Info("collage: draining", "delay", a.cfg.Server.DrainDelay)
+		// A second signal — Ctrl-C pressed twice — ends the drain's wait. The
+		// goroutine exits when this call returns, signal or not; done is closed
+		// before signal.Stop runs, the defers being last in, first out.
+		done := make(chan struct{})
+		defer close(done)
+		go func() {
+			select {
+			case <-signals:
+				a.hurryNow()
+			case <-done:
+			}
+		}()
+		a.drain(context.Background())
 		a.Logger().Info("collage: shutting down", "timeout", a.cfg.Server.ShutdownTimeout)
 		ctx, cancel := context.WithTimeout(context.Background(), a.cfg.Server.ShutdownTimeout)
 		defer cancel()
@@ -992,6 +1037,40 @@ func (a *App) ListenAndServe() error {
 	}
 }
 
+// drain runs the one drain: plugins hear of it, kept-alive connections are
+// closed after their next response, and — with a server serving, a DrainDelay
+// and not in development — the server keeps serving for DrainDelay, or until
+// ctx is done or a second signal arrives.
+//
+// It takes mu only to read the server, and never holds it across the wait.
+func (a *App) drain(ctx context.Context) {
+	a.drainOnce.Do(func() {
+		a.plugins.Drain()
+		a.mu.Lock()
+		server := a.server
+		a.mu.Unlock()
+		if server == nil {
+			return
+		}
+		server.SetKeepAlivesEnabled(false)
+		delay := a.cfg.Server.DrainDelay
+		if delay <= 0 || a.DevMode() {
+			return
+		}
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+		case <-a.hurry:
+		}
+	})
+}
+
+// hurryNow ends the drain's wait, now or when it starts. It is safe to call more
+// than once.
+func (a *App) hurryNow() { a.hurryOnce.Do(func() { close(a.hurry) }) }
+
 // cleanStop maps http.ErrServerClosed — the error a server returns because it was
 // asked to stop — to nil, and passes every other error through unchanged.
 func cleanStop(err error) error {
@@ -1001,9 +1080,12 @@ func cleanStop(err error) error {
 	return err
 }
 
-// Shutdown stops the running server, then the plugin registry, joining whatever
-// errors either produced. ctx bounds how long the server waits for in-flight
-// requests; ListenAndServe's own signal handler bounds it with
+// Shutdown drains, then stops the running server, then the plugin registry,
+// joining whatever errors either produced. The drain tells DrainHook plugins,
+// turns keep-alives off and, with a server serving, a ServerConfig.DrainDelay and
+// not in development mode, keeps serving for DrainDelay. ctx bounds the drain's
+// wait and the server's wait for in-flight requests together; ListenAndServe's
+// own signal handler drains first and then bounds the rest with
 // ServerConfig.ShutdownTimeout.
 //
 // It is idempotent: the work runs exactly once and every caller — including one
@@ -1019,6 +1101,8 @@ func (a *App) Shutdown(ctx context.Context) error {
 
 // shutdown performs the one real shutdown Shutdown's sync.Once guards.
 func (a *App) shutdown(ctx context.Context) error {
+	a.drain(ctx)
+
 	a.mu.Lock()
 	a.closing = true
 	server := a.server

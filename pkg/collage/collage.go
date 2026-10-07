@@ -547,6 +547,7 @@ func toCoreConfig(cfg *Config) core.Config {
 			WriteTimeout:    cfg.Server.WriteTimeout,
 			IdleTimeout:     cfg.Server.IdleTimeout,
 			ShutdownTimeout: cfg.Server.ShutdownTimeout,
+			DrainDelay:      cfg.Server.DrainDelay,
 			MaxBodyBytes:    cfg.Server.MaxBodyBytes,
 			TrustedProxies:  trustedProxies,
 		},

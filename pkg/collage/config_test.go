@@ -218,6 +218,11 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: ErrNegativeDuration,
 		},
 		{
+			name:    "negative drain delay",
+			mutate:  func(c *Config) { c.Server.DrainDelay = -1 },
+			wantErr: ErrNegativeDuration,
+		},
+		{
 			name:    "negative template timeout",
 			mutate:  func(c *Config) { c.Template.Timeout = -1 },
 			wantErr: ErrNegativeDuration,

@@ -356,7 +356,8 @@ Restart=on-failure
 RestartSec=2
 
 # collage traps SIGTERM and drains in-flight requests, so the default KillSignal
-# is the right one; this only has to be longer than Server.ShutdownTimeout.
+# is the right one; this only has to be longer than Server.DrainDelay plus
+# Server.ShutdownTimeout.
 TimeoutStopSec=30
 
 [Install]
