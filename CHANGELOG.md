@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.50.0
 
 ### Breaking
 
