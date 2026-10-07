@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"time"
+	"unicode"
 )
 
 // DefaultContentSlot is the name of the slot a page's content fragment is bound to
@@ -29,7 +30,7 @@ type Redirect struct {
 func RedirectTextError(from, to string) error {
 	for _, field := range []struct{ name, value string }{{"from", from}, {"to", to}} {
 		for _, r := range field.value {
-			if r < 0x20 || r == 0x7f {
+			if unicode.IsControl(r) || r == '\u2028' || r == '\u2029' {
 				return fmt.Errorf("%w: %s %q holds a control character", ErrInvalidRedirect, field.name, field.value)
 			}
 		}
@@ -52,8 +53,11 @@ func (r *Redirect) EffectiveStatus() int {
 
 // Validate reports whether r is well-formed: From and To are both non-empty and
 // start with "/" (ErrInvalidPath), and StatusCode is 0 or one of 301, 302, 307, 308
-// (ErrInvalidRedirectStatus).
+// (ErrInvalidRedirectStatus). A control character in either is ErrInvalidRedirect.
 func (r *Redirect) Validate() error {
+	if err := RedirectTextError(r.From, r.To); err != nil {
+		return err
+	}
 	if r.From == "" || r.From[0] != '/' {
 		return fmt.Errorf("%w: redirect from %q must start with \"/\"", ErrInvalidPath, r.From)
 	}

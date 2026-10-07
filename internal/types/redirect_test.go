@@ -16,6 +16,9 @@ func TestRedirectTextError(t *testing.T) {
 		{"/old", "/new\n/evil 301", true},
 		{"/old\t", "/new", true},
 		{"/old", "/new\x7f", true},
+		{"/old\u0085", "/new", true},
+		{"/old", "/new\u2028", true},
+		{"/old", "/new\u2029", true},
 	}
 	for _, test := range tests {
 		err := RedirectTextError(test.from, test.to)
