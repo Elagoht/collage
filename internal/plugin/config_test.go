@@ -55,3 +55,16 @@ func TestPluginConfig(t *testing.T) {
 		t.Error("PluginConfig changed the caller's defaults struct")
 	}
 }
+
+// A section that is not JSON is an error, and the defaults come back untouched —
+// their map too, since nothing was decoded.
+func TestPluginConfig_SyntaxError(t *testing.T) {
+	defaults := limits{Limit: 10, Window: "1m", Extra: map[string]string{"a": "1"}}
+	got, err := PluginConfig(source(`{"extra": {"b": "2"}, "limit": `), defaults)
+	if err == nil || !strings.Contains(err.Error(), `collage: plugin "test/p" configuration`) {
+		t.Fatalf("err = %v, want the plugin's configuration error", err)
+	}
+	if got.Limit != 10 || got.Window != "1m" || len(got.Extra) != 1 || got.Extra["a"] != "1" {
+		t.Errorf("got %+v, want the defaults untouched", got)
+	}
+}
