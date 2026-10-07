@@ -154,8 +154,9 @@ itself by the differential test. The checker mirrors `evalArg`:
   taken of an addressable value; otherwise a definite error ("wrong type for
   value"). An unknown value, a `reflect.Value` parameter, and anything the rules
   leave in doubt are not judged;
-- `slice` of a kind that is not a string, slice or array is a definite error; an
-  array whose addressability is in doubt is not judged.
+- `slice` of a kind that is not a string, slice or array is a definite error, and
+  so is `slice` of an array the addressability model knows to be unaddressable
+  (text/template cannot slice it); an array in doubt is not judged.
 
 Every rule lands with differential cases both ways (a call that fails and a
 neighbouring one that renders) before it reports anything.
