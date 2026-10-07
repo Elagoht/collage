@@ -243,11 +243,13 @@ func (r *Registry) CloseStreams() {
 
 // Drain tells every plugin implementing DrainHook that the drain has started, in
 // registration order. A panic in one is contained, so the others still hear of
-// it. A nil Registry does nothing.
+// it, and is logged at Warn naming the plugin. A nil Registry does nothing.
 func (r *Registry) Drain() {
 	for _, p := range r.snapshot() {
 		if hook, ok := p.(DrainHook); ok {
-			_ = safeCall(func() error { hook.OnDrain(); return nil })
+			if err := safeCall(func() error { hook.OnDrain(); return nil }); err != nil {
+				r.logOrDefault().Warn("collage: drain hook panicked", "plugin", p.Name(), "err", err)
+			}
 		}
 	}
 }

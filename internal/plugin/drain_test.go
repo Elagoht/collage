@@ -1,6 +1,8 @@
 package plugin
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -32,4 +34,21 @@ func TestRegistry_DrainInOrderAndContainsPanics(t *testing.T) {
 	}
 	var nilRegistry *Registry
 	nilRegistry.Drain()
+}
+
+// A drain hook that panics is logged at Warn with its plugin's name: a silent
+// failure would leave readiness green through the drain.
+func TestRegistry_DrainLogsAPanic(t *testing.T) {
+	var buf bytes.Buffer
+	r := NewRegistry(slog.New(slog.NewTextHandler(&buf, nil)))
+	mustRegister(t, r, &drainPlugin{testPlugin: testPlugin{name: "a", log: &callLog{}}, panics: true})
+	mustRegister(t, r, &drainPlugin{testPlugin: testPlugin{name: "b", log: &callLog{}}})
+	r.Drain()
+	out := buf.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "drain hook panicked") || !strings.Contains(out, "plugin=a") {
+		t.Errorf("log = %q, want a Warn naming plugin a", out)
+	}
+	if strings.Contains(out, "plugin=b") {
+		t.Errorf("log = %q, plugin b did not panic", out)
+	}
 }

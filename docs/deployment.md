@@ -135,7 +135,8 @@ wait longer than that sum before it kills it:
   `DrainDelay`.
 - **Kubernetes:** `terminationGracePeriodSeconds` greater than the sum. Point the
   probes at the [`elagoht/health`](https://github.com/Elagoht/collage-health)
-  plugin's endpoints, so readiness fails as soon as the drain starts:
+  plugin's endpoints, so readiness fails as soon as the drain starts (see
+  [Health checks](#health-checks) if your project has a `/healthz` document):
 
 ```yaml
 spec:
@@ -278,17 +279,27 @@ keeps its pages on disk and does not need this.
 
 ## Health checks
 
-A project scaffolded with the demos (`collage new --template demo`)
-answers `/healthz` with JSON — `{"status": "ok", "date": "..."}`, the current time
-in UTC — from `documents/health.go`. It is a document rather than a page — bytes and
-a content type, no templates — so a health check cannot start failing because a
-template did. A minimal project has no `/healthz`; copy that file, or write the
-few lines it takes, before pointing a platform at it.
+Liveness and readiness come from the
+[`elagoht/health`](https://github.com/Elagoht/collage-health) plugin: `/healthz`
+answers `200` while the process serves requests, and `/readyz` answers `200`
+until a check of yours fails or a drain starts, when it turns `503`. Point every
+platform at those two paths — the Kubernetes probes in
+[Graceful shutdown and draining](#graceful-shutdown-and-draining), or a load
+balancer's health check at `/readyz` in front of a systemd unit — so readiness
+fails as soon as the drain starts. List the plugin before any plugin that can
+refuse or answer a request; its README says why and in which order.
 
-Point your platform's liveness check at it. It reports that the process is up and
-serving, which is what a liveness check is for; a readiness check that also wants to
-know whether your database is reachable is a document of your own, written the same
-way.
+A project scaffolded with the demos (`collage new --template demo`) ships a
+`/healthz` document, `documents/health.go`. Once `elagoht/health` is added, the
+plugin's middleware answers `/healthz` first and the document is never reached;
+startup does not catch this, because the plugin checks pages, not documents.
+Delete the document, or move the plugin's liveness endpoint with `livePath`.
+
+A project without the plugin can still answer its probes with documents of its
+own — bytes and a content type, no templates, so a check cannot start failing
+because a template did. The demo's `documents/health.go` is one to copy for
+liveness. Such a readiness document does not know about the drain, though, so it
+keeps answering `200` until the port closes.
 
 ## A static site instead
 

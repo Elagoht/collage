@@ -206,6 +206,21 @@ streams without waiting for them. A handler served through `Handle` can push its
 write deadline forward with `http.NewResponseController(w).SetWriteDeadline`, and
 take the connection over with `Hijack`, as it could on a bare `net/http` server.
 
+A plugin that must know the server is about to stop taking traffic — readiness
+turning false, new work refused — implements `DrainHook`:
+
+```go
+func (p *Plugin) OnDrain() { p.draining.Store(true) }
+```
+
+`OnDrain` is called once, when the drain starts: before `ServerConfig.DrainDelay`
+is waited out and before `CloseStreams`. It must not block — the server goes on
+serving while the drain lasts, and a slow hook delays every step after it. A
+panic in it is contained and logged at Warn with the plugin's name. Like
+`Shutdown`, it reaches every registered plugin, including one whose `Init` never
+ran — a `Shutdown` before the application started — or failed and was rolled
+back, so it must tolerate being called on a plugin that was never initialised.
+
 `Host` has no `Documents` method, and that is deliberate rather than an
 oversight: nothing outside the framework's own build step reads the document
 registry today (see `internal/core/document.go`'s `Documents`, which
@@ -247,6 +262,8 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike; `ev.Paths` names the URL paths dropped | nothing |
 | `ErrorHook` | `OnError` | On any failure while serving a request — a page, a document, or a mounted asset alike | nothing |
 | `BuildFinishedHook` | `OnBuildFinished` | Once, when a static build has written every file | reports with `ev.Warn`, `ev.Error` |
+| `StreamCloser` | `CloseStreams` | Once, when shutdown begins, before the server waits for open requests (see "Streams and shutdown") | nothing |
+| `DrainHook` | `OnDrain` | Once, when the drain starts, before `DrainDelay` and `CloseStreams`; may reach a plugin whose `Init` never ran or failed (see "Streams and shutdown") | nothing |
 
 Two consequences of where `OnAfterRender` sits are worth stating plainly:
 
@@ -555,7 +572,11 @@ what earlier ones changed.
    startup and rolls back: every already-initialised plugin gets `Shutdown`, in
    reverse order, and the failing plugin does not (it never finished
    initialising).
-3. `Shutdown` — in reverse registration order, *after* the HTTP server has
+3. `OnDrain` — once, when a shutdown starts, for a `DrainHook`: before
+   `DrainDelay`, before `CloseStreams` and before the server stops. A `Shutdown`
+   before the application started calls it too, without waiting, on plugins whose
+   `Init` never ran.
+4. `Shutdown` — in reverse registration order, *after* the HTTP server has
    stopped, so a plugin is never torn out from under an in-flight request. Unlike
    `Init`, it never stops early: every plugin is given its chance and the failures
    are joined.

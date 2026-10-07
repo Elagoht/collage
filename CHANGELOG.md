@@ -16,7 +16,10 @@
   yourself, that ctx bounds the drain and the in-flight requests together, and
   a ctx that is done ends a drain already under way.
 - **`DrainHook`.** A plugin implementing `OnDrain()` is told once, when the drain
-  starts, even with no delay; a panic in one is contained.
+  starts, even with no delay; a panic in one is contained and logged at Warn
+  with the plugin's name. A `Shutdown` before `ListenAndServe` calls `OnDrain`
+  too, without waiting, since nothing is serving — on plugins whose `Init` never
+  ran.
 
 Nothing changes by default: `DrainDelay` is 0, which does not wait. The signal
 path now logs `collage: draining` before `collage: shutting down`.
