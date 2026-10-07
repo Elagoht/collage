@@ -171,6 +171,7 @@ func TestCheck_ArgumentTypes(t *testing.T) {
 		{"addressable value for a pointer", `{{ptrUser .Owner}}`, reflect.PointerTo(argsType), nil},
 		{"slice element for a pointer", `{{range .Cards}}{{ptrUser .Owner}}{{end}}`, argsType, nil},
 		{"map value may be absent", `{{ptrUser .Users.u}}`, argsType, nil},
+		{"method of a map value that may be absent", `{{.Datas.d.Take "x"}}`, argsType, nil},
 		{"pointer for a value", `{{valUser .Author}}`, argsType, nil},
 		{"implements the interface", `{{stringer .Stamp}}`, argsType, nil},
 		{"does not implement the interface", `{{stringer .Owner}}`, argsType,

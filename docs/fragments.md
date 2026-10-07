@@ -622,8 +622,9 @@ and `nil` are false.
   `map[string]any`'s entries, an `error` — could hold anything, so nothing read
   from one is reported. Nor is anything read from a `reflect.Value` a method or
   function returns, which `text/template` unwraps into whatever it holds. A
-  function `call` invokes is checked like any other: its argument count, and
-  what it returns.
+  function `call` invokes is checked like any other: its argument count, the
+  types of what it is passed (as `call` itself converts them), and what it
+  returns.
 - **A fragment with no data.** Reading a field of nil data is not an error in
   `html/template`: `{{.Title}}` renders nothing. A fragment without `WithData`,
   or with `collage.Effect`, is still walked, but only its function calls are
@@ -633,8 +634,9 @@ and `nil` are false.
 - **An argument whose fit the render decides.** A value of an interface type,
   a `reflect.Value`, a function parameter of type `any` or `reflect.Value`, and
   a map entry handed to a parameter that can be nil — a key the map does not
-  hold arrives as nil, which that parameter takes — are not judged; nor is an
-  index out of range. A plugin's render functions are parsed with a stand-in
+  hold arrives as nil, which that parameter takes — are not judged; nor are the
+  arguments of a method of a value read by a map key, which the render never
+  calls when the key is missing; nor is an index out of range. A plugin's render functions are parsed with a stand-in
   that takes anything, so their arguments are left to the plugin.
 
 ### Reading the error

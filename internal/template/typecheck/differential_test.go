@@ -251,6 +251,8 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 		`{{ptrUser .Owner}}`, `{{ptrUser .Author}}`, `{{valUser .Author}}`, `{{valUser .Owner}}`,
 		`{{range .Cards}}{{ptrUser .Owner}}{{end}}`, `{{range .Users}}{{ptrUser .}}{{end}}`,
 		`{{ptrUser (index .Cards 0).Owner}}`, `{{ptrUser .Users.missing}}`, `{{stringer .Users.missing}}`,
+		`{{.Datas.missing.Take "x"}}`, `{{$d := .Datas.missing}}{{$d.Take "x"}}`, `{{.Title | .Datas.missing.Take}}`,
+		`{{define "p"}}{{.Take "x"}}{{end}}{{template "p" .Datas.missing}}`,
 		`{{with .Owner}}{{ptrUser .}}{{end}}`, `{{$o := .Owner}}{{ptrUser $o}}`,
 		`{{cardsf .Cards}}`, `{{cardsf .Fixed}}`, `{{cardsf .Owner}}`,
 		`{{range .Cards}}{{upper .}}{{end}}`, `{{with .Title}}{{upper .}}{{end}}`,
@@ -348,6 +350,7 @@ type argData struct {
 	PStamp pstamp
 	PSPtr  *pstamp
 	Users  map[string]user
+	Datas  map[string]argData
 	ByNum  map[int]string
 	BySlug map[slug]string
 	ByPtr  map[*user]string
@@ -384,7 +387,7 @@ func filledArgs() argData {
 		Count: 2, Small: 1, Ratio: 1.5, Flag: true, Title: "title", Slug: "s",
 		Owner: user{Name: "o"}, Author: &user{Name: "a"}, Cards: cards, Fixed: fixed, PFix: &fixed, PS: &cards,
 		Arrs: [][1]int{{1}}, ArrMap: map[string][1]int{"a": {1}}, PSPtr: &pstamp{},
-		Users: map[string]user{"u": {Name: "u"}}, ByNum: map[int]string{0: "z", 1: "a"},
+		Users: map[string]user{"u": {Name: "u"}}, Datas: map[string]argData{"d": {}}, ByNum: map[int]string{0: "z", 1: "a"},
 		BySlug: map[slug]string{"s": "x"}, ByPtr: map[*user]string{}, Meta: map[string]string{"anything": "m"},
 		Nested: map[int]map[string]int{1: {"a": 1}}, Any: "x", F: reflect.ValueOf("f"),
 		Fn64: func(f float64) float64 { return f }, FnI8: func(n int8) int8 { return n },

@@ -184,20 +184,21 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 	var result value
 	var method reflect.Type
 	var name string
+	var absent bool
 	before := w.reported
 	switch n := cmd.Args[0].(type) {
 	case *parse.FieldNode:
 		w.at = n
 		name = n.Ident[len(n.Ident)-1]
-		result, method = w.chain(n, dot, n.Ident, argc)
+		result, method, absent = w.chain(n, dot, n.Ident, argc)
 	case *parse.ChainNode:
 		w.at = n
 		name = n.Field[len(n.Field)-1]
-		result, method = w.chain(n, w.arg(n.Node, dot, vars), n.Field, argc)
+		result, method, absent = w.chain(n, w.arg(n.Node, dot, vars), n.Field, argc)
 	case *parse.VariableNode:
 		w.at = n
 		name = n.Ident[len(n.Ident)-1]
-		result, method = w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], argc)
+		result, method, absent = w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], argc)
 	case *parse.NilNode:
 		// nil is a value only as an argument; as a command it always fails.
 		w.at = n
@@ -215,7 +216,11 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 		return unknown
 	}
 	// A method's arguments are judged against its parameters, and the first
-	// that fails stops it, as in text/template's evalCall.
+	// that fails stops it, as in text/template's evalCall. A method of a value
+	// that may be absent may never be called, so its arguments are only walked.
+	if absent {
+		method = nil
+	}
 	args := cmd.Args[1:]
 	for i, arg := range args {
 		w.typedArg(cmd, name, i, arg, param(method, true, i), dot, vars)
@@ -234,13 +239,13 @@ func (w *walker) arg(node parse.Node, dot value, vars []variable) value {
 	w.at = node
 	switch n := node.(type) {
 	case *parse.FieldNode:
-		v, _ := w.chain(n, dot, n.Ident, 0)
+		v, _, _ := w.chain(n, dot, n.Ident, 0)
 		return v
 	case *parse.ChainNode:
-		v, _ := w.chain(n, w.arg(n.Node, dot, vars), n.Field, 0)
+		v, _, _ := w.chain(n, w.arg(n.Node, dot, vars), n.Field, 0)
 		return v
 	case *parse.VariableNode:
-		v, _ := w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], 0)
+		v, _, _ := w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], 0)
 		return v
 	case *parse.PipeNode:
 		return w.eval(n, dot, vars)
@@ -259,23 +264,26 @@ func (w *walker) arg(node parse.Node, dot value, vars []variable) value {
 }
 
 // chain resolves names one after another from recv; only the last may be given
-// arguments. It returns the last value, and the type of the method the last
-// name calls, or nil. Whatever follows a key a map may not hold may be absent
-// too: text/template carries the missing value down the chain.
-func (w *walker) chain(node parse.Node, recv value, names []string, argc int) (value, reflect.Type) {
+// arguments. It returns the last value, the type of the method the last name
+// calls, or nil, and whether what that name is read from may be absent.
+// Whatever follows a key a map may not hold may be absent too: text/template
+// carries the missing value down the chain, and calls no method on it, so
+// neither are that method's arguments evaluated.
+func (w *walker) chain(node parse.Node, recv value, names []string, argc int) (value, reflect.Type, bool) {
 	var method reflect.Type
+	absent := recv.absent
 	for i, name := range names {
 		n := 0
 		if i == len(names)-1 {
 			n = argc
 		}
-		absent := recv.absent
+		absent = recv.absent
 		recv, method = w.field(node, recv, name, n)
 		if absent && recv.known() {
 			recv.absent = true
 		}
 	}
-	return recv, method
+	return recv, method, absent
 }
 
 func declare(vars []variable, name string, v value) []variable {
