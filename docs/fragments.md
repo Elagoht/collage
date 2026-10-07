@@ -79,36 +79,54 @@ execute one at a time, in tree order, so `{{hoist}}` and everything else that de
 on ordering behaves exactly as before.
 
 **Parent before child is preserved.** A child's handler starts only after its
-parent's has returned, so a parent putting something in `SharedData` for its children
+parent's has returned, so a parent storing a value under a key for its children
 to read still works, and so does a child reading a path parameter its parent
 resolved.
 
 **Siblings run at the same time**, and that is the one thing that is genuinely
 different. Three consequences follow, in order of how likely they are to matter.
 
-*Read and write `SharedData` through `Get` and `Set`, not as a bare map.* Two
-siblings writing a map directly is a data race. `Get` and `Set` hold the render's
-lock. `collage.Get[T](rc, key)` reads a value as the type it was stored as, so a
-read needs no type assertion: `post, ok := collage.Get[Post](rc, "post")`.
+*Share values through a `collage.Key`.* A key is a name and a type, declared once at
+package level; `Set` stores a value under it for this render and `Get` reads it back
+as that type, so a read needs no type assertion and a write of the wrong type does
+not compile. Both hold the render's lock, so siblings can use them at once:
+
+```go
+var postKey = collage.NewKey[Post]("post")
+
+postKey.Set(rc, post)          // in a parent's data handler
+post, ok := postKey.Get(rc)    // in a child's; ok is false if nothing was set
+```
+
+A key is its name *and* its type: `NewKey[Post]("post")` and `NewKey[Draft]("post")`
+are two keys holding two values, and two `NewKey[Post]("post")` made in different
+files are one. `With` derives a key per value from a declared one —
+`articleKey.With(slug)` is named `article:<slug>` and holds the same type — and chains,
+`boardKey.With(id).With("filter")`. `NewKey` panics on an empty name, at the line
+that declared it.
 
 *Prefer `Once` to a read-then-write.* This shape has a hole in it:
 
 ```go
-if v, ok := rc.Get(key); ok { return v.(Article), nil }
+key := articleKey.With(slug)
+if article, ok := key.Get(rc); ok { return article, nil }
 article, err := api.Article(ctx, slug)   // both siblings are here at once
-rc.Set(key, article)
+key.Set(rc, article)
 ```
 
 Both siblings miss the `Get`, both fetch, and the page quietly asks the upstream
 twice. `Once` closes it — the first caller fetches, the rest wait for it:
 
 ```go
-article, err := collage.Once(rc, "article:"+slug, func(ctx context.Context) (Article, error) {
+var articleKey = collage.NewKey[Article]("article")
+
+article, err := collage.Once(rc, articleKey.With(slug), func(ctx context.Context) (Article, error) {
 	return api.Article(ctx, slug)
 })
 ```
 
-`Once` lives as long as one render. When the same data appears on many pages — an
+`Once` keeps its values apart from `Set`'s: a value `Once` fetched is not readable
+with `Get`. It lives as long as one render. When the same data appears on many pages — an
 author card on every post — use `collage.Cached`, which keeps it across pages and
 requests; see [caching](caching.md#caching-data-not-only-pages).
 
@@ -271,11 +289,12 @@ When the sections of a page come from content — a CMS's block list, in the ord
 editor chose — bind a resolver instead of fragments:
 
 ```go
+var sectionsKey = collage.NewKey[[]block]("sections")
+
 page := collage.NewFragment("sections", "pages/sections.html").
-	WithData(collage.DataHandler(loadSections)). // rc.Set("sections", blocks)
+	WithData(collage.DataHandler(loadSections)). // sectionsKey.Set(rc, blocks)
 	WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
-		value, _ := rc.Get("sections")
-		blocks, _ := value.([]block)
+		blocks, _ := sectionsKey.Get(rc)
 		fragments := make([]*collage.Fragment, 0, len(blocks))
 		for _, b := range blocks {
 			fragments = append(fragments, sectionFragments[b.Kind])
@@ -474,24 +493,23 @@ render that created it.
 | `Locale` | The resolved locale |
 | `PathParams`, `Param(name)` | Route parameters captured from the path |
 | `Page` | The page being rendered — **read-only, see below** |
-| `SharedData`, `Get`, `Set` | Values exchanged between fragments in one render |
+| `Key.Get(rc)`, `Key.Set(rc, v)` | Values exchanged between fragments in one render |
 | `Context()` | The underlying `context.Context` |
 
-`SharedData` works because a parent's data handler returns before its children's
+Keyed values work because a parent's data handler returns before its children's
 start: a fragment can read what an ancestor's handler stored. Siblings' handlers
-run concurrently, so read and write it through `Get` and `Set` (or `collage.Get`
-and `collage.Once`), never as a bare map — see
+run concurrently; `Get`, `Set` and `collage.Once` hold the render's lock — see
 [how a page's fragments run](#how-a-pages-fragments-run).
 
 > **`rc.Page` is not yours to write to.** Every other member of the render context
 > is request-scoped; `Page` is a pointer to the one `*collage.Page` the framework
 > registered, shared by every request that reaches it and by every goroutine
-> serving them. A data handler that writes `rc.Page.SEO["title"] = ...`, appends to
-> `rc.Page.DependencyTags`, or edits `rc.Page.Paths` is not customising one
+> serving them. A data handler that writes `rc.Page.Paths["en"] = ...`, appends to
+> `rc.Page.DependencyTags`, or edits `rc.Page.Redirects` is not customising one
 > response — it is mutating live framework state while other requests read it,
 > which is a data race in the precise sense: `go test -race` will report it, and
 > without the race detector it corrupts a map sooner or later. Read from it freely;
-> put anything you want to vary per request in `SharedData` or in the data your
+> put anything you want to vary per request under a `collage.Key` or in the data your
 > handler returns.
 
 ## How templates are checked

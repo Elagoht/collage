@@ -145,8 +145,9 @@ calls together rather than one after another.
 The split is deliberate. Output must be deterministic — the same page rendered twice
 from the same inputs is byte-identical, because it is cached, ETagged and
 conditionally re-served — and template execution in order gives that for free,
-while fetching in parallel is where the time goes. `SharedData` is locked because
-sibling handlers do run at once; `collage.Once` exists for the same reason.
+while fetching in parallel is where the time goes. The values fragments share
+through a `collage.Key` are locked because sibling handlers do run at once;
+`collage.Once` exists for the same reason.
 
 ## Why the page is not streamed
 
@@ -265,7 +266,7 @@ assertion to find.
 **`Host` limits reachability, not mutability, and the framework does not pretend
 otherwise.** `*collage.Page` is a plain struct of exported fields. `Host.Pages`
 and `Host.Page` return a defensive copy (the struct, plus its `Paths`,
-`Redirects`, `SEO`, and `DependencyTags` containers), but the per-request event
+`Redirects`, and `DependencyTags` containers), but the per-request event
 types deliberately carry the framework's *live* `*Page` — copying a page and its
 fragment tree on every render would defeat a cache-first framework's hot path. A
 plugin holding an event's `*Page` can write straight through it, and doing so

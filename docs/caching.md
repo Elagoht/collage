@@ -171,14 +171,16 @@ as well as its path.
 
 The page cache is kept per host; [`collage.Cached`](#caching-data-not-only-pages)
 is not. Its store is one per process, keyed only by the key you give it, so on a
-site serving several customers — elagoht/tenant, say — `Cached(rc, "posts", …)`
+site serving several customers — elagoht/tenant, say — `Cached(rc, postsKey, …)`
 fetches acme's posts once and hands them to globex too. Put the customer in the key,
 and in the tags, so invalidating one customer's data leaves the others' alone:
 
 ```go
+var postsKey = collage.NewKey[[]Post]("posts")
+
 func posts(ctx context.Context, rc *collage.RenderContext) ([]Post, []string, error) {
 	id, _ := tenant.ID(rc)
-	list, err := collage.Cached(rc, "posts:"+id, time.Hour, []string{"posts:" + id},
+	list, err := collage.Cached(rc, postsKey.With(id), time.Hour, []string{"posts:" + id},
 		func(ctx context.Context) ([]Post, error) { return db.Posts(ctx, id) })
 	return list, nil, err
 }
@@ -302,15 +304,25 @@ export of those pages, which renders every one of them, asks thirty times.
 `collage.Cached` stores what renders are made from:
 
 ```go
+var authorKey = collage.NewKey[Author]("author")
+
 func authorCard(ctx context.Context, rc *collage.RenderContext) (Author, []string, error) {
 	id := rc.Param("author")
-	author, err := collage.Cached(rc, "author:"+id, time.Hour, []string{"author:" + id},
+	author, err := collage.Cached(rc, authorKey.With(id), time.Hour, []string{"author:" + id},
 		func(ctx context.Context) (Author, error) { return api.Author(ctx, id) })
 	return author, nil, err
 }
 ```
 
 Thirty pages by two authors now fetch twice, served or exported.
+
+The key is a [`collage.Key`](fragments.md#how-a-pages-fragments-run), the same kind
+the fragments of one render share values through: a name and a type, declared once,
+with `With` adding the part that varies. A key is its name and its type together, so
+two keys of one name and different types hold two values rather than one read as the
+wrong type, and a `fetch` returning anything but the key's type does not compile.
+Tags stay plain strings — `"author:" + id` here — because they are what
+`InvalidateTags` is called with.
 
 - **One set of tags for both caches.** The tags are added to the page's own, so
   `InvalidateTags("author:" + id)` drops the stored author *and* every cached page

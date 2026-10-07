@@ -146,7 +146,7 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `InvalidateTags(ctx, tags...) error` | Invalidate cache entries by tag |
 | `Logger() *slog.Logger` | The application's structured logger |
 | `RegisterCommand(Command) error` | Contribute a CLI subcommand |
-| `Config(v) error` | Decode this plugin's section of `Config.PluginConfig` into `v` |
+| `ConfigReader` (embedded) | What `collage.PluginConfig(host, defaults)` reads this plugin's section of `Config.PluginConfig` through — see [Configuration](#configuration) |
 | `RegisterPage(*Page) error` | Contribute a page, on the same terms as the application's own |
 | `RegisterDocument(*Document) error` | Contribute a document |
 | `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
@@ -217,7 +217,7 @@ build the method for yet.
 
 **`Host` limits reachability, not mutability.** `*collage.Page` is a plain struct
 of exported fields. `Pages` and `Page` hand back a defensive copy — the struct,
-plus its `Paths`, `Redirects`, `SEO`, and `DependencyTags` containers — so writing
+plus its `Paths`, `Redirects`, and `DependencyTags` containers — so writing
 through one of those cannot reach the framework's own page. But the fragment
 pointers inside it (`LayoutFragment`, `ContentFragment`, `NotFoundPage`,
 `ErrorPage`) stay shared, and the per-request **event** types carry the live
@@ -241,7 +241,7 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** — including an error page, and a page an action answers with | nothing |
 | `BeforeActionHook` | `OnBeforeAction` | Before an action's handler: after the page's guards, the action's body limit and the forgery check. **Actions only**. `ev.Form()` parses the submission through the action's limit, once, for the handler too | `ev.Result`, which answers in the handler's place and stops dispatch |
 | `RequestHook` | `OnRequest` | First, before collage's request span, middleware and routing — also for a request answered before routing (an encoded slash, a dirty path); returns the context to serve under and a function told the final status | the request's context |
-| `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure) and `ev.DependencyTags`. **Pages only**, on the same terms | `ev.HTML`, `ev.Hoist(area, key, html)`; reports with `ev.Warn`, `ev.Error` |
+| `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure), `ev.DependencyTags` and `ev.Values` (read with a key's `In`). **Pages only**, on the same terms | `ev.HTML`, `ev.Hoist(area, key, html)`; reports with `ev.Warn`, `ev.Error` |
 | `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
 | `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored — for a page or a document alike | `ev.Skip`, `ev.TTL`, `ev.Tags` |
 | `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike; `ev.Paths` names the URL paths dropped | nothing |
@@ -624,7 +624,7 @@ app, err := collage.New(&collage.Config{
 
 | | `ConfigHost` (Configure) | `Host` (Init) |
 |---|---|---|
-| `DevMode`, `Logger`, `Config` | yes | yes |
+| `DevMode`, `Logger`, `collage.PluginConfig(host, …)` | yes | yes |
 | `AddTemplateFunc`, `AddRenderFunc` | yes | — |
 | `WrapMount` | yes | — |
 | `Pages`, `Page`, `InvalidateTags` | — | yes |
@@ -639,8 +639,10 @@ app, err := collage.New(&collage.Config{
 nonce a `BeforeRender` hook set, the render's locale:
 
 ```go
+var nonceKey = collage.NewKey[string]("csp:nonce")
+
 host.AddRenderFunc("nonce", func(rc *collage.RenderContext) any {
-	nonce, _ := collage.Get[string](rc, "csp:nonce")
+	nonce, _ := nonceKey.Get(rc)
 	return func() string { return nonce }
 })
 ```
@@ -694,12 +696,30 @@ in one and uses it in the other is not handed half of each.
 
 ### The render's own data
 
-`AfterRenderEvent.Data` is the render's `SharedData` — whatever the page's fragments
-exchanged while producing the HTML. It is how a plugin reaches what the page was
-built *from* rather than what it was rendered *into*: a structured-data plugin wants
-the article, not the markup it would otherwise parse back.
+`AfterRenderEvent.Values` are the values the page's fragments exchanged through
+keys while producing the HTML. It is how a plugin reaches what the page was built
+*from* rather than what it was rendered *into*: a structured-data plugin wants the
+article, not the markup it would otherwise parse back.
 
-What is in it is entirely the application's convention; the framework puts nothing
+A hook has no `RenderContext`, so it reads them with the key's `In`:
+
+```go
+var ArticleKey = collage.NewKey[Article]("jsonld:article")
+
+func (p *Plugin) OnAfterRender(ctx context.Context, ev *collage.AfterRenderEvent) error {
+	article, ok := ArticleKey.In(ev.Values)
+	if !ok {
+		return nil // this page stored no article
+	}
+	ev.Hoist("head", "jsonld", p.script(article))
+	return nil
+}
+```
+
+The values are opaque: a plugin reads only what it holds a key for, and there is no
+listing them. A plugin that wants the application to hand it something exports the
+key, and the application stores under it; a plugin that carries state from its own
+render functions to its hook keeps the key unexported. The framework puts nothing
 there.
 
 ## Configuration
@@ -722,14 +742,21 @@ A plugin reads its own section into its own typed struct:
 
 ```go
 func (p *Plugin) Configure(_ context.Context, host collage.ConfigHost) error {
-	p.cfg = Config{HTML: true} // defaults
-	return host.Config(&p.cfg) // overlaid by the application's section, if any
+	cfg, err := collage.PluginConfig(host, Config{HTML: true}) // defaults, overlaid by the application's section
+	p.cfg = cfg
+	return err
 }
 ```
 
-An absent section leaves the value alone, so defaults survive: "not configured" and
-"configured to the zero value" are different statements, and only this can tell them
-apart.
+`PluginConfig` takes `Host` or `ConfigHost` alike, and the type it returns is the
+type of the defaults. An absent, empty or `null` section returns the defaults
+unchanged, and a section is decoded over a copy of them, so what it leaves out keeps
+its default: "not configured" and "configured to the zero value" are different
+statements, and only this can tell them apart. A malformed section is an error naming
+the plugin — `collage: plugin "you/greeting" configuration: …` — returned with the
+defaults, so a plugin that chooses to carry on runs on something sensible. A map or
+slice inside the defaults is decoded into in place, so write the defaults as a
+literal in the call rather than sharing one value between calls.
 
 **A key matching no registered plugin is a startup error** (`ErrUnknownPluginConfig`).
 Ignoring `"elagoht/minimzer"` would leave the plugin running on defaults and the

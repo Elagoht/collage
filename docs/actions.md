@@ -87,9 +87,14 @@ The handler and the render share one `RenderContext`, so what the handler learne
 there to be read:
 
 ```go
-rc.Set("error", "a title is required")
+var formErrorKey = collage.NewKey[string]("error")
+
+formErrorKey.Set(rc, "a title is required")
 return &collage.ActionResult{Status: http.StatusUnprocessableEntity, Page: rc.Page}, nil
 ```
+
+The page's data handler reads it back with `formErrorKey.Get(rc)`, as the type the
+key declares.
 
 `rc.Page` is the page whose URL the action answers on — the page the form was posted
 from. The handler does not need to be handed its page, so it needs no variable
@@ -129,7 +134,9 @@ Both work. `Page` is not only for failures — a successful submission can perfe
 well answer with the page it was sent from, carrying "thanks, we have your message":
 
 ```go
-rc.Set("sent", true)
+var sentKey = collage.NewKey[bool]("sent")
+
+sentKey.Set(rc, true)
 return collage.RenderPage(rc.Page), nil
 ```
 
@@ -301,7 +308,9 @@ fragments that read the same data, use `Cached`, which keeps the value across
 renders for as long as its TTL — or until one of its tags is invalidated:
 
 ```go
-stats, err := collage.Cached(rc, "system:stats", time.Second, nil,
+var statsKey = collage.NewKey[monitor.Stats]("system:stats")
+
+stats, err := collage.Cached(rc, statsKey, time.Second, nil,
 	func(ctx context.Context) (monitor.Stats, error) { return monitor.Collect(ctx) })
 ```
 

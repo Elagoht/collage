@@ -1,5 +1,60 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- **Values shared in a render are read and written through typed keys.** A
+  `collage.Key[T]` is a name and a type, declared once at package level; the
+  value `Set` stores under it is the one `Get` reads, as `T`, and a write of
+  the wrong type does not compile. `Once` and `Cached` take keys too, and a
+  plugin's `OnAfterRender` reads a render's values with the key's `In`. Plugin
+  configuration is read with `collage.PluginConfig`, and `Page.SEO` is gone:
+
+  | Before | After |
+  | --- | --- |
+  | `rc.Set("k", v)` / `collage.Get[T](rc, "k")` | `k := collage.NewKey[T]("k")`, then `k.Set(rc, v)` / `k.Get(rc)` |
+  | `collage.Once(rc, "a:"+id, fetch)` | `collage.Once(rc, aKey.With(id), fetch)` |
+  | `collage.Cached(rc, "a:"+id, ttl, tags, fetch)` | `collage.Cached(rc, aKey.With(id), ttl, tags, fetch)` |
+  | `ev.Data["x"]` in `OnAfterRender` | the key the plugin that wrote it exports |
+  | `ev.Data[k]` in `OnAfterRender` | `key.In(ev.Values)` |
+  | `WithSEO(k, v)` | delete; head content goes through `HoistTitle` or `{{hoist}}` |
+  | `host.Config(&cfg)` | `cfg, err := collage.PluginConfig(host, defaults)` |
+
+  A key is its name *and* its type: `NewKey[A]("x")` and `NewKey[B]("x")` hold
+  two values, so one name read as two types no longer fails at runtime or reads
+  as missing. `With(part)` derives `name:part` with the same type. The values
+  `Set` stores and the ones `Once` fetches stay apart, as before. A `Cache`
+  store that hands `Cached` a value of another type is an error naming the key,
+  where it used to be `ErrCachedTypeMismatch`. `NewKey` panics on an empty name.
+  See [docs/fragments.md](docs/fragments.md#how-a-pages-fragments-run).
+- **`collage.PluginConfig(host, defaults)` replaces `host.Config(&cfg)`.** It
+  returns the plugin's section decoded over a copy of `defaults`; no section, or
+  an empty or `null` one, returns `defaults` unchanged. A malformed section
+  returns `defaults` with an error naming the plugin
+  (`collage: plugin "x" configuration: …`). A map or slice inside `defaults` is
+  still decoded into in place. See
+  [docs/plugins.md](docs/plugins.md#configuration).
+
+### Added
+
+- `collage.Key[T]`, `collage.NewKey[T](name)`, and its `With`, `Name`, `Get`,
+  `Set` and `In`.
+- `collage.RenderValues` and `AfterRenderEvent.Values`: a finished render's
+  values, read with `Key.In`.
+- `collage.PluginConfig` and `collage.ConfigReader`, which `Host` and
+  `ConfigHost` satisfy and only collage's hosts can.
+
+### Removed
+
+- `collage.Get[T]`, `RenderContext.Get`, `RenderContext.Set` and
+  `RenderContext.SharedData`.
+- `collage.ErrOnceTypeMismatch` and `collage.ErrCachedTypeMismatch`: a key of
+  one type cannot reach a value of another.
+- `Page.SEO` and `PageBuilder.WithSEO`: nothing read them.
+- `Host.Config` and `ConfigHost.Config`.
+- `AfterRenderEvent.Data`.
+
 ## v0.49.0
 
 ### Breaking
