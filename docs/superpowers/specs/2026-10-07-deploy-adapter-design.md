@@ -65,9 +65,12 @@ asked for:
   canonicalised, values in order). A capture that fails (a non-2xx status for a
   file the build wrote) is recorded as is and warned; the build does not fail on
   it.
-- Capture is on by default for every build; `collage build` gains no flag. Its
-  cost is two in-process requests per file at build time and nothing at
-  runtime.
+- Capture is on by default for every build that has a reader (a plugin
+  implementing `BuildFinishedHook`); `collage build` gains no flag. Its cost is
+  two in-process requests per file at build time and nothing at runtime. A
+  `BaseURL` with `https` makes the capture requests HTTPS, so scheme-dependent
+  headers (HSTS) come along. `BuiltFile.Captured` tells a file the build asked
+  for (even when the capture failed) from one the build made itself.
 
 **Redirects.** `BuildFinishedEvent` gains `Redirects []BuiltRedirect`:
 
@@ -131,7 +134,13 @@ It implements `BuildFinishedHook` only; at runtime it does nothing.
    every file under it shares the values).
 3. What remains is one rule per path.
 
-Rules are ordered `/*` first, then by path. Whatever a host cannot hold after
+`Content-Type`, `Content-Disposition` and `Content-Language` never go into a
+wildcard rule: a wildcard also reaches files other plugins write after the
+build. A captured file whose capture failed or was not 2xx blocks `/*` and its
+directory's wildcard.
+
+Rules are ordered `/*` first, then directory wildcards by path, then per-path
+rules by path (so a host's rule cap drops per-path rules first). Whatever a host cannot hold after
 compaction is reported as a warning naming the rules left out.
 
 **Writers** (formats and limits re-verified against each host's current
