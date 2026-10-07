@@ -138,6 +138,7 @@ jobs:
           - collage-bundle
           - collage-cdnpurge
           - collage-compress
+          - collage-deploy
           - collage-devtoolbar
           - collage-errortrack
           - collage-fail2ban
