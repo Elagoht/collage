@@ -169,25 +169,6 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 	}
 }
 
-// TestPageBuilder_WithSEO is not part of either spec example — WithSEO is exercised
-// separately here since it carries the one permitted new `any` in this package.
-func TestPageBuilder_WithSEO(t *testing.T) {
-	content := NewFragment("c", "c.html").Build()
-
-	page := NewPage("p").
-		WithContent(content).
-		WithSEO("title", "A blog post").
-		WithSEO("views", 42).
-		Build()
-
-	if page.SEO["title"] != "A blog post" {
-		t.Errorf(`SEO["title"] = %v, want "A blog post"`, page.SEO["title"])
-	}
-	if page.SEO["views"] != 42 {
-		t.Errorf(`SEO["views"] = %v, want 42`, page.SEO["views"])
-	}
-}
-
 func TestPageBuilder_StrategySelection(t *testing.T) {
 	content := NewFragment("c", "c.html").Build()
 

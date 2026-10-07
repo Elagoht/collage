@@ -871,7 +871,6 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 	page := newHomePage()
 	page.DependencyTags = []string{"homepage"}
 	page.Redirects = []*types.Redirect{{From: "/old", To: "/", Permanent: true}}
-	page.SEO = map[string]any{"title": "Original"} // any: Page.SEO's own value type
 
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -888,7 +887,6 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 	copied.Name = "mutated"
 	copied.Paths["en"] = "/mutated"
 	copied.Paths["tr"] = "/mutated"
-	copied.SEO["title"] = "Mutated"
 	copied.DependencyTags[0] = "mutated"
 	copied.Strategy = types.StrategyDynamic
 	copied.Redirects[0].To = "/mutated"
@@ -902,9 +900,6 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 	}
 	if _, added := page.Paths["tr"]; added {
 		t.Fatal("a path added to the copy reached the live page")
-	}
-	if page.SEO["title"] != "Original" {
-		t.Fatalf("live page SEO title = %v, want Original", page.SEO["title"])
 	}
 	if page.DependencyTags[0] != "homepage" {
 		t.Fatalf("live page tag = %q, want homepage", page.DependencyTags[0])

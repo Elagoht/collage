@@ -210,16 +210,6 @@ func (b *PageBuilder) WithDependency(tags ...string) *PageBuilder {
 	return b
 }
 
-// WithSEO sets the SEO metadata value under key. value is opaque to the framework —
-// it is stored as-is on Page.SEO and interpreted by whatever renders SEO metadata.
-func (b *PageBuilder) WithSEO(key string, value any) *PageBuilder { // any: Page.SEO is opaque framework metadata, mirrored here for the builder parameter
-	if b.page.SEO == nil {
-		b.page.SEO = make(map[string]any)
-	}
-	b.page.SEO[key] = value
-	return b
-}
-
 // WithAction gives this page's own URL a method it would otherwise refuse.
 //
 // This is what an HTML form needs: a form's action is the page it sits on, so the
