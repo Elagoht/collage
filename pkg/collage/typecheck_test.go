@@ -66,6 +66,19 @@ func TestRegister_TemplateTypeErrors(t *testing.T) {
 	}
 }
 
+// A body behind a literal false condition never runs, declaration or not, so
+// what it reads is not judged: html/template renders the page fine.
+func TestRegister_DeclaredLiteralConditionSkipsDeadBody(t *testing.T) {
+	files := fstest.MapFS{
+		"t/post.html": {Data: []byte(`{{if $x := false}}{{.Nope}}{{end}}{{.Title}}`)},
+	}
+	app := tcApp(t, files)
+	content := collage.NewFragment("post-body", "post.html").WithData(collage.Load(loadPost)).Build()
+	if err := app.RegisterPage(collage.NewPage("post").WithContent(content).WithPath("en", "/").Build()); err != nil {
+		t.Fatalf("RegisterPage error = %v, want nil", err)
+	}
+}
+
 func unwrapAll(err error) []error {
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		var out []error

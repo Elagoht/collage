@@ -132,6 +132,13 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 		`{{if "a"}}{{.Nope}}{{end}}`, `{{if 0}}{{else}}{{.Nope}}{{end}}`, `{{if 2}}{{else}}{{.Nope}}{{end}}`,
 		`{{with ""}}{{.Nope}}{{end}}`, `{{with "a"}}{{.Len}}{{end}}`, `{{with "a"}}{{.}}{{end}}`,
 		`{{with 0}}{{else}}{{.Nope}}{{end}}`, `{{with 0}}{{.Nope}}{{end}}`, `{{with 0.0}}{{.Nope}}{{end}}`,
+		`{{if $x := false}}{{.Nope}}{{end}}`, `{{if $x := 0}}{{.Nope}}{{end}}`, `{{if $x := ""}}{{.Nope}}{{end}}`,
+		`{{with $x := ""}}{{.Nope}}{{end}}`, `{{with $x := 0}}{{.Nope}}{{else}}{{$x}}{{end}}`,
+		`{{$x := 1}}{{if $x = false}}{{.Nope}}{{end}}`, `{{$x := 1}}{{if $x = 0}}{{.Nope}}{{end}}`,
+		`{{$x := 1}}{{with $x = ""}}{{.Nope}}{{end}}`, `{{if $x := not true}}{{.Nope}}{{end}}`,
+		`{{if $x := true}}{{.Nope}}{{end}}`, `{{if $x := 1}}{{.Nope}}{{end}}`, `{{with $x := "a"}}{{.Nope}}{{end}}`,
+		`{{$x := 0}}{{if $x = true}}{{.Nope}}{{end}}`, `{{$x := 0}}{{if $x = 1}}{{.Nope}}{{end}}`,
+		`{{if $x := false}}{{else}}{{.Nope}}{{end}}`, `{{if $x := 1}}{{else}}{{.Nope}}{{end}}`,
 
 		// Builtins and FuncMap functions.
 		`{{len .Count}}`, `{{len .Title}}`, `{{len .ByCol}}`, `{{index .Count 0}}`, `{{index .Cards 0 0}}`,

@@ -17,9 +17,11 @@ func (w *walker) branch(b *parse.BranchNode, dot value, vars []variable, with bo
 		body = cond
 	}
 	// A literal condition decides which side runs; the other is never walked.
+	// A declaration or assignment holds the pipeline's value, so it does not
+	// change the truth: {{if $x := false}} never runs its body either.
 	taken, constant := false, false
-	if len(b.Pipe.Decl) == 0 {
-		taken, constant = w.truth(b.Pipe, false)
+	if len(b.Pipe.Cmds) == 1 {
+		taken, constant = w.truth(b.Pipe.Cmds[0], false)
 	}
 	if !constant || taken {
 		w.list(b.List, body, inner)

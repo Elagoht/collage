@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.50.1
+
+### Fixed
+
+- **A literal condition that declares a variable no longer reports its dead
+  body.** The template type checker skips a branch a literal condition never
+  takes, but not when the condition declared or assigned a variable, so
+  `{{if $x := false}}{{.Nope}}{{end}}`, `{{if $x := 0}}…`, `{{with $x := ""}}…`
+  and `{{if $x = false}}…` were reported although html/template renders them
+  fine, and `RegisterPage` failed with `ErrTemplateType`. A declaration holds
+  the pipeline's value, so the literal now decides the branch either way.
+
 ## v0.50.0
 
 ### Breaking
