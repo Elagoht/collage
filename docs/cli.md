@@ -392,9 +392,19 @@ a `types` table describing the types those reach, so an editor can complete
 "types": {
   "blog.Post": {
     "kind": "struct",
-    "fields": [{"name": "Title", "type": "string"}, {"name": "Author", "type": "*blog.User"}],
+    "fields": [
+      {"name": "Base", "type": "blog.Base", "embedded": true},
+      {"name": "ID", "type": "int"},
+      {"name": "Title", "type": "string"},
+      {"name": "Author", "type": "*blog.User"},
+      {"name": "Comments", "type": "blog.Comments"},
+      {"name": "Related", "type": "blog.Tags"}
+    ],
     "methods": [{"name": "URL", "args": 0, "returns": "string"}]
   },
+  "blog.Base": {"kind": "struct", "fields": [{"name": "ID", "type": "int"}]},
+  "blog.Comments": {"kind": "slice", "elem": "blog.Comment"},
+  "blog.Tags": {"kind": "map", "key": "string", "elem": "[]blog.Post"},
   "blog.User": {"kind": "struct", "fields": [{"name": "Name", "type": "string"}]}
 }
 ```
@@ -406,8 +416,12 @@ a `types` table describing the types those reach, so an editor can complete
 - `types` holds every named type reachable from some fragment's data type —
   through fields, element and key types, and method results — keyed by its Go
   name, with its exported fields (promoted ones included) and the exported
-  methods of it and its pointer that return something. A type is listed once and
-  named everywhere else, so a recursive type ends. An unnamed struct is listed
+  methods of it and its pointer that return something. An exported embedded
+  field is a field too — a template reaches it as `{{.Base}}` — and carries
+  `"embedded": true`; the fields it promotes are listed beside it as usual. A
+  named pointer, slice, array, map or chan carries `elem`, the type it holds,
+  and a map also `key`. A type is listed once and named everywhere else, so a
+  recursive type ends. An unnamed struct is listed
   under its Go spelling; other unnamed composites are written inline in a type
   string (`[]blog.Comment`); standard library types such as
   `time.Time` and `template.HTML` are named, not described. It is left out when no

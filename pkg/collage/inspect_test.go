@@ -201,7 +201,15 @@ func TestInspectDataType(t *testing.T) {
 	}
 }
 
-type inspectUser struct{ Name string }
+type InspectBase struct{ ID int }
+type inspectFriends []inspectUser
+type inspectIndex map[string]*inspectUser
+type inspectUser struct {
+	InspectBase
+	Name    string
+	Friends inspectFriends
+	Index   inspectIndex
+}
 
 func TestInspectJSONDataTypes(t *testing.T) {
 	app, err := collage.New(&collage.Config{
@@ -228,7 +236,10 @@ func TestInspectJSONDataTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 	js := string(raw)
-	for _, want := range []string{`"dataType":null`, `"dataType":"nil"`, `"typeCheck":false`, `"dataType":"collage_test.inspectUser"`, `"types":{"collage_test.inspectUser"`} {
+	for _, want := range []string{`"dataType":null`, `"dataType":"nil"`, `"typeCheck":false`, `"dataType":"collage_test.inspectUser"`, `"types":{`, `"collage_test.inspectUser":{"kind":"struct"`,
+		`{"name":"InspectBase","type":"collage_test.InspectBase","embedded":true}`, `{"name":"ID","type":"int"}`,
+		`"collage_test.inspectFriends":{"kind":"slice","elem":"collage_test.inspectUser"}`,
+		`"collage_test.inspectIndex":{"kind":"map","key":"string","elem":"*collage_test.inspectUser"}`} {
 		if !strings.Contains(js, want) {
 			t.Errorf("inspect JSON lacks %s:\n%s", want, js)
 		}

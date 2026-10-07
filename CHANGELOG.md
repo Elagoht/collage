@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.51.1
+
+### Added
+
+- **`collage inspect`'s type table lists embedded fields and container element
+  and key types, for editors.** An exported embedded field, which a template
+  reaches as `{{.Base}}`, is now listed among the fields with
+  `"embedded": true`; the fields it promotes are listed as before. A named
+  pointer, slice, array, map or chan (`type Posts []Post`) now carries
+  `"elem"`, the type it holds, and a map also `"key"`. Both are additions: the
+  output's `version` is still `1`.
+
 ## v0.51.0
 
 ### Added

@@ -76,7 +76,7 @@ type itMapped struct {
 }
 
 func TestTypeTableShapes(t *testing.T) {
-	// promoted fields and methods; the embedded struct itself is not a field
+	// promoted fields and methods; an unexported embedded struct is not a field
 	tb := typeTable([]reflect.Type{reflect.TypeFor[itChildX]()})
 	c := tb["core.itChildX"]
 	if len(c.Fields) != 2 || c.Fields[0].Name != "ID" || len(c.Methods) != 1 || c.Methods[0].Name != "Label" {
@@ -110,5 +110,67 @@ func TestTypeTableShapes(t *testing.T) {
 	tb = typeTable([]reflect.Type{reflect.TypeFor[[]struct{ By itUser }]()})
 	if _, ok := tb["core.itUser"]; !ok {
 		t.Errorf("named type under []struct missing: %v", tb)
+	}
+}
+
+type ItEmbedded struct{ Code string }
+
+func (ItEmbedded) Tag() string { return "" }
+
+type itWithEmbedded struct {
+	ItEmbedded
+	*itUser
+	Name string
+}
+
+func TestTypeTableEmbedded(t *testing.T) {
+	tb := typeTable([]reflect.Type{reflect.TypeFor[itWithEmbedded]()})
+	e := tb["core.itWithEmbedded"]
+	byName := map[string]InspectedField{}
+	for _, f := range e.Fields {
+		byName[f.Name] = f
+	}
+	if f, ok := byName["ItEmbedded"]; !ok || !f.Embedded || f.Type != "core.ItEmbedded" {
+		t.Errorf("embedded field = %+v (%v), want ItEmbedded core.ItEmbedded embedded", f, ok)
+	}
+	if f, ok := byName["Code"]; !ok || f.Embedded {
+		t.Errorf("promoted Code = %+v (%v), want a plain field", f, ok)
+	}
+	if f, ok := byName["Name"]; !ok || f.Embedded {
+		t.Errorf("promoted Name through *itUser = %+v (%v)", f, ok)
+	}
+	if _, ok := byName["itUser"]; ok {
+		t.Error("an unexported embedded field is not a field a template can reach")
+	}
+	if _, ok := tb["core.ItEmbedded"]; !ok {
+		t.Error("the embedded type is not listed")
+	}
+}
+
+type itSlice []itUser
+type itArray [2]itUser
+type itMap map[string]itComment
+type itPtr *itUser
+type itChan chan itBase
+
+func TestTypeTableContainerElems(t *testing.T) {
+	tb := typeTable([]reflect.Type{
+		reflect.TypeFor[itSlice](), reflect.TypeFor[itArray](), reflect.TypeFor[itMap](),
+		reflect.TypeFor[itPtr](), reflect.TypeFor[itChan](),
+	})
+	for name, want := range map[string]InspectedType{
+		"core.itSlice": {Kind: "slice", Elem: "core.itUser"},
+		"core.itArray": {Kind: "array", Elem: "core.itUser"},
+		"core.itMap":   {Kind: "map", Key: "string", Elem: "core.itComment"},
+		"core.itPtr":   {Kind: "ptr", Elem: "core.itUser"},
+		"core.itChan":  {Kind: "chan", Elem: "core.itBase"},
+	} {
+		got := tb[name]
+		if got.Kind != want.Kind || got.Elem != want.Elem || got.Key != want.Key {
+			t.Errorf("%s = %+v, want %+v", name, got, want)
+		}
+	}
+	if s := tb["core.itUser"]; s.Elem != "" || s.Key != "" {
+		t.Errorf("a struct has no elem or key: %+v", s)
 	}
 }

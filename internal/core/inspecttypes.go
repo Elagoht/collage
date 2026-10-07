@@ -9,17 +9,23 @@ import (
 
 // InspectedType is the shape of a type a fragment's template can reach, for an
 // editor completing {{.}}: its exported fields and the exported methods of it
-// and its pointer.
+// and its pointer. A named pointer, slice, array, map or chan also names what
+// it holds: Elem, and Key for a map.
 type InspectedType struct {
 	Kind    string            `json:"kind"`
+	Key     string            `json:"key,omitempty"`
+	Elem    string            `json:"elem,omitempty"`
 	Fields  []InspectedField  `json:"fields,omitempty"`
 	Methods []InspectedMethod `json:"methods,omitempty"`
 }
 
-// InspectedField is one exported field, promoted ones included.
+// InspectedField is one exported field, promoted ones included. An embedded
+// field is listed too, as a template reaches it by its type's name ({{.Base}}),
+// and marked Embedded.
 type InspectedField struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Embedded bool   `json:"embedded,omitempty"`
 }
 
 // InspectedMethod is one exported method a template can call.
@@ -41,13 +47,19 @@ func typeTable(roots []reflect.Type) map[string]InspectedType {
 	register := func(t reflect.Type) {
 		seen[t] = true
 		entry := InspectedType{Kind: t.Kind().String()}
-		if t.Kind() == reflect.Struct {
+		switch t.Kind() {
+		case reflect.Struct:
 			for _, f := range reflect.VisibleFields(t) {
-				if f.IsExported() && !f.Anonymous {
-					entry.Fields = append(entry.Fields, InspectedField{Name: f.Name, Type: f.Type.String()})
+				if f.IsExported() {
+					entry.Fields = append(entry.Fields, InspectedField{Name: f.Name, Type: f.Type.String(), Embedded: f.Anonymous})
 					visit(f.Type)
 				}
 			}
+		case reflect.Map:
+			entry.Key = t.Key().String()
+			entry.Elem = t.Elem().String()
+		case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Chan:
+			entry.Elem = t.Elem().String()
 		}
 		pt := reflect.PointerTo(t)
 		for i := range pt.NumMethod() {
