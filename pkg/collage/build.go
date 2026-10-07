@@ -28,6 +28,14 @@ type WarningRecord = build.WarningRecord
 // finding. The pages were written; what was found is in BuildReport.Findings.
 var ErrBuildFindings = build.ErrFindings
 
+// ErrDuplicateRedirect is in a build's errors when two redirects — pages',
+// documents' or RedirectSource plugins' — share one From.
+var ErrDuplicateRedirect = build.ErrDuplicateRedirect
+
+// ErrRedirectShadowsFile is in a build's errors when a redirect's From is the
+// path of a file the build wrote ("/a" or "/a/" for a directory's index.html).
+var ErrRedirectShadowsFile = build.ErrRedirectShadowsFile
+
 // ErrOutputPathCollision is returned by Build when two pages would be written to
 // the same file — two patterns differing only in a trailing slash, or
 // StaticParams listing one set of values twice. It is reported before anything renders, so

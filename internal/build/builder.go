@@ -502,6 +502,12 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	report.Written = append(report.Written, assetWritten...)
 	errs = append(errs, assetErrs...)
 
+	// Every redirect the site declares, checked against each other and against
+	// the files just written: a static host answers a path with a file or a
+	// rule, and two rules or a rule over a file leave which one to the host.
+	redirects, redirectErrs := b.collectRedirects(urlPathsOf(outDirResolved, report.Written))
+	errs = append(errs, redirectErrs...)
+
 	// Last, so the checks see the build as it will be deployed.
 	capturer, captures := b.app.(ResponseCapturer)
 	finisher, finishes := b.app.(BuildFinisher)
@@ -527,6 +533,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 			}
 		}
 		event.Files = files
+		event.Redirects = redirects
 		if finishes {
 			if err := finisher.BuildFinished(ctx, event); err != nil {
 				errs = append(errs, err)
@@ -649,6 +656,90 @@ func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plug
 		ev.Warn("", "unstable-header", fmt.Sprintf("%s differs between two responses on %d path(s) (e.g. %s); a static host cannot carry it", name, u.count, u.first))
 	}
 	return nil
+}
+
+// ErrDuplicateRedirect is in a build's errors when two redirects — a page's, a
+// document's or a RedirectSource plugin's — share one From. A server answers
+// with whichever its router matches first; a static host's rules file holds
+// both, and which one a host honours is the host's to decide.
+var ErrDuplicateRedirect = errors.New("collage: two redirects from one path")
+
+// ErrRedirectShadowsFile is in a build's errors when a redirect's From is the
+// path of a file the build wrote: for a directory's index.html either "/a" or
+// "/a/". A static host serves the file or follows the rule depending on the
+// host, so the deployed site would not be the one that was built.
+var ErrRedirectShadowsFile = errors.New("collage: a redirect shadows a written file")
+
+// pluginRedirecter is implemented by a Renderer whose plugins declare
+// redirects: the application.
+type pluginRedirecter interface {
+	PluginRedirects() ([]plugin.BuiltRedirect, error)
+}
+
+// collectRedirects returns every redirect the site declares — every page's, in
+// registration order, built or not; then every document's; then every
+// RedirectSource plugin's — and the errors that fail the build: a plugin rule
+// with a status other than a redirect's or 410, two rules from one path, and a
+// rule from a path in written.
+func (b *Builder) collectRedirects(written map[string]bool) ([]plugin.BuiltRedirect, []error) {
+	var out []plugin.BuiltRedirect
+	var errs []error
+	for _, p := range b.app.Pages() {
+		for _, r := range p.Redirects {
+			out = append(out, plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "page:" + p.Name})
+		}
+	}
+	for _, d := range b.app.Documents() {
+		for _, r := range d.Redirects {
+			out = append(out, plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "document:" + d.Name})
+		}
+	}
+	if source, ok := b.app.(pluginRedirecter); ok {
+		rules, err := source.PluginRedirects()
+		if err != nil {
+			errs = append(errs, err)
+		}
+		for _, r := range rules {
+			switch r.Status {
+			case 301, 302, 307, 308, 410:
+				out = append(out, r)
+			default:
+				errs = append(errs, fmt.Errorf("%w: %d on the redirect from %q of %s; want 301, 302, 307, 308 or 410",
+					types.ErrInvalidRedirectStatus, r.Status, r.From, r.Source))
+			}
+		}
+	}
+
+	first := make(map[string]string, len(out))
+	for _, r := range out {
+		if source, ok := first[r.From]; ok {
+			errs = append(errs, fmt.Errorf("%w: %q from %s and from %s", ErrDuplicateRedirect, r.From, source, r.Source))
+		} else {
+			first[r.From] = r.Source
+		}
+		if written[r.From] {
+			errs = append(errs, fmt.Errorf("%w: %q from %s is a file the build wrote", ErrRedirectShadowsFile, r.From, r.Source))
+		}
+	}
+	return out, errs
+}
+
+// urlPathsOf is the set of URL paths a static host answers files with: each
+// file's path under outDir, and for a directory's index.html both "/a/" and
+// "/a".
+func urlPathsOf(outDir string, files []string) map[string]bool {
+	paths := make(map[string]bool, len(files))
+	for _, f := range files {
+		u := urlPathOf(outDir, f)
+		if u == "" {
+			continue
+		}
+		paths[u] = true
+		if dir, ok := strings.CutSuffix(u, "/"); ok && dir != "" {
+			paths[dir] = true
+		}
+	}
+	return paths
 }
 
 // ErrFindings is in a build's errors when a plugin reported an error-level

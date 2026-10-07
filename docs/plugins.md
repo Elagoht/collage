@@ -694,6 +694,14 @@ would make every plugin counting requests count renders nobody asked for.
 `BeforeRender` and `AfterRender` fire as a pair, so a plugin that sets something up
 in one and uses it in the other is not handed half of each.
 
+The header capture that follows the writes is different: it asks the
+application's handler for every written file's path, twice, so middleware and the
+request hooks — `PageResolved` included — do see those requests. A plugin that
+counts or limits traffic skips them with `collage.IsCapture(r.Context())`. A plugin
+whose redirects a static host should carry implements `collage.RedirectSource`;
+its rules reach `BuildFinishedHook` in `ev.Redirects`. See
+[deployment](deployment.md#static-hosts).
+
 ### The render's own data
 
 `AfterRenderEvent.Values` are the values the page's fragments exchanged through

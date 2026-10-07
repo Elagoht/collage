@@ -536,8 +536,9 @@ renders pages through `App.RenderPath` and documents through
 template set, the same fragment tree, the same data handlers, the same document
 handlers.
 
-**A static build runs your plugins, as the server does.** It does not go through
-`App.Handler()`, but `RenderPath` and `RenderDocumentPath` start the application
+**A static build runs your plugins, as the server does.** It does not render
+through `App.Handler()` (only its header capture asks it, after the files are
+written — see [static hosts](#static-hosts)), but `RenderPath` and `RenderDocumentPath` start the application
 first — memoised, exactly as `Handler` does — so plugin `Init` has run before the
 first page renders. Every page gets `OnBeforeRender` and `OnAfterRender`, and every
 document `OnDocumentRendered`, so a minifier that shapes the served site shapes the
@@ -664,6 +665,20 @@ collage.NewPage("post").
 
 Documents take the same `WithStaticParams`: a feed at `/feeds/{category}/rss.xml`
 lists its categories.
+
+### Static hosts
+
+After the files are written, the build asks `App.Handler()` for each one's path —
+twice, in-process — and records the status and headers it answers with on the
+`BuiltFile` that `BuildFinishedHook` receives, leaving out the ones about a
+single response and any that differ between the two answers. The hook's event
+also carries every redirect the site declares, in `Redirects`: pages', documents'
+and `collage.RedirectSource` plugins'. Two redirects from one path fail the
+build (`collage.ErrDuplicateRedirect`), and so does one from a path the build
+wrote (`collage.ErrRedirectShadowsFile`). Middleware sees the capture requests;
+one that counts traffic should skip them with `collage.IsCapture`. Collage
+writes no host files itself — `elagoht/deploy` writes them from the hook. See
+[deployment](deployment.md#static-hosts).
 
 ### Safety
 

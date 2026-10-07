@@ -271,3 +271,57 @@ which serves `dist/` the way a static host does — clean URLs, no directory
 listings, `404.html` with a 404, nothing cached. Opening `dist/index.html` from the
 file system does not work, because a `file://` page has no root and every absolute
 link in the export is broken.
+
+## Static hosts
+
+A server sends headers with every page and answers redirects; a static host sends
+what its own configuration files tell it to — Netlify's `_headers` and
+`_redirects`, Vercel's `vercel.json`, and so on. An export carries what the server
+would have said, so that a plugin can write those files.
+
+**Headers are captured.** Once every file is written, the build asks the
+application's own handler for each file's path — in-process, no network — twice,
+and records the status and the headers it answered with on the file
+(`BuiltFile.Status`, `BuiltFile.Headers`). Whatever your middleware and plugins
+set — `Cache-Control`, `Content-Security-Policy`, `X-Frame-Options` — comes along
+without being declared again. Left out:
+
+- headers about one response rather than the file: `Date`, `ETag`,
+  `Last-Modified`, `Content-Length`, `Set-Cookie`, `Vary`, `Content-Encoding`,
+  `Transfer-Encoding`, `Connection`, `Age`;
+- a header whose value differs between the two answers, such as a CSP nonce. A
+  file cannot carry a new one per reader, so it is left out and an
+  `unstable-header` warning names it;
+- the `404.html` pages and the root redirect, which the build makes itself.
+
+A path answered with something other than one 2xx is a `capture-status` warning,
+one not answered at all a `capture-failed` warning, and a build in development
+mode a `capture-dev-mode` warning — its `Cache-Control: no-store` is not what you
+want deployed. None of them fails the build.
+
+Middleware sees these requests. A plugin that counts or limits traffic —
+analytics, a rate limiter, a ban list — should let a request through untouched
+when `collage.IsCapture(r.Context())` is true: it is the build, not a reader.
+Middleware that sets headers should not skip it, since what it sets is what gets
+deployed.
+
+**Redirects reach the build hook.** `BuildFinishedEvent.Redirects` holds every
+redirect the site declares — pages' (`WithRedirect`, `WithPermanentRedirect`),
+documents', and every plugin implementing `collage.RedirectSource` — each with its
+status and where it came from. Two redirects from one path fail the build with
+`collage.ErrDuplicateRedirect`, and a redirect from a path the build wrote a file
+for (`/about` or `/about/` beside `about/index.html`) with
+`collage.ErrRedirectShadowsFile`: on a host, which one wins would be the host's
+call, not yours.
+
+**`elagoht/deploy` writes the host's files.** Collage itself writes none: the
+plugin takes the captured headers and the redirects from the build hook and
+writes them in the form the host you name reads, warning about whatever that host
+cannot carry:
+
+```json
+{ "elagoht/deploy": { "target": "netlify" } }
+```
+
+`target` is one of `netlify`, `cloudflare`, `vercel` or `github-pages`; without
+one the plugin writes nothing and says so.

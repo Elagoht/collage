@@ -1,5 +1,63 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- **A redirect with a control character in its `From` or `To` fails
+  registration with `ErrInvalidRedirect`.** `\r`, `\n`, any other control
+  character and the Unicode line and paragraph separators are refused by
+  `WithRedirect` and `WithPermanentRedirect` on pages and documents, and by
+  `Redirect.Validate` for a redirect built as a struct literal. Such a rule
+  could only ever break the redirect file a static host reads, or the
+  `Location` header a server sends.
+- **A static build now sends requests to the application's own handler: two
+  per written file, three when the first answer is the trailing-slash
+  redirect.** They are in-process — no network — and middleware and the
+  request hooks see them, so a plugin that counts or limits traffic
+  (analytics, a rate limiter, a ban list) now sees a build's paths. It should
+  skip a request for which `collage.IsCapture(r.Context())` is true. Middleware
+  that sets response headers must not skip it: what it sets is what the
+  deployed file is served with. A capture request never writes the response
+  cache and never shares a reader's render.
+
+### Added
+
+- **A static build records each file's response headers.** After every file is
+  written, the build asks the handler for each one's path twice and puts the
+  answer on the file: `BuiltFile.Status` and `BuiltFile.Headers`. Request-specific
+  headers are left out (`Date`, `ETag`, `Last-Modified`, `Content-Length`,
+  `Set-Cookie`, `Vary`, `Content-Encoding`, `Transfer-Encoding`, `Connection`,
+  `Age`, `X-Collage-Render-Time`), and so is a header whose value differs
+  between the two answers, such as a CSP nonce: a static file cannot carry it.
+  The 404 pages and the root redirect, which the build makes itself, are not
+  asked for. What the capture found is reported as warnings, never as a
+  failed build:
+  - `unstable-header` — a header left out because it differs between two
+    answers, once per header name with a count of paths;
+  - `capture-status` — a file answered with a non-2xx status, or with two
+    different statuses;
+  - `capture-failed` — a path not answered (each request has a deadline), or
+    the capture not run at all;
+  - `capture-dev-mode` — a build in development mode, whose headers (such as
+    `Cache-Control: no-store`) are not the ones to deploy.
+- **`collage.IsCapture(ctx)`** reports whether a request is the build's
+  capture.
+- **`BuildFinishedEvent.Redirects`** hands `BuildFinishedHook` every redirect
+  the site declares, as `collage.BuiltRedirect` (`From`, `To`, `Status`,
+  `Source`): every page's in registration order (`Source` `"page:<name>"`),
+  every document's (`"document:<name>"`), then every plugin's. `Status` is the
+  redirect's `EffectiveStatus()`.
+- **`collage.RedirectSource`**: a plugin with `Redirects() []BuiltRedirect`
+  has its rules carried by a static export. Their `Status` must be 301, 302,
+  307, 308 or 410 (a path that is gone), and a control character in one fails
+  the build, naming the plugin.
+- **`ErrDuplicateRedirect`** fails a build in which two redirects, from any
+  source, share one `From`, and **`ErrRedirectShadowsFile`** one in which a
+  redirect's `From` is a file the build wrote — `/about` or `/about/` for
+  `about/index.html`. On a static host either would be settled by the host's
+  own precedence, not by the application.
+
 ## v0.51.2
 
 ### Fixed
