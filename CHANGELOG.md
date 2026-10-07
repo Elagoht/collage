@@ -84,6 +84,7 @@
   and 301, 302, 307 and 308 need one. Any other `Status` fails the build with
   `ErrInvalidRedirectStatus`, and a malformed rule, or a control character in
   one, with `ErrInvalidRedirect`, naming the rule and the plugin.
+
 ### Fixed
 
 - **A static build no longer tries to render a page registered only with

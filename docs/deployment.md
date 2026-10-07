@@ -345,10 +345,12 @@ cannot carry:
 ```
 
 `target` is one of `netlify`, `cloudflare`, `vercel` or `github-pages`; without
-one the plugin writes nothing and says so. It records what it wrote in
+one the plugin writes nothing, removes what the last export wrote for a target,
+and says so. It records what it wrote in
 `.collage-deploy.json` and replaces those files on the next export into the same
 directory, so `collage export` without `-clean` works with it. A header every
 captured file shares goes in a `/*` rule, and `/*` also reaches the files other
 plugins write into the output — share cards, a search index — so `Content-Type`,
 `Content-Disposition` and `Content-Language` are never put there, only at each
-file's own path.
+file's own path; a `Content-Type` the file's extension implies (`text/html;
+charset=utf-8` for a page) is not written at all, and is left to the host.
