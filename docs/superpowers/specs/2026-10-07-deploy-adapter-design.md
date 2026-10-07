@@ -139,14 +139,17 @@ documentation during implementation):
 
 | Target | Headers | Redirects | Cannot carry → warning |
 |---|---|---|---|
-| `netlify` | `_headers` | `_redirects` | — |
-| `cloudflare` | `_headers` (100 rules) | `_redirects` (2000 static + 100 dynamic; 301/302/307/308) | 410; over a limit |
+| `netlify` | `_headers` | `_redirects` (301/302 only: 307 → 302, 308 → 301) | 410; the 307/308 distinction; placeholders with text around them |
+| `cloudflare` | `_headers` (100 rules) | `_redirects` (2000 static + 100 dynamic; 301/302/307/308) | 410; over a limit; placeholders with text around them; a catch-all whose base is a page |
 | `vercel` | `vercel.json` `headers` | `vercel.json` `redirects` (301/302/307/308) | 410; an existing `vercel.json` in the output is a build error, never overwritten |
 | `github-pages` | not written: one summary warning with the count of header names and paths lost | one meta-refresh page per literal `From` (`<link rel="canonical">`, `noindex`) | 410, the permanent/temporary distinction, patterned `From`s; also writes `.nojekyll` |
 
 Patterned redirects are translated to the host's syntax: `{name}` → `:name`,
 `{name...}` → `*` with the host's splat token (`:splat` on Netlify/Cloudflare,
-`:name*` on Vercel).
+`:name+` on Vercel: `:name*` would also match the catch-all's base and take its
+page). Amended during implementation against the hosts' current docs: Netlify
+supports only 301/302 (and 200/404), so 307/308 are written as 302/301 with a
+warning and 410 is left out.
 
 Every value written is checked once more for control characters before it
 reaches a file; one found is a build error naming its source (a defence in depth
