@@ -63,6 +63,11 @@ var ErrInvalidSlotDefinition = errors.New("collage: invalid slot definition")
 // value other than 0, 301, 302, 307, or 308.
 var ErrInvalidRedirectStatus = errors.New("collage: invalid redirect status code")
 
+// ErrInvalidRedirect is returned for a redirect whose source or destination
+// holds a control character: a carriage return or a line feed in it would add
+// lines to a host's redirect file, a header to a response.
+var ErrInvalidRedirect = errors.New("collage: invalid redirect")
+
 // ErrSelfErrorPage is returned when a page references itself as its own NotFoundPage
 // or ErrorPage.
 var ErrSelfErrorPage = errors.New("collage: page cannot reference itself as an error page")

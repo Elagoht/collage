@@ -164,6 +164,10 @@ var ErrInvalidSlotDefinition = types.ErrInvalidSlotDefinition
 // value other than 0, 301, 302, 307, or 308.
 var ErrInvalidRedirectStatus = types.ErrInvalidRedirectStatus
 
+// ErrInvalidRedirect is returned for a redirect whose source or destination
+// holds a control character.
+var ErrInvalidRedirect = types.ErrInvalidRedirect
+
 // ErrSelfErrorPage is returned when a page references itself as its own NotFoundPage
 // or ErrorPage.
 var ErrSelfErrorPage = types.ErrSelfErrorPage

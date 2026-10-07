@@ -96,6 +96,9 @@ func (b *PageBuilder) WithPath(locale, pattern string) *PageBuilder {
 // WithRedirect adds a redirect from the path pattern from to the path to, using
 // status as the redirect's HTTP status code.
 func (b *PageBuilder) WithRedirect(from, to string, status int) *PageBuilder {
+	if err := types.RedirectTextError(from, to); err != nil {
+		b.errs = append(b.errs, fmt.Errorf("page %q: %w", b.page.Name, err))
+	}
 	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, StatusCode: status})
 	return b
 }
@@ -103,6 +106,9 @@ func (b *PageBuilder) WithRedirect(from, to string, status int) *PageBuilder {
 // WithPermanentRedirect adds a permanent redirect from the path pattern from to the
 // path to.
 func (b *PageBuilder) WithPermanentRedirect(from, to string) *PageBuilder {
+	if err := types.RedirectTextError(from, to); err != nil {
+		b.errs = append(b.errs, fmt.Errorf("page %q: %w", b.page.Name, err))
+	}
 	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, Permanent: true})
 	return b
 }

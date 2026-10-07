@@ -24,6 +24,19 @@ type Redirect struct {
 	Permanent bool
 }
 
+// RedirectTextError reports a control character in a redirect's from or to,
+// naming the field, wrapped in ErrInvalidRedirect; nil when both are clean.
+func RedirectTextError(from, to string) error {
+	for _, field := range []struct{ name, value string }{{"from", from}, {"to", to}} {
+		for _, r := range field.value {
+			if r < 0x20 || r == 0x7f {
+				return fmt.Errorf("%w: %s %q holds a control character", ErrInvalidRedirect, field.name, field.value)
+			}
+		}
+	}
+	return nil
+}
+
 // EffectiveStatus returns r.StatusCode when it is one of 301, 302, 307, or 308;
 // otherwise it returns 301 when r.Permanent, else 302.
 func (r *Redirect) EffectiveStatus() int {

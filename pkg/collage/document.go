@@ -2,6 +2,7 @@ package collage
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Elagoht/collage/internal/core"
@@ -122,6 +123,9 @@ func (b *DocumentBuilder) WithBody(body []byte) *DocumentBuilder {
 // WithRedirect adds a redirect from the path pattern from to the path to, using
 // status as the redirect's HTTP status code.
 func (b *DocumentBuilder) WithRedirect(from, to string, status int) *DocumentBuilder {
+	if err := types.RedirectTextError(from, to); err != nil {
+		b.errs = append(b.errs, fmt.Errorf("document %q: %w", b.document.Name, err))
+	}
 	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, StatusCode: status})
 	return b
 }
@@ -129,6 +133,9 @@ func (b *DocumentBuilder) WithRedirect(from, to string, status int) *DocumentBui
 // WithPermanentRedirect adds a permanent redirect from the path pattern from to the
 // path to.
 func (b *DocumentBuilder) WithPermanentRedirect(from, to string) *DocumentBuilder {
+	if err := types.RedirectTextError(from, to); err != nil {
+		b.errs = append(b.errs, fmt.Errorf("document %q: %w", b.document.Name, err))
+	}
 	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, Permanent: true})
 	return b
 }
