@@ -59,28 +59,31 @@ func (a *App) CaptureResponses(ctx context.Context, paths []string) (map[string]
 }
 
 // compareResponses keeps what first and second agree on, past the
-// request-specific headers, with first's status.
-func compareResponses(first, second *httptest.ResponseRecorder) types.CapturedResponse {
+// request-specific headers, with first's status. The headers are each
+// response's as written with its status — Result's snapshot — not whatever a
+// handler set on the map afterwards, which no client is sent.
+func compareResponses(firstRec, secondRec *httptest.ResponseRecorder) types.CapturedResponse {
+	first, second := firstRec.Result().Header, secondRec.Result().Header
 	kept := http.Header{}
 	var unstable []string
-	for name, values := range first.Header() {
+	for name, values := range first {
 		if slices.Contains(requestSpecific, name) {
 			continue
 		}
-		if !slices.Equal(values, second.Header()[name]) {
+		if !slices.Equal(values, second[name]) {
 			unstable = append(unstable, name)
 			continue
 		}
 		kept[name] = slices.Clone(values)
 	}
-	for name := range second.Header() {
-		if _, ok := first.Header()[name]; ok || slices.Contains(requestSpecific, name) {
+	for name := range second {
+		if _, ok := first[name]; ok || slices.Contains(requestSpecific, name) {
 			continue
 		}
 		unstable = append(unstable, name)
 	}
 	slices.Sort(unstable)
-	return types.CapturedResponse{Status: first.Code, Headers: kept, Unstable: unstable}
+	return types.CapturedResponse{Status: firstRec.Code, Headers: kept, Unstable: unstable}
 }
 
 // slashSpelling reports the spelling rec redirected urlPath to, when that
