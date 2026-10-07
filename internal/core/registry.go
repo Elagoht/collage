@@ -64,6 +64,7 @@ func (a *App) RegisterPage(p *types.Page) error {
 		return err
 	}
 	a.remember(p)
+	a.routed[p.Name] = true
 	return nil
 }
 
@@ -637,6 +638,16 @@ func (a *App) Commands() []plugin.Command {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	return slices.Clone(a.commands)
+}
+
+// PageRouted reports whether the page registered under name is a route — was
+// registered with RegisterPage — rather than only the not-found or error page,
+// which the router reaches by failing to match and whose paths and redirects
+// it never serves.
+func (a *App) PageRouted(name string) bool {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.routed[name]
 }
 
 // Pages returns every registered page, in registration order, each a defensive copy

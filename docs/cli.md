@@ -537,14 +537,17 @@ template set, the same fragment tree, the same data handlers, the same document
 handlers.
 
 **A static build runs your plugins, as the server does.** It does not render
-through `App.Handler()` (only its header capture asks it, after the files are
-written — see [static hosts](#static-hosts)), but `RenderPath` and `RenderDocumentPath` start the application
-first — memoised, exactly as `Handler` does — so plugin `Init` has run before the
-first page renders. Every page gets `OnBeforeRender` and `OnAfterRender`, and every
-document `OnDocumentRendered`, so a minifier that shapes the served site shapes the
-built one too. Two hooks do not fire, because they are about something a build is
-not: `OnPageResolved` (a build is not a request) and `OnCacheWrite` (a build writes
-files, not cache entries). See [plugins](plugins.md#static-builds).
+through `App.Handler()`, but `RenderPath` and `RenderDocumentPath` start the
+application first — memoised, exactly as `Handler` does — so plugin `Init` has run
+before the first page renders. Every page gets `OnBeforeRender` and
+`OnAfterRender`, and every document `OnDocumentRendered`, so a minifier that
+shapes the served site shapes the built one too. `OnCacheWrite` does not fire,
+because a build writes files, not cache entries. `OnPageResolved` does not fire
+for those renders, which are not requests — but once the files are written, the
+header capture asks `App.Handler()` for each one's path, and those requests go
+through middleware and every request hook, `OnPageResolved` included, and render
+again with `OnBeforeRender` and `OnAfterRender`; see
+[static hosts](#static-hosts). See [plugins](plugins.md#static-builds).
 
 A page that renders with a failed fragment is **not written**: the failure is
 recorded in `report.Errors` as `collage.ErrDegradedRender`, because a static file
@@ -674,8 +677,12 @@ twice, in-process — and records the status and headers it answers with on the
 single response and any that differ between the two answers. The hook's event
 also carries every redirect the site declares, in `Redirects`: pages', documents'
 and `collage.RedirectSource` plugins'. Two redirects from one path fail the
-build (`collage.ErrDuplicateRedirect`), and so does one from a path the build
-wrote (`collage.ErrRedirectShadowsFile`). Middleware sees the capture requests;
+build (`collage.ErrDuplicateRedirect`) — a trailing slash or a placeholder's
+name does not make two different — and so does one matching the path of a file
+the build wrote (`collage.ErrRedirectShadowsFile`), a pattern like
+`/docs/{rest...}` included. A plugin's rules are held to what a registered
+redirect is held to, except that one may lead to an `http` or `https` URL and a
+410 leads nowhere. Middleware sees the capture requests;
 one that counts traffic should skip them with `collage.IsCapture`. Collage
 writes no host files itself — `elagoht/deploy` writes them from the hook. See
 [deployment](deployment.md#static-hosts).

@@ -154,3 +154,102 @@ type pluginRedirectsOnly struct{ r *redirectingRenderer }
 func (p *pluginRedirectsOnly) PluginRedirects() ([]plugin.BuiltRedirect, error) {
 	return p.r.PluginRedirects()
 }
+
+// TestBuild_FailsOnAMalformedPluginRedirect: a plugin rule is held to what the
+// router holds a registered one to, with an absolute destination allowed.
+func TestBuild_FailsOnAMalformedPluginRedirect(t *testing.T) {
+	for _, r := range []plugin.BuiltRedirect{
+		{From: "old", To: "/new", Status: 301},
+		{From: "//old", To: "/new", Status: 301},
+		{From: "/a//b", To: "/new", Status: 301},
+		{From: "/a/{", To: "/new", Status: 301},
+		{From: "/a/{slug}", To: "/b/{id}", Status: 301},
+		{From: "/z", To: "/b", Status: 410},
+		{From: "/z", Status: 301},
+		{From: "/z", To: "//evil.example", Status: 301},
+		{From: "/z", To: "/\\evil.example", Status: 301},
+		{From: "/z", To: "ftp://example.com/x", Status: 301},
+		{From: "/z", To: "https:///x", Status: 301},
+		{From: "/z", To: "new", Status: 302},
+	} {
+		app := newRedirectingRenderer()
+		r.Source = "legacy"
+		app.plugin = []plugin.BuiltRedirect{r}
+		_, err := buildRedirects(t, app)
+		if !errors.Is(err, types.ErrInvalidRedirect) || !strings.Contains(err.Error(), "legacy") || !strings.Contains(err.Error(), r.From) {
+			t.Errorf("%+v: Build error = %v, want ErrInvalidRedirect naming the From and legacy", r, err)
+		}
+	}
+}
+
+// TestBuild_TakesAWellFormedPluginRedirect: an absolute destination and a
+// placeholder carried over are fine.
+func TestBuild_TakesAWellFormedPluginRedirect(t *testing.T) {
+	app := newRedirectingRenderer()
+	app.plugin = []plugin.BuiltRedirect{
+		{From: "/ext", To: "https://example.com/x", Status: 302, Source: "legacy"},
+		{From: "/w/{slug}", To: "/wiki/{slug}", Status: 308, Source: "legacy"},
+		{From: "/gone/{rest...}", Status: 410, Source: "legacy"},
+	}
+	if _, err := buildRedirects(t, app); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+}
+
+// TestBuild_DuplicateRedirectsCompareAsTheRouterDoes: a trailing slash and a
+// placeholder's name do not make two rules different.
+func TestBuild_DuplicateRedirectsCompareAsTheRouterDoes(t *testing.T) {
+	for _, c := range []struct{ page, plugin string }{
+		{"/old", "/old/"},
+		{"/blog/{slug}", "/blog/{x}"},
+		{"/f/{rest...}", "/f/{path...}"},
+	} {
+		app := newRedirectingRenderer()
+		app.pages[0].Redirects = []*types.Redirect{{From: c.page, To: "/a"}}
+		app.plugin = []plugin.BuiltRedirect{{From: c.plugin, Status: 410, Source: "legacy"}}
+		_, err := buildRedirects(t, app)
+		if !errors.Is(err, ErrDuplicateRedirect) {
+			t.Errorf("%q and %q: Build error = %v, want ErrDuplicateRedirect", c.page, c.plugin, err)
+		}
+	}
+}
+
+// TestBuild_FailsOnAPatternShadowingAFile: a rule with a placeholder that
+// matches a written file's path shadows it.
+func TestBuild_FailsOnAPatternShadowingAFile(t *testing.T) {
+	app := newRedirectingRenderer()
+	app.pages = append(app.pages, newTestPage("doc", types.StrategyStatic, map[string]string{"en": "/docs/x"}))
+	app.plugin = []plugin.BuiltRedirect{{From: "/docs/{rest...}", To: "/manual/{rest}", Status: 301, Source: "legacy"}}
+	_, err := buildRedirects(t, app)
+	if !errors.Is(err, ErrDuplicateRedirect) && !errors.Is(err, ErrRedirectShadowsFile) {
+		t.Fatalf("Build error = %v, want ErrRedirectShadowsFile", err)
+	}
+	if !errors.Is(err, ErrRedirectShadowsFile) || !strings.Contains(err.Error(), "/docs/x") {
+		t.Errorf("Build error = %v, want ErrRedirectShadowsFile naming /docs/x", err)
+	}
+}
+
+// unroutedRenderer is a redirectingRenderer that says which pages are routed.
+type unroutedRenderer struct {
+	*redirectingRenderer
+	unrouted map[string]bool
+}
+
+func (u *unroutedRenderer) PageRouted(name string) bool { return !u.unrouted[name] }
+
+// TestBuild_LeavesOutAnUnroutedPagesRedirects: a page registered only as the
+// not-found or error page is never matched, and neither are its redirects.
+func TestBuild_LeavesOutAnUnroutedPagesRedirects(t *testing.T) {
+	app := &unroutedRenderer{redirectingRenderer: newRedirectingRenderer(), unrouted: map[string]bool{"missing": true}}
+	missing := newTestPage("missing", types.StrategyDynamic, nil)
+	missing.Redirects = []*types.Redirect{{From: "/lost", To: "/"}}
+	app.pages = append(app.pages, missing)
+	if _, err := buildRedirects(t, app); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, r := range app.finished.Redirects {
+		if r.Source == "page:missing" {
+			t.Errorf("Redirects = %+v, want none of page:missing", app.finished.Redirects)
+		}
+	}
+}

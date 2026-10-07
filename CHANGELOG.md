@@ -19,7 +19,11 @@
   skip a request for which `collage.IsCapture(r.Context())` is true. Middleware
   that sets response headers must not skip it: what it sets is what the
   deployed file is served with. A capture request never writes the response
-  cache and never shares a reader's render.
+  cache and never shares a reader's render, but it renders: `BeforeRender`,
+  `AfterRender` and `DocumentRendered` run for it as for any request, so a
+  plugin that writes files or keeps a tally from those hooks sees each built
+  path two or three more times, and should check `collage.IsCapture(ctx)`
+  too.
 
 ### Added
 
@@ -48,15 +52,25 @@
   `Source`): every page's in registration order (`Source` `"page:<name>"`),
   every document's (`"document:<name>"`), then every plugin's. `Status` is the
   redirect's `EffectiveStatus()`.
+  A page registered only with `RegisterNotFoundPage` or `RegisterErrorPage`
+  is never matched, so its redirects are left out — and a static build no
+  longer tries to render such a page at the path it was given, which failed
+  the build.
 - **`collage.RedirectSource`**: a plugin with `Redirects() []BuiltRedirect`
-  has its rules carried by a static export. Their `Status` must be 301, 302,
-  307, 308 or 410 (a path that is gone), and a control character in one fails
-  the build, naming the plugin.
+  has its rules carried by a static export, and each is checked as a
+  registered redirect is: `From` starts with one `/` and parses as a route
+  pattern, and every placeholder in `To` is captured by it. `To` may also be
+  an absolute `http` or `https` URL; a 410 (a path that is gone) has no `To`,
+  and 301, 302, 307 and 308 need one. Any other `Status` fails the build with
+  `ErrInvalidRedirectStatus`, and a malformed rule, or a control character in
+  one, with `ErrInvalidRedirect`, naming the rule and the plugin.
 - **`ErrDuplicateRedirect`** fails a build in which two redirects, from any
-  source, share one `From`, and **`ErrRedirectShadowsFile`** one in which a
-  redirect's `From` is a file the build wrote — `/about` or `/about/` for
-  `about/index.html`. On a static host either would be settled by the host's
-  own precedence, not by the application.
+  source, are one to the router: `/old` and `/old/`, `/blog/{slug}` and
+  `/blog/{x}`. **`ErrRedirectShadowsFile`** fails one in which a redirect
+  matches the path of a file the build wrote — `/about` or `/about/` for
+  `about/index.html`, `/docs/{rest...}` for `docs/x/index.html`. On a static
+  host either would be settled by the host's own precedence, not by the
+  application.
 
 ## v0.51.2
 

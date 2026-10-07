@@ -533,22 +533,15 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 		}
 	}
 
-	captured := make(map[string]struct{}, len(fromSegments))
 	catchAll := ""
 	for _, seg := range fromSegments {
-		if seg.kind == segmentStatic {
-			continue
-		}
-		captured[seg.text] = struct{}{}
 		if seg.kind == segmentCatchAll {
 			// parsePattern guarantees at most one, as the final segment.
 			catchAll = seg.text
 		}
 	}
-	for _, name := range placeholderNames(redirect.To) {
-		if _, ok := captured[name]; !ok {
-			return fmt.Errorf("%w: redirect %q -> %q: placeholder %q", ErrUnsubstitutedPlaceholder, redirect.From, redirect.To, name)
-		}
+	if name, ok := uncaptured(fromSegments, redirect.To); ok {
+		return fmt.Errorf("%w: redirect %q -> %q: placeholder %q", ErrUnsubstitutedPlaceholder, redirect.From, redirect.To, name)
 	}
 
 	target, err := rt.redirectTree.insert(fromSegments)

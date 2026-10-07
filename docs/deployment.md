@@ -288,7 +288,8 @@ without being declared again. Left out:
 
 - headers about one response rather than the file: `Date`, `ETag`,
   `Last-Modified`, `Content-Length`, `Set-Cookie`, `Vary`, `Content-Encoding`,
-  `Transfer-Encoding`, `Connection`, `Age`;
+  `Transfer-Encoding`, `Connection`, `Age`, and development's
+  `X-Collage-Render-Time`;
 - a header whose value differs between the two answers, such as a CSP nonce. A
   file cannot carry a new one per reader, so it is left out and an
   `unstable-header` warning names it;
@@ -308,11 +309,16 @@ deployed.
 **Redirects reach the build hook.** `BuildFinishedEvent.Redirects` holds every
 redirect the site declares — pages' (`WithRedirect`, `WithPermanentRedirect`),
 documents', and every plugin implementing `collage.RedirectSource` — each with its
-status and where it came from. Two redirects from one path fail the build with
-`collage.ErrDuplicateRedirect`, and a redirect from a path the build wrote a file
-for (`/about` or `/about/` beside `about/index.html`) with
+status and where it came from. A page registered only as the not-found or
+error page is never matched, and its redirects are not among them. Two
+redirects the router would take for one — `/old` and `/old/`, `/blog/{slug}` and
+`/blog/{id}` — fail the build with `collage.ErrDuplicateRedirect`, and a redirect
+matching the path of a file the build wrote (`/about` or `/about/` beside
+`about/index.html`, or `/docs/{rest...}` beside `docs/intro/index.html`) with
 `collage.ErrRedirectShadowsFile`: on a host, which one wins would be the host's
-call, not yours.
+call, not yours. A plugin's rules are checked as a registered redirect is — a
+`From` the router can parse, every placeholder in `To` captured by it — except
+that `To` may be an `http` or `https` URL, and a 410 has no `To`.
 
 **`elagoht/deploy` writes the host's files.** Collage itself writes none: the
 plugin takes the captured headers and the redirects from the build hook and

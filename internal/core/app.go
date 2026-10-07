@@ -342,6 +342,9 @@ type App struct {
 	// order holds the registered page names in registration order, so Pages is
 	// deterministic.
 	order []string
+	// routed holds the names of the pages registered as routes, with
+	// RegisterPage; the rest of pages are only the not-found or error page.
+	routed map[string]bool
 	// bound holds the pages whose LayoutFragment this App has already replaced with
 	// a copy of their own. It is what makes the layout binding happen exactly once
 	// per page; see bindContent for why the slot's contents cannot answer that.
@@ -612,6 +615,7 @@ func New(cfg Config) (*App, error) {
 	app.metrics = metrics
 	app.tracer = tracer
 	app.pages = make(map[string]*types.Page)
+	app.routed = make(map[string]bool)
 	app.bound = make(map[*types.Page]bool)
 	app.documents = make(map[string]*types.Document)
 	app.actions = make(map[string]*types.Action)

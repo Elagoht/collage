@@ -43,6 +43,12 @@ func buildLegacySite(t *testing.T, rules []collage.BuiltRedirect) (*legacyRules,
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatal(err)
 	}
+	// Never matched, so its redirect is never served, and not exported.
+	missing := collage.NewPage("missing").WithContent(collage.NewFragment("missing", "p.html").Build()).
+		WithPath("en", "/missing").WithPermanentRedirect("/lost", "/about").Build()
+	if err := app.RegisterNotFoundPage(missing); err != nil {
+		t.Fatal(err)
+	}
 	builder, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: t.TempDir()})
 	if err != nil {
 		t.Fatal(err)

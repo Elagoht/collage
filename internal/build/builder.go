@@ -676,22 +676,51 @@ type pluginRedirecter interface {
 	PluginRedirects() ([]plugin.BuiltRedirect, error)
 }
 
-// collectRedirects returns every redirect the site declares — every page's, in
-// registration order, built or not; then every document's; then every
-// RedirectSource plugin's — and the errors that fail the build: a plugin rule
-// with a status other than a redirect's or 410, two rules from one path, and a
-// rule from a path in written.
-func (b *Builder) collectRedirects(written map[string]bool) ([]plugin.BuiltRedirect, []error) {
+// pageRouter is implemented by a Renderer that knows which of its pages are
+// routes: the application. A page registered only as the not-found or error
+// page is in Pages but is never matched, and neither are its redirects.
+// Without it, a page with no path is taken to be one of those.
+type pageRouter interface {
+	PageRouted(name string) bool
+}
+
+// routed reports whether p is a route the application serves.
+func (b *Builder) routed(p *types.Page) bool {
+	if routes, ok := b.app.(pageRouter); ok {
+		return routes.PageRouted(p.Name)
+	}
+	return len(p.Paths) > 0
+}
+
+// collectRedirects returns every redirect the site serves — every routed
+// page's, in registration order, built or not; then every document's; then
+// every RedirectSource plugin's — and the errors that fail the build: a
+// malformed plugin rule, two rules the router would take for one, and a rule
+// matching the path of a file the build wrote. written are those files' URL
+// paths.
+func (b *Builder) collectRedirects(written []string) ([]plugin.BuiltRedirect, []error) {
 	var out []plugin.BuiltRedirect
+	var patterns []*router.Pattern
 	var errs []error
+	add := func(r plugin.BuiltRedirect) {
+		// A page's or document's redirect was parsed when it was registered;
+		// one that does not parse here came from a Renderer with no router,
+		// and is only compared by its text.
+		p, _ := router.CompilePattern(r.From)
+		out = append(out, r)
+		patterns = append(patterns, p)
+	}
 	for _, p := range b.app.Pages() {
+		if !b.routed(p) {
+			continue
+		}
 		for _, r := range p.Redirects {
-			out = append(out, plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "page:" + p.Name})
+			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "page:" + p.Name})
 		}
 	}
 	for _, d := range b.app.Documents() {
 		for _, r := range d.Redirects {
-			out = append(out, plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "document:" + d.Name})
+			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "document:" + d.Name})
 		}
 	}
 	if source, ok := b.app.(pluginRedirecter); ok {
@@ -700,43 +729,112 @@ func (b *Builder) collectRedirects(written map[string]bool) ([]plugin.BuiltRedir
 			errs = append(errs, err)
 		}
 		for _, r := range rules {
-			switch r.Status {
-			case 301, 302, 307, 308, 410:
-				out = append(out, r)
-			default:
-				errs = append(errs, fmt.Errorf("%w: %d on the redirect from %q of %s; want 301, 302, 307, 308 or 410",
-					types.ErrInvalidRedirectStatus, r.Status, r.From, r.Source))
+			p, err := checkPluginRedirect(r)
+			if err != nil {
+				errs = append(errs, err)
+				continue
 			}
+			out = append(out, r)
+			patterns = append(patterns, p)
 		}
 	}
 
+	writtenKeys := make(map[string]string, len(written))
+	for _, w := range written {
+		writtenKeys[pathKey(w)] = w
+	}
 	first := make(map[string]string, len(out))
-	for _, r := range out {
-		if source, ok := first[r.From]; ok {
+	for i, r := range out {
+		key := r.From
+		if p := patterns[i]; p != nil {
+			key = p.Key()
+		}
+		if source, ok := first[key]; ok {
 			errs = append(errs, fmt.Errorf("%w: %q from %s and from %s", ErrDuplicateRedirect, r.From, source, r.Source))
 		} else {
-			first[r.From] = r.Source
+			first[key] = r.Source
 		}
-		if written[r.From] {
-			errs = append(errs, fmt.Errorf("%w: %q from %s is a file the build wrote", ErrRedirectShadowsFile, r.From, r.Source))
+		if file, ok := shadowedFile(r.From, patterns[i], written, writtenKeys); ok {
+			errs = append(errs, fmt.Errorf("%w: %q from %s matches %q, a file the build wrote", ErrRedirectShadowsFile, r.From, r.Source, file))
 		}
 	}
 	return out, errs
 }
 
-// urlPathsOf is the set of URL paths a static host answers files with: each
-// file's path under outDir, and for a directory's index.html both "/a/" and
-// "/a".
-func urlPathsOf(outDir string, files []string) map[string]bool {
-	paths := make(map[string]bool, len(files))
-	for _, f := range files {
-		u := urlPathOf(outDir, f)
-		if u == "" {
-			continue
+// shadowedFile returns the first of written that from matches, as the router
+// would match it: by its text when it has no placeholder, by the router's own
+// matcher when it has one.
+func shadowedFile(from string, p *router.Pattern, written []string, keys map[string]string) (string, bool) {
+	if p == nil || p.Literal() {
+		file, ok := keys[pathKey(from)]
+		return file, ok
+	}
+	for _, w := range written {
+		if p.Matches(w) {
+			return w, true
 		}
-		paths[u] = true
-		if dir, ok := strings.CutSuffix(u, "/"); ok && dir != "" {
-			paths[dir] = true
+	}
+	return "", false
+}
+
+// pathKey is path without its trailing "/", except at the root: "/a/" and "/a"
+// are one path to the router, and either names a directory's index.html.
+func pathKey(path string) string {
+	return "/" + strings.Trim(path, "/")
+}
+
+// checkPluginRedirect holds a RedirectSource rule to what the router holds a
+// registered redirect to — a From it can parse, starting with one "/", and a
+// To whose every placeholder From captures — except that To may be an absolute
+// http or https URL, and a 410 has no To at all.
+func checkPluginRedirect(r plugin.BuiltRedirect) (*router.Pattern, error) {
+	switch r.Status {
+	case 301, 302, 307, 308, 410:
+	default:
+		return nil, fmt.Errorf("%w: %d on the redirect from %q of %s; want 301, 302, 307, 308 or 410",
+			types.ErrInvalidRedirectStatus, r.Status, r.From, r.Source)
+	}
+	invalid := func(reason string) error {
+		return fmt.Errorf("%w: the redirect from %q of %s: %s", types.ErrInvalidRedirect, r.From, r.Source, reason)
+	}
+	if strings.HasPrefix(r.From, "//") {
+		return nil, invalid("from must start with a single \"/\"")
+	}
+	p, err := router.CompilePattern(r.From)
+	if err != nil {
+		return nil, invalid(err.Error())
+	}
+	if err := p.CheckCaptures(r.To); err != nil {
+		return nil, invalid(err.Error())
+	}
+	if r.Status == 410 {
+		if r.To != "" {
+			return nil, invalid(fmt.Sprintf("a 410 has no destination, and this one has %q", r.To))
+		}
+		return p, nil
+	}
+	if r.To == "" {
+		return nil, invalid("a redirect needs a destination")
+	}
+	if r.To[0] == '/' {
+		if reason, unsafe := router.UnsafeRedirectReason(r.To); unsafe {
+			return nil, invalid(reason)
+		}
+		return p, nil
+	}
+	u, err := url.Parse(r.To)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return nil, invalid(fmt.Sprintf("to %q is neither a path starting with \"/\" nor an http or https URL", r.To))
+	}
+	return p, nil
+}
+
+// urlPathsOf is the URL path a static host answers each of files at.
+func urlPathsOf(outDir string, files []string) []string {
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		if u := urlPathOf(outDir, f); u != "" {
+			paths = append(paths, u)
 		}
 	}
 	return paths
@@ -858,7 +956,10 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 		//
 		// The not-found page is in the output all the same, as 404.html; see
 		// writeNotFoundPages.
-		if len(page.Paths) == 0 {
+		//
+		// One registered only as such with a path all the same is no URL either:
+		// the router never matches it.
+		if len(page.Paths) == 0 || !b.routed(page) {
 			continue
 		}
 		if !page.Strategy.Cacheable() {
