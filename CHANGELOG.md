@@ -41,7 +41,8 @@
 ### Added
 
 - **A static build records each file's response headers.** After every file is
-  written, the build asks the handler for each one's path twice and puts the
+  written, and when a plugin implementing `BuildFinishedHook` is registered to
+  read them, the build asks the handler for each one's path twice and puts the
   answer on the file: `BuiltFile.Status` and `BuiltFile.Headers`. Request-specific
   headers are left out (`Date`, `ETag`, `Last-Modified`, `Content-Length`,
   `Set-Cookie`, `Vary`, `Content-Encoding`, `Transfer-Encoding`, `Connection`,

@@ -672,9 +672,11 @@ lists its categories.
 
 ### Static hosts
 
-After the files are written, the build asks `App.Handler()` for each one's path —
-twice, in-process — and records the status and headers it answers with on the
-`BuiltFile` that `BuildFinishedHook` receives, leaving out the ones about a
+After the files are written, when a `BuildFinishedHook` plugin is registered, the
+build asks `App.Handler()` for each one's path — twice, in-process, over HTTPS when
+`BaseURL` is `https` — and records the status and headers it answers with on the
+`BuiltFile` that `BuildFinishedHook` receives (`Captured` marks every file it
+asked for), leaving out the ones about a
 single response and any that differ between the two answers. The hook's event
 also carries every redirect the site declares, in `Redirects`: pages', documents'
 and `collage.RedirectSource` plugins'. Two redirects from one path fail the
