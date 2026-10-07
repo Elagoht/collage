@@ -16,17 +16,17 @@
   | `rc.Set("k", v)` / `collage.Get[T](rc, "k")` | `k := collage.NewKey[T]("k")`, then `k.Set(rc, v)` / `k.Get(rc)` |
   | `collage.Once(rc, "a:"+id, fetch)` | `collage.Once(rc, aKey.With(id), fetch)` |
   | `collage.Cached(rc, "a:"+id, ttl, tags, fetch)` | `collage.Cached(rc, aKey.With(id), ttl, tags, fetch)` |
-  | `ev.Data["x"]` in `OnAfterRender` | the key the plugin that wrote it exports |
-  | `ev.Data[k]` in `OnAfterRender` | `key.In(ev.Values)` |
+  | `ev.Data[k]` in `OnAfterRender` | `key.In(ev.Values)`, with the key the plugin or application that set it exports |
   | `WithSEO(k, v)` | delete; head content goes through `HoistTitle` or `{{hoist}}` |
   | `host.Config(&cfg)` | `cfg, err := collage.PluginConfig(host, defaults)` |
 
-  A key is its name *and* its type: `NewKey[A]("x")` and `NewKey[B]("x")` hold
-  two values, so one name read as two types no longer fails at runtime or reads
-  as missing. `With(part)` derives `name:part` with the same type. The values
-  `Set` stores and the ones `Once` fetches stay apart, as before. A `Cache`
-  store that hands `Cached` a value of another type is an error naming the key,
-  where it used to be `ErrCachedTypeMismatch`. `NewKey` panics on an empty name.
+  A key is its name *and* its type: `NewKey[A]("x")` and `NewKey[B]("x")` are
+  two keys and hold two values. A value can only be read as the type it was
+  stored as, so the runtime type-mismatch errors are gone: reading `"x"` as `B`
+  after storing an `A` finds nothing, not the wrong type. `With(part)` derives
+  `name:part` with the same type. The values `Set` stores and the ones `Once`
+  fetches stay apart, as before. `NewKey` panics on an empty name, and using a
+  zero `Key` that never went through `NewKey` panics too.
   See [docs/fragments.md](docs/fragments.md#how-a-pages-fragments-run).
 - **`collage.PluginConfig(host, defaults)` replaces `host.Config(&cfg)`.** It
   returns the plugin's section decoded over a copy of `defaults`; no section, or

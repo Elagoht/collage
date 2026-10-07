@@ -722,6 +722,11 @@ key, and the application stores under it; a plugin that carries state from its o
 render functions to its hook keeps the key unexported. The framework puts nothing
 there.
 
+Begin a key's name with the plugin's own name — `"jsonld:article"`,
+`"validate:errors"`. A key is only its name and its type, so two plugins that each
+declare `NewKey[string]("errors")` hold one value between them, and whichever sets
+it last wins. The prefix keeps a plugin's keys its own.
+
 ## Configuration
 
 `Config.PluginConfig` is a `map[string]json.RawMessage`, keyed by plugin name:
@@ -754,9 +759,13 @@ unchanged, and a section is decoded over a copy of them, so what it leaves out k
 its default: "not configured" and "configured to the zero value" are different
 statements, and only this can tell them apart. A malformed section is an error naming
 the plugin — `collage: plugin "you/greeting" configuration: …` — returned with the
-defaults, so a plugin that chooses to carry on runs on something sensible. A map or
-slice inside the defaults is decoded into in place, so write the defaults as a
-literal in the call rather than sharing one value between calls.
+defaults. A section that is not JSON at all leaves them untouched. A value of the
+wrong type (`"limit": "three"`) fails while the section is being decoded, and the
+rest of it is still decoded: the plain fields come back as the defaults had them,
+but a map inside the defaults may hold entries from the section and a slice's
+elements may be written over. A map or slice inside the
+defaults is decoded into in place, so write the defaults as a literal in the call
+rather than sharing one value between calls.
 
 **A key matching no registered plugin is a startup error** (`ErrUnknownPluginConfig`).
 Ignoring `"elagoht/minimzer"` would leave the plugin running on defaults and the

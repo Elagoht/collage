@@ -29,6 +29,11 @@ func (s ConfigSource) pluginConfig() (json.RawMessage, string) {
 // slice inside defaults is filled in place, as decoding into a pointer always
 // did. A malformed section is an error, and defaults come back with it: the
 // operator wrote something, and running on defaults silently would hide it.
+// What comes back depends on how it is malformed. A section that is not JSON
+// leaves defaults untouched. A value of the wrong type fails while decoding, and
+// decoding the rest goes on: defaults' plain fields come back as they were, but
+// its maps may hold entries from the section and its slices' elements may be
+// written over.
 func PluginConfig[T any](r ConfigReader, defaults T) (T, error) {
 	raw, name := r.pluginConfig()
 	if len(raw) == 0 {

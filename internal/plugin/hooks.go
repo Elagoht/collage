@@ -437,9 +437,11 @@ type AfterRenderEvent struct {
 	//
 	//	st, ok := stateKey.In(ev.Values)
 	//
-	// They are the render's own, not a copy; the render has finished, so nothing
-	// is writing to them. A plugin that keeps them past the hook is holding
-	// request-scoped state.
+	// They are the render's own, not a copy. The render has finished, but a
+	// prefetch it cancelled and never waited for may still Set while the hook
+	// runs; every read and write holds their lock, so In is safe, and a value
+	// arriving that late was not part of the page. A plugin that keeps them past
+	// the hook is holding request-scoped state.
 	Values *types.Values
 }
 
