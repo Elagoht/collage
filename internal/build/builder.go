@@ -18,7 +18,8 @@
 //
 // Once every file is written, a Renderer that is a ResponseCapturer — the
 // application — is asked for each file's path twice through its real handler, to
-// record the headers a static host should send with it, each request under a
+// record the headers a static host should send with it, when a plugin
+// implementing BuildFinishedHook is registered to read them, each request under a
 // deadline (a handler ignoring its context keeps running past it). Middleware and the
 // request hooks see those requests, marked so a plugin can tell them from a
 // reader's (collage.IsCapture); nothing is written to the response cache for
@@ -511,6 +512,12 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	// Last, so the checks see the build as it will be deployed.
 	capturer, captures := b.app.(ResponseCapturer)
 	finisher, finishes := b.app.(BuildFinisher)
+	// The captured headers are for the plugins that check a finished build:
+	// with none, asking the handler for every file again costs renders that
+	// nothing reads.
+	if h, ok := b.app.(buildHookReporter); captures && (!finishes || (ok && !h.HasBuildFinishedHook())) {
+		captures = false
+	}
 	if captures || finishes {
 		event := &plugin.BuildFinishedEvent{OutDir: outDirResolved}
 		files := b.builtFiles(outDirResolved, tasks, written, docWritten, assetWritten, report.Written)
@@ -572,10 +579,18 @@ type BuildFinisher interface {
 	BuildFinished(ctx context.Context, ev *plugin.BuildFinishedEvent) error
 }
 
+// buildHookReporter is implemented by a BuildFinisher that can say whether
+// anything is behind it: the application, which has a BuildFinishedHook plugin
+// or not. A BuildFinisher that does not implement it is taken to have one.
+type buildHookReporter interface {
+	HasBuildFinishedHook() bool
+}
+
 // ResponseCapturer is implemented by a Renderer that can say what it answers a
 // built file's path with: the application, through its own HTTP handler. The
 // build asks it once, for every file it wrote but the ones it made up itself,
-// and puts the answers on each BuiltFile.
+// and puts the answers on each BuiltFile — only when the Renderer is also a
+// BuildFinisher with a plugin behind it to read them.
 //
 // Each request is bounded by a deadline, and a path not answered within it is
 // warned as capture-failed; a handler that ignores its context keeps running

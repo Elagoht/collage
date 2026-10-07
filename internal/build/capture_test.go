@@ -162,23 +162,47 @@ func TestBuild_CapturesEveryWrittenFilesHeaders(t *testing.T) {
 	}
 }
 
-// TestBuild_CaptureWarnsWithoutABuildFinisher: an application that captures but
-// has no plugins to finish the build still reports what the capture found.
-func TestBuild_CaptureWarnsWithoutABuildFinisher(t *testing.T) {
-	out := resolvedTempDir(t)
-	app := newCapturingRenderer(t)
-	b, err := New(app, Options{OutDir: out})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	report, err := b.Build(context.Background())
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if !slices.ContainsFunc(report.Findings, func(f types.Finding) bool { return f.Rule == "unstable-header" }) {
-		t.Errorf("Findings = %+v, want an unstable-header warning", report.Findings)
+// TestBuild_NothingIsCapturedWithoutAReader: the captured headers are for the
+// plugins that check a finished build. An application that cannot finish a
+// build, or one whose finishing has no plugin behind it, is not asked for
+// anything, and no capture warning is reported.
+func TestBuild_NothingIsCapturedWithoutAReader(t *testing.T) {
+	for name, app := range map[string]interface {
+		Renderer
+		ResponseCapturer
+	}{
+		"no BuildFinisher": newCapturingRenderer(t),
+		"no hook":          &hooklessFinisher{capturingFinisher: &capturingFinisher{capturingRenderer: newCapturingRenderer(t)}},
+	} {
+		b, err := New(app, Options{OutDir: resolvedTempDir(t)})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		report, err := b.Build(context.Background())
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		var captured []string
+		switch a := app.(type) {
+		case *capturingRenderer:
+			captured = a.captured
+		case *hooklessFinisher:
+			captured = a.captured
+		}
+		if len(captured) != 0 {
+			t.Errorf("%s: captured %v, want nothing", name, captured)
+		}
+		if f := findingsBy(report, "unstable-header"); len(f) != 0 {
+			t.Errorf("%s: unstable-header = %+v, want none", name, f)
+		}
 	}
 }
+
+// hooklessFinisher is a capturingFinisher with no plugin behind its
+// BuildFinished.
+type hooklessFinisher struct{ *capturingFinisher }
+
+func (*hooklessFinisher) HasBuildFinishedHook() bool { return false }
 
 // findingsBy returns report's findings under rule.
 func findingsBy(report *Report, rule string) []types.Finding {
@@ -227,7 +251,7 @@ func TestBuild_CaptureInDevModeWarns(t *testing.T) {
 	for _, dev := range []bool{false, true} {
 		app := newCapturingRenderer(t)
 		app.dev = dev
-		b, err := New(app, Options{OutDir: resolvedTempDir(t)})
+		b, err := New(&capturingFinisher{capturingRenderer: app}, Options{OutDir: resolvedTempDir(t)})
 		if err != nil {
 			t.Fatalf("New: %v", err)
 		}
@@ -250,7 +274,7 @@ func TestBuild_CaptureInDevModeWarns(t *testing.T) {
 func TestBuild_CaptureReturnsACancelledBuildsError(t *testing.T) {
 	app := newCapturingRenderer(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	finisher := &cancelOnCapture{capturingRenderer: app, cancel: cancel}
+	finisher := &cancellingFinisher{capturingFinisher: &capturingFinisher{capturingRenderer: app}, cancel: cancel}
 	b, err := New(finisher, Options{OutDir: resolvedTempDir(t)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -262,17 +286,6 @@ func TestBuild_CaptureReturnsACancelledBuildsError(t *testing.T) {
 	if f := findingsBy(report, "capture-failed"); len(f) != 0 {
 		t.Errorf("capture-failed = %+v, want the error alone", f)
 	}
-}
-
-// cancelOnCapture cancels the build's context as the capture begins.
-type cancelOnCapture struct {
-	*capturingRenderer
-	cancel context.CancelFunc
-}
-
-func (c *cancelOnCapture) CaptureResponses(ctx context.Context, paths []string) (map[string]types.CapturedResponse, error) {
-	c.cancel()
-	return c.capturingRenderer.CaptureResponses(ctx, paths)
 }
 
 // stoppingCapturer is a capturingRenderer whose capture gives up after the first
@@ -288,7 +301,7 @@ func (s stoppingCapturer) CaptureResponses(_ context.Context, paths []string) (m
 // warning naming what was left, on top of the timed-out path's, and not a failed
 // build.
 func TestBuild_AStoppedCaptureWarnsOnceMore(t *testing.T) {
-	b, err := New(stoppingCapturer{newCapturingRenderer(t)}, Options{OutDir: resolvedTempDir(t)})
+	b, err := New(&stoppingFinisher{capturingFinisher: &capturingFinisher{capturingRenderer: newCapturingRenderer(t)}}, Options{OutDir: resolvedTempDir(t)})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -1397,6 +1397,13 @@ func (a *App) BuildFinished(ctx context.Context, ev *plugin.BuildFinishedEvent) 
 	return a.plugins.BuildFinished(ctx, ev)
 }
 
+// HasBuildFinishedHook reports whether a registered plugin checks a finished
+// static build. Without one the build skips its header capture, which only
+// such a plugin reads.
+func (a *App) HasBuildFinishedHook() bool {
+	return a.plugins.HasBuildFinishedHook()
+}
+
 // PluginRedirects returns every RedirectSource plugin's redirects, for the
 // static build.
 func (a *App) PluginRedirects() ([]plugin.BuiltRedirect, error) {

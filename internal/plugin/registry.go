@@ -336,6 +336,17 @@ func (r *Registry) Personalise(ctx context.Context, ev *PersonaliseEvent) error 
 	return nil
 }
 
+// HasBuildFinishedHook reports whether a registered plugin implements
+// BuildFinishedHook. A nil Registry has none.
+func (r *Registry) HasBuildFinishedHook() bool {
+	for _, p := range r.snapshot() {
+		if _, ok := p.(BuildFinishedHook); ok {
+			return true
+		}
+	}
+	return false
+}
+
 // BuildFinished dispatches ev to every registered plugin implementing
 // BuildFinishedHook, in registration order, stopping at the first that fails.
 func (r *Registry) BuildFinished(ctx context.Context, ev *BuildFinishedEvent) error {
