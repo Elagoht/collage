@@ -18,8 +18,10 @@
 //
 // Once every file is written, a Renderer that is a ResponseCapturer — the
 // application — is asked for each file's path twice through its real handler, to
-// record the headers a static host should send with it. Those are ordinary
-// requests: middleware, every request hook, and the response cache see them.
+// record the headers a static host should send with it. Middleware and the
+// request hooks see those requests, marked so a plugin can tell them from a
+// reader's (collage.IsCapture); nothing is written to the response cache for
+// them.
 package build
 
 import (
@@ -515,7 +517,13 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 			for _, f := range notFoundWritten {
 				synthesized[f] = true
 			}
-			captureHeaders(ctx, capturer, files, synthesized, event)
+			devMode := false
+			if d, ok := b.app.(devModer); ok {
+				devMode = d.DevMode()
+			}
+			if err := captureHeaders(ctx, capturer, files, synthesized, devMode, event); err != nil {
+				errs = append(errs, err)
+			}
 		}
 		event.Files = files
 		if finishes {
@@ -558,12 +566,19 @@ type ResponseCapturer interface {
 	CaptureResponses(ctx context.Context, paths []string) (map[string]types.CapturedResponse, error)
 }
 
+// devModer is implemented by a Renderer that can be in development mode: the
+// application.
+type devModer interface {
+	DevMode() bool
+}
+
 // captureHeaders asks capturer for every file in files but the synthesized ones,
 // sets each file's Status and Headers from the answer, and warns on ev about
-// headers that changed between two responses and paths not answered with a 2xx.
-// A capture that fails is warned too: the files were written, and headers are
-// what a deploy adds to them, not what makes them.
-func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plugin.BuiltFile, synthesized map[string]bool, ev *plugin.BuildFinishedEvent) {
+// headers that changed between two responses, paths not answered with one 2xx,
+// and paths not answered at all. A capture that fails is warned, not failed:
+// the files were written, and headers are what a deploy adds to them, not what
+// makes them. Only the build's own context ending is returned as an error.
+func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plugin.BuiltFile, synthesized map[string]bool, devMode bool, ev *plugin.BuildFinishedEvent) error {
 	var paths []string
 	for _, f := range files {
 		if !synthesized[f.File] && f.Path != "" {
@@ -571,10 +586,16 @@ func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plug
 		}
 	}
 	if len(paths) == 0 {
-		return
+		return nil
+	}
+	if devMode {
+		ev.Warn("", "capture-dev-mode", "headers captured in development mode — e.g. Cache-Control: no-store — would be deployed; build without DevMode")
 	}
 	captured, err := capturer.CaptureResponses(ctx, paths)
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("collage: capture response headers: %w", err)
+		}
 		ev.Warn("", "capture-failed", fmt.Sprintf("the build could not ask the application for its files' headers: %v", err))
 	}
 
@@ -593,9 +614,16 @@ func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plug
 		if !ok {
 			continue
 		}
+		if resp.Err != nil {
+			ev.Warn(f.Path, "capture-failed", fmt.Sprintf("the build could not ask the application for %s's headers: %v", f.Path, resp.Err))
+			continue
+		}
 		f.Status = resp.Status
 		f.Headers = resp.Headers
-		if resp.Status < 200 || resp.Status > 299 {
+		switch {
+		case resp.OtherStatus != 0:
+			ev.Warn(f.Path, "capture-status", fmt.Sprintf("the application answered %s with %d and then with %d; its headers are the first answer's", f.Path, resp.Status, resp.OtherStatus))
+		case resp.Status < 200 || resp.Status > 299:
 			ev.Warn(f.Path, "capture-status", fmt.Sprintf("the application answered %s with %d; its headers are what that answer carried", f.Path, resp.Status))
 		}
 		for _, name := range resp.Unstable {
@@ -613,6 +641,7 @@ func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plug
 		u := unstable[name]
 		ev.Warn("", "unstable-header", fmt.Sprintf("%s differs between two responses on %d path(s) (e.g. %s); a static host cannot carry it", name, u.count, u.first))
 	}
+	return nil
 }
 
 // ErrFindings is in a build's errors when a plugin reported an error-level

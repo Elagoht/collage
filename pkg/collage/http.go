@@ -6,6 +6,7 @@ import (
 
 	"github.com/Elagoht/collage/internal/core"
 	"github.com/Elagoht/collage/internal/httpx"
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // Vary declares that the response to r depends on the request header named
@@ -69,6 +70,18 @@ func Varied(rc *RenderContext, header string) (string, bool) {
 // It is as safe in a shared render as Varied is: the value is in the cache key.
 func VariedContext(ctx context.Context, header string) (string, bool) {
 	return httpx.VariedContext(ctx, header)
+}
+
+// IsCapture reports whether ctx belongs to a request a static build sent to its
+// own handler to record a written file's response headers. Each file's path is
+// asked for twice, after the file is written, and nothing is cached for it.
+//
+// A plugin that counts or limits traffic — analytics, a rate limiter, a ban
+// list — should leave such a request alone: it is the build, not a visitor. A
+// middleware that sets response headers must not: what it sets on a capture is
+// what the deployed file is served with.
+func IsCapture(ctx context.Context) bool {
+	return types.IsCapture(ctx)
 }
 
 // BaseURL returns the public origin of the request rc renders for —

@@ -221,6 +221,10 @@ func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, do
 // every document request and loses the cache write with it.
 func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Document, result *render.DocumentResult, route *routeRef) string {
 	ctx := r.Context()
+	// Not for a static build's header capture; see writeCache.
+	if types.IsCapture(ctx) {
+		return ""
+	}
 
 	event := &plugin.CacheWriteEvent{
 		Key:  key,

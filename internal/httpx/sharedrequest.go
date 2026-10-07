@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // sharedRequest returns the request a render stored in the cache is made from:
@@ -94,7 +96,7 @@ type renderSafe struct {
 
 func (c renderSafe) Value(key any) any {
 	switch key.(type) {
-	case routeCtxKey, varySetKey, chainStateKey, originsKey:
+	case routeCtxKey, varySetKey, chainStateKey, originsKey, types.CaptureKey:
 		return c.Context.Value(key)
 	}
 	// Not one of ours: hidden. Tell the developer, but only when the value was

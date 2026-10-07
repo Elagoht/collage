@@ -1127,6 +1127,12 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 // miss.
 func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string) string {
 	ctx := r.Context()
+	// A static build asking what it answers is not a reader: the build has
+	// written the file, and an entry or a hook call on its behalf would be
+	// state the build left behind.
+	if types.IsCapture(ctx) {
+		return ""
+	}
 
 	event := &plugin.CacheWriteEvent{
 		Key:  key,

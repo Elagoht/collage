@@ -2,6 +2,7 @@ package build
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -21,6 +22,12 @@ import (
 type capturingRenderer struct {
 	*fakeRenderer
 	status map[string]int
+	// other is the second answer's status for a path, when it differs.
+	other map[string]int
+	// failed are the paths whose capture fails.
+	failed map[string]bool
+	// dev is what DevMode reports.
+	dev bool
 
 	mu       sync.Mutex
 	captured []string
@@ -28,7 +35,12 @@ type capturingRenderer struct {
 
 func (c *capturingRenderer) PrefixDefault() bool { return true }
 
-func (c *capturingRenderer) CaptureResponses(_ context.Context, paths []string) (map[string]types.CapturedResponse, error) {
+func (c *capturingRenderer) DevMode() bool { return c.dev }
+
+func (c *capturingRenderer) CaptureResponses(ctx context.Context, paths []string) (map[string]types.CapturedResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	c.mu.Lock()
 	c.captured = append(c.captured, paths...)
 	c.mu.Unlock()
@@ -38,10 +50,15 @@ func (c *capturingRenderer) CaptureResponses(_ context.Context, paths []string) 
 		if s, ok := c.status[p]; ok {
 			status = s
 		}
+		if c.failed[p] {
+			out[p] = types.CapturedResponse{Err: errors.New("not answered in time")}
+			continue
+		}
 		out[p] = types.CapturedResponse{
-			Status:   status,
-			Headers:  http.Header{"X-Path": {p}},
-			Unstable: []string{"X-Nonce"},
+			Status:      status,
+			OtherStatus: c.other[p],
+			Headers:     http.Header{"X-Path": {p}},
+			Unstable:    []string{"X-Nonce"},
 		}
 	}
 	return out, nil
@@ -160,4 +177,99 @@ func TestBuild_CaptureWarnsWithoutABuildFinisher(t *testing.T) {
 	if !slices.ContainsFunc(report.Findings, func(f types.Finding) bool { return f.Rule == "unstable-header" }) {
 		t.Errorf("Findings = %+v, want an unstable-header warning", report.Findings)
 	}
+}
+
+// findingsBy returns report's findings under rule.
+func findingsBy(report *Report, rule string) []types.Finding {
+	var out []types.Finding
+	for _, f := range report.Findings {
+		if f.Rule == rule {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// TestBuild_CaptureWarnsAboutFailuresAndFlappingStatuses: a path the capture
+// could not answer is warned as capture-failed and keeps no headers; one answered
+// with two statuses is warned as capture-status.
+func TestBuild_CaptureWarnsAboutFailuresAndFlappingStatuses(t *testing.T) {
+	app := newCapturingRenderer(t)
+	app.status = nil
+	app.failed = map[string]bool{"/static/app.css": true}
+	app.other = map[string]int{"/en": http.StatusTooManyRequests}
+	finisher := &capturingFinisher{capturingRenderer: app}
+	b, err := New(finisher, Options{OutDir: resolvedTempDir(t)})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if f := findingsBy(report, "capture-failed"); len(f) != 1 || f[0].Path != "/static/app.css" {
+		t.Errorf("capture-failed = %+v, want one for /static/app.css", f)
+	}
+	if f := findingsBy(report, "capture-status"); len(f) != 1 || f[0].Path != "/en" || !strings.Contains(f[0].Message, "429") {
+		t.Errorf("capture-status = %+v, want one for /en naming 429", f)
+	}
+	for _, f := range finisher.files {
+		if f.Path == "/static/app.css" && (f.Status != 0 || f.Headers != nil) {
+			t.Errorf("the failed capture set %+v", f)
+		}
+	}
+}
+
+// TestBuild_CaptureInDevModeWarns: headers captured in development mode are
+// development's, and the build says so once.
+func TestBuild_CaptureInDevModeWarns(t *testing.T) {
+	for _, dev := range []bool{false, true} {
+		app := newCapturingRenderer(t)
+		app.dev = dev
+		b, err := New(app, Options{OutDir: resolvedTempDir(t)})
+		if err != nil {
+			t.Fatalf("New: %v", err)
+		}
+		report, err := b.Build(context.Background())
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		want := 0
+		if dev {
+			want = 1
+		}
+		if f := findingsBy(report, "capture-dev-mode"); len(f) != want {
+			t.Errorf("dev=%v: capture-dev-mode = %+v, want %d", dev, f, want)
+		}
+	}
+}
+
+// TestBuild_CaptureReturnsACancelledBuildsError: a capture stopped by the
+// build's own context ending fails the build rather than warning.
+func TestBuild_CaptureReturnsACancelledBuildsError(t *testing.T) {
+	app := newCapturingRenderer(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	finisher := &cancelOnCapture{capturingRenderer: app, cancel: cancel}
+	b, err := New(finisher, Options{OutDir: resolvedTempDir(t)})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(ctx)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Build = %v, want context.Canceled", err)
+	}
+	if f := findingsBy(report, "capture-failed"); len(f) != 0 {
+		t.Errorf("capture-failed = %+v, want the error alone", f)
+	}
+}
+
+// cancelOnCapture cancels the build's context as the capture begins.
+type cancelOnCapture struct {
+	*capturingRenderer
+	cancel context.CancelFunc
+}
+
+func (c *cancelOnCapture) CaptureResponses(ctx context.Context, paths []string) (map[string]types.CapturedResponse, error) {
+	c.cancel()
+	return c.capturingRenderer.CaptureResponses(ctx, paths)
 }
