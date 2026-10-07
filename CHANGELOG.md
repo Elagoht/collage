@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **The template type checker judges argument types.** Up to v0.50.x only the
+  number of a call's arguments was checked. An argument is now judged against
+  its parameter as `text/template`'s `evalArg` judges it: a constant by the
+  parameter's kind (`{{upper 1}}`, `{{printf 1}}`, `{{uint -1}}`, `{{i8 1.5}}`,
+  `nil` where nil cannot go), any other value of a known type by
+  assignability, one pointer deref, or the address of an addressable value
+  (`{{upper .Count}}`, `{{edit .Owner}}` for a `func(*User)` on data passed by
+  value), for template functions, methods, variadic parameters and the value
+  piped in alike. `call` checks what it passes as `text/template`'s `call`
+  does, and `index` checks a map key's type and that a slice, array or string
+  is indexed by an integer.
+- **`slice` of the wrong kind is reported**: of anything but a string, a slice
+  or an array, of a string by three indexes, by more than three indexes, by a
+  non-integer, or of an array `text/template` cannot address.
+
+An application may now fail at startup over a call in a template that would
+already have failed when it rendered: the check reports it earlier, and still
+reports nothing `text/template` does not fail on.
+
 ## v0.50.2
 
 ### Fixed

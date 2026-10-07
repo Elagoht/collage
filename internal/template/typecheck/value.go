@@ -9,9 +9,14 @@ import (
 // value is what the checker knows about a value: its type, and whether
 // text/template could take its address — which decides whether a method with a
 // pointer receiver is reachable. A nil t is unknown.
+//
+// absent marks a value read by a map key the map may not hold: text/template
+// gives a missing key as no value at all, which a chain of fields goes on to
+// give too, and which a parameter that can be nil takes as its zero.
 type value struct {
-	t    reflect.Type
-	addr bool
+	t      reflect.Type
+	addr   bool
+	absent bool
 }
 
 var unknown = value{}
@@ -34,27 +39,28 @@ func (v value) known() bool { return v.t != nil }
 
 // field resolves .name on recv as text/template's evalField does: through any
 // pointers first, then a method — a pointer receiver's only when the value is
-// addressable — then a struct field or a map key.
-func (w *walker) field(node parse.Node, recv value, name string, argc int) value {
+// addressable — then a struct field or a map key. A method's type, receiver
+// included, is returned with what it gives back, so its arguments can be judged.
+func (w *walker) field(node parse.Node, recv value, name string, argc int) (value, reflect.Type) {
 	if !recv.known() {
-		return unknown
+		return unknown, nil
 	}
 	t, addr := recv.t, recv.addr
 	for t.Kind() == reflect.Pointer {
 		t, addr = t.Elem(), true
 	}
 	if t.Kind() == reflect.Interface {
-		return unknown
+		return unknown, nil
 	}
 	if m, ok := t.MethodByName(name); ok && m.IsExported() {
-		return w.result(node, name, m.Type, argc, true)
+		return w.result(node, name, m.Type, argc, true), m.Type
 	}
 	// A pointer-receiver method of an unaddressable value is invisible to
 	// text/template, which goes on to a struct field or map key of that name.
 	hidden := false
 	if m, ok := reflect.PointerTo(t).MethodByName(name); ok && m.IsExported() {
 		if addr {
-			return w.result(node, name, m.Type, argc, true)
+			return w.result(node, name, m.Type, argc, true), m.Type
 		}
 		hidden = true
 	}
@@ -70,15 +76,15 @@ func (w *walker) field(node parse.Node, recv value, name string, argc int) value
 		f, ok := t.FieldByName(name)
 		if !ok {
 			missing()
-			return unknown
+			return unknown, nil
 		}
 		if !f.IsExported() {
 			w.report(node, fmt.Sprintf("%s is an unexported field of type %s", name, t), "")
-			return unknown
+			return unknown, nil
 		}
 		if argc > 0 {
 			w.report(node, fmt.Sprintf("%s is a field of type %s, not a method, and takes no arguments", name, t), "")
-			return unknown
+			return unknown, nil
 		}
 		// Anything reached through an embedded pointer is addressable.
 		ft := t
@@ -88,20 +94,22 @@ func (w *walker) field(node parse.Node, recv value, name string, argc int) value
 				addr, ft = true, ft.Elem()
 			}
 		}
-		return typed(f.Type, addr)
+		return typed(f.Type, addr), nil
 	case reflect.Map:
 		if !reflect.TypeFor[string]().AssignableTo(t.Key()) {
 			w.report(node, fmt.Sprintf("type %s is keyed by %s, which .%s cannot look up", t, t.Key(), name), "")
-			return unknown
+			return unknown, nil
 		}
 		if argc > 0 {
 			w.report(node, fmt.Sprintf("%s is a key of type %s, not a method, and takes no arguments", name, t), "")
-			return unknown
+			return unknown, nil
 		}
-		return typed(t.Elem(), false)
+		elem := typed(t.Elem(), false)
+		elem.absent = elem.known()
+		return elem, nil
 	}
 	missing()
-	return unknown
+	return unknown, nil
 }
 
 // result checks a call of a method or function of type ft with argc arguments,

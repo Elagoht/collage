@@ -1,6 +1,7 @@
 package typecheck
 
 import (
+	"fmt"
 	"html/template"
 	"io"
 	"reflect"
@@ -68,6 +69,19 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 		"f64":  func(n float64) float64 { return n },
 		"u64":  func(n uint64) uint64 { return n },
 		"anyf": func(v any) any { return v }, // any: a parameter text/template fills with an ideal constant
+
+		// Typed parameters an argument is converted to or checked against.
+		"uint":     func(n uint) uint { return n },
+		"c128":     func(n complex128) complex128 { return n },
+		"boolf":    func(b bool) bool { return b },
+		"slugf":    func(s slug) slug { return s },
+		"ptrUser":  func(u *user) string { return "p" },
+		"valUser":  func(u user) string { return u.Name },
+		"stringer": func(s fmt.Stringer) string { return "s" },
+		"errf":     func(err error) string { return "e" },
+		"cardsf":   func(c []card) int { return len(c) },
+		"variadic": func(s string, n ...int) string { return s },
+		"rv":       func(v reflect.Value) string { return "v" },
 	}
 	type differential struct {
 		src  string
@@ -211,6 +225,82 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 	add(func() any { return outer{inner{Edit: "e"}} }, `{{.Edit}}`, `{{.Edit "x"}}`)                          // any: case data
 	add(func() any { return &outer{inner{Edit: "e"}} }, `{{.Edit}}`, `{{.Edit "x"}}`)                         // any: case data
 
+	// Argument types, judged as text/template's evalArg judges them: a
+	// constant by its parameter's kind, any other value by validateType's
+	// rules; call, index and slice by the checks inside them.
+	argsVal := func() any { return filledArgs() }          // any: case data
+	argsPtr := func() any { a := filledArgs(); return &a } // any: case data
+	add(argsVal,
+		// Constants against the parameter's kind.
+		`{{printf 1}}`, `{{printf "%d" 1}}`, `{{printf nil}}`, `{{printf true}}`, `{{printf .Count}}`, `{{printf .Title}}`,
+		`{{upper 1}}`, `{{upper "x"}}`, `{{upper true}}`, `{{upper nil}}`, `{{upper 1.5}}`,
+		`{{i8 300}}`, `{{i8 3}}`, `{{i8 -3}}`, `{{i8 1.5}}`, `{{i8 1.0}}`, `{{i8 1e3}}`, `{{i8 'a'}}`, `{{i8 "x"}}`,
+		`{{i8 (1)}}`, `{{$x := 1}}{{i8 $x}}`, `{{i8 .Small}}`, `{{i8 .Count}}`,
+		`{{uint -1}}`, `{{uint 1}}`, `{{uint 0x10}}`, `{{uint 1.5}}`, `{{uint -0}}`,
+		`{{f64 1}}`, `{{f64 1.5}}`, `{{f64 'a'}}`, `{{f64 1i}}`, `{{f64 "x"}}`, `{{f64 .Ratio}}`, `{{f64 .Count}}`,
+		`{{c128 1}}`, `{{c128 1i}}`, `{{c128 1.5}}`,
+		`{{boolf true}}`, `{{boolf 1}}`, `{{boolf "x"}}`, `{{boolf nil}}`, `{{boolf .Flag}}`, `{{boolf .Title}}`,
+		`{{anyf 1}}`, `{{anyf 9223372036854775808}}`, `{{anyf "x"}}`, `{{anyf .Owner}}`,
+		`{{rv 1}}`, `{{rv nil}}`, `{{rv .Owner}}`, `{{rv 9223372036854775808}}`,
+		`{{slugf "a"}}`, `{{slugf .Title}}`, `{{slugf .Slug}}`, `{{slugf 1}}`,
+		`{{stringer "x"}}`, `{{stringer 1}}`, `{{stringer nil}}`, `{{stringer true}}`,
+		`{{errf nil}}`, `{{ptrUser nil}}`, `{{cardsf nil}}`, `{{cardsf 1}}`, `{{cardsf "x"}}`,
+
+		// Values of a known type against the parameter's type.
+		`{{stringer .Stamp}}`, `{{stringer .Owner}}`, `{{stringer .PStamp}}`, `{{stringer .PSPtr}}`,
+		`{{ptrUser .Owner}}`, `{{ptrUser .Author}}`, `{{valUser .Author}}`, `{{valUser .Owner}}`,
+		`{{range .Cards}}{{ptrUser .Owner}}{{end}}`, `{{range .Users}}{{ptrUser .}}{{end}}`,
+		`{{ptrUser (index .Cards 0).Owner}}`, `{{ptrUser .Users.missing}}`, `{{stringer .Users.missing}}`,
+		`{{with .Owner}}{{ptrUser .}}{{end}}`, `{{$o := .Owner}}{{ptrUser $o}}`,
+		`{{cardsf .Cards}}`, `{{cardsf .Fixed}}`, `{{cardsf .Owner}}`,
+		`{{range .Cards}}{{upper .}}{{end}}`, `{{with .Title}}{{upper .}}{{end}}`,
+		`{{upper (index .Cards 0).Name}}`, `{{upper (index .Cards 0).Owner}}`, `{{upper (pick 1)}}`,
+		`{{upper (upper 1)}}`, `{{upper .Any}}`, `{{anyf .F}}`,
+		`{{upper .Count .Nope}}`, "{{upper\n  .Count}}",
+
+		// Variadic parameters take the element type.
+		`{{variadic "a" 1 2}}`, `{{variadic "a" "b"}}`, `{{variadic "a" .Count}}`, `{{variadic "a" .Title}}`,
+		`{{variadic 1}}`, `{{variadic "a" 1 1.5}}`, `{{variadic "a" .Small}}`,
+
+		// The piped final value.
+		`{{.Count | upper}}`, `{{.Title | upper}}`, `{{1 | upper}}`, `{{"x" | upper}}`, `{{.Count | printf}}`,
+		`{{.Title | printf}}`, `{{.Count | printf "%d"}}`, `{{.Count | variadic "a"}}`, `{{.Title | variadic "a"}}`,
+		`{{"a" | variadic}}`, `{{.Count | variadic}}`, `{{.Owner | ptrUser}}`, `{{.Author | valUser}}`,
+		`{{.Count | .Take}}`, `{{.Title | .Take}}`, `{{.Count | upper | upper}}`,
+
+		// Methods with typed parameters.
+		`{{.Take 3}}`, `{{.Take 300}}`, `{{.Take "x"}}`, `{{.Take .Count}}`, `{{.Take .Small}}`, `{{.Take 1.5}}`,
+		`{{.Name 1}}`, `{{.Name "x"}}`, `{{.Many "," 1 2}}`, `{{.Many "," "x"}}`, `{{.Many 1}}`,
+		`{{.Ptr .Owner}}`, `{{.Ptr .Author}}`, `{{.Ptr nil}}`, `{{$.Take "x"}}`, `{{$a := .}}{{$a.Take "x"}}`,
+
+		// call checks each argument as prepareArg does: assignable, or an
+		// integer converted to another integer type.
+		`{{call .Fn64 1.5}}`, `{{call .Fn64 1}}`, `{{call .FnI8 300}}`, `{{call .FnI8 .Count}}`, `{{call .FnI8 1.5}}`,
+		`{{call .FnStr 1}}`, `{{call .FnStr .Title}}`, `{{call .FnStr .Slug}}`, `{{call .FnStr "x"}}`,
+		`{{call .FnUser .Owner}}`, `{{call .FnUser .Author}}`, `{{call .FnUser nil}}`, `{{call .FnAny 1}}`,
+		`{{.Title | call .FnStr}}`, `{{.Count | call .FnStr}}`, `{{call .FnVar "a" 1 2}}`, `{{call .FnVar "a" "b"}}`,
+		`{{call .FnVal .Author}}`, `{{call .FnUser .Users.missing}}`,
+
+		// index converts a map key as call does; a slice, array or string
+		// index must be an integer.
+		`{{index .ByNum "a"}}`, `{{index .ByNum 1}}`, `{{index .ByNum .Small}}`, `{{index .ByNum 1.5}}`,
+		`{{index .BySlug "a"}}`, `{{index .BySlug .Slug}}`, `{{index .Meta 1}}`, `{{index .Meta "anything"}}`,
+		`{{index .Cards "a"}}`, `{{index .Cards 1.0}}`, `{{index .Cards .Small}}`, `{{index .Cards 0}}`,
+		`{{index .Title 0}}`, `{{index .Title "a"}}`, `{{index .Fixed .Title}}`, `{{index .Users.missing 0}}`,
+		`{{index .ByPtr .Users.missing}}`, `{{index .ByNum 0 0}}`, `{{index .Nested 1 "a"}}`, `{{index .Nested 1 1}}`,
+
+		// slice of a string, a slice or an addressable array, by integers.
+		`{{slice .Count}}`, `{{slice .Title 1}}`, `{{slice .Cards 0}}`, `{{slice .Owner}}`, `{{slice .Author}}`,
+		`{{slice .Title 0 1 1}}`, `{{slice .Cards 0 1 1}}`, `{{slice .Cards 0 0 0 0}}`, `{{slice .Cards "a"}}`,
+		`{{slice .Title 1.5}}`, `{{slice .Fixed 0}}`, `{{slice .PFix 0}}`, `{{slice .PS 0}}`, `{{slice .Cards .Small}}`,
+		`{{range .Arrs}}{{slice . 0}}{{end}}`, `{{slice (index .Arrs 0) 0}}`, `{{slice .ArrMap.a 0}}`,
+		`{{(slice .Title 1).Nope}}`, `{{slice 1}}`, `{{slice "abc" 1}}`,
+	)
+	add(argsPtr,
+		`{{ptrUser .Owner}}`, `{{stringer .PStamp}}`, `{{.Ptr .Owner}}`, `{{call .FnUser .Owner}}`,
+		`{{slice .Fixed 0}}`, `{{range .Users}}{{ptrUser .}}{{end}}`, `{{cardsf .Fixed}}`,
+	)
+
 	at := regexp.MustCompile(`t\.html:(\d+):(\d+)`)
 	for _, tc := range cases {
 		data := tc.data()
@@ -234,6 +324,73 @@ func TestCheck_AgreesWithTextTemplate(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// argData holds what the argument-type cases pass: values of named, pointer,
+// array, map and function types, every map key read present but "missing".
+type argData struct {
+	Count  int
+	Small  int8
+	Ratio  float64
+	Flag   bool
+	Title  string
+	Slug   slug
+	Owner  user
+	Author *user
+	Cards  []card
+	Fixed  [2]card
+	PFix   *[2]card
+	PS     *[]card
+	Arrs   [][1]int
+	ArrMap map[string][1]int
+	Stamp  stamp
+	PStamp pstamp
+	PSPtr  *pstamp
+	Users  map[string]user
+	ByNum  map[int]string
+	BySlug map[slug]string
+	ByPtr  map[*user]string
+	Meta   map[string]string
+	Nested map[int]map[string]int
+	Any    any // any: a value the checker must not look into
+	F      reflect.Value
+	Fn64   func(float64) float64
+	FnI8   func(int8) int8
+	FnStr  func(string) string
+	FnUser func(*user) string
+	FnVal  func(user) string
+	FnAny  func(any) any // any: a parameter call fills with whatever it is given
+	FnVar  func(string, ...int) string
+}
+
+func (argData) Take(n int8) int8                 { return n }
+func (argData) Name(s string) string             { return s }
+func (argData) Many(sep string, n ...int) string { return sep }
+func (argData) Ptr(u *user) string               { return "p" }
+
+type stamp struct{}
+
+func (stamp) String() string { return "stamp" }
+
+type pstamp struct{}
+
+func (*pstamp) String() string { return "pstamp" }
+
+func filledArgs() argData {
+	cards := []card{{Name: "c"}, {Name: "d"}}
+	fixed := [2]card{{Name: "a"}, {Name: "b"}}
+	return argData{
+		Count: 2, Small: 1, Ratio: 1.5, Flag: true, Title: "title", Slug: "s",
+		Owner: user{Name: "o"}, Author: &user{Name: "a"}, Cards: cards, Fixed: fixed, PFix: &fixed, PS: &cards,
+		Arrs: [][1]int{{1}}, ArrMap: map[string][1]int{"a": {1}}, PSPtr: &pstamp{},
+		Users: map[string]user{"u": {Name: "u"}}, ByNum: map[int]string{0: "z", 1: "a"},
+		BySlug: map[slug]string{"s": "x"}, ByPtr: map[*user]string{}, Meta: map[string]string{"anything": "m"},
+		Nested: map[int]map[string]int{1: {"a": 1}}, Any: "x", F: reflect.ValueOf("f"),
+		Fn64: func(f float64) float64 { return f }, FnI8: func(n int8) int8 { return n },
+		FnStr: func(s string) string { return s }, FnUser: func(*user) string { return "u" },
+		FnVal: func(u user) string { return u.Name }, FnAny: func(v any) any { return v }, // any: FnAny's own type
+		FnVar: func(s string, _ ...int) string { return s },
 	}
 }
 

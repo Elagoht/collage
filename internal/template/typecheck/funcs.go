@@ -14,9 +14,11 @@ import (
 //
 // As in text/template, the call's shape — how many arguments, how many results
 // — is checked at the identifier before any argument is evaluated, so a call of
-// the wrong shape reports nothing inside its arguments. Then every argument is
-// walked, except those and and or skip. A builtin's own failure is named at
-// node, the whole command; findings are about node.
+// the wrong shape reports nothing inside its arguments. Then each argument is
+// evaluated and judged against its parameter, up to the first that fails, and
+// except those and and or skip; the piped final value is judged last. A
+// builtin's own failure is named at node, the whole command; findings are about
+// node.
 func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse.Node, dot value, vars []variable, hasFinal bool, final value) value {
 	name := ident.Ident
 	w.at = ident
@@ -40,17 +42,15 @@ func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse
 			return unknown
 		}
 	}
+	// Each argument is judged against its parameter as it is evaluated, and the
+	// first that fails stops the call, as in text/template's evalCall.
 	values := make([]value, 0, argc)
 	walked := w.reported
 	for i, arg := range args {
-		// A number given to a typed parameter is converted to it, not made an
-		// ideal constant; whether it converts is not judged.
-		if num, ok := arg.(*parse.NumberNode); ok && !w.idealParam(name, ft, overridden, i) {
-			w.at = num
-			values = append(values, unknown)
-			continue
+		values = append(values, w.typedArg(node, name, i, arg, w.param(name, ft, overridden, i), dot, vars))
+		if w.reported != walked {
+			return unknown
 		}
-		values = append(values, w.arg(arg, dot, vars))
 		// and and or stop at the first operand that decides them, so what
 		// follows a literal that is false (and) or true (or) never runs.
 		if !overridden && (name == "and" || name == "or") {
@@ -60,14 +60,13 @@ func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse
 		}
 	}
 	if hasFinal {
+		if !w.validate(node, name, len(args), final, w.param(name, ft, overridden, len(args))) {
+			return unknown
+		}
 		values = append(values, final)
 	}
 	if overridden || strings.HasPrefix(name, "_html_template_") {
 		return result
-	}
-	// An argument that failed stopped text/template before the call ran.
-	if w.reported != walked {
-		return unknown
 	}
 	// A builtin fails after its arguments are evaluated, named at the
 	// command; after it the arguments' last mark stands.
@@ -77,35 +76,31 @@ func (w *walker) call(ident *parse.IdentifierNode, node parse.Node, args []parse
 	return w.builtin(node, name, values)
 }
 
-// idealParam says whether the i'th argument of the call of name is an any or a
-// reflect.Value, where text/template makes an ideal constant of a number. Every
-// builtin's parameters are, but printf's format, a string; a function the set
-// was not parsed with is not known to take one.
-func (w *walker) idealParam(name string, ft reflect.Type, overridden bool, i int) bool {
-	if !overridden {
-		if _, builtin := builtinArgs[name]; builtin {
-			return name != "printf" || i != 0
+// param is the type of the i'th parameter of the call of name, or nil when it
+// is not known. Every builtin takes reflect.Values or ...any but printf, whose
+// format is a string; the escaper's functions, which html/template adds after
+// parsing, take ...any; a name neither the set nor text/template knows is not
+// known.
+func (w *walker) param(name string, ft reflect.Type, overridden bool, i int) reflect.Type {
+	if overridden {
+		return param(ft, false, i)
+	}
+	if _, builtin := builtinArgs[name]; builtin {
+		if name == "printf" && i == 0 {
+			return reflect.TypeFor[string]()
 		}
-		// The escaper's functions take ...any; a name neither knows is unknown.
-		return strings.HasPrefix(name, "_html_template_")
+		return reflectValueType
 	}
-	if ft == nil || ft.Kind() != reflect.Func {
-		return false
+	if strings.HasPrefix(name, "_html_template_") {
+		return anyType
 	}
-	var p reflect.Type
-	switch n := ft.NumIn(); {
-	case ft.IsVariadic() && i >= n-1:
-		p = ft.In(n - 1).Elem()
-	case i < n:
-		p = ft.In(i)
-	default:
-		return false
-	}
-	return p == reflectValueType || p.Kind() == reflect.Interface && p.NumMethod() == 0
+	return nil
 }
 
 // builtinArgs holds how many arguments each of text/template's builtins takes:
 // at least min, and no more than max unless max is -1.
+var anyType = reflect.TypeFor[any]() // any: the type of the escaper's parameters
+
 var builtinArgs = map[string]struct{ min, max int }{
 	"and": {1, -1}, "or": {1, -1}, "not": {1, 1},
 	"call": {1, -1}, "index": {1, -1}, "slice": {1, -1}, "len": {1, 1},
@@ -134,6 +129,13 @@ func (w *walker) builtinArity(node parse.Node, name string, argc int) bool {
 }
 
 func (w *walker) builtin(node parse.Node, name string, args []value) value {
+	// A builtin is given reflect.Values, and one an argument already is reaches
+	// it as the value it holds, which is only known when it renders.
+	for i, a := range args {
+		if a.t == reflectValueType {
+			args[i] = unknown
+		}
+	}
 	str := typed(reflect.TypeFor[string](), false)
 	boolean := typed(reflect.TypeFor[bool](), false)
 	switch name {
@@ -152,7 +154,20 @@ func (w *walker) builtin(node parse.Node, name string, args []value) value {
 			return unknown
 		}
 		if fn := args[0].t; fn.Kind() == reflect.Func {
+			before := w.reported
 			v := w.result(node, "call", fn, len(args)-1, false)
+			if w.reported != before {
+				return unknown
+			}
+			// call's own prepareArg converts each argument to fn's
+			// parameter: it takes one assignable to it, or an integer of
+			// another integer type, and nothing else.
+			for i, a := range args[1:] {
+				if p := param(fn, false, i); p != nil && !prepared(a, p) {
+					w.report(node, fmt.Sprintf("argument %d of the function call calls: value has type %s; should be %s", i+1, a.t, p), "")
+					return unknown
+				}
+			}
 			// call hands back fn's result wrapped once more, and text/template
 			// unwraps only that: a reflect.Value fn returns stays one.
 			if fn.NumOut() > 0 && fn.Out(0) == reflectValueType {
@@ -181,32 +196,23 @@ func (w *walker) builtin(node parse.Node, name string, args []value) value {
 			return unknown
 		}
 		item := args[0]
-		for range args[1:] {
-			item = w.indexed(node, item)
+		for _, i := range args[1:] {
+			if item = w.indexed(node, item, i); !item.known() {
+				return unknown
+			}
 		}
 		return item
 	case "slice":
-		if len(args) == 0 || !args[0].known() {
-			return unknown
-		}
-		t := deref(args[0].t)
-		switch t.Kind() {
-		case reflect.String, reflect.Slice:
-			return typed(t, false)
-		case reflect.Array:
-			// text/template fails on an array it cannot address; that is not
-			// reported, since addressability is only a guess here.
-			return typed(reflect.SliceOf(t.Elem()), false)
-		}
-		return unknown
+		return w.sliced(node, args)
 	}
 	return unknown
 }
 
-// indexed is what index gives one level into item: a slice's element, which
-// text/template can take the address of, an array's when the array itself is
-// addressable, a map's value, a string's byte.
-func (w *walker) indexed(node parse.Node, item value) value {
+// indexed is what index gives one level into item by i: a slice's element,
+// which text/template can take the address of, an array's when the array itself
+// is addressable, a map's value, a string's byte. A slice, array or string is
+// indexed by an integer; a map's key is converted as call converts an argument.
+func (w *walker) indexed(node parse.Node, item, i value) value {
 	if !item.known() {
 		return unknown
 	}
@@ -215,19 +221,89 @@ func (w *walker) indexed(node parse.Node, item value) value {
 		t, addr = t.Elem(), true
 	}
 	switch t.Kind() {
-	case reflect.Slice:
-		return typed(t.Elem(), true)
-	case reflect.Array:
-		return typed(t.Elem(), addr)
-	case reflect.Map:
-		return typed(t.Elem(), false)
-	case reflect.String:
+	case reflect.Slice, reflect.Array, reflect.String:
+		if !w.integer(node, "index", i) {
+			return unknown
+		}
+		switch t.Kind() {
+		case reflect.Slice:
+			return typed(t.Elem(), true)
+		case reflect.Array:
+			return typed(t.Elem(), addr)
+		}
 		return typed(reflect.TypeFor[uint8](), false)
+	case reflect.Map:
+		if !prepared(i, t.Key()) {
+			w.report(node, fmt.Sprintf("index of type %s by a key of type %s; should be %s", t, i.t, t.Key()), "")
+			return unknown
+		}
+		return typed(t.Elem(), false)
 	case reflect.Interface:
 		return unknown
 	}
 	w.report(node, fmt.Sprintf("cannot index into type %s", t), "")
 	return unknown
+}
+
+// integer says whether i may index a slice, array or string, as text/template's
+// indexArg judges it: by an integer kind, signed or not. A key a map may not
+// hold arrives as no value, which indexes nothing either.
+func (w *walker) integer(node parse.Node, name string, i value) bool {
+	if !i.known() || intLike(i.t.Kind()) {
+		return true
+	}
+	w.report(node, fmt.Sprintf("%s by a value of type %s, which is not an integer", name, i.t), "")
+	return false
+}
+
+// sliced is what slice gives of args[0] by the indexes after it, as
+// text/template's slice judges them: through any pointers, a string by up to two
+// indexes, a slice or an array — one text/template can take the address of — by
+// up to three, each an integer.
+func (w *walker) sliced(node parse.Node, args []value) value {
+	if len(args) == 0 || !args[0].known() {
+		return unknown
+	}
+	t, addr := args[0].t, args[0].addr
+	for t.Kind() == reflect.Pointer {
+		t, addr = t.Elem(), true
+	}
+	indexes := args[1:]
+	if t.Kind() == reflect.Interface {
+		return unknown
+	}
+	if len(indexes) > 3 {
+		w.report(node, fmt.Sprintf("slice takes at most three indexes, not %d", len(indexes)), "")
+		return unknown
+	}
+	var result value
+	switch t.Kind() {
+	case reflect.String:
+		if len(indexes) == 3 {
+			w.report(node, "slice of a string takes at most two indexes", "")
+			return unknown
+		}
+		result = typed(t, false)
+	case reflect.Slice:
+		result = typed(t, false)
+	case reflect.Array:
+		result = typed(reflect.SliceOf(t.Elem()), false)
+	default:
+		w.report(node, fmt.Sprintf("slice of type %s, which is not a string, a slice or an array", t), "")
+		return unknown
+	}
+	for _, i := range indexes {
+		if !w.integer(node, "slice", i) {
+			return unknown
+		}
+	}
+	// reflect cannot slice an array it cannot address, and text/template
+	// fails with it: data passed by value, a map's value, a function's result.
+	if t.Kind() == reflect.Array && !addr {
+		w.report(node, fmt.Sprintf("slice of a %s that is not addressable: pass the data as a pointer, or reach the array through a slice", t), "")
+		return unknown
+	}
+	return result
 }
 
 func deref(t reflect.Type) reflect.Type {

@@ -1,11 +1,12 @@
 // Package typecheck walks a parsed template against the Go type of the data it
 // will run with, and reports what is certain to fail when it renders: a field the
-// type does not have, a method called with the wrong number of arguments or
-// through a value that cannot reach it, a range over something that cannot be
-// ranged over. A value whose type cannot be known before it renders — an
-// interface, a map[string]any entry, a reflect.Value a method or function
-// returns — is unknown, and nothing below an unknown value is reported: the
-// checker speaks only when text/template would fail.
+// type does not have, a method called with the wrong number of arguments, with
+// an argument its parameter cannot take, or through a value that cannot reach
+// it, a range over something that cannot be ranged over. A value whose type
+// cannot be known before it renders — an interface, a map[string]any entry, a
+// reflect.Value a method or function returns — is unknown, and nothing below an
+// unknown value is reported: the checker speaks only when text/template would
+// fail.
 package typecheck
 
 import (
@@ -181,17 +182,22 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 	// The receiver resolves before its arguments are evaluated, as in
 	// text/template; when it fails, its arguments are never evaluated.
 	var result value
+	var method reflect.Type
+	var name string
 	before := w.reported
 	switch n := cmd.Args[0].(type) {
 	case *parse.FieldNode:
 		w.at = n
-		result = w.chain(n, dot, n.Ident, argc)
+		name = n.Ident[len(n.Ident)-1]
+		result, method = w.chain(n, dot, n.Ident, argc)
 	case *parse.ChainNode:
 		w.at = n
-		result = w.chain(n, w.arg(n.Node, dot, vars), n.Field, argc)
+		name = n.Field[len(n.Field)-1]
+		result, method = w.chain(n, w.arg(n.Node, dot, vars), n.Field, argc)
 	case *parse.VariableNode:
 		w.at = n
-		result = w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], argc)
+		name = n.Ident[len(n.Ident)-1]
+		result, method = w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], argc)
 	case *parse.NilNode:
 		// nil is a value only as an argument; as a command it always fails.
 		w.at = n
@@ -208,14 +214,17 @@ func (w *walker) command(cmd *parse.CommandNode, dot value, vars []variable, has
 	if w.reported != before {
 		return unknown
 	}
-	for _, arg := range cmd.Args[1:] {
-		// A number given to a method is converted to its parameter's type,
-		// which is not followed here, so it is not judged.
-		if num, ok := arg.(*parse.NumberNode); ok {
-			w.at = num
-			continue
+	// A method's arguments are judged against its parameters, and the first
+	// that fails stops it, as in text/template's evalCall.
+	args := cmd.Args[1:]
+	for i, arg := range args {
+		w.typedArg(cmd, name, i, arg, param(method, true, i), dot, vars)
+		if w.reported != before {
+			return unknown
 		}
-		w.arg(arg, dot, vars)
+	}
+	if hasFinal && method != nil && !w.validate(cmd, name, len(args), final, param(method, true, len(args))) {
+		return unknown
 	}
 	return result
 }
@@ -225,11 +234,14 @@ func (w *walker) arg(node parse.Node, dot value, vars []variable) value {
 	w.at = node
 	switch n := node.(type) {
 	case *parse.FieldNode:
-		return w.chain(n, dot, n.Ident, 0)
+		v, _ := w.chain(n, dot, n.Ident, 0)
+		return v
 	case *parse.ChainNode:
-		return w.chain(n, w.arg(n.Node, dot, vars), n.Field, 0)
+		v, _ := w.chain(n, w.arg(n.Node, dot, vars), n.Field, 0)
+		return v
 	case *parse.VariableNode:
-		return w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], 0)
+		v, _ := w.chain(n, lookup(vars, n.Ident[0]), n.Ident[1:], 0)
+		return v
 	case *parse.PipeNode:
 		return w.eval(n, dot, vars)
 	case *parse.DotNode:
@@ -247,16 +259,23 @@ func (w *walker) arg(node parse.Node, dot value, vars []variable) value {
 }
 
 // chain resolves names one after another from recv; only the last may be given
-// arguments.
-func (w *walker) chain(node parse.Node, recv value, names []string, argc int) value {
+// arguments. It returns the last value, and the type of the method the last
+// name calls, or nil. Whatever follows a key a map may not hold may be absent
+// too: text/template carries the missing value down the chain.
+func (w *walker) chain(node parse.Node, recv value, names []string, argc int) (value, reflect.Type) {
+	var method reflect.Type
 	for i, name := range names {
 		n := 0
 		if i == len(names)-1 {
 			n = argc
 		}
-		recv = w.field(node, recv, name, n)
+		absent := recv.absent
+		recv, method = w.field(node, recv, name, n)
+		if absent && recv.known() {
+			recv.absent = true
+		}
 	}
-	return recv
+	return recv, method
 }
 
 func declare(vars []variable, name string, v value) []variable {
