@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.51.2
+
+### Fixed
+
+- **`collage inspect`'s type table no longer lets two packages of one name
+  overwrite each other.** `a/models.User` and `b/models.User` both key as
+  `models.User`; the second replaced the first, and an editor then flagged the
+  first type's fields. Such a key is now `{"kind": "struct", "ambiguous": true}`
+  with no fields or methods (`kind` is empty if the types differ in kind), for
+  an editor to treat as unknown, whatever order the types were reached in. A
+  fragment's `dataType` is unchanged, and `version` is still `1`.
+
 ## v0.51.1
 
 ### Added

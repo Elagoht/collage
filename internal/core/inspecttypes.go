@@ -11,12 +11,18 @@ import (
 // editor completing {{.}}: its exported fields and the exported methods of it
 // and its pointer. A named pointer, slice, array, map or chan also names what
 // it holds: Elem, and Key for a map.
+//
+// Two packages of one name (a/models, b/models) both name a type "models.User":
+// the entry is then Ambiguous, with only its Kind (empty if they differ), and
+// a consumer treats it as unknown.
 type InspectedType struct {
 	Kind    string            `json:"kind"`
 	Key     string            `json:"key,omitempty"`
 	Elem    string            `json:"elem,omitempty"`
 	Fields  []InspectedField  `json:"fields,omitempty"`
 	Methods []InspectedMethod `json:"methods,omitempty"`
+	// Ambiguous marks a name two distinct types share; it carries no more.
+	Ambiguous bool `json:"ambiguous,omitempty"`
 }
 
 // InspectedField is one exported field, promoted ones included. An embedded
@@ -42,6 +48,8 @@ type InspectedMethod struct {
 func typeTable(roots []reflect.Type) map[string]InspectedType {
 	table := make(map[string]InspectedType)
 	seen := make(map[reflect.Type]bool)
+	owners := make(map[string]reflect.Type)
+	clashes := make(map[string]string) // key -> kind, "" when the types disagree
 	var visit func(t reflect.Type)
 	// register lists t (a named type, or an unnamed struct) and visits what it reaches.
 	register := func(t reflect.Type) {
@@ -71,7 +79,20 @@ func typeTable(roots []reflect.Type) map[string]InspectedType {
 			visit(m.Type.Out(0))
 		}
 		sort.Slice(entry.Methods, func(i, j int) bool { return entry.Methods[i].Name < entry.Methods[j].Name })
-		table[t.String()] = entry
+		key := t.String()
+		if owner, taken := owners[key]; taken && owner != t {
+			kind := entry.Kind
+			if prior, again := clashes[key]; again {
+				if prior != kind {
+					kind = ""
+				}
+			} else if table[key].Kind != kind {
+				kind = ""
+			}
+			clashes[key] = kind
+		}
+		owners[key] = t
+		table[key] = entry
 	}
 	visit = func(t reflect.Type) {
 		if seen[t] {
@@ -99,6 +120,9 @@ func typeTable(roots []reflect.Type) map[string]InspectedType {
 		if root != nil {
 			visit(root)
 		}
+	}
+	for key, kind := range clashes {
+		table[key] = InspectedType{Kind: kind, Ambiguous: true}
 	}
 	return table
 }

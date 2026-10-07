@@ -4,6 +4,9 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	amodels "github.com/Elagoht/collage/internal/core/inspecttest/a/models"
+	bmodels "github.com/Elagoht/collage/internal/core/inspecttest/b/models"
 )
 
 type itUser struct{ Name string }
@@ -172,5 +175,30 @@ func TestTypeTableContainerElems(t *testing.T) {
 	}
 	if s := tb["core.itUser"]; s.Elem != "" || s.Key != "" {
 		t.Errorf("a struct has no elem or key: %+v", s)
+	}
+}
+
+type itHolder struct {
+	A amodels.User
+	B bmodels.User
+	O bmodels.Other
+}
+
+func TestTypeTableAmbiguous(t *testing.T) {
+	a, b := reflect.TypeFor[amodels.User](), reflect.TypeFor[bmodels.User]()
+	o := reflect.TypeFor[bmodels.Other]()
+	orders := [][]reflect.Type{{a, b, o}, {o, b, a}, {reflect.TypeFor[itHolder]()}}
+	for _, roots := range orders {
+		table := typeTable(roots)
+		got, ok := table["models.User"]
+		if !ok || !got.Ambiguous || got.Kind != "struct" || got.Fields != nil || got.Methods != nil {
+			t.Errorf("models.User = %+v, want ambiguous struct without fields", got)
+		}
+		if other := table["models.Other"]; other.Ambiguous || len(other.Fields) != 1 {
+			t.Errorf("models.Other = %+v, want it unaffected", other)
+		}
+	}
+	if !reflect.DeepEqual(typeTable(orders[0]), typeTable(orders[1])) {
+		t.Error("table depends on visit order")
 	}
 }

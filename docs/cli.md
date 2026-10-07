@@ -426,6 +426,9 @@ a `types` table describing the types those reach, so an editor can complete
   string (`[]blog.Comment`); standard library types such as
   `time.Time` and `template.HTML` are named, not described. It is left out when no
   fragment has a known data type.
+- A key two different types share (`models.User` from two packages named
+  `models`) is written as `{"kind": "struct", "ambiguous": true}` with no fields
+  or methods, and an editor treats it as unknown.
 
 These are additions: the output's `version` is still `1`.
 
