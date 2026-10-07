@@ -137,9 +137,28 @@ unknown value is reported.
 | `{{block}}`, `{{define}}` | As `template`. |
 | `_html_template_*` identifiers | Ignored: they are the escaper's, inserted after parsing. |
 
-Argument *types* are not checked in this version, only their count:
+Argument *types* were not checked up to v0.50.x, only their count:
 `text/template` converts some arguments itself, and mirroring that exactly is
 where false alarms would come from.
+
+**From v0.51.0 they are**, now that every rule is pinned against `text/template`
+itself by the differential test. The checker mirrors `evalArg`:
+
+- a constant argument (number, string, bool, nil) against the parameter's kind:
+  `int` kinds take an integer constant that fits, `uint` kinds an unsigned one,
+  float and complex kinds theirs, `string` a string, `bool` a bool, an interface
+  the constant's own type (`idealConstant`: overflow is an error); anything else
+  is a definite error ("expected string; found 1");
+- a value of known type against the parameter type by `validateType`'s rules:
+  assignable, or reached through an interface, a pointer deref or an address
+  taken of an addressable value; otherwise a definite error ("wrong type for
+  value"). An unknown value, a `reflect.Value` parameter, and anything the rules
+  leave in doubt are not judged;
+- `slice` of a kind that is not a string, slice or array is a definite error; an
+  array whose addressability is in doubt is not judged.
+
+Every rule lands with differential cases both ways (a call that fails and a
+neighbouring one that renders) before it reports anything.
 
 
 Not in scope: nil-pointer chains inside data, "probably wrong" warnings, anything
