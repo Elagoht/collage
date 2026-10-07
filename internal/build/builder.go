@@ -31,6 +31,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 	"path"
@@ -41,6 +42,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
@@ -640,7 +642,7 @@ func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plug
 		first string
 	}
 	unstable := make(map[string]*unstableHeader)
-	var names []string
+	var names, personal []string
 	for i := range files {
 		f := &files[i]
 		if synthesized[f.File] {
@@ -662,6 +664,9 @@ func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plug
 		case resp.Status < 200 || resp.Status > 299:
 			ev.Warn(f.Path, "capture-status", fmt.Sprintf("the application answered %s with %d; its headers are what that answer carried", f.Path, resp.Status))
 		}
+		if f.Kind == "page" && resp.Status >= 200 && resp.Status <= 299 && len(resp.Unstable) > 0 && personalCacheControl(resp.Headers) {
+			personal = append(personal, f.Path)
+		}
 		for _, name := range resp.Unstable {
 			u := unstable[name]
 			if u == nil {
@@ -677,7 +682,34 @@ func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plug
 		u := unstable[name]
 		ev.Warn("", "unstable-header", fmt.Sprintf("%s differs between two responses on %d path(s) (e.g. %s); a static host cannot carry it", name, u.count, u.first))
 	}
+	if len(personal) > 0 {
+		named := personal[:min(len(personal), personalNamed)]
+		more := ""
+		if len(personal) > len(named) {
+			more = ", …"
+		}
+		ev.Warn("", "capture-personal", fmt.Sprintf("%d page(s) (%s%s) are answered with Cache-Control private or no-store beside a header that differs between responses; that header is left out, so the exported file is no longer personal, and the Cache-Control only means a host will not cache it", len(personal), strings.Join(named, ", "), more))
+	}
 	return nil
+}
+
+// personalNamed is how many pages a capture-personal warning names.
+const personalNamed = 3
+
+// personalCacheControl reports whether h's Cache-Control holds the private or
+// no-store directive, in any of its values, in any case, with or without a
+// field list (private="Set-Cookie").
+func personalCacheControl(h http.Header) bool {
+	for _, value := range h.Values("Cache-Control") {
+		for directive := range strings.SplitSeq(value, ",") {
+			name, _, _ := strings.Cut(directive, "=")
+			name = strings.TrimSpace(name)
+			if ascii.EqualFold(name, "private") || ascii.EqualFold(name, "no-store") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ErrDuplicateRedirect is in a build's errors when two redirects — a page's, a

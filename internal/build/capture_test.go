@@ -29,6 +29,10 @@ type capturingRenderer struct {
 	failed map[string]bool
 	// dev is what DevMode reports.
 	dev bool
+	// cacheControl is a path's Cache-Control, when it has one.
+	cacheControl map[string]string
+	// stable are the paths answered with no unstable header.
+	stable map[string]bool
 
 	mu       sync.Mutex
 	captured []string
@@ -55,12 +59,19 @@ func (c *capturingRenderer) CaptureResponses(ctx context.Context, paths []string
 			out[p] = types.CapturedResponse{Err: errors.New("not answered in time")}
 			continue
 		}
-		out[p] = types.CapturedResponse{
+		resp := types.CapturedResponse{
 			Status:      status,
 			OtherStatus: c.other[p],
 			Headers:     http.Header{"X-Path": {p}},
 			Unstable:    []string{"X-Nonce"},
 		}
+		if cc, ok := c.cacheControl[p]; ok {
+			resp.Headers.Set("Cache-Control", cc)
+		}
+		if c.stable[p] {
+			resp.Unstable = nil
+		}
+		out[p] = resp
 	}
 	return out, nil
 }
@@ -412,5 +423,60 @@ func TestBuild_ACancelledBuildIsNotFinished(t *testing.T) {
 	}
 	if app.finished {
 		t.Error("BuildFinished ran on a cancelled build")
+	}
+}
+
+// TestBuild_CaptureWarnsAboutPersonalPages: a page answered as personal —
+// Cache-Control private or no-store — beside a header that differed between
+// the two answers, such as a nonce, is exported without that header, so the
+// file is no longer personal, and the Cache-Control would only keep a host from
+// caching it. One warning names how many and a few of them; a public page with
+// a nonce, and a private one with nothing unstable, are not among them.
+func TestBuild_CaptureWarnsAboutPersonalPages(t *testing.T) {
+	app := newCapturingRenderer(t)
+	paths := []string{"/a", "/b", "/c", "/d", "/public", "/private-stable", "/quoted"}
+	for _, p := range paths {
+		app.pages = append(app.pages, newTestPage(strings.Trim(p, "/"), types.StrategyStatic, map[string]string{"en": p}))
+	}
+	app.cacheControl = map[string]string{
+		"/en/a":              "private, no-store",
+		"/en/b":              "no-store",
+		"/en/c":              "Private",
+		"/en/d":              "max-age=0, private",
+		"/en/public":         "public, max-age=60",
+		"/en/private-stable": "private",
+		"/en/quoted":         `private="Set-Cookie", max-age=60`,
+		"/en/feed.xml":       "private",
+	}
+	app.stable = map[string]bool{"/en/private-stable": true}
+	app.status = nil
+	b, err := New(&capturingFinisher{capturingRenderer: app}, Options{OutDir: resolvedTempDir(t)})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	f := findingsBy(report, "capture-personal")
+	if len(f) != 1 {
+		t.Fatalf("capture-personal = %+v, want one", f)
+	}
+	msg := f[0].Message
+	if f[0].Level != types.FindingWarning || f[0].Path != "" || !strings.Contains(msg, "5 page(s)") {
+		t.Errorf("capture-personal = %+v, want one warning naming 5 pages", f[0])
+	}
+	for _, want := range []string{"no longer personal", "will not cache"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("message %q does not say %q", msg, want)
+		}
+	}
+	for _, not := range []string{"/en/public", "/en/private-stable", "/en/feed.xml"} {
+		if strings.Contains(msg, not) {
+			t.Errorf("message %q names %s", msg, not)
+		}
+	}
+	if !strings.Contains(msg, "/en/a") {
+		t.Errorf("message %q names none of the pages", msg)
 	}
 }
