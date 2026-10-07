@@ -145,7 +145,8 @@ where false alarms would come from.
 itself by the differential test. The checker mirrors `evalArg`:
 
 - a constant argument (number, string, bool, nil) against the parameter's kind:
-  `int` kinds take an integer constant that fits, `uint` kinds an unsigned one,
+  `int` kinds take an integer constant (text/template truncates one that does
+  not fit, so the range is not judged), `uint` kinds an unsigned one,
   float and complex kinds theirs, `string` a string, `bool` a bool, an interface
   the constant's own type (`idealConstant`: overflow is an error); anything else
   is a definite error ("expected string; found 1");

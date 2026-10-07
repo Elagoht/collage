@@ -97,10 +97,10 @@ func (w *walker) param(name string, ft reflect.Type, overridden bool, i int) ref
 	return nil
 }
 
-// builtinArgs holds how many arguments each of text/template's builtins takes:
-// at least min, and no more than max unless max is -1.
 var anyType = reflect.TypeFor[any]() // any: the type of the escaper's parameters
 
+// builtinArgs holds how many arguments each of text/template's builtins takes:
+// at least min, and no more than max unless max is -1.
 var builtinArgs = map[string]struct{ min, max int }{
 	"and": {1, -1}, "or": {1, -1}, "not": {1, 1},
 	"call": {1, -1}, "index": {1, -1}, "slice": {1, -1}, "len": {1, 1},

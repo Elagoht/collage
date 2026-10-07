@@ -636,8 +636,9 @@ and `nil` are false.
   a map entry handed to a parameter that can be nil — a key the map does not
   hold arrives as nil, which that parameter takes — are not judged; nor are the
   arguments of a method of a value read by a map key, which the render never
-  calls when the key is missing; nor is an index out of range. A plugin's render functions are parsed with a stand-in
-  that takes anything, so their arguments are left to the plugin.
+  calls when the key is missing; nor is an index out of range. A plugin's render
+  functions are parsed with a stand-in that takes anything, so their arguments
+  are left to the plugin.
 
 ### Reading the error
 
