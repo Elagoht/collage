@@ -279,10 +279,16 @@ what its own configuration files tell it to — Netlify's `_headers` and
 `_redirects`, Vercel's `vercel.json`, and so on. An export carries what the server
 would have said, so that a plugin can write those files.
 
-**Headers are captured.** Once every file is written, the build asks the
+**Headers are captured.** Once every file is written, and when a plugin
+implementing `BuildFinishedHook` is registered to read them, the build asks the
 application's own handler for each file's path — in-process, no network — twice,
 and records the status and the headers it answered with on the file
-(`BuiltFile.Status`, `BuiltFile.Headers`). Whatever your middleware and plugins
+(`BuiltFile.Status`, `BuiltFile.Headers`); with no such plugin it asks nothing.
+The requests carry the host of `Config.BaseURL`, and come over HTTPS when its
+scheme is `https`, so a header sent only over HTTPS — collage-secure's
+`Strict-Transport-Security` — is captured too. `BuiltFile.Captured` marks every
+file the build asked for, also one whose capture failed (its `Status` is then 0),
+so a plugin can tell it from a file the build made itself. Whatever your middleware and plugins
 set — `Cache-Control`, `Content-Security-Policy`, `X-Frame-Options` — comes along
 without being declared again. Left out:
 
@@ -298,7 +304,11 @@ without being declared again. Left out:
 A path answered with something other than one 2xx is a `capture-status` warning,
 one not answered at all a `capture-failed` warning, and a build in development
 mode a `capture-dev-mode` warning — its `Cache-Control: no-store` is not what you
-want deployed. None of them fails the build.
+want deployed. Pages answered with `Cache-Control` `private` or `no-store` beside a
+header that differs between the answers — a page with a CSP nonce — are one
+`capture-personal` warning: the nonce is left out, so the exported file is no
+longer personal, and the `Cache-Control` only keeps a host from caching it. None of
+them fails the build.
 
 Middleware sees these requests. A plugin that counts or limits traffic —
 analytics, a rate limiter, a ban list — should let a request through untouched
@@ -316,9 +326,14 @@ redirects the router would take for one — `/old` and `/old/`, `/blog/{slug}` a
 matching the path of a file the build wrote (`/about` or `/about/` beside
 `about/index.html`, or `/docs/{rest...}` beside `docs/intro/index.html`) with
 `collage.ErrRedirectShadowsFile`: on a host, which one wins would be the host's
-call, not yours. A plugin's rules are checked as a registered redirect is — a
+call, not yours. A placeholder `From` like `/{slug}` shadows every file the
+build wrote at that depth — `about/index.html`, `feed.xml`, `404.html` included —
+so it fails the build too. A plugin's rules
+are checked as a registered redirect is — a
 `From` the router can parse, every placeholder in `To` captured by it — except
-that `To` may be an `http` or `https` URL, and a 410 has no `To`.
+that `To` may be an `http` or `https` URL, and a 410 has no `To`. Braces in a
+`To` are always a placeholder, also in an absolute URL's query
+(`https://example.com/?q={slug}`).
 
 **`elagoht/deploy` writes the host's files.** Collage itself writes none: the
 plugin takes the captured headers and the redirects from the build hook and
@@ -330,4 +345,10 @@ cannot carry:
 ```
 
 `target` is one of `netlify`, `cloudflare`, `vercel` or `github-pages`; without
-one the plugin writes nothing and says so.
+one the plugin writes nothing and says so. It records what it wrote in
+`.collage-deploy.json` and replaces those files on the next export into the same
+directory, so `collage export` without `-clean` works with it. A header every
+captured file shares goes in a `/*` rule, and `/*` also reaches the files other
+plugins write into the output — share cards, a search index — so `Content-Type`,
+`Content-Disposition` and `Content-Language` are never put there, only at each
+file's own path.

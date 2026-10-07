@@ -694,7 +694,8 @@ would make every plugin counting requests count renders nobody asked for.
 `BeforeRender` and `AfterRender` fire as a pair, so a plugin that sets something up
 in one and uses it in the other is not handed half of each.
 
-The header capture that follows the writes is different: it asks the
+The header capture that follows the writes is different: when a
+`BuildFinishedHook` plugin is registered to read what it finds, it asks the
 application's handler for every written file's path, twice, so middleware and the
 request hooks — `PageResolved` included — do see those requests. A plugin that
 counts or limits traffic skips them with `collage.IsCapture(r.Context())`. A plugin

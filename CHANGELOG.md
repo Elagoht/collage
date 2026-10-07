@@ -13,7 +13,11 @@
   `Location` header a server sends.
 - **A static build now sends requests to the application's own handler: two
   per written file, three when the first answer is the trailing-slash
-  redirect.** They are in-process — no network — and middleware and the
+  redirect,** whenever a plugin implementing `BuildFinishedHook` is
+  registered to read what they answer; without one, none are sent. They are
+  asked over HTTPS (a TLS connection state and the `https` scheme) when
+  `Config.BaseURL` is `https`, so a header sent only over HTTPS, such as
+  collage-secure's `Strict-Transport-Security`, is captured. They are in-process — no network — and middleware and the
   request hooks see them, so a plugin that counts or limits traffic
   (analytics, a rate limiter, a ban list) now sees a build's paths. It should
   skip a request for which `collage.IsCapture(r.Context())` is true. Middleware
@@ -24,6 +28,15 @@
   plugin that writes files or keeps a tally from those hooks sees each built
   path two or three more times, and should check `collage.IsCapture(ctx)`
   too.
+- **Two redirects the router takes for one now fail a static build with
+  `ErrDuplicateRedirect`** — `/old` and `/old/`, `/blog/{slug}` and
+  `/blog/{x}`, from any source: a page, a document or a `RedirectSource`
+  plugin. On a static host the host's own precedence would pick one. Remove
+  one of the two.
+- **A redirect matching the path of a file the build wrote now fails it with
+  `ErrRedirectShadowsFile`** — `/about` or `/about/` beside
+  `about/index.html`, `/docs/{rest...}` beside `docs/x/index.html`. Narrow the
+  redirect's pattern so it no longer matches the file, or drop the page.
 
 ### Added
 
@@ -35,8 +48,11 @@
   `Age`, `X-Collage-Render-Time`), and so is a header whose value differs
   between the two answers, such as a CSP nonce: a static file cannot carry it.
   The 404 pages and the root redirect, which the build makes itself, are not
-  asked for. What the capture found is reported as warnings, never as a
-  failed build:
+  asked for. `BuiltFile.Captured` is true for every file the build asked for —
+  also when that capture failed or was never reached because the capture
+  stopped, which leaves `Status` 0 — and false for the files the build made
+  itself. A build whose context ends is not handed to `BuildFinishedHook`.
+  What the capture found is reported as warnings, never as a failed build:
   - `unstable-header` — a header left out because it differs between two
     answers, once per header name with a count of paths;
   - `capture-status` — a file answered with a non-2xx status, or with two
@@ -44,7 +60,12 @@
   - `capture-failed` — a path not answered (each request has a deadline), or
     the capture not run at all;
   - `capture-dev-mode` — a build in development mode, whose headers (such as
-    `Cache-Control: no-store`) are not the ones to deploy.
+    `Cache-Control: no-store`) are not the ones to deploy;
+  - `capture-personal` — pages answered with `Cache-Control` `private` or
+    `no-store` beside a header that differs between answers (a CSP nonce):
+    that header is left out, so the exported file is no longer personal, and
+    the `Cache-Control` only keeps a host from caching it. One warning names
+    how many and the first few.
 - **`collage.IsCapture(ctx)`** reports whether a request is the build's
   capture.
 - **`BuildFinishedEvent.Redirects`** hands `BuildFinishedHook` every redirect
@@ -53,9 +74,7 @@
   every document's (`"document:<name>"`), then every plugin's. `Status` is the
   redirect's `EffectiveStatus()`.
   A page registered only with `RegisterNotFoundPage` or `RegisterErrorPage`
-  is never matched, so its redirects are left out — and a static build no
-  longer tries to render such a page at the path it was given, which failed
-  the build.
+  is never matched, so its redirects are left out.
 - **`collage.RedirectSource`**: a plugin with `Redirects() []BuiltRedirect`
   has its rules carried by a static export, and each is checked as a
   registered redirect is: `From` starts with one `/` and parses as a route
@@ -64,13 +83,11 @@
   and 301, 302, 307 and 308 need one. Any other `Status` fails the build with
   `ErrInvalidRedirectStatus`, and a malformed rule, or a control character in
   one, with `ErrInvalidRedirect`, naming the rule and the plugin.
-- **`ErrDuplicateRedirect`** fails a build in which two redirects, from any
-  source, are one to the router: `/old` and `/old/`, `/blog/{slug}` and
-  `/blog/{x}`. **`ErrRedirectShadowsFile`** fails one in which a redirect
-  matches the path of a file the build wrote — `/about` or `/about/` for
-  `about/index.html`, `/docs/{rest...}` for `docs/x/index.html`. On a static
-  host either would be settled by the host's own precedence, not by the
-  application.
+### Fixed
+
+- **A static build no longer tries to render a page registered only with
+  `RegisterNotFoundPage` or `RegisterErrorPage` at the path it was given**,
+  which failed the build: such a page is never matched.
 
 ## v0.51.2
 

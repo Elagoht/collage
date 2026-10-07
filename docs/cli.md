@@ -544,7 +544,8 @@ before the first page renders. Every page gets `OnBeforeRender` and
 shapes the served site shapes the built one too. `OnCacheWrite` does not fire,
 because a build writes files, not cache entries. `OnPageResolved` does not fire
 for those renders, which are not requests — but once the files are written, the
-header capture asks `App.Handler()` for each one's path, and those requests go
+header capture — when a plugin implementing `BuildFinishedHook` is registered —
+asks `App.Handler()` for each one's path, and those requests go
 through middleware and every request hook, `OnPageResolved` included, and render
 again with `OnBeforeRender` and `OnAfterRender`; see
 [static hosts](#static-hosts). See [plugins](plugins.md#static-builds).
