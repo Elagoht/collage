@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -68,6 +69,17 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		}
 	}
 
+	// After the guards, so only a request the page lets through is given the
+	// longer deadlines; before the forgery check, which reads an ordinary
+	// action's body to find the token, and before the handler. net/http set both
+	// deadlines when the request's headers arrived, as absolute times, so
+	// replacing them here works as long as they have not passed — and nothing
+	// before this point reads the body, unless a middleware does, which then
+	// reads it under the server's deadlines.
+	if action.BodyTimeout > 0 {
+		h.setBodyDeadlines(w, r, action)
+	}
+
 	// A multipart body over the parser's memory budget spills its files to disk,
 	// and net/http removes them only for the request it made — not for this one,
 	// a copy, which is the one the forgery check and the handler parse. Without
@@ -82,16 +94,16 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// Bounded before the handler sees it, not by the handler. A limit every
 	// handler has to remember is a limit the one handler that forgot does not
 	// have, and that handler is the one an anonymous caller will find.
-	var body *limitedBody
-	if limit := h.bodyLimit(action); limit >= 0 {
-		// Already bounded before the middleware, as a rule; a middleware that
-		// read the body and dropped the error leaves it read past its bound,
-		// and the action answers for it. See boundBeforeMiddleware.
-		body = boundBody(w, r, limit)
-		if body.tooLarge.Load() {
-			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
-				actionBodyTooLarge(action, limit)))
-		}
+	//
+	// Already bounded before the middleware, as a rule; a middleware that read
+	// the body and dropped the error leaves it read past its bound, and the
+	// action answers for it. See boundBeforeMiddleware. An unbounded body is
+	// wrapped all the same, to see whether a read of it failed.
+	limit := h.bodyLimit(action)
+	body := boundBody(w, r, limit)
+	if body.tooLarge.Load() {
+		return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
+			actionBodyTooLarge(action, limit)))
 	}
 
 	// Checked before the handler runs, and before anything it might change.
@@ -147,6 +159,9 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// handler would; before the handler, so a refusal changes nothing.
 	before := &plugin.BeforeActionEvent{Action: action, Page: match.Page, Locale: match.Locale, Request: r}
 	if err := h.plugins.BeforeAction(ctx, before); err != nil {
+		if f, cut := bodyCutOff(route, stageBeforeAction, action, body, err); cut {
+			return h.serveFailure(w, r, f)
+		}
 		return h.serveFailure(w, r, route.failure(actionErrorStatus(err), stageBeforeAction,
 			fmt.Errorf("collage: action %q: %w", action.Name, err)))
 	}
@@ -161,10 +176,13 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		// error is a 413 already, and one that replaced it with its own — "upload
 		// failed" — is the same request too large, not a fault of the server's.
 		// The handler's own error is kept: it is what the operator reads.
-		if body != nil && body.tooLarge.Load() {
+		if body.tooLarge.Load() {
 			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRender,
 				errors.Join(fmt.Errorf("collage: action %q: the handler read past its body limit: %w", action.Name, err),
 					&http.MaxBytesError{Limit: body.limit})))
+		}
+		if f, cut := bodyCutOff(route, stageRender, action, body, err); cut {
+			return h.serveFailure(w, r, f)
 		}
 		return h.serveFailure(w, r, route.failure(actionErrorStatus(err), stageRender,
 			fmt.Errorf("collage: action %q: %w", action.Name, err)))
@@ -188,6 +206,48 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	}
 
 	return h.writeActionResult(w, r, rc, match, result, route)
+}
+
+// bodyCutOff reports the failure for an action that failed with err after a read
+// of its body failed: the client went away mid-body, or the read deadline passed.
+// That is the request's failure, not the application's — a 400, or a 408 for the
+// deadline — and it is logged at debug and given to no error hook, as a request
+// whose context was cancelled is (see readerLeft): an upload a reader cancels, or
+// a phone that loses its signal, is the most ordinary way an upload ends, and
+// anyone can open and drop them as fast as they like. The action's own error is
+// kept, beside the read's.
+func bodyCutOff(route *routeRef, stage string, action *types.Action, body *limitedBody, err error) (failure, bool) {
+	readErr := body.failedRead()
+	if readErr == nil {
+		return failure{}, false
+	}
+	f := route.failure(bodyAbortStatus(readErr), stage,
+		errors.Join(fmt.Errorf("collage: action %q: the request body was cut off: %w", action.Name, err), readErr))
+	f.requestFault = true
+	return f, true
+}
+
+// bodyTimeoutUnsupported is the warning logged, once, when an action's body
+// timeout cannot be set because the ResponseWriter cannot take a deadline.
+const bodyTimeoutUnsupported = "collage: an action's body timeout could not be set, so the server's deadlines apply; " +
+	"a middleware's ResponseWriter wrapper probably lacks Unwrap"
+
+// setBodyDeadlines gives r action's BodyTimeout to be read and answered in,
+// replacing the server's ReadTimeout and WriteTimeout for this request.
+func (h *Handler) setBodyDeadlines(w http.ResponseWriter, r *http.Request, action *types.Action) {
+	deadline := time.Now().Add(action.BodyTimeout)
+	controller := http.NewResponseController(w)
+	err := errors.Join(controller.SetReadDeadline(deadline), controller.SetWriteDeadline(deadline))
+	switch {
+	case err == nil:
+	case errors.Is(err, http.ErrNotSupported):
+		h.bodyTimeoutWarning.Do(func() {
+			h.logger.Warn(bodyTimeoutUnsupported, "action", action.Name, "path", r.URL.Path)
+		})
+	default:
+		// The connection is already gone, as a rule; the body's read will say so.
+		h.logger.Debug("collage: an action's body timeout could not be set", "action", action.Name, "err", err)
+	}
 }
 
 // actionErrorStatus maps a handler's error to a status.

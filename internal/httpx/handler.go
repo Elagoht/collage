@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Elagoht/collage/internal/ascii"
@@ -253,6 +254,10 @@ type Handler struct {
 	// popular page costs one render rather than one per request that arrives
 	// while it is being re-made.
 	flight *flight
+
+	// bodyTimeoutWarning logs, once, that an action's body timeout could not
+	// be set. See setBodyDeadlines.
+	bodyTimeoutWarning sync.Once
 }
 
 var _ http.Handler = (*Handler)(nil)

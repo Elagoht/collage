@@ -214,18 +214,67 @@ handling for you.
 `ListenAndServe` sets `Server.ReadTimeout` (15s), `ReadHeaderTimeout`,
 `WriteTimeout` (30s) and `IdleTimeout` (60s) on its server. `ReadHeaderTimeout` is
 what drops a client that sends its headers a byte at a time; unset, it is
-`ReadTimeout`, as it always was. Set it shorter to free such connections early while
-a large upload still gets the whole `ReadTimeout` for its body:
+`ReadTimeout`, as it always was. Set it shorter to free such connections early:
 
 ```go
 Server: collage.ServerConfig{
-    ReadTimeout:       60 * time.Second, // uploads
     ReadHeaderTimeout: 5 * time.Second,
 },
 ```
 
+`ReadTimeout` bounds reading the whole request, body included, and `WriteTimeout`
+starts when the request's headers have been read — so it bounds the upload as well
+as the answer. Raising only `ReadTimeout` for uploads is a trap: an upload that
+takes longer than `WriteTimeout` is read, and the handler stores it, but the
+answer is cut off and the client sees the connection close, and tries again.
+Raising both for the whole server lets any slow client hold any endpoint that
+long. Give the upload action its own instead, with `WithBodyTimeout` — see
+[Uploads](#uploads).
+
 A negative value in any of them is `collage.ErrNegativeDuration`. `collage dev`'s
 proxy has its own fixed 10s header timeout, which is development only.
+
+## Uploads
+
+An upload (see [Streaming bodies](actions.md#streaming-bodies)) meets every limit
+between the browser and the handler, and the defaults of most of them are sized for
+forms.
+
+**The server's deadlines.** The defaults above end any request after 15s of reading.
+`WithBodyTimeout(d)` on the upload action replaces both deadlines with now plus `d`
+for that action alone, once its page's guards have let the request through. Make
+`d` at least `MaxBodyBytes` divided by the slowest connection you serve, plus the
+time to answer. A client that goes away mid-upload, or runs out of time, is answered
+`400` or `408` and logged at debug, not as a server error.
+
+**nginx** answers anything over `client_max_body_size` — 1 MiB by default — with
+its own `413`, before collage sees it. And by default it buffers the whole request
+body to its own disk before passing any of it on, so the stream, the early refusal
+of a bad file, and the upload's progress are all lost, and nginx's temp directory
+is what fills up. For the upload location:
+
+```nginx
+location /upload {
+    client_max_body_size     2g;   # MaxBodyBytes, or a little more
+    proxy_request_buffering  off;  # stream the body through
+    proxy_send_timeout       30m;  # between two writes to collage
+    proxy_read_timeout       30m;  # waiting for collage's answer
+    proxy_pass               http://127.0.0.1:8080;
+}
+```
+
+**Caddy** streams request bodies; its limit, when set, is `request_body { max_size
+2GB }`.
+
+**Cloudflare and other CDNs** cap the request body by plan — 100 MB on the Free and
+Pro plans when this was written; check Cloudflare's documentation for yours — and
+answer a larger one themselves. Load balancers have caps and idle timeouts of their
+own. Larger files need a hostname that bypasses the CDN, or resumable uploads in
+chunks, which collage does not do.
+
+**`elagoht/health`'s `maxInFlight`** counts every request being served, an upload
+included, for as long as it lasts. Size it for the uploads you expect at once, or
+slow uploads will hold the slots and the rest of the site will be answered `503`.
 
 ## Behind a proxy: `TrustedProxies`
 

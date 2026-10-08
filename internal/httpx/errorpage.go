@@ -44,6 +44,10 @@ type failure struct {
 	route string
 	// stage names where in the pipeline the failure happened.
 	stage string
+	// requestFault marks a failure the request caused and the application had no
+	// part in — its body cut off mid-read. It is logged at debug and given to no
+	// error hook, but still answered, with status.
+	requestFault bool
 }
 
 // serveFailure logs f, dispatches it to plugins, and writes the error response. It
@@ -158,6 +162,8 @@ func (h *Handler) ServeStatus(w http.ResponseWriter, r *http.Request, status int
 func (h *Handler) reportError(r *http.Request, f failure) {
 	level := slog.LevelError
 	switch {
+	case f.requestFault:
+		level = slog.LevelDebug
 	case f.stage == stageNotFound:
 		level = slog.LevelDebug
 	case f.status == http.StatusNotFound && errors.Is(f.err, types.ErrNotFound):
@@ -180,6 +186,12 @@ func (h *Handler) reportError(r *http.Request, f failure) {
 		// in development the reason is written into the response itself, which
 		// is where they are looking.
 		level = slog.LevelDebug
+	case f.status == http.StatusRequestEntityTooLarge:
+		// A body larger than the action takes, run into by the handler rather
+		// than refused before it: the client's doing, but worth seeing — a limit
+		// set too tight for real uploads shows here first. Still handed to the
+		// error hooks, which choose by status.
+		level = slog.LevelWarn
 	}
 	// A panic's stack is its own attribute rather than part of the error's
 	// message, so the message stays one line and the stack is still logged.
@@ -203,6 +215,10 @@ func (h *Handler) reportError(r *http.Request, f failure) {
 			slog.String("fragment", f.fragment),
 			slog.Any("error", f.err),
 		}, stack...)...)
+	}
+
+	if f.requestFault {
+		return
 	}
 
 	// Error always returns nil: the registry logs and swallows a failing ErrorHook

@@ -38,6 +38,9 @@ var (
 	// ErrStreamingBodyMethod is returned for an action that declares
 	// WithStreamingBody but answers none of POST, PUT or PATCH.
 	ErrStreamingBodyMethod = router.ErrStreamingBodyMethod
+	// ErrNegativeBodyTimeout is returned for an action given a negative
+	// WithBodyTimeout.
+	ErrNegativeBodyTimeout = router.ErrNegativeBodyTimeout
 	// ErrStreamingBody is returned by BeforeActionEvent.Form for an action
 	// declared WithStreamingBody, without reading the body: such an action has
 	// no form for a plugin to check.

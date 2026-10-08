@@ -3,6 +3,7 @@ package types
 import (
 	"context"
 	"net/http"
+	"time"
 )
 
 // ActionHandlerFunc handles one request to an action and says what to answer with.
@@ -86,6 +87,14 @@ type Action struct {
 	// large upload for one. MaxBodyBytes still bounds it while it is read. Only
 	// an action answering POST, PUT or PATCH may declare it.
 	StreamingBody bool
+	// BodyTimeout, when positive, replaces the server's read and write
+	// deadlines for a request this action answers: both are set to now plus
+	// BodyTimeout once the page's guards have let the request through, before
+	// anything reads its body. It is what lets a long upload outlive the
+	// server's ReadTimeout and WriteTimeout without raising them for every
+	// route. Zero leaves the server's deadlines alone; a negative value is
+	// refused at registration.
+	BodyTimeout time.Duration
 	// SkipCSRF turns off cross-site request forgery checking for this action.
 	//
 	// It exists for the requests that cannot possibly carry a token: a payment

@@ -345,16 +345,64 @@ collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPos
   bounds a streaming body as it bounds any other, enforced as the handler reads.
   A handler that reads past it and fails is answered with `413`, whatever error it
   returns.
-- **Anything that parses the form consumes the stream.** `rc.Request.FormValue`,
+- **Anything that parses the form gives up the stream.** `rc.Request.FormValue`,
   `ParseMultipartForm`, a helper such as `validate.Form` — each reads the body to
-  its end, and the handler finds nothing left. `BeforeActionEvent.Form()` will not
-  do this: for such an action it returns `ErrStreamingBody` without reading a
-  byte, and a plugin that inspects forms treats that error as "this action has no
-  form to check" and lets the request through. A plugin that calls
-  `ev.Request.ParseForm()` itself still consumes the stream.
+  its end before the handler does. What it parsed stays on the request, so an
+  upload handler that looks for `rc.Request.MultipartForm` still finds the files,
+  but net/http has already written the whole body, up to `MaxBodyBytes`, to temp
+  files under `os.TempDir()` — which on many Linux hosts is `tmpfs`, and so
+  memory. Nothing fails; the upload is simply no longer streamed. A handler
+  reading the body itself afterwards, with `MultipartReader` or `io.Copy`, finds
+  it already consumed and fails. Validate the fields the handler read from the
+  stream instead. `BeforeActionEvent.Form()` will not parse the body: for such an
+  action it returns `ErrStreamingBody` without reading a byte, and a plugin that
+  inspects forms treats that error as "this action has no form to check" and
+  lets the request through. A plugin that calls `ev.Request.ParseForm()` itself
+  still reads the body.
+- **An upload cut off is the client's failure.** When a read of the body fails
+  because the client went away mid-upload, or because the read deadline passed,
+  and the handler then returns an error, the action answers `400` — `408` for the
+  deadline — and logs it at debug. No error hook is called, as for a request
+  whose reader left: a cancelled upload is the most ordinary way an upload ends,
+  and not a fault of the application's. The handler's error is kept beside the
+  read's in what is logged.
 
 Registration refuses `WithStreamingBody()` on an action answering none of `POST`,
 `PUT` or `PATCH`, with `ErrStreamingBodyMethod`.
+
+### Long uploads and timeouts
+
+The server's deadlines are sized for pages: `ReadTimeout` (15s by default) bounds
+reading the whole request, body included, and `WriteTimeout` (30s), which net/http
+starts as soon as the request's headers arrive, bounds the upload too, not only the
+response. An upload slower than that fails — and one that outlives `WriteTimeout`
+but not `ReadTimeout` is worse: the handler stores the file, and the client gets no
+answer and tries again.
+
+`WithBodyTimeout(d)` is the fix. For a request to that action it replaces both
+deadlines with now plus `d`, once the page's guards have let the request through
+and before anything reads the body, so the rest of the site keeps its short ones:
+
+```go
+collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPost).
+	WithStreamingBody().
+	WithMaxBodyBytes(2 << 30).
+	WithBodyTimeout(30 * time.Minute).
+	WithHandler(upload)
+```
+
+Choose `d` to cover the whole upload and the answer after it: at least
+`MaxBodyBytes` divided by the slowest connection you mean to serve. Zero, the
+default, keeps the server's deadlines; a negative value is refused at registration
+with `ErrNegativeBodyTimeout`. It sets the deadlines through
+`http.ResponseController`, which needs every `ResponseWriter` wrapper between the
+server and the action to implement `Unwrap`; the framework's own and those of the
+`elagoht` plugins do. When one does not, the request runs under the server's
+deadlines and a warning is logged once.
+
+A request that clears the guards holds its connection for up to `d`. Guard the
+upload action, and see [Going to production](deployment.md#uploads) for what a
+proxy in front needs.
 
 ## A fragment at its own URL
 

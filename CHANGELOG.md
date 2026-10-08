@@ -20,6 +20,18 @@
 - **`ErrStreamingBodyMethod`.** Registration refuses `WithStreamingBody()` on
   an action answering none of `POST`, `PUT` or `PATCH`, naming the action and
   its methods.
+- **`WithBodyTimeout(d)`.** A request to the action gets `d` to be read and
+  answered, in place of the server's `ReadTimeout` and `WriteTimeout`: both
+  deadlines are set to now plus `d` through `http.ResponseController`, after the
+  page's guards and before anything reads the body. The defaults (15s, 30s)
+  otherwise end any upload slower than that, and `WriteTimeout`, which net/http
+  starts when the headers arrive, covers the upload too — raising only
+  `ReadTimeout` lets the handler store a file whose answer the client never
+  receives. A negative `d` is refused at registration with the new
+  `ErrNegativeBodyTimeout`. A `ResponseWriter` wrapper without `Unwrap` cannot
+  take the deadline; the request then runs under the server's, with a warning
+  logged once. See "Uploads" in docs/deployment.md, which also covers nginx,
+  Caddy, CDN body limits and `elagoht/health`'s `maxInFlight`.
 
 ### Changed
 
@@ -29,6 +41,27 @@
   own ("upload failed") was a `500`. Now the action checks whether its body ran
   into the bound, for every action, and answers `413` with the limit. The
   handler's own error is kept in what is logged and handed to error hooks.
+  `errors.As` finds a `*http.MaxBytesError` on the error the hooks receive.
+  It is logged at warn, not error.
+- **An action whose body was cut off answers `400`, or `408`.** When a read of
+  the body fails because the client went away, the connection broke, or the read
+  deadline passed, and the handler then fails, the action answers `400` — `408`
+  for the deadline — instead of `500`. It is logged at debug and handed to no
+  error hook, as a request whose context was cancelled already was: every
+  cancelled upload was an error-level line and an error-tracker event, and
+  anyone could make them as fast as they liked. This holds for every action,
+  bounded or not; a read after `Close` is still the handler's bug, and a `500`.
+- **`docs/deployment.md`'s timeout example no longer raises `ReadTimeout` alone**
+  for uploads, which led into the trap described under `WithBodyTimeout`.
+
+### Upgrading
+
+- **elagoht/honeypot must be upgraded with this release** if any form it
+  protects posts to a `WithStreamingBody()` action: its released versions refuse
+  any request whose `BeforeActionEvent.Form()` fails, and for such an action it
+  always does, with `ErrStreamingBody`. Its streaming-aware release lets the
+  request through. It cannot protect a streaming action either way, since
+  nothing reads that action's fields.
 
 ## v0.56.0
 

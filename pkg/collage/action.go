@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/types"
@@ -80,6 +81,22 @@ func (b *ActionBuilder) WithMaxBodyBytes(n int64) *ActionBuilder {
 // POST, PUT or PATCH, with ErrStreamingBodyMethod.
 func (b *ActionBuilder) WithStreamingBody() *ActionBuilder {
 	b.action.StreamingBody = true
+	return b
+}
+
+// WithBodyTimeout gives a request to this action d to be read and answered,
+// in place of the server's ReadTimeout and WriteTimeout, which are sized for
+// pages and cut a long upload off. Both deadlines are set to now plus d once the
+// page's guards have let the request through, before anything reads the body;
+// the write deadline covers the whole upload too, since net/http starts it when
+// the headers arrive. Zero, the default, keeps the server's deadlines; a negative
+// d is refused at registration with ErrNegativeBodyTimeout.
+//
+// It needs a ResponseWriter that can take a deadline. One wrapped by a
+// middleware that does not implement Unwrap cannot, and the request then runs
+// under the server's deadlines, with a warning logged once.
+func (b *ActionBuilder) WithBodyTimeout(d time.Duration) *ActionBuilder {
+	b.action.BodyTimeout = d
 	return b
 }
 

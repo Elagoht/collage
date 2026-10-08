@@ -28,6 +28,10 @@ var serverMethods = []string{http.MethodOptions, http.MethodTrace, http.MethodCo
 // answers no method that carries one: none of POST, PUT or PATCH.
 var ErrStreamingBodyMethod = fmt.Errorf("collage: a streaming body needs POST, PUT or PATCH")
 
+// ErrNegativeBodyTimeout reports an action whose body timeout is negative. Zero
+// means the server's own deadlines; there is no "less than none".
+var ErrNegativeBodyTimeout = fmt.Errorf("collage: an action's body timeout must not be negative")
+
 // bodyMethods are the methods a streaming body may arrive with.
 var bodyMethods = []string{http.MethodPost, http.MethodPut, http.MethodPatch}
 
@@ -48,6 +52,9 @@ func (rt *router) RegisterAction(action *types.Action) error {
 		if slices.Contains(serverMethods, method) {
 			return fmt.Errorf("%w: action %q declares %s", ErrInvalidActionMethod, action.Name, method)
 		}
+	}
+	if action.BodyTimeout < 0 {
+		return fmt.Errorf("%w: action %q declares %v", ErrNegativeBodyTimeout, action.Name, action.BodyTimeout)
 	}
 	if action.StreamingBody && !slices.ContainsFunc(action.Methods, func(m string) bool { return slices.Contains(bodyMethods, m) }) {
 		return fmt.Errorf("%w: action %q declares %v", ErrStreamingBodyMethod, action.Name, action.Methods)
