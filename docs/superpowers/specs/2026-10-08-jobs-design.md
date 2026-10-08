@@ -105,7 +105,7 @@ j.Cron("cleanup", "0 3 * * *", cleanup)
 **Background queues**
 
 ```go
-mail := jobs.NewQueue(j, "email", sendEmail, jobs.QueueOptions{Workers: 2, MaxAttempts: 3})
+mail := jobs.NewQueue(j, "email", sendEmail, jobs.QueueOptions[Email]{Workers: 2, MaxAttempts: 3})
 // sendEmail: func(ctx context.Context, m Email) error
 err := mail.Enqueue(ctx, Email{To: to})
 ```
