@@ -4,6 +4,7 @@ import (
 	"github.com/Elagoht/collage/internal/core"
 	"github.com/Elagoht/collage/internal/csrf"
 	"github.com/Elagoht/collage/internal/httpx"
+	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/template"
 )
@@ -37,6 +38,10 @@ var (
 	// ErrStreamingBodyMethod is returned for an action that declares
 	// WithStreamingBody but answers none of POST, PUT or PATCH.
 	ErrStreamingBodyMethod = router.ErrStreamingBodyMethod
+	// ErrStreamingBody is returned by BeforeActionEvent.Form for an action
+	// declared WithStreamingBody, without reading the body: such an action has
+	// no form for a plugin to check.
+	ErrStreamingBody = plugin.ErrStreamingBody
 	// ErrNilFragmentPath is returned for a WithFragmentPath given no fragment.
 	ErrNilFragmentPath = core.ErrNilFragmentPath
 )

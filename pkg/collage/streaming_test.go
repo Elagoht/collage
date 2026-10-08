@@ -242,3 +242,58 @@ func TestStreamingBody_NeedsBodyMethod(t *testing.T) {
 		t.Fatalf("RegisterAction = %v, want ErrStreamingBodyMethod", err)
 	}
 }
+
+// formReader is a plugin that asks for each submission's form before the
+// handler, as a spam check or a validator would.
+type formReader struct{ err error }
+
+func (p *formReader) Name() string                             { return "test/form-reader" }
+func (p *formReader) Version() string                          { return "0" }
+func (p *formReader) Init(context.Context, collage.Host) error { return nil }
+func (p *formReader) Shutdown(context.Context) error           { return nil }
+func (p *formReader) OnBeforeAction(_ context.Context, ev *collage.BeforeActionEvent) error {
+	_, p.err = ev.Form()
+	return nil
+}
+
+// A plugin asking for a streaming action's form is told there is none, and the
+// body is left whole for the handler.
+func TestStreamingBody_PluginFormRefused(t *testing.T) {
+	plugin := &formReader{}
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>x</p>`)}}, Root: "t"},
+		Plugins:  []collage.Plugin{plugin},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent, contentType := multipartWithToken(t, "a field")
+	var got string
+	action := collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPost).
+		WithoutCSRF().WithStreamingBody().
+		WithHandler(func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+			if rc.Request.Form != nil || rc.Request.MultipartForm != nil {
+				return nil, errors.New("the form was parsed before the handler")
+			}
+			b, err := io.ReadAll(rc.Request.Body)
+			got = string(b)
+			return nil, err
+		}).Build()
+	if err := app.RegisterAction(action); err != nil {
+		t.Fatal(err)
+	}
+	w := postUpload(app.Handler(), sent, contentType, nil)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204: %s", w.Code, w.Body.String())
+	}
+	if !errors.Is(plugin.err, collage.ErrStreamingBody) {
+		t.Errorf("Form() = %v, want ErrStreamingBody", plugin.err)
+	}
+	if plugin.err != nil && plugin.err.Error() != "collage: the action's body is streamed; it is not parsed as a form" {
+		t.Errorf("Form() error reads %q", plugin.err)
+	}
+	if got != sent {
+		t.Errorf("the handler read %d bytes, want the %d sent", len(got), len(sent))
+	}
+}

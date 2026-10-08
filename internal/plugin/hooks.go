@@ -405,21 +405,34 @@ type BeforeActionEvent struct {
 	// form parsed from it — ParseMultipartForm, FormValue — stays parsed for the
 	// handler. An action with Action.StreamingBody set is the exception: its
 	// handler reads the body as a stream, and a form parsed here consumes that
-	// stream, so a plugin leaves such a body alone.
+	// stream, so Form refuses it with ErrStreamingBody and a plugin leaves the
+	// body alone.
 	Request *http.Request
 	// Result, when a plugin sets it, is what the request is answered with in
 	// place of the handler's result: a refusal, a redirect.
 	Result *types.ActionResult
 }
 
+// ErrStreamingBody is what Form returns for an action declared WithStreamingBody:
+// its handler reads the body as a stream, so it has no form for a plugin to
+// check, and parsing one would consume what the handler reads.
+var ErrStreamingBody = errors.New("collage: the action's body is streamed; it is not parsed as a form")
+
 // Form parses the submitted form, URL-encoded or multipart, and returns its body's
 // fields. What it parsed stays parsed for the handler.
+//
+// For an action with a streaming body it returns ErrStreamingBody without reading
+// the body. A plugin that inspects forms treats that as "this action has no form
+// to check" and lets the request through, rather than refusing it.
 //
 // Use it rather than ParseMultipartForm alone: for a URL-encoded body that one
 // discards the error of reading it, a body past the limit among them, and
 // reports only that the body is not multipart. An error wrapping
 // *http.MaxBytesError, returned from the hook, answers 413.
 func (ev *BeforeActionEvent) Form() (url.Values, error) {
+	if ev.Action != nil && ev.Action.StreamingBody {
+		return nil, ErrStreamingBody
+	}
 	r := ev.Request
 	if err := r.ParseForm(); err != nil {
 		return nil, err

@@ -342,10 +342,11 @@ collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPos
   A handler that reads past it and fails is answered with `413`, whatever error it
   returns.
 - **Anything that parses the form consumes the stream.** `rc.Request.FormValue`,
-  `ParseMultipartForm`, a helper such as `validate.Form`, a plugin calling
-  `BeforeActionEvent.Form()` — each reads the body to its end, and the handler
-  finds nothing left. A plugin with an `OnBeforeAction` hook checks
-  `ev.Action.StreamingBody` and leaves such a body alone.
+  `ParseMultipartForm`, a helper such as `validate.Form` — each reads the body to
+  its end, and the handler finds nothing left. A plugin cannot do this by
+  accident: `BeforeActionEvent.Form()` returns `ErrStreamingBody` for such an
+  action without reading a byte. A plugin that inspects forms treats that error as
+  "this action has no form to check" and lets the request through.
 
 Registration refuses `WithStreamingBody()` on an action answering none of `POST`,
 `PUT` or `PATCH`, with `ErrStreamingBodyMethod`.

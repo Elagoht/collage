@@ -13,6 +13,10 @@
   A plain HTML form therefore cannot post to such an action — a `fetch()` with
   the header can. `MaxBodyBytes` bounds it as before, and its 4 MiB default
   must be raised for a large upload.
+- **`ErrStreamingBody`.** `BeforeActionEvent.Form()` returns it for a
+  `WithStreamingBody()` action without reading the body, so a plugin cannot
+  consume the stream the handler reads. A plugin that inspects forms treats it
+  as "this action has no form to check".
 - **`ErrStreamingBodyMethod`.** Registration refuses `WithStreamingBody()` on
   an action answering none of `POST`, `PUT` or `PATCH`, naming the action and
   its methods.
