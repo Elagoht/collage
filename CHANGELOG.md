@@ -19,11 +19,11 @@
 
 ### Changed
 
-- **`capture-personal` now names the application's own `Cache-Control`.** It
-  is still raised for a page answered `private` or `no-store` beside a header
-  that differs between answers, but a `PersonaliseHook` can no longer cause it,
-  so its message says the `Cache-Control` comes from the application itself,
-  such as a middleware.
+- **`capture-personal` is narrower.** It is still raised for a page answered
+  `private` or `no-store` beside a header that differs between answers, but a
+  `PersonaliseHook` can no longer cause it, and its message says so. A
+  development build no longer raises it either: its `no-store` is what
+  `capture-dev-mode` already warns about.
 
 ## v0.53.0
 

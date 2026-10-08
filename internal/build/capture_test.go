@@ -434,7 +434,7 @@ func TestBuild_ACancelledBuildIsNotFinished(t *testing.T) {
 // a nonce, and a private one with nothing unstable, are not among them. A
 // PersonaliseHook's Personal no longer makes a capture private (see
 // pkg/collage's TestBuild_CaptureOfAHookPersonalPageKeepsItsStrategysCacheControl),
-// so the warning says the Cache-Control is the application's own.
+// so the warning says the Cache-Control does not come from one.
 func TestBuild_CaptureWarnsAboutPersonalPages(t *testing.T) {
 	app := newCapturingRenderer(t)
 	paths := []string{"/a", "/b", "/c", "/d", "/public", "/private-stable", "/quoted"}
@@ -469,7 +469,7 @@ func TestBuild_CaptureWarnsAboutPersonalPages(t *testing.T) {
 	if f[0].Level != types.FindingWarning || f[0].Path != "" || !strings.Contains(msg, "5 page(s)") {
 		t.Errorf("capture-personal = %+v, want one warning naming 5 pages", f[0])
 	}
-	for _, want := range []string{"no longer personal", "will not cache", "PersonaliseHook's Personal aside", "application's own"} {
+	for _, want := range []string{"no longer personal", "will not cache", "PersonaliseHook's Personal, which the capture sets aside"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("message %q does not say %q", msg, want)
 		}

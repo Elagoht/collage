@@ -169,34 +169,12 @@ func (p *nonceReader) OnPersonalise(_ context.Context, ev *PersonaliseEvent) err
 // A reader's request to the same page is still private: the hook ran for it.
 func TestBuild_CaptureOfAHookPersonalPageKeepsItsStrategysCacheControl(t *testing.T) {
 	plugin := &nonceReader{}
-	app, err := New(&Config{
-		Server: ServerConfig{Host: "localhost", Port: 3000},
-		Template: TemplateConfig{FS: fstest.MapFS{
-			"t/p.html": {Data: []byte(`<p>NONCE</p>`)},
-		}, Root: "t"},
-		Cache:   CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour},
-		Plugins: []Plugin{plugin},
-	})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	page := NewPage("home").WithContent(NewFragment("p", "p.html").Build()).
-		WithPath("en", "/").Incremental(time.Hour).Build()
-	if err := app.RegisterPage(page); err != nil {
-		t.Fatalf("RegisterPage: %v", err)
-	}
+	app := newNonceApp(t, false, plugin)
 	// What an incremental page with an hour's TTL is answered with: see the
 	// handler's cacheControl.
 	const want = "public, max-age=3600"
 
-	builder, err := NewBuilder(app, BuildOptions{OutDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	report, err := builder.Build(context.Background())
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
+	report := buildNonceApp(t, app)
 	if n := plugin.n.Load(); n < 2 {
 		t.Fatalf("the hook ran %d time(s) during the build, want at least the two captures", n)
 	}
@@ -229,5 +207,99 @@ func TestBuild_CaptureOfAHookPersonalPageKeepsItsStrategysCacheControl(t *testin
 	}
 	if !strings.Contains(rec.Body.String(), "<p>n") {
 		t.Errorf("a reader's body = %q, want the hook's nonce in it", rec.Body.String())
+	}
+}
+
+// newNonceApp is an application with one incremental page at "/" whose body
+// carries plugin's nonce.
+func newNonceApp(t *testing.T, devMode bool, plugin *nonceReader) *App {
+	t.Helper()
+	app, err := New(&Config{
+		Server:  ServerConfig{Host: "localhost", Port: 3000},
+		DevMode: devMode,
+		Template: TemplateConfig{FS: fstest.MapFS{
+			"t/p.html": {Data: []byte(`<p>NONCE</p>`)},
+		}, Root: "t"},
+		Cache:   CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour},
+		Plugins: []Plugin{plugin},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	page := NewPage("home").WithContent(NewFragment("p", "p.html").Build()).
+		WithPath("en", "/").Incremental(time.Hour).Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	return app
+}
+
+func buildNonceApp(t *testing.T, app *App) *BuildReport {
+	t.Helper()
+	builder, err := NewBuilder(app, BuildOptions{OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+	report, err := builder.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	return report
+}
+
+func findingsRuled(report *BuildReport, rule string) []Finding {
+	var out []Finding
+	for _, f := range report.Findings {
+		if f.Rule == rule {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// privateWriter sets Cache-Control private on whatever its handler answers, as
+// a middleware that has the last word on it would.
+type privateWriter struct{ http.ResponseWriter }
+
+func (w privateWriter) WriteHeader(status int) {
+	w.Header().Set("Cache-Control", "private")
+	w.ResponseWriter.WriteHeader(status)
+}
+
+// TestBuild_CapturePersonalIsTheApplicationsOwnCacheControl: with the hook's
+// Personal set aside, capture-personal is what a private Cache-Control the
+// application sets itself raises beside a nonce — here a middleware's — and
+// its message does not blame a PersonaliseHook.
+func TestBuild_CapturePersonalIsTheApplicationsOwnCacheControl(t *testing.T) {
+	app := newNonceApp(t, false, &nonceReader{})
+	err := app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(privateWriter{w}, r)
+		})
+	})
+	if err != nil {
+		t.Fatalf("Use: %v", err)
+	}
+	f := findingsRuled(buildNonceApp(t, app), "capture-personal")
+	if len(f) != 1 {
+		t.Fatalf("capture-personal = %+v, want one", f)
+	}
+	for _, want := range []string{"1 page(s)", "PersonaliseHook's Personal, which the capture sets aside"} {
+		if !strings.Contains(f[0].Message, want) {
+			t.Errorf("message %q does not say %q", f[0].Message, want)
+		}
+	}
+}
+
+// TestBuild_CaptureInDevModeIsNotAlsoPersonal: a development build's pages are
+// answered no-store, which capture-dev-mode already explains; beside a nonce,
+// that is not a capture-personal warning too.
+func TestBuild_CaptureInDevModeIsNotAlsoPersonal(t *testing.T) {
+	report := buildNonceApp(t, newNonceApp(t, true, &nonceReader{}))
+	if f := findingsRuled(report, "capture-dev-mode"); len(f) != 1 {
+		t.Fatalf("capture-dev-mode = %+v, want one", f)
+	}
+	if f := findingsRuled(report, "capture-personal"); len(f) != 0 {
+		t.Errorf("capture-personal = %+v in a dev-mode build", f)
 	}
 }
