@@ -688,7 +688,7 @@ func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plug
 		if len(personal) > len(named) {
 			more = ", …"
 		}
-		ev.Warn("", "capture-personal", fmt.Sprintf("%d page(s) (%s%s) are answered with Cache-Control private or no-store beside a header that differs between responses; that header is left out, so the exported file is no longer personal, and the Cache-Control only means a host will not cache it", len(personal), strings.Join(named, ", "), more))
+		ev.Warn("", "capture-personal", fmt.Sprintf("%d page(s) (%s%s) are answered with Cache-Control private or no-store beside a header that differs between responses; that header is left out, so the exported file is no longer personal, and the Cache-Control only means a host will not cache it; the capture sets a PersonaliseHook's Personal aside, so that Cache-Control is the application's own, such as a middleware's", len(personal), strings.Join(named, ", "), more))
 	}
 	return nil
 }

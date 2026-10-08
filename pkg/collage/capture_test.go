@@ -1,13 +1,18 @@
 package collage
 
 import (
+	"bytes"
 	"context"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/fstest"
+	"time"
 )
 
 // TestBuild_CaptureLeavesNoCacheEntries: a build with a disk cache leaves the
@@ -138,4 +143,91 @@ func countFiles(t *testing.T, dir string) int {
 		t.Fatalf("walk %s: %v", dir, err)
 	}
 	return n
+}
+
+// nonceReader stamps a new nonce into every page and its header and marks the
+// body Personal, as a CSP nonce plugin does, and reads the finished build.
+type nonceReader struct {
+	buildReader
+	n atomic.Int32
+}
+
+func (*nonceReader) Name() string { return "test/noncereader" }
+func (p *nonceReader) OnPersonalise(_ context.Context, ev *PersonaliseEvent) error {
+	nonce := "n" + strconv.Itoa(int(p.n.Add(1)))
+	ev.Body = bytes.ReplaceAll(ev.Body, []byte("NONCE"), []byte(nonce))
+	ev.Header.Set("X-Nonce", nonce)
+	ev.Personal = true
+	return nil
+}
+
+// TestBuild_CaptureOfAHookPersonalPageKeepsItsStrategysCacheControl: a
+// PersonaliseHook that marks every body Personal — a CSP nonce — does not make
+// the build's capture private. The exported file has no nonce (the header is
+// unstable and left out), so it is exported with the Cache-Control its strategy
+// gives a page nobody personalised, and no capture-personal warning is raised.
+// A reader's request to the same page is still private: the hook ran for it.
+func TestBuild_CaptureOfAHookPersonalPageKeepsItsStrategysCacheControl(t *testing.T) {
+	plugin := &nonceReader{}
+	app, err := New(&Config{
+		Server: ServerConfig{Host: "localhost", Port: 3000},
+		Template: TemplateConfig{FS: fstest.MapFS{
+			"t/p.html": {Data: []byte(`<p>NONCE</p>`)},
+		}, Root: "t"},
+		Cache:   CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour},
+		Plugins: []Plugin{plugin},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	page := NewPage("home").WithContent(NewFragment("p", "p.html").Build()).
+		WithPath("en", "/").Incremental(time.Hour).Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	// What an incremental page with an hour's TTL is answered with: see the
+	// handler's cacheControl.
+	const want = "public, max-age=3600"
+
+	builder, err := NewBuilder(app, BuildOptions{OutDir: t.TempDir()})
+	if err != nil {
+		t.Fatalf("NewBuilder: %v", err)
+	}
+	report, err := builder.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if n := plugin.n.Load(); n < 2 {
+		t.Fatalf("the hook ran %d time(s) during the build, want at least the two captures", n)
+	}
+	var pages int
+	for _, f := range plugin.built.Files {
+		if f.Kind != "page" {
+			continue
+		}
+		pages++
+		if got := f.Headers.Get("Cache-Control"); got != want {
+			t.Errorf("%s captured Cache-Control = %q, want the strategy's %q", f.Path, got, want)
+		}
+		if got := f.Headers.Get("X-Nonce"); got != "" {
+			t.Errorf("%s captured X-Nonce = %q, want it left out as unstable", f.Path, got)
+		}
+	}
+	if pages == 0 {
+		t.Fatalf("no page among the built files %+v", plugin.built.Files)
+	}
+	for _, f := range report.Findings {
+		if f.Rule == "capture-personal" {
+			t.Errorf("finding %+v for a page only a hook made personal", f)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if got := rec.Header().Get("Cache-Control"); got != "private, no-store" {
+		t.Errorf("a reader's Cache-Control = %q, want private, no-store", got)
+	}
+	if !strings.Contains(rec.Body.String(), "<p>n") {
+		t.Errorf("a reader's body = %q, want the hook's nonce in it", rec.Body.String())
+	}
 }

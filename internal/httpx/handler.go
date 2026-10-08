@@ -906,11 +906,19 @@ func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []
 		http.SetCookie(w, cookie)
 	}
 	changed := personal || !bytes.Equal(ev.Body, content)
+	// A static build's capture asks what the exported file is to be served
+	// with, and that file is no reader's: the build writes it from the render,
+	// not from this answer, and a header a hook made per response — a nonce —
+	// differs between the build's two answers and is left out. So its
+	// Cache-Control is the one the page's own strategy gives, which lets a host
+	// cache the file. The hooks still ran; only what their Personal decides is
+	// set aside. A forgery token is not a hook's, and still makes it personal.
+	hookPersonal := ev.Personal && !types.IsCapture(r.Context())
 	out := personalised{
 		body:         ev.Body,
 		etag:         etag,
-		personal:     personal || ev.Personal,
-		hookPersonal: ev.Personal,
+		personal:     personal || hookPersonal,
+		hookPersonal: hookPersonal,
 	}
 	// Recomputed whenever the body is not the one the ETag was made from. An ETag
 	// that names a body nobody was sent is how a conditional request is answered

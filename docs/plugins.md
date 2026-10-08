@@ -379,7 +379,10 @@ with the recomputed ETag and an action's HTML `private, no-store`, overriding ev
 a `Cache-Control` the handler set. A compressing middleware that keeps compressed
 bodies per ETag, such as elagoht/compress, gains nothing from a personal
 response: its ETag is new every time, so it is compressed for each reader. A body changed without `Personal`
-still gets an ETag naming the bytes sent. A hook that returns an error or panics is
+still gets an ETag naming the bytes sent. A static build's header capture
+(`collage.IsCapture`) runs the hook too, but sets its `Personal` aside: the
+exported file carries no nonce, so it gets the `Cache-Control` the page's strategy
+gives, not `private, no-store` (see [deployment](deployment.md)). A hook that returns an error or panics is
 logged and the page, fragment or action answers 500; on an error page the built-in
 page for that status is sent instead. A site without such a plugin sends the same
 responses as before.

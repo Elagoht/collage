@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A static build exports a nonce page with its strategy's `Cache-Control`.**
+  A `PersonaliseHook` that set `Personal` — a CSP nonce, as elagoht/secure's —
+  made the build's header capture answer `private, no-store`, so the exported
+  file, which carries no nonce, was exported as one no host may cache. The
+  capture still runs the hook, but sets its `Personal` aside: the page gets the
+  `Cache-Control` its strategy gives (`public, max-age=…` for an incremental
+  page), and no `capture-personal` warning. A reader's request is unchanged,
+  still `private, no-store` with no `304`.
+
+### Changed
+
+- **`capture-personal` now names the application's own `Cache-Control`.** It
+  is still raised for a page answered `private` or `no-store` beside a header
+  that differs between answers, but a `PersonaliseHook` can no longer cause it,
+  so its message says the `Cache-Control` comes from the application itself,
+  such as a middleware.
+
 ## v0.53.0
 
 ### Added

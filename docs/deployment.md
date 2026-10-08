@@ -368,11 +368,19 @@ without being declared again. Left out:
 A path answered with something other than one 2xx is a `capture-status` warning,
 one not answered at all a `capture-failed` warning, and a build in development
 mode a `capture-dev-mode` warning — its `Cache-Control: no-store` is not what you
-want deployed. Pages answered with `Cache-Control` `private` or `no-store` beside a
-header that differs between the answers — a page with a CSP nonce — are one
-`capture-personal` warning: the nonce is left out, so the exported file is no
-longer personal, and the `Cache-Control` only keeps a host from caching it. None of
-them fails the build.
+want deployed.
+
+A page with a CSP nonce, or anything else a `PersonaliseHook` marks `Personal`,
+is answered `private, no-store` to a reader, but not to the capture: the hook
+still runs, the nonce header differs between the two answers and is left out,
+and the exported file gets the `Cache-Control` the page's strategy gives — for an
+`Incremental(time.Hour)` page, `public, max-age=3600` — so a host can cache it.
+Pages still answered with `Cache-Control` `private` or `no-store` beside a header
+that differs between the answers are one `capture-personal` warning. That
+`Cache-Control` is then the application's own, such as a middleware's: the header
+that differs is left out, so the exported file is no longer personal, and the
+`Cache-Control` only keeps a host from caching it. None of these warnings fails
+the build.
 
 Middleware sees these requests. A plugin that counts or limits traffic —
 analytics, a rate limiter, a ban list — should let a request through untouched
