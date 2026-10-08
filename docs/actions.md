@@ -52,6 +52,13 @@ saw the submission.
 `OPTIONS` is answered from the same list, so what a 405 offers and what an `OPTIONS`
 reports cannot disagree.
 
+`OPTIONS`, `TRACE` and `CONNECT` belong to the server, not to an action, and
+registering an action that declares one fails with
+`collage.ErrInvalidActionMethod`, naming the action and the method. The router
+answers `OPTIONS` itself, and the forgery check counts it as a safe method like
+`GET`, so an action claiming it would change state with no token checked. A CORS
+preflight is a middleware's job, answered before the router.
+
 ## What a handler answers with
 
 ```go
@@ -247,6 +254,13 @@ admin panel on its own origin that posts here is named in
 port do not matter, and a wildcard is refused: name each origin. The token cookie is
 `SameSite=Lax`, so a trusted origin on another *site* never sends it; trusting one
 is for another origin of the same site, such as a subdomain.
+
+The cookie is `Secure` when the request arrived over TLS, or when the proxy in
+front says it did in `X-Forwarded-Proto`. With `Server.TrustedProxies` set, that
+header is believed only from a listed proxy: a client reaching the server directly
+cannot claim TLS it does not have. Empty, it is believed from anyone, which is right
+for a server only a proxy can reach. See
+[Behind a proxy](deployment.md#behind-a-proxy-trustedproxies).
 
 A multipart body over the 32 MiB the parser holds in memory spills its files to
 disk; they are removed when the action has answered, accepted or refused.

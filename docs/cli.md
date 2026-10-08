@@ -292,7 +292,7 @@ to `go` in the current directory, exactly as you would by hand:
 
 | Command | Runs | With |
 | --- | --- | --- |
-| `collage dev` | `go build -tags collage_dev`, then the binary it built — again on every change | `COLLAGE_DEV=1`, and the `HOST` and `PORT` to listen on, in the environment |
+| `collage dev` | `go build -tags collage_dev`, then the binary it built — again on every change | `COLLAGE_DEV=1`, the `HOST` and `PORT` to listen on, and `COLLAGE_DEV_HOST`, the host `collage dev` itself listens on, in the environment |
 | `collage export` | `go run . -collage-build -out <dir>` | `-clean` appended when you passed it |
 
 That is a **contract with your `main.go`**, and the scaffolded one honours both
@@ -343,6 +343,13 @@ tool to install:
   exited, or the first build failed — the page is a 503 showing what the program or
   the compiler printed, and it reloads by itself once a change brings the program
   back. A page already open when the program exits reloads onto that error.
+- **Only this machine's names are answered.** A request whose `Host` is not
+  localhost (or a name under `.localhost`), an IP address, or the `HOST` it was
+  started with is a 403: a page on another site that made its own name resolve
+  here (DNS rebinding) would otherwise read every development page. The program
+  applies the same rule in development mode, and is told the proxy's `HOST` in
+  `COLLAGE_DEV_HOST`, since it listens on loopback but sees the browser's `Host`.
+  See [deployment.md](deployment.md#development-mode-stays-on-this-machine).
 - **The browser reloads too.** A development page reloads itself when a template or
   a static file changes, and when the program comes back from a rebuild — see
   [fragments.md](fragments.md#development-mode). Nothing to install in the browser.

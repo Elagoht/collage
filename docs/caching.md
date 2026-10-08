@@ -591,6 +591,19 @@ conservative reading and it is correct: a data handler receives the whole reques
 and may render from `r.URL.Query()`, so the framework cannot know which parameters
 matter without being told.
 
+This default is deliberate and will not change. Dropping or allowlisting the query
+by default would make every page that reads a parameter it did not declare share
+one entry across all values of it — `?page=2` served as page one, one visitor's
+filter served to the next — and nothing would fail to say so. A page opts into a
+smaller key with `WithCacheParams`; the framework never guesses one for it.
+
+What keeps an unbounded number of query variants from becoming unbounded memory is
+the cache's bounds, not the key: `Cache.MaxEntries` (10000 by default) and
+`Cache.MaxBytes` cap the memory cache, and the dependency tracker is capped per tag
+by `MaxKeysPerTag` and in all at `MaxEntries` (see
+[the tracker is bounded](#the-tracker-is-in-process-and-bounded)). A client minting
+variants evicts entries — a cost in hit rate, not in memory.
+
 It is also expensive. A newsletter link carrying `?utm_source=` caches a second copy
 of the page, and a crawler walking variants evicts real entries from a bounded cache
 without ever asking for a distinct page. Say which parameters the page reads:

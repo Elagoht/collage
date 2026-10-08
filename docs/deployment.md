@@ -209,6 +209,24 @@ srv.ListenAndServeTLS(certFile, keyFile)
 Doing that means you own the timeouts and the shutdown that `ListenAndServe` was
 handling for you.
 
+## Timeouts
+
+`ListenAndServe` sets `Server.ReadTimeout` (15s), `ReadHeaderTimeout`,
+`WriteTimeout` (30s) and `IdleTimeout` (60s) on its server. `ReadHeaderTimeout` is
+what drops a client that sends its headers a byte at a time; unset, it is
+`ReadTimeout`, as it always was. Set it shorter to free such connections early while
+a large upload still gets the whole `ReadTimeout` for its body:
+
+```go
+Server: collage.ServerConfig{
+    ReadTimeout:       60 * time.Second, // uploads
+    ReadHeaderTimeout: 5 * time.Second,
+},
+```
+
+A negative value in any of them is `collage.ErrNegativeDuration`. `collage dev`'s
+proxy has its own fixed 10s header timeout, which is development only.
+
 ## Behind a proxy: `TrustedProxies`
 
 Behind a proxy, every request's `RemoteAddr` is the proxy's. The proxy names the
@@ -242,6 +260,35 @@ every visitor coming through it becomes one. List only proxies you run, or your
 platform's documented ranges: trusting a range a client can send from lets that
 client name any address it likes. An entry with zero bits (`0.0.0.0/0`, `::/0`)
 trusts everyone; `collage.New` accepts it but logs a Warn saying so.
+
+The same list decides whose `X-Forwarded-Proto` is believed. The forgery cookie is
+`Secure` when the request arrived over TLS, and behind a proxy that terminates TLS
+the proxy says so in that header. With `TrustedProxies` set, a request whose
+`RemoteAddr` is not a listed proxy cannot set it: a client reaching the port
+directly over plain http gets a cookie it can send back over plain http. Empty, the
+header is believed from anyone — the behaviour before the list existed, and right
+only when nothing but your proxy can reach the server.
+
+## Development mode stays on this machine
+
+`DevMode` serves things production must not: error pages with stacks and source,
+the reload stream, a development toolbar. Two guards keep them here:
+
+- **A foreign `Host` is refused.** In development the server answers `403` to a
+  request whose `Host` is not localhost (or a name under `.localhost`), an IP
+  address, or `Server.Host`. A page on another site can make its own name resolve
+  to `127.0.0.1` — DNS rebinding — and would then be same-origin with the
+  development server; its `Host` is still its own name. `collage dev`'s proxy
+  applies the same rule, and tells the program its host in `COLLAGE_DEV_HOST`, so
+  `HOST=mybox.local collage dev` is reachable at `mybox.local` through the proxy.
+  Running the binary directly with `COLLAGE_DEV=1` and `HOST=0.0.0.0`, a phone on
+  the LAN reaches it by IP address; to use a name, set `HOST` to that name.
+- **A reachable address is warned about.** When `ListenAndServe` binds anything but
+  loopback in development — `0.0.0.0`, `::`, an empty host, a LAN address — it logs
+  a Warn saying the development pages expose the application's internals.
+
+Neither applies in production, where `DevMode` is off and the `Host` is whatever
+your DNS sends.
 
 ## Caching
 
