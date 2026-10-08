@@ -159,8 +159,8 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 		DevWatch: []string{"content"},
 		Logger:   logger,
 		Server: ServerConfig{
-			Host:            "0.0.0.0",
-			Port:            8080,
+			Host:              "0.0.0.0",
+			Port:              8080,
 			ReadTimeout:       time.Second,
 			ReadHeaderTimeout: 1500 * time.Millisecond,
 			WriteTimeout:      2 * time.Second,
