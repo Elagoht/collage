@@ -256,9 +256,13 @@ func (r *Registry) Drain() {
 
 // Serve calls OnServe on every plugin implementing ServeHook, in registration
 // order. A panic in one is contained and logged, so the others still start.
+// Once ctx is done — a drain that started mid-loop — no later hook is called.
 // A nil Registry does nothing.
 func (r *Registry) Serve(ctx context.Context) {
 	for _, p := range r.snapshot() {
+		if ctx.Err() != nil {
+			return
+		}
 		if hook, ok := p.(ServeHook); ok {
 			if err := safeCall(func() error { hook.OnServe(ctx); return nil }); err != nil {
 				r.logOrDefault().Warn("collage: serve hook panicked", "plugin", p.Name(), "err", err)

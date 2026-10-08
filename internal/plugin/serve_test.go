@@ -73,3 +73,31 @@ func TestRegistry_ServeLogsAPanic(t *testing.T) {
 		t.Errorf("log = %q, plugin b did not panic", out)
 	}
 }
+
+// cancellingPlugin cancels the serve ctx from its OnServe, as a drain landing
+// mid-loop would.
+type cancellingPlugin struct {
+	testPlugin
+	cancel context.CancelFunc
+}
+
+func (p *cancellingPlugin) OnServe(context.Context) {
+	p.log.add(p.name + ".OnServe")
+	p.cancel()
+}
+
+// Once the ctx is done, Serve starts no later hook: it would hand that plugin
+// a ctx already cancelled, possibly after its Shutdown.
+func TestRegistry_ServeStopsOnceCtxIsDone(t *testing.T) {
+	log := &callLog{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := NewRegistry(nil)
+	mustRegister(t, r, &cancellingPlugin{testPlugin: testPlugin{name: "a", log: log}, cancel: cancel})
+	mustRegister(t, r, &testPlugin{name: "b", log: log})
+	mustRegister(t, r, &servePlugin{testPlugin: testPlugin{name: "c", log: log}})
+	r.Serve(ctx)
+	if got := strings.Join(log.get(), ","); got != "a.OnServe" {
+		t.Errorf("calls = %s, want only a.OnServe once the ctx is done", got)
+	}
+}

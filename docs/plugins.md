@@ -240,8 +240,9 @@ in development too, again on every restart.
 starts, at the same moment `OnDrain` runs, whether the stop came from a signal
 or from `App.Shutdown(ctx)`. It means "start no new work"; finishing the work
 already running belongs in the plugin's `Shutdown`, which runs after the server
-stops and is bounded by the shutdown ctx. `OnServe` must not block: start
-goroutines and return. A panic in it is contained and logged at Warn with the
+stops and is bounded by the shutdown ctx. The ctx may already be done when
+`OnServe` is called — a drain that started a moment earlier — so check it
+before starting work. `OnServe` must not block: start goroutines and return. A panic in it is contained and logged at Warn with the
 plugin's name, and the server still serves.
 
 `Host` has no `Documents` method, and that is deliberate rather than an

@@ -1121,10 +1121,9 @@ func cleanStop(err error) error {
 // joining whatever errors either produced. The drain cancels the ServeHook ctx,
 // tells DrainHook plugins, turns keep-alives off and, with a server serving, a
 // ServerConfig.DrainDelay and not in development mode, keeps serving for
-// DrainDelay. ctx bounds the drain's
-// wait and the server's wait for in-flight requests together; ListenAndServe's
-// own signal handler drains first and then bounds the rest with
-// ServerConfig.ShutdownTimeout.
+// DrainDelay. ctx bounds the drain's wait and the server's wait for in-flight
+// requests together; ListenAndServe's own signal handler drains first and then
+// bounds the rest with ServerConfig.ShutdownTimeout.
 //
 // It is idempotent: the work runs exactly once and every caller — including one
 // racing another — observes the same result. Calling it before ListenAndServe has
