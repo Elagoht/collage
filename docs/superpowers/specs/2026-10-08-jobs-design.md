@@ -122,7 +122,7 @@ Behaviour:
   - Enqueue works before serving. Work waits in the queue until `OnServe` or
     `Start` starts the workers.
   - A full queue returns `ErrQueueFull`.
-  - After the drain has started, `Enqueue` returns `ErrDraining`.
+  - Once the plugin's `Shutdown` has begun, `Enqueue` returns `ErrDraining`. During the drain the server still serves on purpose, so `Enqueue` still accepts work then; that work is finished, or logged as dropped, by `Shutdown`.
 - **Failures:** an error or a panic counts as a failed attempt. Attempts are
   retried with exponential backoff (1s, 2s, 4s…, capped at 1 minute) up to
   `MaxAttempts`. The last failure is logged at Error and `OnFailure` is called.
@@ -133,8 +133,9 @@ Behaviour:
 **Lifecycle**
 
 - `OnServe(ctx)` starts the scheduler and the workers. When ctx is cancelled
-  (the drain), the scheduler stops triggering and `Enqueue` returns
-  `ErrDraining`.
+  (the drain), the scheduler stops triggering. `Enqueue` keeps accepting work
+  until the plugin's `Shutdown` begins (amended after the final review: under
+  `ListenAndServe` no request then ever sees `ErrDraining`).
 - `Start(ctx)` does the same for an application that serves by itself. A
   second `Start`, or `Start` after `OnServe`, is a no-op.
 - `Shutdown(ctx)`:
@@ -188,7 +189,7 @@ interface, so tests do not depend on wall-clock sleeps.
 - `disabled` works.
 - Queues:
   - `ErrQueueFull`;
-  - `ErrDraining` after the drain;
+  - `ErrDraining` once Shutdown has begun, and not during the drain;
   - retry with backoff;
   - `OnFailure` after the last attempt;
   - panics retried;
