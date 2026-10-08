@@ -71,6 +71,18 @@ func (b *ActionBuilder) WithMaxBodyBytes(n int64) *ActionBuilder {
 	return b
 }
 
+// WithStreamingBody hands the handler the request body unread, for it to read
+// as a stream: nothing before the handler parses a form out of it. The forgery
+// token is then accepted only in the X-CSRF-Token header (Security.CSRFHeaderName),
+// never in a form field, so a plain HTML form cannot post here; a fetch() can.
+// WithMaxBodyBytes still bounds the body, and its default is small, so a large
+// upload raises it. Registration refuses it on an action answering none of
+// POST, PUT or PATCH, with ErrStreamingBodyMethod.
+func (b *ActionBuilder) WithStreamingBody() *ActionBuilder {
+	b.action.StreamingBody = true
+	return b
+}
+
 // WithoutCSRF turns off cross-site request forgery checking for this action.
 //
 // It is for requests that cannot carry a token: a payment provider's webhook, an API

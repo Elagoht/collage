@@ -80,6 +80,12 @@ type Action struct {
 	// decision worth making deliberately, because an unbounded body is memory an
 	// anonymous caller chooses the size of.
 	MaxBodyBytes int64
+	// StreamingBody hands the handler the request body unread. Nothing before
+	// the handler parses it — the forgery check reads the token from its header
+	// only, never from a form field — so the handler reads it as a stream, a
+	// large upload for one. MaxBodyBytes still bounds it while it is read. Only
+	// an action answering POST, PUT or PATCH may declare it.
+	StreamingBody bool
 	// SkipCSRF turns off cross-site request forgery checking for this action.
 	//
 	// It exists for the requests that cannot possibly carry a token: a payment

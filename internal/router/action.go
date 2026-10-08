@@ -24,6 +24,13 @@ var ErrInvalidActionMethod = fmt.Errorf("collage: action method is reserved for 
 // ErrInvalidActionMethod.
 var serverMethods = []string{http.MethodOptions, http.MethodTrace, http.MethodConnect}
 
+// ErrStreamingBodyMethod reports an action that declares a streaming body but
+// answers no method that carries one: none of POST, PUT or PATCH.
+var ErrStreamingBodyMethod = fmt.Errorf("collage: a streaming body needs POST, PUT or PATCH")
+
+// bodyMethods are the methods a streaming body may arrive with.
+var bodyMethods = []string{http.MethodPost, http.MethodPut, http.MethodPatch}
+
 // RegisterAction implements Router.
 //
 // An action shares a tree node with whatever else claims its path, which is the
@@ -41,6 +48,9 @@ func (rt *router) RegisterAction(action *types.Action) error {
 		if slices.Contains(serverMethods, method) {
 			return fmt.Errorf("%w: action %q declares %s", ErrInvalidActionMethod, action.Name, method)
 		}
+	}
+	if action.StreamingBody && !slices.ContainsFunc(action.Methods, func(m string) bool { return slices.Contains(bodyMethods, m) }) {
+		return fmt.Errorf("%w: action %q declares %v", ErrStreamingBodyMethod, action.Name, action.Methods)
 	}
 
 	for _, locale := range actionLocales(action) {

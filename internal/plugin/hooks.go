@@ -403,7 +403,9 @@ type BeforeActionEvent struct {
 	Locale string
 	// Request is the request. Its body is bounded by the action's limit, and a
 	// form parsed from it — ParseMultipartForm, FormValue — stays parsed for the
-	// handler.
+	// handler. An action with Action.StreamingBody set is the exception: its
+	// handler reads the body as a stream, and a form parsed here consumes that
+	// stream, so a plugin leaves such a body alone.
 	Request *http.Request
 	// Result, when a plugin sets it, is what the request is answered with in
 	// place of the handler's result: a refusal, a redirect.

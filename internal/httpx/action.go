@@ -82,11 +82,13 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// Bounded before the handler sees it, not by the handler. A limit every
 	// handler has to remember is a limit the one handler that forgot does not
 	// have, and that handler is the one an anonymous caller will find.
+	var body *limitedBody
 	if limit := h.bodyLimit(action); limit >= 0 {
 		// Already bounded before the middleware, as a rule; a middleware that
 		// read the body and dropped the error leaves it read past its bound,
 		// and the action answers for it. See boundBeforeMiddleware.
-		if boundBody(w, r, limit).tooLarge {
+		body = boundBody(w, r, limit)
+		if body.tooLarge {
 			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
 				actionBodyTooLarge(action, limit)))
 		}
@@ -100,7 +102,13 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// registration refuses it (router.ErrInvalidActionMethod), and the router
 	// answers it itself.
 	if h.csrf != nil && !action.SkipCSRF && !types.SafeMethod(r.Method) {
-		if err := h.csrf.Verify(r); err != nil {
+		// A streaming body is the handler's to read, so its token comes from
+		// the header alone: looking for the form field would parse the body.
+		verify := h.csrf.Verify
+		if action.StreamingBody {
+			verify = h.csrf.VerifyHeader
+		}
+		if err := verify(r); err != nil {
 			// 403, not 400. The request was well formed; it was not authorised —
 			// unless reading the token hit the body limit, which is a request too
 			// large to be read at all, and says so.
@@ -148,6 +156,14 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 
 	result, err := action.Handler(ctx, rc)
 	if err != nil {
+		// A handler that read past the bound and failed failed because of it,
+		// whatever error it chose to say so with: one that wrapped the read's
+		// error is a 413 already, and one that replaced it with its own — "upload
+		// failed" — is the same request too large, not a fault of the server's.
+		if body != nil && body.tooLarge {
+			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRender,
+				actionBodyTooLarge(action, body.limit)))
+		}
 		return h.serveFailure(w, r, route.failure(actionErrorStatus(err), stageRender,
 			fmt.Errorf("collage: action %q: %w", action.Name, err)))
 	}

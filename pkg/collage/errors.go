@@ -34,6 +34,9 @@ var (
 	// TRACE or CONNECT. The router answers OPTIONS itself, and an action
 	// claiming it would skip the forgery check.
 	ErrInvalidActionMethod = router.ErrInvalidActionMethod
+	// ErrStreamingBodyMethod is returned for an action that declares
+	// WithStreamingBody but answers none of POST, PUT or PATCH.
+	ErrStreamingBodyMethod = router.ErrStreamingBodyMethod
 	// ErrNilFragmentPath is returned for a WithFragmentPath given no fragment.
 	ErrNilFragmentPath = core.ErrNilFragmentPath
 )
@@ -52,6 +55,10 @@ var (
 	// refused whatever token it carried. An origin whose forms may post here is
 	// named in Security.CSRFTrustedOrigins.
 	ErrCSRFCrossOrigin = csrf.ErrCrossOrigin
+	// ErrCSRFHeaderRequired reports a submission to a WithStreamingBody action
+	// that did not carry its token in the header — the only place such an action
+	// looks. It wraps ErrCSRFMissing.
+	ErrCSRFHeaderRequired = csrf.ErrHeaderRequired
 	// ErrCSRFDisabled is returned by {{csrfToken}} when forgery protection is off.
 	ErrCSRFDisabled = core.ErrCSRFDisabled
 )

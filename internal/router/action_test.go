@@ -263,3 +263,31 @@ func TestRegisterAction_RefusesServerMethods(t *testing.T) {
 		})
 	}
 }
+
+// A streaming body needs a method that carries one.
+func TestRegisterAction_StreamingNeedsBodyMethod(t *testing.T) {
+	rt := New(LocaleOptions{Default: "en"})
+	action := testAction("upload", "/upload", http.MethodGet)
+	action.StreamingBody = true
+	err := rt.RegisterAction(action)
+	if !errors.Is(err, ErrStreamingBodyMethod) {
+		t.Fatalf("RegisterAction(GET) = %v, want ErrStreamingBodyMethod", err)
+	}
+	if !strings.Contains(err.Error(), `"upload"`) {
+		t.Errorf("error %q does not name the action", err)
+	}
+	if match, err := rt.Match(httptest.NewRequest(http.MethodGet, "/upload", nil)); err == nil && match.Action != nil {
+		t.Errorf("GET /upload matched action %q after the refused registration", match.Action.Name)
+	}
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch} {
+		t.Run(method, func(t *testing.T) {
+			rt := New(LocaleOptions{Default: "en"})
+			action := testAction("upload", "/upload", method)
+			action.StreamingBody = true
+			if err := rt.RegisterAction(action); err != nil {
+				t.Fatalf("RegisterAction(%s) = %v, want nil", method, err)
+			}
+		})
+	}
+}

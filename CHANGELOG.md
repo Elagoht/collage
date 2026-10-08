@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`WithStreamingBody()`.** An action marked with it reaches its handler with
+  the body unread: nothing before the handler parses a form out of it, so the
+  handler reads it as a stream. Its forgery token is accepted only in the
+  `X-CSRF-Token` header (`Security.CSRFHeaderName`), never in a form field; a
+  request without it is refused with `403` and the new
+  `ErrCSRFHeaderRequired`, which wraps `ErrCSRFMissing` and names the header.
+  A plain HTML form therefore cannot post to such an action — a `fetch()` with
+  the header can. `MaxBodyBytes` bounds it as before, and its 4 MiB default
+  must be raised for a large upload.
+- **`ErrStreamingBodyMethod`.** Registration refuses `WithStreamingBody()` on
+  an action answering none of `POST`, `PUT` or `PATCH`, naming the action and
+  its methods.
+
+### Changed
+
+- **A body that hit its bound answers `413`, whatever the handler returned.**
+  A handler that read past `MaxBodyBytes` and failed was a `413` only when its
+  error wrapped the read's `*http.MaxBytesError`; one that replaced it with its
+  own ("upload failed") was a `500`. Now the action checks whether its body ran
+  into the bound, for every action, and answers `413` with the limit.
+
 ## v0.56.0
 
 ### Breaking

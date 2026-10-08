@@ -54,6 +54,11 @@ var ErrMismatch = errors.New("collage: csrf token does not match")
 // ErrInvalid reports a token whose signature does not hold.
 var ErrInvalid = errors.New("collage: csrf token is not valid")
 
+// ErrHeaderRequired reports a request to an action that reads its token from the
+// header only — one whose body the core does not read — that sent none there. It
+// wraps ErrMissing: the token is missing from the one place that was looked in.
+var ErrHeaderRequired = fmt.Errorf("%w from the header", ErrMissing)
+
 // ErrCrossOrigin reports a request the browser says was sent from another origin.
 var ErrCrossOrigin = errors.New("collage: cross-origin request")
 
@@ -334,6 +339,40 @@ func (g *Guard) Verify(r *http.Request) error {
 
 	// Constant time, on both comparisons. A token is a secret, and a comparison
 	// that stops at the first wrong byte tells an attacker how many were right.
+	if !hmac.Equal([]byte(submitted), []byte(cookie.Value)) {
+		return ErrMismatch
+	}
+	if !g.valid(submitted) {
+		return ErrInvalid
+	}
+	return nil
+}
+
+// VerifyHeader is Verify without the form: the token is read from the header and
+// nowhere else, so the body is never read. It is for an action whose body its
+// handler reads as a stream, which a form parsed here would have consumed.
+//
+// The origin, the cookie and the token are checked as Verify checks them. A
+// request with no token in the header is refused with ErrHeaderRequired, whose
+// message names the header, whatever its form fields carry.
+func (g *Guard) VerifyHeader(r *http.Request) error {
+	if err := g.origin.Check(r); err != nil {
+		return fmt.Errorf("%w: %w", ErrCrossOrigin, err)
+	}
+
+	cookie, err := r.Cookie(g.cookieName)
+	if err != nil || cookie.Value == "" {
+		return ErrMissing
+	}
+	if !g.valid(cookie.Value) {
+		return ErrInvalid
+	}
+
+	submitted := r.Header.Get(g.headerName)
+	if submitted == "" {
+		return fmt.Errorf("%w: the CSRF token must be sent in the %s header for this action", ErrHeaderRequired, g.headerName)
+	}
+
 	if !hmac.Equal([]byte(submitted), []byte(cookie.Value)) {
 		return ErrMismatch
 	}

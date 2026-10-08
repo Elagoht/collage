@@ -478,3 +478,85 @@ func TestCookie_ForwardedProtoAndTrustedProxies(t *testing.T) {
 		})
 	}
 }
+
+// VerifyHeader is Verify for a body the core must not read: the token comes
+// from the header or not at all, and the body stays unparsed either way.
+func TestVerifyHeader(t *testing.T) {
+	g := guard(t)
+	token, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+
+	t.Run("a valid token in the header passes", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/upload", strings.NewReader("raw bytes"))
+		req.AddCookie(&http.Cookie{Name: DefaultCookieName, Value: token})
+		req.Header.Set(DefaultHeaderName, token)
+		if err := g.VerifyHeader(req); err != nil {
+			t.Fatalf("VerifyHeader() = %v, want nil", err)
+		}
+		if req.Form != nil || req.MultipartForm != nil {
+			t.Error("VerifyHeader parsed the body")
+		}
+	})
+
+	t.Run("a token only in the form field is refused, unread", func(t *testing.T) {
+		req := postWith(t, token, token)
+		err := g.VerifyHeader(req)
+		if !errors.Is(err, ErrHeaderRequired) {
+			t.Fatalf("VerifyHeader() = %v, want ErrHeaderRequired", err)
+		}
+		want := "the CSRF token must be sent in the " + DefaultHeaderName + " header for this action"
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not read %q", err, want)
+		}
+		if req.Form != nil || req.PostForm != nil || req.MultipartForm != nil {
+			t.Error("VerifyHeader parsed the body looking for the field")
+		}
+	})
+
+	t.Run("a renamed header is the one named", func(t *testing.T) {
+		g, err := New(Config{Key: []byte("a key of some length"), HeaderName: "X-Upload-Token"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := postWith(t, token, token)
+		if err := g.VerifyHeader(req); !errors.Is(err, ErrHeaderRequired) || !strings.Contains(err.Error(), "X-Upload-Token") {
+			t.Fatalf("VerifyHeader() = %v, want ErrHeaderRequired naming X-Upload-Token", err)
+		}
+	})
+
+	t.Run("a bad cookie is refused as invalid", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+		req.AddCookie(&http.Cookie{Name: DefaultCookieName, Value: "forged.signature"})
+		req.Header.Set(DefaultHeaderName, "forged.signature")
+		if err := g.VerifyHeader(req); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("VerifyHeader() = %v, want ErrInvalid", err)
+		}
+	})
+
+	t.Run("no cookie is missing", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+		req.Header.Set(DefaultHeaderName, token)
+		if err := g.VerifyHeader(req); !errors.Is(err, ErrMissing) {
+			t.Fatalf("VerifyHeader() = %v, want ErrMissing", err)
+		}
+	})
+
+	t.Run("a different valid token mismatches", func(t *testing.T) {
+		other, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+		req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+		req.AddCookie(&http.Cookie{Name: DefaultCookieName, Value: token})
+		req.Header.Set(DefaultHeaderName, other)
+		if err := g.VerifyHeader(req); !errors.Is(err, ErrMismatch) {
+			t.Fatalf("VerifyHeader() = %v, want ErrMismatch", err)
+		}
+	})
+
+	t.Run("a cross-origin request is refused", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+		req.AddCookie(&http.Cookie{Name: DefaultCookieName, Value: token})
+		req.Header.Set(DefaultHeaderName, token)
+		req.Header.Set("Sec-Fetch-Site", "cross-site")
+		if err := g.VerifyHeader(req); !errors.Is(err, ErrCrossOrigin) {
+			t.Fatalf("VerifyHeader() = %v, want ErrCrossOrigin", err)
+		}
+	})
+}

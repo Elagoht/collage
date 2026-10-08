@@ -210,6 +210,11 @@ the form, `WithMaxBodyBytes(maxPhoto + 64<<10)`.
 A limit every handler has to remember is a limit the one handler that forgot does not
 have, and that handler is the one an anonymous caller will find.
 
+A handler that reads the body itself and runs into the limit is answered with `413`
+too, whatever error it returns — the read's own, or one of its own such as "upload
+failed". An action that reads a large body as a stream is in
+[Streaming bodies](#streaming-bodies).
+
 ## Forgery protection
 
 Every unsafe request to an action is checked. Put the token in the form:
@@ -295,6 +300,55 @@ anything a browser submits, it gives the protection away.
 Safe methods are not checked. A `GET` action changes nothing by contract, and a token
 on it would be a token in a URL, which is a token in a log file and in a `Referer`
 header.
+
+## Streaming bodies
+
+An action that takes a large upload reads its body as a stream, and nothing may read
+it first. `WithStreamingBody()` makes that a guarantee:
+
+```go
+collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPost).
+	WithStreamingBody().
+	WithMaxBodyBytes(2 << 30).
+	WithHandler(upload)
+```
+
+- **The body arrives unread.** Nothing before the handler parses a form out of it:
+  `rc.Request.Body` is the bytes as they were sent, and `rc.Request.Form` and
+  `rc.Request.MultipartForm` are nil. The handler reads it — with
+  `rc.Request.MultipartReader()`, say, one part at a time.
+- **The token comes in the header, and only there.** Finding it in a form field
+  would mean parsing the body, so the field is not looked for: a request without
+  `X-CSRF-Token` (or `Security.CSRFHeaderName`) is refused with `403`, and the
+  reason, `ErrCSRFHeaderRequired`, names the header. Send it from the page's own
+  token — the cookie is `HttpOnly`, so read the value from the input `{{csrfToken}}`
+  renders (named `_csrf`, or `Security.CSRFFieldName`):
+
+  ```js
+  const token = form.querySelector('input[name="_csrf"]').value;
+  await fetch(form.action, {
+    method: "POST",
+    headers: {"X-CSRF-Token": token},
+    body: new FormData(form),
+  });
+  ```
+
+- **A plain HTML form cannot post to it.** A browser submitting a form has no way
+  to set a header, so its token is in a field nobody reads, and it is refused.
+  Submit with `fetch()` as above. `WithoutCSRF()` still turns the check off
+  entirely, and the body still arrives unread.
+- **`MaxBodyBytes` still applies, and must be raised.** The four-megabyte default
+  bounds a streaming body as it bounds any other, enforced as the handler reads.
+  A handler that reads past it and fails is answered with `413`, whatever error it
+  returns.
+- **Anything that parses the form consumes the stream.** `rc.Request.FormValue`,
+  `ParseMultipartForm`, a helper such as `validate.Form`, a plugin calling
+  `BeforeActionEvent.Form()` — each reads the body to its end, and the handler
+  finds nothing left. A plugin with an `OnBeforeAction` hook checks
+  `ev.Action.StreamingBody` and leaves such a body alone.
+
+Registration refuses `WithStreamingBody()` on an action answering none of `POST`,
+`PUT` or `PATCH`, with `ErrStreamingBodyMethod`.
 
 ## A fragment at its own URL
 
