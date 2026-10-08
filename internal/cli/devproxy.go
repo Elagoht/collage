@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,7 +57,10 @@ type devProxy struct {
 	// told to listen on.
 	public string
 	target string
-	proxy  *httputil.ReverseProxy
+	// names are the hosts besides the machine's own that the proxy answers:
+	// the COLLAGE_DEV_HOST list.
+	names []string
+	proxy *httputil.ReverseProxy
 
 	mu    sync.Mutex
 	state devState
@@ -70,8 +75,8 @@ type devProxy struct {
 	changed chan struct{}
 }
 
-func newDevProxy(public, target string) *devProxy {
-	p := &devProxy{public: public, target: target, changed: make(chan struct{})}
+func newDevProxy(public, target string, names ...string) *devProxy {
+	p := &devProxy{public: public, target: target, names: names, changed: make(chan struct{})}
 	targetURL := &url.URL{Scheme: "http", Host: target}
 	p.proxy = &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
@@ -147,7 +152,9 @@ func (p *devProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		header.Set("Content-Type", "text/plain; charset=utf-8")
 		header.Set("X-Content-Type-Options", "nosniff")
 		w.WriteHeader(http.StatusForbidden)
-		fmt.Fprintf(w, "collage: dev: %q is not this machine's name. To reach collage dev by it, start it with HOST set to it.\n", r.Host)
+		// Quoted, never echoed: the Host is the requester's to choose.
+		fmt.Fprintf(w, "collage: dev: %q is not this machine's name. To reach collage dev by it, "+
+			"add it to %s (a comma-separated list) or start it with HOST set to it.\n", r.Host, devhost.EnvHost)
 		return
 	}
 	// A build takes as long as it takes, so only a program already started is
@@ -189,7 +196,28 @@ func (p *devProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // started with. See internal/devhost for why; the program behind the proxy
 // applies the same rule, and is told the HOST through devhost.EnvHost.
 func (p *devProxy) allowedHost(host string) bool {
-	return devhost.Allowed(host, p.public)
+	return devhost.Allowed(host, append([]string{p.public}, p.names...)...)
+}
+
+// programHosts is the COLLAGE_DEV_HOST the program is started with: the
+// proxy's names and its own host, which is the Host the browser sends.
+func (p *devProxy) programHosts() string {
+	public, _, err := net.SplitHostPort(p.public)
+	if err != nil {
+		public = p.public
+	}
+	return strings.Join(append(slices.Clone(p.names), public), ",")
+}
+
+// warnDevProxyExposure logs, once, when collage dev is bound where other
+// machines can reach it. The program behind it binds loopback, so its own
+// warning never fires; this is the one that does.
+func warnDevProxyExposure(logger *slog.Logger, addr net.Addr) {
+	tcp, ok := addr.(*net.TCPAddr)
+	if !ok || tcp.IP.IsLoopback() {
+		return
+	}
+	logger.Warn(devhost.ExposureWarning, "addr", addr.String())
 }
 
 // proxyFailed answers a request the program did not. That is almost always a

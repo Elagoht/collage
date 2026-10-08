@@ -24,12 +24,12 @@ func TestDevHost_RefusesAForeignHost(t *testing.T) {
 		return env.do(r)
 	}
 	for _, path := range []string{"/", "/missing", devReloadPath, devReloadWorkerPath} {
-		rec := request("evil.example:6060", path)
+		rec := request("evil.attacker.io:6060", path)
 		if rec.Code != http.StatusForbidden {
-			t.Errorf("GET %s from Host evil.example = %d, want 403", path, rec.Code)
+			t.Errorf("GET %s from Host evil.attacker.io = %d, want 403", path, rec.Code)
 		}
 		if strings.Contains(rec.Body.String(), "page") || strings.Contains(rec.Body.String(), devReloadPath) {
-			t.Errorf("GET %s from Host evil.example served %q", path, rec.Body.String())
+			t.Errorf("GET %s from Host evil.attacker.io served %q", path, rec.Body.String())
 		}
 		if rec.Header().Get("Cache-Control") != "no-store" {
 			t.Errorf("GET %s refusal Cache-Control = %q, want no-store", path, rec.Header().Get("Cache-Control"))
@@ -38,6 +38,7 @@ func TestDevHost_RefusesAForeignHost(t *testing.T) {
 	for _, host := range []string{
 		"localhost", "localhost:6060", "app.localhost:6060", "127.0.0.1:6060", "[::1]:6060",
 		"192.168.1.20:6060", "mybox.local:6060", "MYBOX.local.",
+		"example.com", "www.example.org:6060", "app.test:6060", "site.example",
 	} {
 		if rec := request(host, "/"); rec.Code != http.StatusOK {
 			t.Errorf("GET / from Host %q = %d, want 200", host, rec.Code)
@@ -54,7 +55,7 @@ func TestDevHost_NotCheckedInProduction(t *testing.T) {
 	page := testPage("home", "/", types.StrategyDynamic)
 	env := newEnv(t, []*types.Page{page})
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
-	r.Host = "evil.example"
+	r.Host = "evil.attacker.io"
 	if rec := env.do(r); rec.Code != http.StatusOK {
 		t.Errorf("production GET / from any Host = %d, want 200", rec.Code)
 	}

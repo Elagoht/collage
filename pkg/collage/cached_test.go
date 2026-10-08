@@ -37,7 +37,7 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 	site := &authorSite{calls: map[string]int{}, names: map[string]string{"A": "Ada", "B": "Bo"}}
 	app, err := collage.New(&collage.Config{
 		DevMode: devMode,
-		Server:  collage.ServerConfig{Host: "example.com", Port: 3000},
+		Server:  collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{
 			"t/post.html":   {Data: []byte(`<article>{{slot "author"}}</article>`)},
 			"t/author.html": {Data: []byte(`<p>{{.Name}}</p>`)},

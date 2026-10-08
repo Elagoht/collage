@@ -251,7 +251,7 @@ func TestErrorEvent_ErrorPageFailureIsA500(t *testing.T) {
 func TestPanicPlainTextAnswer(t *testing.T) {
 	for _, dev := range []bool{true, false} {
 		app, err := collage.New(&collage.Config{
-			Server:   collage.ServerConfig{Host: "example.com", Port: 3000},
+			Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
 			DevMode:  dev,
 			Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>hi</p>`)}}, Root: "t"},
 			Logger:   slog.New(slog.NewTextHandler(&lockedBuffer{}, nil)),

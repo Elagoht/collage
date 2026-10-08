@@ -36,13 +36,13 @@ func TestDevProxy_TheProgramAllowsWhatTheProxyAllows(t *testing.T) {
 	p := newDevProxy("dev.example.test:6060", target.Host)
 	p.set(devReady, nil, "")
 	for host, allowed := range map[string]bool{
-		"localhost:6060":            true,
-		"app.localhost:6060":        true,
-		"127.0.0.1:6060":            true,
-		"[::1]:6060":                true,
-		"192.168.1.20:6060":         true,
-		"dev.example.test:6060":     true,
-		"rebind.attacker.test:6060": false,
+		"localhost:6060":          true,
+		"app.localhost:6060":      true,
+		"127.0.0.1:6060":          true,
+		"[::1]:6060":              true,
+		"192.168.1.20:6060":       true,
+		"dev.example.test:6060":   true,
+		"rebind.attacker.io:6060": false,
 	} {
 		r := httptest.NewRequest(http.MethodGet, "/_collage/reload-worker.js", nil)
 		r.Host = host

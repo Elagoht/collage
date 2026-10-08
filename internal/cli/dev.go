@@ -131,7 +131,13 @@ func (c *CLI) runDev(ctx context.Context, args []string) int {
 		fmt.Fprintf(c.stderr(), "collage: dev: %v\n", err)
 		return 1
 	}
-	proxy := newDevProxy(public, target)
+	// Read once, like the address: the names the proxy answers besides this
+	// machine's own, from the shell or else the environment file.
+	extra, ok := os.LookupEnv(devhost.EnvHost)
+	if !ok {
+		extra = envValueOf(env, devhost.EnvHost)
+	}
+	proxy := newDevProxy(public, target, devhost.Names(extra)...)
 	server := &http.Server{Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
 	go server.Serve(listener)
 	defer server.Close()
@@ -139,6 +145,7 @@ func (c *CLI) runDev(ctx context.Context, args []string) int {
 	log := slog.New(term.NewHandler(c.stderr(), slog.LevelInfo))
 	style := term.NewStyle(c.stderr())
 	log.Info("collage dev: serving " + style.Bold("http://"+public))
+	warnDevProxyExposure(log, listener.Addr())
 
 	(&devLoop{cli: c, log: log, color: style.Rich(), buildDir: buildDir, proxy: proxy}).run(ctx)
 	return 0
@@ -292,11 +299,7 @@ func (l *devLoop) restart(ctx context.Context) {
 	// The proxy's own host, too: the program listens on loopback, but the
 	// browser's Host — passed on unchanged — is the proxy's, and the program's
 	// development Host check must allow what the proxy allowed.
-	publicHost, _, err := net.SplitHostPort(l.proxy.public)
-	if err != nil {
-		publicHost = l.proxy.public
-	}
-	env = append(env, "HOST="+host, "PORT="+port, devhost.EnvHost+"="+publicHost, "COLLAGE_DEV=1")
+	env = append(env, "HOST="+host, "PORT="+port, devhost.EnvHost+"="+l.proxy.programHosts(), "COLLAGE_DEV=1")
 
 	l.builds++
 	binary := filepath.Join(l.buildDir, fmt.Sprintf("app-%d%s", l.builds, exeSuffix()))

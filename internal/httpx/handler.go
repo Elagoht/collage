@@ -322,8 +322,10 @@ func serveForeignHost(w http.ResponseWriter, r *http.Request) {
 	header.Set("Content-Type", "text/plain; charset=utf-8")
 	header.Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusForbidden)
+	// Quoted, never echoed: the Host is the requester's to choose.
 	fmt.Fprintf(w, "collage: development mode answers only this machine's names; %q is not one. "+
-		"To reach it by that name, set Server.Host to it.\n", r.Host)
+		"To reach it by that name, add it to %s (a comma-separated list) or set Server.Host to it.\n",
+		r.Host, devhost.EnvHost)
 }
 
 // ServeHTTP implements http.Handler: it runs the request lifecycle inside one span

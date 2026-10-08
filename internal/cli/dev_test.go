@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -644,16 +645,18 @@ func TestDevProxy_RefusesAHostItWasNotStartedFor(t *testing.T) {
 	p.down("SECRET program output")
 
 	for host, allowed := range map[string]bool{
-		"localhost:6060":            true,
-		"app.localhost:6060":        true,
-		"127.0.0.1:6060":            true,
-		"[::1]:6060":                true,
-		"192.168.1.20:6060":         true,
-		"dev.example.test:6060":     true,
-		"DEV.example.test:6060":     true,
-		"rebind.attacker.test:6060": false,
-		"localhost.attacker.test":   false,
-		"":                          false,
+		"localhost:6060":          true,
+		"app.localhost:6060":      true,
+		"127.0.0.1:6060":          true,
+		"[::1]:6060":              true,
+		"192.168.1.20:6060":       true,
+		"dev.example.test:6060":   true,
+		"DEV.example.test:6060":   true,
+		"example.com":             true,
+		"app.test:6060":           true,
+		"rebind.attacker.io:6060": false,
+		"localhost.attacker.io":   false,
+		"":                        false,
 	} {
 		r := httptest.NewRequest(http.MethodGet, "/", nil)
 		r.Host = host
@@ -665,6 +668,63 @@ func TestDevProxy_RefusesAHostItWasNotStartedFor(t *testing.T) {
 		}
 		if !allowed && (w.Code != http.StatusForbidden || leaked) {
 			t.Errorf("Host %q: %d (output shown %v), want 403 and nothing of the program's", host, w.Code, leaked)
+		}
+	}
+}
+
+// COLLAGE_DEV_HOST names more hosts collage dev answers — a docker-compose
+// service, an /etc/hosts name — as a comma-separated list. The proxy allows
+// them, and the program is handed them along with the proxy's own host.
+func TestDev_ExtraHostsReachTheProxyAndTheProgram(t *testing.T) {
+	t.Setenv("COLLAGE_DEV_HOST", "app, mybox.lan")
+	runner, _, stop := devSession(t, map[string]string{"main.go": "package main"})
+	call := waitStarted(t, runner)
+	defer stop()
+	if !slices.Contains(call.env, "COLLAGE_DEV_HOST=app,mybox.lan,127.0.0.1") {
+		t.Errorf("env = %v, want COLLAGE_DEV_HOST=app,mybox.lan,127.0.0.1", call.env)
+	}
+}
+
+func TestDevProxy_AllowsTheExtraHostsAndNamesTheSetting(t *testing.T) {
+	p := newDevProxy("localhost:6060", "127.0.0.1:1", "app", "mybox.lan")
+	p.down("program output")
+	for host, want := range map[string]int{
+		"app:6060":                http.StatusServiceUnavailable,
+		"mybox.lan":               http.StatusServiceUnavailable,
+		"rebind.attacker.io:6060": http.StatusForbidden,
+	} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.Host = host
+		w := httptest.NewRecorder()
+		p.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("Host %q: %d, want %d", host, w.Code, want)
+		}
+		if want == http.StatusForbidden {
+			body := w.Body.String()
+			if !strings.Contains(body, "COLLAGE_DEV_HOST") || !strings.Contains(body, `"rebind.attacker.io:6060"`) {
+				t.Errorf("refusal %q does not name COLLAGE_DEV_HOST and the quoted Host", body)
+			}
+		}
+	}
+}
+
+// Bound where other machines can reach it, collage dev says so: the program
+// behind it binds loopback and never will.
+func TestDevProxy_WarnsWhenReachableFromOtherMachines(t *testing.T) {
+	for addr, warn := range map[string]bool{"0.0.0.0:6060": true, "[::]:6060": true, "192.168.1.20:6060": true, "127.0.0.1:6060": false, "[::1]:6060": false} {
+		tcp, err := net.ResolveTCPAddr("tcp", addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var logs strings.Builder
+		warnDevProxyExposure(slog.New(slog.NewTextHandler(&logs, nil)), tcp)
+		got := logs.String()
+		if (strings.Count(got, "level=WARN") == 1) != warn {
+			t.Errorf("%s: logged %q, want warn=%v", addr, got, warn)
+		}
+		if warn && !strings.Contains(got, "development") {
+			t.Errorf("%s: warning %q does not say what is exposed", addr, got)
 		}
 	}
 }

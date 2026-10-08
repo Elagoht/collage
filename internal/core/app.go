@@ -807,10 +807,7 @@ func warnDevExposure(logger *slog.Logger, devMode bool, addr net.Addr) {
 	if !ok || tcp.IP.IsLoopback() {
 		return
 	}
-	logger.Warn("collage: development mode is listening on an address other machines can reach; "+
-		"its error pages and development tooling expose the application's internals to them. "+
-		"Bind a loopback address (Server.Host \"localhost\") or turn DevMode off",
-		"addr", addr.String())
+	logger.Warn(devhost.ExposureWarning, "addr", addr.String())
 }
 
 // unavailableHandler answers every request with 503. It stands in for the real
@@ -940,10 +937,12 @@ func (a *App) buildHandler() (http.Handler, error) {
 	return handler, nil
 }
 
-// devHosts are the names the development Host check allows besides localhost
-// and IP addresses: the host this server listens on, and, under "collage dev",
-// the host its proxy listens on — the program itself is started on loopback,
-// but the browser's Host is the proxy's, passed on unchanged.
+// devHosts are the names the development Host check allows besides localhost,
+// IP addresses and reserved names: the host this server listens on, and the
+// COLLAGE_DEV_HOST list — names a developer adds (a docker-compose service, an
+// /etc/hosts name) and, under "collage dev", the host its proxy listens on: the
+// program itself is started on loopback, but the browser's Host is the proxy's,
+// passed on unchanged.
 //
 // The one environment variable the framework reads itself, and only in
 // development: the alternative is a configuration field every application's
@@ -952,7 +951,7 @@ func (a *App) devHosts() []string {
 	if !a.devMode {
 		return nil
 	}
-	return []string{a.cfg.Server.Host, os.Getenv(devhost.EnvHost)}
+	return append([]string{a.cfg.Server.Host}, devhost.Names(os.Getenv(devhost.EnvHost))...)
 }
 
 // dataCacheFor returns the store behind collage.Cached as the render engine takes
