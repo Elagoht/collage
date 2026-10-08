@@ -705,6 +705,9 @@ func TestDevProxy_AllowsTheExtraHostsAndNamesTheSetting(t *testing.T) {
 			if !strings.Contains(body, "COLLAGE_DEV_HOST") || !strings.Contains(body, `"rebind.attacker.io:6060"`) {
 				t.Errorf("refusal %q does not name COLLAGE_DEV_HOST and the quoted Host", body)
 			}
+			if cc := w.Header().Get("Cache-Control"); cc != "no-store" {
+				t.Errorf("refusal Cache-Control = %q, want no-store", cc)
+			}
 		}
 	}
 }

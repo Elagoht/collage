@@ -151,6 +151,7 @@ func (p *devProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		header := w.Header()
 		header.Set("Content-Type", "text/plain; charset=utf-8")
 		header.Set("X-Content-Type-Options", "nosniff")
+		header.Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusForbidden)
 		// Quoted, never echoed: the Host is the requester's to choose.
 		fmt.Fprintf(w, "collage: dev: %q is not this machine's name. To reach collage dev by it, "+
