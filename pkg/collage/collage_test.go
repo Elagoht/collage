@@ -161,12 +161,13 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 		Server: ServerConfig{
 			Host:            "0.0.0.0",
 			Port:            8080,
-			ReadTimeout:     time.Second,
-			WriteTimeout:    2 * time.Second,
-			IdleTimeout:     3 * time.Second,
-			ShutdownTimeout: 4 * time.Second,
-			DrainDelay:      5 * time.Second,
-			TrustedProxies:  []string{"10.0.0.0/8", "127.0.0.1"},
+			ReadTimeout:       time.Second,
+			ReadHeaderTimeout: 1500 * time.Millisecond,
+			WriteTimeout:      2 * time.Second,
+			IdleTimeout:       3 * time.Second,
+			ShutdownTimeout:   4 * time.Second,
+			DrainDelay:        5 * time.Second,
+			TrustedProxies:    []string{"10.0.0.0/8", "127.0.0.1"},
 		},
 		Template: TemplateConfig{
 			FS:        templateFS,
@@ -203,6 +204,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	}
 	if core.Server.ReadTimeout != time.Second {
 		t.Errorf("Server.ReadTimeout = %v, want 1s", core.Server.ReadTimeout)
+	}
+	if core.Server.ReadHeaderTimeout != 1500*time.Millisecond {
+		t.Errorf("Server.ReadHeaderTimeout = %v, want 1.5s", core.Server.ReadHeaderTimeout)
 	}
 	if core.Server.WriteTimeout != 2*time.Second {
 		t.Errorf("Server.WriteTimeout = %v, want 2s", core.Server.WriteTimeout)

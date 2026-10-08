@@ -203,6 +203,11 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: ErrNegativeDuration,
 		},
 		{
+			name:    "negative read header timeout",
+			mutate:  func(c *Config) { c.Server.ReadHeaderTimeout = -1 },
+			wantErr: ErrNegativeDuration,
+		},
+		{
 			name:    "negative write timeout",
 			mutate:  func(c *Config) { c.Server.WriteTimeout = -1 },
 			wantErr: ErrNegativeDuration,

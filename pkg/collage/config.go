@@ -47,12 +47,13 @@ var ErrEmptyLocaleDefault = errors.New("collage: empty default locale")
 var ErrLocaleDefaultNotSupported = errors.New("collage: default locale not in supported locales")
 
 // ErrNegativeDuration is returned when a Config duration field is negative. It is
-// shared deliberately across all seven duration fields Validate checks
-// (Server.ReadTimeout, Server.WriteTimeout, Server.IdleTimeout,
-// Server.ShutdownTimeout, Server.DrainDelay, Template.Timeout, Cache.DefaultTTL): unlike
+// shared deliberately across all eight duration fields Validate checks
+// (Server.ReadTimeout, Server.ReadHeaderTimeout, Server.WriteTimeout,
+// Server.IdleTimeout, Server.ShutdownTimeout, Server.DrainDelay, Template.Timeout,
+// Cache.DefaultTTL): unlike
 // types.ErrInvalidTimeout and types.ErrInvalidTTL, which mean genuinely different
 // things to a caller (a fragment's data-fetch deadline versus a page's cache
-// lifetime), a negative value in any of these seven fields is the same failure mode —
+// lifetime), a negative value in any of these eight fields is the same failure mode —
 // "you passed a negative duration" — differing only in which field tripped. Validate
 // names the offending field in the wrapped message (%w: %s); callers that need to
 // distinguish which field failed should inspect that message rather than expect a
@@ -169,6 +170,15 @@ type ServerConfig struct {
 	Port int
 	// ReadTimeout bounds how long reading a request may take. Defaults to 15s.
 	ReadTimeout time.Duration
+	// ReadHeaderTimeout bounds how long reading a request's headers may take,
+	// which is what holds a connection open against a client that sends them a
+	// byte at a time. Zero, the default, uses ReadTimeout, as the server always
+	// has. Set it shorter than ReadTimeout to drop slow-header clients early
+	// while still giving a large upload the whole ReadTimeout for its body.
+	//
+	// It is the application's own server. "collage dev"'s proxy has its own
+	// fixed 10s header timeout in front of it.
+	ReadHeaderTimeout time.Duration
 	// WriteTimeout bounds how long writing a response may take. Defaults to 30s.
 	WriteTimeout time.Duration
 	// IdleTimeout bounds how long a keep-alive connection may sit idle. Defaults to
@@ -556,6 +566,7 @@ func (c *Config) Validate() error {
 		d    time.Duration
 	}{
 		{"server.read_timeout", c.Server.ReadTimeout},
+		{"server.read_header_timeout", c.Server.ReadHeaderTimeout},
 		{"server.write_timeout", c.Server.WriteTimeout},
 		{"server.idle_timeout", c.Server.IdleTimeout},
 		{"server.shutdown_timeout", c.Server.ShutdownTimeout},

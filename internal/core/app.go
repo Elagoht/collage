@@ -180,6 +180,9 @@ type ServerConfig struct {
 	Port int
 	// ReadTimeout bounds how long reading a request may take.
 	ReadTimeout time.Duration
+	// ReadHeaderTimeout bounds how long reading a request's headers may take.
+	// Zero falls back to ReadTimeout.
+	ReadHeaderTimeout time.Duration
 	// WriteTimeout bounds how long writing a response may take.
 	WriteTimeout time.Duration
 	// IdleTimeout bounds how long a keep-alive connection may sit idle.
@@ -767,6 +770,25 @@ func (a *App) Start() error {
 	return err
 }
 
+// httpServer is the server ListenAndServe runs: Config.Server's address and
+// timeouts around handler. ReadHeaderTimeout falls back to ReadTimeout, so a
+// client that sends its headers a byte at a time is bounded even when only
+// ReadTimeout was set.
+func (a *App) httpServer(handler http.Handler) *http.Server {
+	readHeader := a.cfg.Server.ReadHeaderTimeout
+	if readHeader == 0 {
+		readHeader = a.cfg.Server.ReadTimeout
+	}
+	return &http.Server{
+		Addr:              net.JoinHostPort(a.cfg.Server.Host, strconv.Itoa(a.cfg.Server.Port)),
+		Handler:           handler,
+		ReadTimeout:       a.cfg.Server.ReadTimeout,
+		ReadHeaderTimeout: readHeader,
+		WriteTimeout:      a.cfg.Server.WriteTimeout,
+		IdleTimeout:       a.cfg.Server.IdleTimeout,
+	}
+}
+
 // warnDevExposure logs, once, when a development server is bound where other
 // machines can reach it: an unspecified address (0.0.0.0, ::, an empty Host) or
 // a LAN one. Development error pages carry stacks, source and the failing
@@ -982,10 +1004,11 @@ func (a *App) buildFailed(err error) (http.Handler, error) {
 }
 
 // ListenAndServe builds the handler, starts an HTTP server on Config.Server's host
-// and port, and blocks until the server stops. It sets all four of ServerConfig's
-// timeouts — ReadTimeout (also used for ReadHeaderTimeout, so a slow-header client
-// cannot hold a connection open indefinitely), WriteTimeout, IdleTimeout, and
-// ShutdownTimeout, the last as the deadline for the graceful shutdown below.
+// and port, and blocks until the server stops. It sets all five of ServerConfig's
+// timeouts — ReadTimeout, ReadHeaderTimeout (ReadTimeout when unset, so a
+// slow-header client cannot hold a connection open indefinitely), WriteTimeout,
+// IdleTimeout, and ShutdownTimeout, the last as the deadline for the graceful
+// shutdown below.
 //
 // It traps SIGINT and SIGTERM and shuts down gracefully on either, and returns nil
 // on a clean shutdown rather than http.ErrServerClosed: a server that stopped
@@ -1015,14 +1038,7 @@ func (a *App) ListenAndServe() error {
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(signals)
 
-	server := &http.Server{
-		Addr:              net.JoinHostPort(a.cfg.Server.Host, strconv.Itoa(a.cfg.Server.Port)),
-		Handler:           handler,
-		ReadTimeout:       a.cfg.Server.ReadTimeout,
-		ReadHeaderTimeout: a.cfg.Server.ReadTimeout,
-		WriteTimeout:      a.cfg.Server.WriteTimeout,
-		IdleTimeout:       a.cfg.Server.IdleTimeout,
-	}
+	server := a.httpServer(handler)
 
 	listener, err := net.Listen("tcp", server.Addr)
 	if err != nil {
