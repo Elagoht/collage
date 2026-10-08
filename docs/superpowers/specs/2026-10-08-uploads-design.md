@@ -118,7 +118,7 @@ type Store interface {
 ```
 
 - **`uploads.Dir(path)`** is the disk store.
-  - It writes to a temp file in the same directory, then renames it.
+  - It writes to a temp file in the same directory, then hard-links it into place (a rename would silently replace an existing file); where hard links are unsupported it falls back to an exclusive create plus copy.
   - The directory is 0700 and files are 0600.
   - It refuses keys containing `/`, `\`, `..` or control characters.
   - An existing key is an error.
