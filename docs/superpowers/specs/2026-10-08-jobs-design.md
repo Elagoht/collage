@@ -97,7 +97,7 @@ j.Cron("cleanup", "0 3 * * *", cleanup)
 - **Time zone:** cron expressions are read in the configured `timezone`, UTC by
   default. Across DST:
   - a time in the skipped hour runs once, at the first instant after the gap;
-  - a time in the repeated hour runs once, on its first occurrence.
+  - a time in the repeated hour runs once, on its first occurrence — for a schedule with a fixed hour. A schedule whose hour field starts with `*` (`*/15 * * * *`, `0 * * * *`) fires on every real occurrence, through both copies of the repeated hour, as Vixie cron does; otherwise a 15-minute job would leave a 75-minute hole.
 - **Several instances:** every instance runs its own scheduled jobs. Three
   replicas run a job three times. Leader election is out of scope, and the
   README says so prominently.
