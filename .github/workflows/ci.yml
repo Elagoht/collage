@@ -172,6 +172,7 @@ jobs:
           - collage-sitemap
           - collage-tenant
           - collage-toc
+          - collage-uploads
           - collage-validate
           - collage-websocket
     steps:
