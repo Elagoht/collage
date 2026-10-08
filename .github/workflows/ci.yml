@@ -151,6 +151,7 @@ jobs:
           - collage-htmlcheck
           - collage-i18n
           - collage-indexnow
+          - collage-jobs
           - collage-jsonld
           - collage-live
           - collage-markdown
