@@ -16,6 +16,7 @@ import (
 // was given, or panics on it.
 type serveSpy struct {
 	panics bool
+	inits  atomic.Int32
 	served atomic.Int32
 	once   sync.Once
 	called chan struct{}
@@ -25,10 +26,10 @@ type serveSpy struct {
 
 func newServeSpy() *serveSpy { return &serveSpy{called: make(chan struct{})} }
 
-func (*serveSpy) Name() string                            { return "serve-spy" }
-func (*serveSpy) Version() string                         { return "1.0.0" }
-func (*serveSpy) Init(context.Context, plugin.Host) error { return nil }
-func (*serveSpy) Shutdown(context.Context) error          { return nil }
+func (*serveSpy) Name() string                              { return "serve-spy" }
+func (*serveSpy) Version() string                           { return "1.0.0" }
+func (s *serveSpy) Init(context.Context, plugin.Host) error { s.inits.Add(1); return nil }
+func (*serveSpy) Shutdown(context.Context) error            { return nil }
 func (s *serveSpy) OnServe(ctx context.Context) {
 	s.mu.Lock()
 	s.ctx = ctx
@@ -156,6 +157,9 @@ func TestServe_NotCalledWithoutServing(t *testing.T) {
 	}
 	if err := app.ListenAndServe(); err != nil {
 		t.Fatalf("ListenAndServe after Shutdown = %v, want nil", err)
+	}
+	if spy.inits.Load() == 0 {
+		t.Fatal("the spy's Init never ran, so its OnServe count proves nothing")
 	}
 	if n := spy.served.Load(); n != 0 {
 		t.Fatalf("OnServe called %d times without serving, want 0", n)
