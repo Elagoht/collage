@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased
+
+### Breaking
+
+- **An action may not declare `OPTIONS`, `TRACE` or `CONNECT`.** Registration
+  fails with the new `ErrInvalidActionMethod`, naming the action and the
+  method, however the action was built: `NewAction(…).WithMethods`, a page's
+  `WithAction` or `WithActionFor`. The router answers `OPTIONS` itself with the
+  path's `Allow` list, and the forgery check counts `OPTIONS` as a safe method,
+  so an action claiming it would change state with no token checked. A CORS
+  preflight belongs in a middleware, ahead of the router.
+
+### Added
+
+- **`ServerConfig.ReadHeaderTimeout`.** A deadline for the request headers
+  alone, so a client sending them a byte at a time is dropped early while a
+  large body still gets the whole `ReadTimeout`. Zero, the default, uses
+  `ReadTimeout`, which is what the server has always done; a negative value is
+  `ErrNegativeDuration`. `collage dev`'s proxy keeps its own fixed 10s.
+
+### Security
+
+- **`X-Forwarded-Proto` is believed only from `Server.TrustedProxies` when it
+  is set.** The header decides whether the forgery cookie is `Secure`, and a
+  client reaching the server directly could send it too. With
+  `TrustedProxies` set, it counts only when `RemoteAddr` is a listed proxy,
+  matched as `ClientIP` matches. Empty, it is believed from anyone, as before.
+- **Development mode refuses a `Host` that does not name this machine.** Run
+  directly with `COLLAGE_DEV=1`, an application had no Host check, so a page on
+  another site that made its own name resolve to it (DNS rebinding) could read
+  the development error pages, the reload stream and a development toolbar. In
+  `DevMode` the handler now answers 403 unless the `Host` is localhost or a
+  name under `.localhost`, an IP address, or `Server.Host` — the rule
+  `collage dev`'s proxy already applied, now shared. `collage dev` passes its
+  own host to the program as `COLLAGE_DEV_HOST`, so a `HOST` name the proxy
+  allows is allowed behind it too. A test that sends dev-mode requests for
+  httptest's `example.com` names it as `Server.Host`.
+- **`ListenAndServe` warns when development mode is reachable from other
+  machines.** Bound to anything but loopback — `0.0.0.0`, `::`, an empty
+  host, a LAN address — with `DevMode` on, it logs one Warn that the
+  development error pages and tooling expose the application's internals.
+
+### Docs
+
+- **The query string's place in the cache key is deliberate.** The caching
+  guide now says why the full raw query is the default and stays so — changing
+  it would silently serve one page for another — that `WithCacheParams` is the
+  opt-in allowlist, and that `MaxEntries`, `MaxBytes` and the tracker's caps are
+  what bound the memory a client minting variants can cost.
+
 ## v0.55.0
 
 ### Added
