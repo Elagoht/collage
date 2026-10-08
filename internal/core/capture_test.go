@@ -553,3 +553,26 @@ func TestCaptureResponses_AsksOverHTTPSForAnHTTPSBaseURL(t *testing.T) {
 		}
 	}
 }
+
+// A development build captures with the production BaseURL's host, which the
+// development Host check does not know. A capture is the application asking
+// itself, in process — the marker cannot come from the wire — so it is not
+// refused.
+func TestCaptureResponses_DevModeWithAProductionBaseURL(t *testing.T) {
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.DevMode = true
+		cfg.BaseURL = "https://mysite.dev"
+	})
+	page := newHomePage()
+	page.Paths = map[string]string{"en": "/a"}
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	got, err := app.CaptureResponses(context.Background(), []string{"/a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := got["/a"]; a.Status != http.StatusOK || a.Err != nil {
+		t.Errorf("/a = %d, %v; want 200", a.Status, a.Err)
+	}
+}

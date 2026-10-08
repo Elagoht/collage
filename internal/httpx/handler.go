@@ -164,9 +164,11 @@ type Deps struct {
 	// It also refuses, 403, a request whose Host does not name this machine:
 	// see internal/devhost.
 	DevMode bool
-	// DevHosts are the names, besides localhost and IP addresses, that the
-	// development Host check allows: the host the server listens on, and the
-	// one "collage dev"'s proxy does. Ignored outside development.
+	// DevHosts are the names, besides localhost, IP addresses and the reserved
+	// names (example.com, *.test, …: see internal/devhost), that the
+	// development Host check allows: the host the server listens on and the
+	// COLLAGE_DEV_HOST list, which under "collage dev" includes the host its
+	// proxy listens on. Ignored outside development, and for a capture.
 	DevHosts []string
 	// DefaultTTL is the cache TTL used for a page that sets no CacheTTL of its
 	// own. Zero or less defers to the cache's own default TTL.
@@ -345,8 +347,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Before anything a development server serves that a production one does
 	// not — the reload stream, the worker, a stack on an error page — and
-	// before middleware, which a development toolbar is.
-	if h.devMode && !devhost.Allowed(r.Host, h.devHosts...) {
+	// before middleware, which a development toolbar is. Before the request
+	// hooks too, deliberately: a refused request reaches no plugin, not even
+	// one that only logs — this is development only, and refusing before
+	// anything of the application runs is the point.
+	//
+	// A capture is exempt: it is the application asking itself, in process,
+	// with BaseURL's host — a production name a development build does not
+	// answer — and its marker is a context value no request from the wire
+	// can carry.
+	if h.devMode && !types.IsCapture(r.Context()) && !devhost.Allowed(r.Host, h.devHosts...) {
 		serveForeignHost(w, r)
 		return
 	}
@@ -384,7 +394,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// makes its span the parent of collage's own. See plugin.RequestHook. And
 	// before the path checks below, so a request answered there — a scanner's
 	// "/a/../etc/passwd", its encoded slash — is still one the hooks see: a
-	// ban counting probes, a trace, a log line.
+	// ban counting probes, a trace, a log line. The development Host refusal
+	// above, and the reload channel, are the exceptions: development only, and
+	// answered before anything of the application runs.
 	r, finish := h.plugins.Request(r)
 
 	// Before middleware and routing, so that a check on a path — "skip
