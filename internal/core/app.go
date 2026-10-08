@@ -767,6 +767,30 @@ func (a *App) Start() error {
 	return err
 }
 
+// warnDevExposure logs, once, when a development server is bound where other
+// machines can reach it: an unspecified address (0.0.0.0, ::, an empty Host) or
+// a LAN one. Development error pages carry stacks, source and the failing
+// data, and the reload stream and a development toolbar are tooling nobody else
+// should have.
+//
+// Decided from the address the listener bound, not the configured Host, so a
+// name that resolves to a LAN address is caught and "localhost" is not
+// warned about. A program run by "collage dev" binds loopback and is never
+// warned; the proxy in front of it is what other machines reach.
+func warnDevExposure(logger *slog.Logger, devMode bool, addr net.Addr) {
+	if !devMode {
+		return
+	}
+	tcp, ok := addr.(*net.TCPAddr)
+	if !ok || tcp.IP.IsLoopback() {
+		return
+	}
+	logger.Warn("collage: development mode is listening on an address other machines can reach; "+
+		"its error pages and development tooling expose the application's internals to them. "+
+		"Bind a loopback address (Server.Host \"localhost\") or turn DevMode off",
+		"addr", addr.String())
+}
+
 // unavailableHandler answers every request with 503. It stands in for the real
 // handler when the build failed, so an App whose startup failed serves a clear
 // status rather than panicking on a nil handler. It is an empty struct rather than a
@@ -1032,6 +1056,7 @@ func (a *App) ListenAndServe() error {
 		serveCancel()
 	}
 	a.mu.Unlock()
+	warnDevExposure(a.Logger(), a.devMode, listener.Addr())
 	a.listenOnce.Do(func() { close(a.listening) })
 
 	// Logged here rather than by the caller, because this is the first point at
