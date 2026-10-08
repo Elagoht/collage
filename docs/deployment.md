@@ -276,16 +276,42 @@ the reload stream, a development toolbar. Two guards keep them here:
 
 - **A foreign `Host` is refused.** In development the server answers `403` to a
   request whose `Host` is not localhost (or a name under `.localhost`), an IP
-  address, or `Server.Host`. A page on another site can make its own name resolve
-  to `127.0.0.1` — DNS rebinding — and would then be same-origin with the
-  development server; its `Host` is still its own name. `collage dev`'s proxy
-  applies the same rule, and tells the program its host in `COLLAGE_DEV_HOST`, so
-  `HOST=mybox.local collage dev` is reachable at `mybox.local` through the proxy.
-  Running the binary directly with `COLLAGE_DEV=1` and `HOST=0.0.0.0`, a phone on
-  the LAN reaches it by IP address; to use a name, set `HOST` to that name.
+  address, a reserved name — `example.com`, `example.net`, `example.org` and names
+  under them, or a name under `.example`, `.test` or `.invalid` — `Server.Host`, or
+  a name in `COLLAGE_DEV_HOST`. A page on another site can make its own name
+  resolve to `127.0.0.1` — DNS rebinding — and would then be same-origin with the
+  development server; its `Host` is still its own name. Reserved names are allowed
+  because nobody can register one to point at you; they are what tests use
+  (httptest's requests are for `example.com`) and what `/etc/hosts` entries
+  conventionally use.
 - **A reachable address is warned about.** When `ListenAndServe` binds anything but
-  loopback in development — `0.0.0.0`, `::`, a LAN address — it logs
-  a Warn saying the development pages expose the application's internals.
+  loopback in development — `0.0.0.0`, `::`, a LAN address — it logs a Warn saying
+  the development pages expose the application's internals. `collage dev` logs the
+  same when its own proxy is bound that way.
+
+### Reaching development by another name: `COLLAGE_DEV_HOST`
+
+`COLLAGE_DEV_HOST` is a comma-separated list of extra names a development server
+answers. Set it for:
+
+- a docker-compose service name, `http://app:6060` from another container:
+  `COLLAGE_DEV_HOST=app`;
+- a name in `/etc/hosts` outside the reserved ones;
+- several tenant hosts in one development server (or use `*.localhost` names, which
+  need no setting);
+- reaching a server bound to `0.0.0.0` from a phone by the machine's LAN name:
+  `HOST=0.0.0.0 COLLAGE_DEV_HOST=mybox.lan`. By IP address it needs nothing.
+
+```
+COLLAGE_DEV_HOST=app,mybox.lan
+```
+
+Both the application in development mode and `collage dev`'s proxy read it, from
+the shell or `.env.development`. `collage dev` hands the program the list plus its
+own `HOST`, since the program listens on loopback but sees the browser's `Host`.
+A refused request's 403 names the setting. A tunnel such as ngrok is refused
+unless you list its name — on purpose: it puts the development pages on the
+internet.
 
 Neither applies in production, where `DevMode` is off and the `Host` is whatever
 your DNS sends.

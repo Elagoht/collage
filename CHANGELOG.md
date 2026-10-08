@@ -14,6 +14,12 @@
 
 ### Added
 
+- **`COLLAGE_DEV_HOST`.** A comma-separated list of extra names a development
+  server answers — a docker-compose service name, an `/etc/hosts` name,
+  several tenant hosts, a LAN name while bound to `0.0.0.0`. Read by an
+  application in development mode and by `collage dev`, from the shell or the
+  environment file; `collage dev` starts the program with the list plus its
+  own `HOST`.
 - **`ServerConfig.ReadHeaderTimeout`.** A deadline for the request headers
   alone, so a client sending them a byte at a time is dropped early while a
   large body still gets the whole `ReadTimeout`. Zero, the default, uses
@@ -32,18 +38,18 @@
   another site that made its own name resolve to it (DNS rebinding) could read
   the development error pages, the reload stream and a development toolbar. In
   `DevMode` the handler now answers 403 unless the `Host` is localhost or a
-  name under `.localhost`, an IP address, or `Server.Host` — the rule
-  `collage dev`'s proxy already applied, now shared. `collage dev` passes its
-  own host to the program as `COLLAGE_DEV_HOST`, so a `HOST` name the proxy
-  allows is allowed behind it too. **Upgrading:** a test that drives a
-  `DevMode` application with `httptest.NewRequest` — whose Host is
-  `example.com` — or with `collagetest` now gets 403; set
-  `Server.Host: "example.com"` in that test's configuration, or send a
-  `localhost` Host.
+  name under `.localhost`, an IP address, a reserved name (`example.com`,
+  `example.net`, `example.org` and names under them; names under `.example`,
+  `.test`, `.invalid` — nobody can register one to rebind with, and httptest's
+  requests use `example.com`), `Server.Host`, or a name in `COLLAGE_DEV_HOST`.
+  `collage dev`'s proxy applies the same rule, now shared, reserved names
+  included. The 403 quotes the refused Host and names the setting.
 - **`ListenAndServe` warns when development mode is reachable from other
   machines.** Bound to anything but loopback — `0.0.0.0`, `::`, a LAN
   address — with `DevMode` on, it logs one Warn that the
   development error pages and tooling expose the application's internals.
+  `collage dev` logs the same Warn when its own proxy is bound that way: the
+  program behind it binds loopback and would never say so.
 
 ### Docs
 
