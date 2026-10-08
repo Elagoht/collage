@@ -69,14 +69,15 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		}
 	}
 
-	// After the guards, so only a request the page lets through is given the
-	// longer deadlines; before the forgery check, which reads an ordinary
-	// action's body to find the token, and before the handler. net/http set both
-	// deadlines when the request's headers arrived, as absolute times, so
-	// replacing them here works as long as they have not passed — and nothing
-	// before this point reads the body, unless a middleware does, which then
-	// reads it under the server's deadlines.
-	if action.BodyTimeout > 0 {
+	// An ordinary action's longer deadlines are set after the guards, so only
+	// a request the page lets through is given them, and before the forgery
+	// check, which reads its body to find the token. A streaming action's are
+	// set after the forgery check too — see below. net/http set both deadlines
+	// when the request's headers arrived, as absolute times, so replacing them
+	// here works as long as they have not passed; nothing before this point
+	// reads the body, unless a middleware does, which then reads it under the
+	// server's deadlines.
+	if action.BodyTimeout > 0 && !action.StreamingBody {
 		h.setBodyDeadlines(w, r, action)
 	}
 
@@ -99,11 +100,15 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// the body and dropped the error leaves it read past its bound, and the
 	// action answers for it. See boundBeforeMiddleware. An unbounded body is
 	// wrapped all the same, to see whether a read of it failed.
-	limit := h.bodyLimit(action)
-	body := boundBody(w, r, limit)
-	if body.tooLarge.Load() {
-		return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
-			actionBodyTooLarge(action, limit)))
+	// A request built by hand may have no body at all; it is left as it is.
+	var body *limitedBody
+	if r.Body != nil {
+		limit := h.bodyLimit(action)
+		body = boundBody(w, r, limit)
+		if body.tooLarge.Load() {
+			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
+				actionBodyTooLarge(action, limit)))
+		}
 	}
 
 	// Checked before the handler runs, and before anything it might change.
@@ -132,6 +137,14 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 			return h.serveFailure(w, r, route.failure(status, stageRoute,
 				fmt.Errorf("collage: action %q: %w", action.Name, err)))
 		}
+	}
+
+	// A streaming action's forgery check reads only a header, so its longer
+	// deadlines can wait for it: a request without a valid token is refused
+	// under the server's short ones, and the drain net/http does after the
+	// refusal is bounded by them too.
+	if action.BodyTimeout > 0 && action.StreamingBody {
+		h.setBodyDeadlines(w, r, action)
 	}
 
 	ctx := r.Context()
@@ -176,7 +189,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		// error is a 413 already, and one that replaced it with its own — "upload
 		// failed" — is the same request too large, not a fault of the server's.
 		// The handler's own error is kept: it is what the operator reads.
-		if body.tooLarge.Load() {
+		if body != nil && body.tooLarge.Load() {
 			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRender,
 				errors.Join(fmt.Errorf("collage: action %q: the handler read past its body limit: %w", action.Name, err),
 					&http.MaxBytesError{Limit: body.limit})))
@@ -217,6 +230,9 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 // anyone can open and drop them as fast as they like. The action's own error is
 // kept, beside the read's.
 func bodyCutOff(route *routeRef, stage string, action *types.Action, body *limitedBody, err error) (failure, bool) {
+	if body == nil {
+		return failure{}, false
+	}
 	readErr := body.failedRead()
 	if readErr == nil {
 		return failure{}, false

@@ -242,10 +242,12 @@ forms.
 
 **The server's deadlines.** The defaults above end any request after 15s of reading.
 `WithBodyTimeout(d)` on the upload action replaces both deadlines with now plus `d`
-for that action alone, once its page's guards have let the request through. Make
-`d` at least `MaxBodyBytes` divided by the slowest connection you serve, plus the
-time to answer. A client that goes away mid-upload, or runs out of time, is answered
-`400` or `408` and logged at debug, not as a server error.
+for that action alone, after its page's guards (and, for a streaming action, its
+forgery check). Make `d` at least `MaxBodyBytes` divided by the slowest connection
+you serve, plus the time to answer. An upload whose client went away, or ran out of
+time, is recorded as `400` or `408` and logged at debug, not as a server error. A
+client that left receives nothing, and nor, under `WithBodyTimeout`, does one that
+ran out of time: its write deadline passed with the read one.
 
 **nginx** answers anything over `client_max_body_size` — 1 MiB by default — with
 its own `413`, before collage sees it. And by default it buffers the whole request

@@ -352,9 +352,9 @@ collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPos
   but net/http has already written the whole body, up to `MaxBodyBytes`, to temp
   files under `os.TempDir()` — which on many Linux hosts is `tmpfs`, and so
   memory. Nothing fails; the upload is simply no longer streamed. A handler
-  reading the body itself afterwards, with `MultipartReader` or `io.Copy`, finds
-  it already consumed and fails. Validate the fields the handler read from the
-  stream instead. `BeforeActionEvent.Form()` will not parse the body: for such an
+  reading the body itself afterwards finds it consumed: `MultipartReader`
+  returns an error, and `io.Copy` reads nothing, with no error at all. Validate
+  the fields the handler read from the stream instead. `BeforeActionEvent.Form()` will not parse the body: for such an
   action it returns `ErrStreamingBody` without reading a byte, and a plugin that
   inspects forms treats that error as "this action has no form to check" and
   lets the request through. A plugin that calls `ev.Request.ParseForm()` itself
@@ -365,7 +365,9 @@ collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPos
   deadline — and logs it at debug. No error hook is called, as for a request
   whose reader left: a cancelled upload is the most ordinary way an upload ends,
   and not a fault of the application's. The handler's error is kept beside the
-  read's in what is logged.
+  read's in what is logged. As a rule nobody receives that answer — a client
+  that left is gone, and under `WithBodyTimeout` the write deadline passed with
+  the read one — so the status is for the metrics and the access log.
 
 Registration refuses `WithStreamingBody()` on an action answering none of `POST`,
 `PUT` or `PATCH`, with `ErrStreamingBodyMethod`.
@@ -380,8 +382,11 @@ but not `ReadTimeout` is worse: the handler stores the file, and the client gets
 answer and tries again.
 
 `WithBodyTimeout(d)` is the fix. For a request to that action it replaces both
-deadlines with now plus `d`, once the page's guards have let the request through
-and before anything reads the body, so the rest of the site keeps its short ones:
+deadlines with now plus `d`, so the rest of the site keeps its short ones. It does
+so after the page's guards and before anything reads the body: for an ordinary
+action that is before the forgery check, which reads the body; for a streaming
+action, whose check reads only a header, after it, so a request without a token is
+refused under the server's deadlines:
 
 ```go
 collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPost).
@@ -400,9 +405,11 @@ server and the action to implement `Unwrap`; the framework's own and those of th
 `elagoht` plugins do. When one does not, the request runs under the server's
 deadlines and a warning is logged once.
 
-A request that clears the guards holds its connection for up to `d`. Guard the
-upload action, and see [Going to production](deployment.md#uploads) for what a
-proxy in front needs.
+A request that clears those checks holds its connection for up to `d`. An action
+registered on its own has no page guards, and a token is free to anyone who loads
+the form, so guard the upload: a page guard or an auth middleware, which runs
+before all of this — a check inside the handler runs after `d` is granted. See
+[Going to production](deployment.md#uploads) for what a proxy in front needs.
 
 ## A fragment at its own URL
 

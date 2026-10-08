@@ -23,7 +23,8 @@
 - **`WithBodyTimeout(d)`.** A request to the action gets `d` to be read and
   answered, in place of the server's `ReadTimeout` and `WriteTimeout`: both
   deadlines are set to now plus `d` through `http.ResponseController`, after the
-  page's guards and before anything reads the body. The defaults (15s, 30s)
+  page's guards — and, for a streaming action, after its forgery check, which
+  reads only a header — and before anything reads the body. The defaults (15s, 30s)
   otherwise end any upload slower than that, and `WriteTimeout`, which net/http
   starts when the headers arrive, covers the upload too — raising only
   `ReadTimeout` lets the handler store a file whose answer the client never
@@ -46,10 +47,13 @@
 - **An action whose body was cut off answers `400`, or `408`.** When a read of
   the body fails because the client went away, the connection broke, or the read
   deadline passed, and the handler then fails, the action answers `400` — `408`
-  for the deadline — instead of `500`. It is logged at debug and handed to no
-  error hook, as a request whose context was cancelled already was: every
-  cancelled upload was an error-level line and an error-tracker event, and
-  anyone could make them as fast as they liked. This holds for every action,
+  for the deadline — instead of `500`. A client that left never receives it,
+  and under `WithBodyTimeout` neither does one that ran out of time, since the
+  write deadline passed with the read one: the status is then for metrics and
+  access logs. It is logged at debug and handed to no error hook, as a request
+  whose context was cancelled already was: every cancelled upload was an
+  error-level line and an error-tracker event, and anyone could make them as
+  fast as they liked. This holds for every action,
   bounded or not; a read after `Close` is still the handler's bug, and a `500`.
 - **`docs/deployment.md`'s timeout example no longer raises `ReadTimeout` alone**
   for uploads, which led into the trap described under `WithBodyTimeout`.

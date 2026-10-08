@@ -169,3 +169,51 @@ func TestAction_BodyTimeoutUnsupportedWarnsOnce(t *testing.T) {
 		t.Errorf("records %+v, want one at WARN", records)
 	}
 }
+
+// A streaming action is given its longer deadlines only once its forgery check
+// passed, which reads nothing: a request without a token is refused under the
+// server's own. An ordinary action's check reads the body, so its deadlines are
+// set before it. The recorder cannot take a deadline, so the warning is the
+// trace of an attempt.
+func TestAction_BodyTimeoutAfterTheForgeryCheckWhenStreaming(t *testing.T) {
+	for name, tc := range map[string]struct {
+		streaming bool
+		attempted bool
+	}{
+		"streaming": {streaming: true, attempted: false},
+		"ordinary":  {streaming: false, attempted: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			option, _ := withCSRF(t)
+			upload := action("upload", "/upload", []string{http.MethodPost}, readAll)
+			upload.StreamingBody = tc.streaming
+			upload.BodyTimeout = time.Minute
+			env := actionEnv(t, nil, []*types.Action{upload}, option)
+			if res := env.do(post("/upload", "x=1")); res.Code != http.StatusForbidden {
+				t.Fatalf("status %d, want 403", res.Code)
+			}
+			if got := len(env.logs.recordsFor(bodyTimeoutUnsupported)) == 1; got != tc.attempted {
+				t.Errorf("deadline attempted = %v, want %v", got, tc.attempted)
+			}
+		})
+	}
+}
+
+// A request built with no body at all reaches an unbounded action's handler
+// with no body still, not a wrapper around nil that panics when read.
+func TestAction_NilBodyUnbounded(t *testing.T) {
+	upload := action("upload", "/upload", []string{http.MethodPost},
+		func(_ context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
+			if rc.Request.Body != nil {
+				return nil, errors.New("the nil body was wrapped")
+			}
+			return nil, nil
+		})
+	upload.MaxBodyBytes = -1
+	env := actionEnv(t, nil, []*types.Action{upload})
+	req := httptest.NewRequest(http.MethodPost, "/upload", nil)
+	req.Body = nil
+	if res := env.do(req); res.Code != http.StatusNoContent {
+		t.Errorf("status %d, want 204", res.Code)
+	}
+}
