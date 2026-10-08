@@ -14,6 +14,27 @@
   panic in `OnServe` is contained and logged at Warn with the plugin's name, and
   the server still serves. `OnServe` must not block.
 
+### Changed
+
+- **The scaffolded `main.go` shuts the application down after a static build
+  or a plugin command.** Neither serves, so until now no plugin's `Shutdown`
+  ran there: what a plugin held was never flushed, and work handed to a queue
+  plugin such as elagoht/jobs during a build vanished without being logged.
+  `main.go` now calls `app.Shutdown` once the build or the command is done, and
+  only after a successful start, since a failed one has already shut down what
+  it started. `DispatchCommands` and `Builder.Build` themselves still do not
+  shut down: a caller may go on to serve the same App. Existing projects add
+  the call by hand; see `shutdown` in a newly scaffolded `main.go`.
+
+### Docs
+
+- **An application serving `app.Handler()` from its own `http.Server` calls
+  `app.Shutdown(ctx)` after its server has stopped.** That has always been
+  what runs the plugins' `Shutdown`, but nothing said so; the deployment guide
+  now does, and its example calls `app.Start()` first so that an Init failure
+  is returned rather than only logged. The stop-time rule there counts the one
+  second elagoht/jobs may wait past its deadline.
+
 ## v0.54.0
 
 ### Fixed

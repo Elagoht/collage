@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -373,6 +374,128 @@ func TestRun_New_Minimal(t *testing.T) {
 	page, err := os.ReadFile(filepath.Join(target, "dist", "index.html"))
 	if err != nil || !strings.Contains(string(page), "<h1>Hello from site</h1>") || !strings.Contains(string(page), "<title>site</title>") {
 		t.Errorf("dist/index.html is not the page, in the layout: %v\n%s", err, page)
+	}
+}
+
+// A static build and a plugin command start the application but never serve
+// it, so nothing else would ever call the plugins' Shutdown: a queue plugin's
+// items enqueued there would vanish without even being logged. The scaffolded
+// main.go shuts the application down once a build or a command is done, and
+// exactly once. A probe plugin, registered through routes.go so that main.go is
+// what is under test, says on stderr when its Shutdown runs. collage-inspect
+// still prints nothing but its JSON on stdout.
+func TestRun_New_BuildAndCommandShutDown(t *testing.T) {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("go binary not available")
+	}
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+
+	c, _, errOut := testCLI()
+	target := filepath.Join(t.TempDir(), "proj")
+	if code := c.Run(context.Background(), []string{"new", "site", "--dir", target, "-module", "collageshutdowntest"}); code != 0 {
+		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
+	}
+
+	const probe = `package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+type probe struct{}
+
+func (probe) Name() string    { return "probe" }
+func (probe) Version() string { return "0" }
+
+func (probe) Init(_ context.Context, host collage.Host) error {
+	return host.RegisterCommand(collage.Command{Name: "probe", Run: func(context.Context, []string) error {
+		fmt.Fprintln(os.Stderr, "probe: ran")
+		return nil
+	}})
+}
+
+func (probe) Shutdown(context.Context) error {
+	fmt.Fprintln(os.Stderr, "probe: shutdown")
+	return nil
+}
+`
+	if err := os.WriteFile(filepath.Join(target, "probe.go"), []byte(probe), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	routesPath := filepath.Join(target, "routes.go")
+	routes, err := os.ReadFile(routesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const ret = "\treturn app.Register("
+	if !strings.Contains(string(routes), ret) {
+		t.Fatalf("routes.go has no %q to register the probe before:\n%s", ret, routes)
+	}
+	patched := strings.Replace(string(routes), ret, "\tif err := app.RegisterPlugin(probe{}); err != nil {\n\t\treturn err\n\t}\n"+ret, 1)
+	if err := os.WriteFile(routesPath, []byte(patched), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(args ...string) (stdout, stderr string) {
+		t.Helper()
+		cmd := exec.Command(goBin, args...)
+		cmd.Dir = target
+		cmd.Env = append(os.Environ(), "GOWORK=off")
+		var out, errs strings.Builder
+		cmd.Stdout, cmd.Stderr = &out, &errs
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("go %s: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, out.String(), errs.String())
+		}
+		return out.String(), errs.String()
+	}
+	run("mod", "edit", "-replace", "github.com/Elagoht/collage="+repoRoot)
+	run("mod", "tidy")
+	run("build", "-o", "app", ".")
+	bin := filepath.Join(target, "app")
+
+	runApp := func(args ...string) (stdout, stderr string) {
+		t.Helper()
+		cmd := exec.Command(bin, args...)
+		cmd.Dir = target
+		var out, errs strings.Builder
+		cmd.Stdout, cmd.Stderr = &out, &errs
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("app %s: %v\nstdout:\n%s\nstderr:\n%s", strings.Join(args, " "), err, out.String(), errs.String())
+		}
+		return out.String(), errs.String()
+	}
+
+	_, stderr := runApp("-collage-build", "-out", "dist")
+	if n := strings.Count(stderr, "probe: shutdown"); n != 1 {
+		t.Errorf("a static build shut the probe down %d times, want 1; stderr:\n%s", n, stderr)
+	}
+
+	_, stderr = runApp("probe")
+	if !strings.Contains(stderr, "probe: ran") {
+		t.Fatalf("the probe's command did not run; stderr:\n%s", stderr)
+	}
+	if n := strings.Count(stderr, "probe: shutdown"); n != 1 {
+		t.Errorf("a plugin command shut the probe down %d times, want 1; stderr:\n%s", n, stderr)
+	}
+	if strings.Index(stderr, "probe: shutdown") < strings.Index(stderr, "probe: ran") {
+		t.Errorf("the probe was shut down before its command ran; stderr:\n%s", stderr)
+	}
+
+	stdout, stderr := runApp("collage-inspect")
+	var inspected map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stdout), &inspected); err != nil {
+		t.Errorf("collage-inspect's stdout is not JSON: %v\n%s", err, stdout)
+	}
+	if n := strings.Count(stderr, "probe: shutdown"); n != 1 {
+		t.Errorf("collage-inspect shut the probe down %d times, want 1; stderr:\n%s", n, stderr)
 	}
 }
 

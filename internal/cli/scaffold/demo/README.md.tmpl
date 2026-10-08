@@ -141,4 +141,6 @@ If you rewrite `main.go`, keep both halves working, or `collage dev` and
 
 A plugin's own commands are run through this program rather than the `collage`
 binary, which never loads your plugins: `go run . <command>`. `main.go` hands
-the first word after its flags to `collage.DispatchCommands`.
+the first word after its flags to `collage.DispatchCommands`. Once a command or
+a static build is done, `main.go` calls `app.Shutdown`, so every plugin's
+`Shutdown` runs even though nothing was served.

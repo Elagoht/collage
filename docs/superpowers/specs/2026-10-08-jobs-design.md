@@ -20,8 +20,8 @@ new work before the drain.
 ## Decisions
 
 - **Scope:** scheduled jobs (interval and cron) plus typed, bounded, in-memory
-  background queues with retries. Persistence stays out, behind a `Store[T]`
-  interface a later plugin can implement ("data/state out of scope").
+  background queues with retries. Persistence stays out, behind a store
+  interface a later version can open up ("data/state out of scope").
 - **Lifecycle:** the core gains one optional hook, `ServeHook`, called only when
   `ListenAndServe` serves. Its ctx is cancelled when the drain starts.
   `DrainHook` (v0.53.0) is the matching piece for the other end.
@@ -127,8 +127,11 @@ Behaviour:
   retried with exponential backoff (1s, 2s, 4s…, capped at 1 minute) up to
   `MaxAttempts`. The last failure is logged at Error and `OnFailure` is called.
 - **Storage:** queued work lives behind
-  `Store[T] interface { Push(T) error; Pop(ctx) (T, error); Len() int }`. The
-  in-memory store is the only implementation.
+  `store[T] interface { Push(T) error; Pop(ctx) (T, error); Len() int }`. The
+  in-memory store is the only implementation. The interface is unexported
+  (amended after the final review): nothing can supply one yet, and a
+  persistent store will need a ctx on `Push` and an acknowledgement after
+  handling, so its shape will change.
 
 **Lifecycle**
 
@@ -215,7 +218,7 @@ interface, so tests do not depend on wall-clock sleeps.
 
 ## Out of scope
 
-- A persistent queue (only the `Store[T]` interface).
+- A persistent queue (only the unexported `store[T]` interface).
 - Leader election or locks across instances.
 - Triggering a job by hand through the CLI or HTTP.
 - Metrics.

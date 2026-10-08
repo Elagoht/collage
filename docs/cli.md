@@ -503,7 +503,14 @@ func main() {
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 		}
-		os.Exit(code)
+		// Nothing serves after a command, so nothing else runs the plugins'
+		// Shutdown. A failed start has already shut down what it started.
+		if app.Start() == nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			app.Shutdown(ctx)
+			cancel()
+		}
+		os.Exit(code) // runs no defers, so the shutdown comes first
 	}
 
 	// Nothing claimed it: carry on and serve.
@@ -521,7 +528,10 @@ print one.
 
 Dispatching starts the application, which closes registration — so call it after
 everything is registered. A later `ListenAndServe` reuses that start rather than
-repeating it.
+repeating it. `DispatchCommands` does not shut the application down, since a
+program may go on to serve it: once a command has run, call `App.Shutdown`
+yourself, as above, so that every plugin's `Shutdown` runs. A scaffolded
+`main.go` does, from collage v0.55.0.
 
 Within the application, a command with an empty name or a name another command
 already holds is rejected at `RegisterCommand` (`collage.ErrEmptyCommandName`,
@@ -581,6 +591,13 @@ func staticBuild(app *collage.App, outDir string, clean bool) error {
 	return err
 }
 ```
+
+A build does not shut the application down either, and nothing serves after
+it, so a program that exits once it has built calls `App.Shutdown` itself; a
+scaffolded `main.go` does, from collage v0.55.0. Otherwise no plugin's
+`Shutdown` runs: what a plugin holds is never flushed, and work a queue plugin
+such as [elagoht/jobs](https://github.com/Elagoht/collage-jobs) was handed
+during the build vanishes without being logged.
 
 ### Options
 

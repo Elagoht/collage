@@ -129,8 +129,12 @@ The two add up. On a signal, `ShutdownTimeout` starts when the drain ends, so a
 stop can take `DrainDelay + ShutdownTimeout`. When you call `App.Shutdown(ctx)`
 yourself, one ctx covers both the drain and the wait for requests in flight, and
 `ShutdownTimeout` is not used: give it a deadline of at least `DrainDelay` plus
-the time your requests need, or the drain uses up the time they would have had. Whatever stops the process has to
-wait longer than that sum before it kills it:
+the time your requests need, or the drain uses up the time they would have had.
+A plugin's `Shutdown` may run a little past that deadline:
+[`elagoht/jobs`](https://github.com/Elagoht/collage-jobs) waits up to one more
+second for a job that ignores its ctx, so with it a stop can take
+`DrainDelay + ShutdownTimeout + 1s`. Whatever stops the process has to wait
+longer than that sum before it kills it:
 
 - **systemd:** `TimeoutStopSec` greater than the sum. The unit
   `collage build -i` writes uses 30s, which covers the defaults; raise it with
@@ -142,7 +146,7 @@ wait longer than that sum before it kills it:
 
 ```yaml
 spec:
-  terminationGracePeriodSeconds: 30   # > DrainDelay + ShutdownTimeout
+  terminationGracePeriodSeconds: 30   # > DrainDelay + ShutdownTimeout (+ 1s with elagoht/jobs)
   containers:
     - name: app
       readinessProbe:
@@ -167,6 +171,11 @@ after its server has stopped: that is what runs the plugins' `Shutdown`, and
 without it a queue's waiting items vanish without even being logged.
 
 ```go
+// Init first, and its error: app.Handler() would only log it and answer 503,
+// and the jobs plugin's Start panics before its Init has run.
+if err := app.Start(); err != nil {
+	return err
+}
 ln, err := net.Listen("tcp", ":8080")
 if err != nil {
 	return err
@@ -177,9 +186,9 @@ ctx, stopJobs := context.WithCancel(context.Background())
 j.Start(ctx) // the port is bound: start the jobs
 
 // On shutdown:
-stopJobs()                // the drain: no more triggers, Enqueue refused
+stopJobs()                // the drain: no more triggers; Enqueue still accepts
 srv.Shutdown(shutdownCtx) // requests in flight finish
-app.Shutdown(shutdownCtx) // the plugins stop; jobs finishes its queues
+app.Shutdown(shutdownCtx) // the plugins stop; jobs finishes its queues and refuses more
 ```
 
 ## TLS, and what serves it

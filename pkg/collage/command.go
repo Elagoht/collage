@@ -42,6 +42,12 @@ var ErrUnknownCommand = errors.New("collage: unknown command")
 // same rule Handler and ListenAndServe already impose, and a later ListenAndServe on
 // the same App reuses this start rather than repeating it.
 //
+// It does not shut the application down, because a caller may go on to serve it
+// or dispatch again. A program that exits after a command calls App.Shutdown
+// first, as below, so that every plugin's Shutdown runs; nothing else would. Skip
+// it when the start failed: that start has already shut down the plugins it
+// started.
+//
 // It dispatches plugin commands, and two of its own: InspectCommand, which prints
 // App.Inspect as JSON for an editor or a linter, and CheckCommand, which prints
 // App.Check's findings. "dev", "build", "export" and the
@@ -61,6 +67,9 @@ var ErrUnknownCommand = errors.New("collage: unknown command")
 //	if !errors.Is(err, collage.ErrUnknownCommand) {
 //		if err != nil {
 //			fmt.Fprintln(os.Stderr, err)
+//		}
+//		if app.Start() == nil {
+//			app.Shutdown(shutdownCtx) // os.Exit runs no defers
 //		}
 //		os.Exit(code)
 //	}

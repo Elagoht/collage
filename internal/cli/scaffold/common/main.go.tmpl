@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -61,12 +62,21 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "@@NAME@@: %v\n", err)
 		}
+		if err := shutdown(app); err != nil {
+			fmt.Fprintf(os.Stderr, "@@NAME@@: shutdown: %v\n", err)
+			code = max(code, 1)
+		}
 		os.Exit(code)
 	}
 
 	if *buildFlag {
-		if err := staticBuild(app, *outFlag, *cleanFlag); err != nil {
-			log.Fatalf("@@NAME@@: static build: %v", err)
+		buildErr := staticBuild(app, *outFlag, *cleanFlag)
+		if err := shutdown(app); err != nil {
+			log.Printf("@@NAME@@: shutdown: %v", err)
+			buildErr = errors.Join(buildErr, err)
+		}
+		if buildErr != nil {
+			log.Fatalf("@@NAME@@: static build: %v", buildErr)
 		}
 		return
 	}
@@ -187,6 +197,21 @@ func envInt(key string, fallback int) int {
 		return fallback
 	}
 	return value
+}
+
+// shutdown runs every plugin's Shutdown once a build or a command is done.
+// Neither serves, so nothing else would: a plugin would then never flush what
+// it holds, and a queue's waiting items would vanish without being logged.
+//
+// Only after a successful start. A start that failed has already shut down
+// the plugins it started, and a plugin's Shutdown runs once.
+func shutdown(app *collage.App) error {
+	if app.Start() != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return app.Shutdown(ctx)
 }
 
 // staticBuild renders every statically-buildable page to files under outDir
