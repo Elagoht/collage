@@ -72,6 +72,13 @@ var ErrInvalidBaseURL = plugin.ErrInvalidOrigin
 type Config struct {
 	// DevMode enables development-mode behaviour across the framework. See IsDevMode
 	// for the effective value, which also considers Template.DevMode.
+	//
+	// In development the server answers only a request whose Host names this
+	// machine — localhost or a name under it, an IP address, or Server.Host —
+	// and refuses any other with 403, so a page on another site that makes its
+	// own name resolve here (DNS rebinding) cannot read the development error
+	// pages or the reload stream. Under "collage dev" the name its proxy listens
+	// on is allowed too.
 	DevMode bool
 	// DevWatch lists directories, besides the templates and the mounts, whose
 	// changes reload a development page: content the application reads from disk

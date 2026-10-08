@@ -18,7 +18,7 @@ import (
 func inlineApp(t *testing.T, dev bool) *collage.App {
 	t.Helper()
 	app, err := collage.New(&collage.Config{
-		Server:  collage.ServerConfig{Host: "localhost", Port: 0},
+		Server:  collage.ServerConfig{Host: "example.com", Port: 0},
 		DevMode: dev,
 		Template: collage.TemplateConfig{
 			FS: fstest.MapFS{

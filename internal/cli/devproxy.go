@@ -14,7 +14,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Elagoht/collage/internal/ascii"
+	"github.com/Elagoht/collage/internal/devhost"
 	"github.com/Elagoht/collage/internal/term"
 )
 
@@ -186,30 +186,10 @@ func (p *devProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // allowedHost reports whether host, a request's Host header, names this machine:
 // localhost or a name under it, an IP address, or the HOST collage dev was
-// started with.
-//
-// Anything else is a page on another site that made its own name resolve here
-// — DNS rebinding — and is then same-origin with collage dev: it could read
-// every page, the dev error pages with their stacks, and the program's output,
-// and post the program's forms with a token it read. The Host header is the one
-// thing it cannot choose; it is the attacker's own name.
+// started with. See internal/devhost for why; the program behind the proxy
+// applies the same rule, and is told the HOST through devhost.EnvHost.
 func (p *devProxy) allowedHost(host string) bool {
-	name := host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		name = h
-	}
-	name = ascii.LowerString(strings.TrimSuffix(strings.Trim(name, "[]"), "."))
-	if name == "" {
-		return false
-	}
-	if name == "localhost" || strings.HasSuffix(name, ".localhost") || net.ParseIP(name) != nil {
-		return true
-	}
-	public, _, err := net.SplitHostPort(p.public)
-	if err != nil {
-		public = p.public
-	}
-	return name == ascii.LowerString(strings.TrimSuffix(public, "."))
+	return devhost.Allowed(host, p.public)
 }
 
 // proxyFailed answers a request the program did not. That is almost always a

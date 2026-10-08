@@ -486,8 +486,14 @@ func newEnv(t *testing.T, pages []*types.Page, opts ...envOption) *testEnv {
 }
 
 // withDevMode turns on dev mode.
+// withDevMode turns development mode on. httptest requests are for
+// example.com, so that is named as the server's host: the development Host
+// check would refuse it otherwise.
 func withDevMode() envOption {
-	return func(d *Deps) { d.DevMode = true }
+	return func(d *Deps) {
+		d.DevMode = true
+		d.DevHosts = []string{"example.com"}
+	}
 }
 
 // withPlugins installs a registry holding p.

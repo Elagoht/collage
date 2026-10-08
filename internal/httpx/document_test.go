@@ -62,6 +62,8 @@ func documentEnvWithDeps(t *testing.T, doc *types.Document, devMode bool, p plug
 		Tracker:  tracker,
 		Logger:   slog.New(slog.DiscardHandler),
 		DevMode:  devMode,
+		// httptest's requests are for example.com: see withDevMode.
+		DevHosts: []string{"example.com"},
 	}
 	if p != nil {
 		registry := plugin.NewRegistry(slog.New(slog.DiscardHandler))

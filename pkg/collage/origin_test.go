@@ -179,11 +179,11 @@ func TestOrigins_Capability(t *testing.T) {
 // says so once.
 func TestBaseURL_InvalidOriginIsIgnoredAndLogged(t *testing.T) {
 	var logs bytes.Buffer
-	app := originSite(t, true, &logs, &hostOrigins{origins: map[string]string{"bad.test": "ftp://bad"}})
+	app := originSite(t, true, &logs, &hostOrigins{origins: map[string]string{"bad.localhost": "ftp://bad"}})
 	h := app.Handler()
 	for range 2 {
-		if got := getAt(h, "http://bad.test/"); !strings.Contains(got, "https://main.example") {
-			t.Errorf("GET bad.test = %q, want Config.BaseURL", got)
+		if got := getAt(h, "http://bad.localhost/"); !strings.Contains(got, "https://main.example") {
+			t.Errorf("GET bad.localhost = %q, want Config.BaseURL", got)
 		}
 	}
 	if n := strings.Count(logs.String(), "invalid origin"); n != 1 {
@@ -195,9 +195,9 @@ func TestBaseURL_InvalidOriginIsIgnoredAndLogged(t *testing.T) {
 // ignored and logged like any other invalid one.
 func TestBaseURL_OriginWithoutHostnameIsIgnored(t *testing.T) {
 	var logs bytes.Buffer
-	app := originSite(t, true, &logs, &hostOrigins{origins: map[string]string{"bad.test": "https://:8080"}})
-	if got := getAt(app.Handler(), "http://bad.test/"); !strings.Contains(got, "https://main.example") {
-		t.Errorf("GET bad.test = %q, want Config.BaseURL", got)
+	app := originSite(t, true, &logs, &hostOrigins{origins: map[string]string{"bad.localhost": "https://:8080"}})
+	if got := getAt(app.Handler(), "http://bad.localhost/"); !strings.Contains(got, "https://main.example") {
+		t.Errorf("GET bad.localhost = %q, want Config.BaseURL", got)
 	}
 	if n := strings.Count(logs.String(), "invalid origin"); n != 1 {
 		t.Errorf("logged %d times, want once: %s", n, logs.String())

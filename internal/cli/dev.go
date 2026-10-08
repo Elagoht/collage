@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Elagoht/collage/internal/devhost"
 	"github.com/Elagoht/collage/internal/term"
 )
 
@@ -288,7 +289,14 @@ func (l *devLoop) restart(ctx context.Context) {
 	if l.color {
 		env = append(env, "FORCE_COLOR=1")
 	}
-	env = append(env, "HOST="+host, "PORT="+port, "COLLAGE_DEV=1")
+	// The proxy's own host, too: the program listens on loopback, but the
+	// browser's Host — passed on unchanged — is the proxy's, and the program's
+	// development Host check must allow what the proxy allowed.
+	publicHost, _, err := net.SplitHostPort(l.proxy.public)
+	if err != nil {
+		publicHost = l.proxy.public
+	}
+	env = append(env, "HOST="+host, "PORT="+port, devhost.EnvHost+"="+publicHost, "COLLAGE_DEV=1")
 
 	l.builds++
 	binary := filepath.Join(l.buildDir, fmt.Sprintf("app-%d%s", l.builds, exeSuffix()))

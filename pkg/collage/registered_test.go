@@ -21,7 +21,7 @@ import (
 func TestAction_AnUnregisteredPageIsNamed(t *testing.T) {
 	app, err := collage.New(&collage.Config{
 		DevMode: true,
-		Server:  collage.ServerConfig{Host: "localhost", Port: 3000},
+		Server:  collage.ServerConfig{Host: "example.com", Port: 3000},
 		Template: collage.TemplateConfig{
 			FS: fstest.MapFS{
 				"t/layout.html": {Data: []byte(`<main>{{slot "content"}}</main>`)},
@@ -128,7 +128,7 @@ func TestRegister_RefusesWhatABuilderRecorded(t *testing.T) {
 func TestDev500_NamesTheBrokenFragment(t *testing.T) {
 	app, err := collage.New(&collage.Config{
 		DevMode: true,
-		Server:  collage.ServerConfig{Host: "localhost", Port: 3000},
+		Server:  collage.ServerConfig{Host: "example.com", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{
 			"t/layout.html": {Data: []byte(`<main>{{slot "content"}}</main>`)},
 			"t/recipe.html": {Data: []byte(`{{.Chef.Name}}`)},

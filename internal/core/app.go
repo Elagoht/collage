@@ -37,6 +37,7 @@ import (
 	"github.com/Elagoht/collage/internal/csrf"
 	"github.com/Elagoht/collage/internal/datacache"
 	"github.com/Elagoht/collage/internal/dependency"
+	"github.com/Elagoht/collage/internal/devhost"
 	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -883,6 +884,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		FrameOptions:   a.frameOptions,
 		NoSniff:        a.noSniff,
 		TrustedProxies: a.cfg.Server.TrustedProxies,
+		DevHosts:       a.devHosts(),
 	})
 	if err != nil {
 		return a.buildFailed(err)
@@ -890,6 +892,21 @@ func (a *App) buildHandler() (http.Handler, error) {
 
 	a.handler = handler
 	return handler, nil
+}
+
+// devHosts are the names the development Host check allows besides localhost
+// and IP addresses: the host this server listens on, and, under "collage dev",
+// the host its proxy listens on — the program itself is started on loopback,
+// but the browser's Host is the proxy's, passed on unchanged.
+//
+// The one environment variable the framework reads itself, and only in
+// development: the alternative is a configuration field every application's
+// main.go would have to wire before "HOST=mybox.local collage dev" worked again.
+func (a *App) devHosts() []string {
+	if !a.devMode {
+		return nil
+	}
+	return []string{a.cfg.Server.Host, os.Getenv(devhost.EnvHost)}
 }
 
 // dataCacheFor returns the store behind collage.Cached as the render engine takes

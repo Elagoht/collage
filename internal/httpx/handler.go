@@ -27,6 +27,7 @@ import (
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/csrf"
 	"github.com/Elagoht/collage/internal/dependency"
+	"github.com/Elagoht/collage/internal/devhost"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
@@ -159,7 +160,14 @@ type Deps struct {
 	// chain — on the built-in error page, and adds the render-time header. It
 	// must be false in production: those diagnostics can carry credentials,
 	// internal hostnames, and filesystem paths.
+	//
+	// It also refuses, 403, a request whose Host does not name this machine:
+	// see internal/devhost.
 	DevMode bool
+	// DevHosts are the names, besides localhost and IP addresses, that the
+	// development Host check allows: the host the server listens on, and the
+	// one "collage dev"'s proxy does. Ignored outside development.
+	DevHosts []string
 	// DefaultTTL is the cache TTL used for a page that sets no CacheTTL of its
 	// own. Zero or less defers to the cache's own default TTL.
 	DefaultTTL time.Duration
@@ -225,6 +233,7 @@ type Handler struct {
 	tracer       observability.Tracer
 	logger       *slog.Logger
 	devMode      bool
+	devHosts     []string
 	defaultTTL   time.Duration
 	mounts       []*asset.Mount
 	handlers     []HandlerMount
@@ -273,6 +282,7 @@ func New(d Deps) (*Handler, error) {
 		tracer:     observability.TracerOrNoop(d.Tracer),
 		logger:     d.Logger,
 		devMode:    d.DevMode,
+		devHosts:   slices.Clone(d.DevHosts),
 		defaultTTL: d.DefaultTTL,
 		// Cloned so a caller mutating d.Mounts after New returns cannot change
 		// what this Handler serves.
@@ -304,6 +314,18 @@ func New(d Deps) (*Handler, error) {
 	return h, nil
 }
 
+// serveForeignHost refuses a development request for a Host that does not
+// name this machine. Plain text that names the fix and nothing of the
+// application: the reader is, as far as the server can tell, another site.
+func serveForeignHost(w http.ResponseWriter, r *http.Request) {
+	header := w.Header()
+	header.Set("Content-Type", "text/plain; charset=utf-8")
+	header.Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusForbidden)
+	fmt.Fprintf(w, "collage: development mode answers only this machine's names; %q is not one. "+
+		"To reach it by that name, set Server.Host to it.\n", r.Host)
+}
+
 // ServeHTTP implements http.Handler: it runs the request lifecycle inside one span
 // and reports the completed response to Metrics.
 //
@@ -318,6 +340,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// X-Frame-Options or Content-Security-Policy overrides them with a plain
 	// Header().Set. They are the floor every response stands on, not the ceiling.
 	h.setBaselineHeaders(w.Header())
+
+	// Before anything a development server serves that a production one does
+	// not — the reload stream, the worker, a stack on an error page — and
+	// before middleware, which a development toolbar is.
+	if h.devMode && !devhost.Allowed(r.Host, h.devHosts...) {
+		serveForeignHost(w, r)
+		return
+	}
 
 	// Ahead of everything, middleware included: it is the development tool's
 	// own channel, and an auth middleware refusing it would turn live reload off

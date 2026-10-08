@@ -102,7 +102,7 @@ func TestSharedRender_DevModeWarnsOnHiddenContextRead(t *testing.T) {
 	app, err := collage.New(&collage.Config{
 		DevMode:  true,
 		Logger:   slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn})),
-		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Server:   collage.ServerConfig{Host: "example.com", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/s.html": {Data: []byte(`<p>secret={{.}}</p>`)}}, Root: "t"},
 		Cache:    collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Minute},
 	})

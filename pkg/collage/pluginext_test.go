@@ -97,7 +97,7 @@ func checkerSite(t *testing.T, dev bool) (*collage.App, *checker) {
 	c := &checker{}
 	app, err := collage.New(&collage.Config{
 		DevMode: dev,
-		Server:  collage.ServerConfig{Host: "localhost", Port: 3000},
+		Server:  collage.ServerConfig{Host: "example.com", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{
 			"t/home.html":  {Data: []byte(`<html><body><h1>home</h1><script nonce="{{nonce}}"></script></body></html>`)},
 			"t/about.html": {Data: []byte(`<html><body><p>about</p></body></html>`)},
@@ -256,7 +256,7 @@ func TestFindings_Build(t *testing.T) {
 func TestFindings_OnAnActionsPage(t *testing.T) {
 	app, err := collage.New(&collage.Config{
 		DevMode:  true,
-		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Server:   collage.ServerConfig{Host: "example.com", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<html><body><p>no heading</p></body></html>`)}}, Root: "t"},
 		Plugins:  []collage.Plugin{&checker{}},
 	})

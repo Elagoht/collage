@@ -202,6 +202,11 @@ func TestDev_BuildsAndRunsTheProgram(t *testing.T) {
 	if len(call.env) == 0 || call.env[len(call.env)-1] != "COLLAGE_DEV=1" {
 		t.Errorf("env = %v, want COLLAGE_DEV=1 last", call.env)
 	}
+	// The host the proxy listens on, which is the Host the browser sends: the
+	// program's own development Host check allows it by this.
+	if !slices.Contains(call.env, "COLLAGE_DEV_HOST=127.0.0.1") {
+		t.Errorf("env = %v, want COLLAGE_DEV_HOST=127.0.0.1, the proxy's host", call.env)
+	}
 	// Its stderr here is a buffer, not a terminal, so it is not told to colour.
 	if slices.Contains(call.env, "FORCE_COLOR=1") {
 		t.Errorf("env = %v, want no FORCE_COLOR when collage dev is not writing to a terminal", call.env)
