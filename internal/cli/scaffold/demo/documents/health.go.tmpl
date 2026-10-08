@@ -11,6 +11,10 @@ import (
 
 // Returns the health check: JSON at /healthz, rendered without a template so it
 // cannot start failing because a page did.
+//
+// If you add the elagoht/health plugin, delete this document or move the
+// plugin's livePath: its middleware answers /healthz first, so this document
+// would never be reached.
 func Health() *collage.Document {
 	return collage.NewDocument("health", "application/json").
 		WithPath("en", "/healthz").

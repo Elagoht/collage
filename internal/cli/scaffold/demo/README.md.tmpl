@@ -93,7 +93,9 @@ HOST=0.0.0.0 PORT=8080 COLLAGE_CSRF_KEY=... ./bin/@@NAME@@
 Templates and static files are embedded (`embed.go`), so the binary is the whole site —
 nothing to copy next to it. It drains in-flight requests on `SIGTERM`, answers
 `/healthz` for a liveness check, and caches rendered pages under `.cache` so a
-restart does not re-render everything.
+restart does not re-render everything. If you add the elagoht/health plugin, delete
+`documents/health.go` or move the plugin's `livePath`: its middleware answers
+`/healthz` first, so the document would never be reached.
 
 `collage export` writes the static pages to `dist/` for any static host. Pages
 that need a server — a form, or a `Dynamic()` page — are skipped and named, and

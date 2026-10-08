@@ -12,6 +12,10 @@
   `Cache-Control` its strategy gives (`public, max-age=…` for an incremental
   page), and no `capture-personal` warning. A reader's request is unchanged,
   still `private, no-store` with no `304`.
+- **The demo scaffold says what to do with `/healthz` when elagoht/health is
+  added.** `documents/health.go`, its test and the README now say to delete the
+  document or move the plugin's `livePath`: the plugin's middleware answers
+  `/healthz` first, so the document would never be reached.
 
 ### Changed
 

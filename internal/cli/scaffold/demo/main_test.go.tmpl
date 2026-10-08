@@ -125,6 +125,10 @@ func TestTheClockFragmentHasItsOwnURL(t *testing.T) {
 
 // The health check answers without rendering a template, which is the point of it:
 // it cannot start failing because a page did.
+//
+// It tests documents/health.go. If you add the elagoht/health plugin, its
+// middleware answers /healthz first, in plain text: delete that document and this
+// test, or move the plugin's livePath.
 func TestHealthCheck(t *testing.T) {
 	res := client(t).Get("/healthz").WantStatus(http.StatusOK)
 
