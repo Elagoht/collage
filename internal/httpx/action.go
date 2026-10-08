@@ -96,7 +96,9 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	//
 	// Unsafe methods only: a GET action changes nothing by contract, and a token
 	// on it would be a token in a URL, which is a token in a log file and in a
-	// Referer header.
+	// Referer header. OPTIONS, the other safe method, never reaches an action:
+	// registration refuses it (router.ErrInvalidActionMethod), and the router
+	// answers it itself.
 	if h.csrf != nil && !action.SkipCSRF && !types.SafeMethod(r.Method) {
 		if err := h.csrf.Verify(r); err != nil {
 			// 403, not 400. The request was well formed; it was not authorised —

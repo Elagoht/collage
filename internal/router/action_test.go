@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -233,6 +234,31 @@ func TestAction_CannotAnswerGetWhereAPageIsRead(t *testing.T) {
 			}
 			if err := tc.occupant(rt); !errors.Is(err, ErrDuplicateRoute) {
 				t.Fatalf("occupant = %v, want ErrDuplicateRoute", err)
+			}
+		})
+	}
+}
+
+// OPTIONS, TRACE and CONNECT are the server's own: the router answers OPTIONS
+// with the Allow list, and an action declaring one would be skipped by the
+// forgery check, since SafeMethod counts OPTIONS as safe.
+func TestRegisterAction_RefusesServerMethods(t *testing.T) {
+	for _, method := range []string{http.MethodOptions, http.MethodTrace, http.MethodConnect} {
+		t.Run(method, func(t *testing.T) {
+			rt := New(LocaleOptions{Default: "en"})
+			err := rt.RegisterAction(testAction("preflight", "/api", http.MethodPost, method))
+			if !errors.Is(err, ErrInvalidActionMethod) {
+				t.Fatalf("RegisterAction(%s) = %v, want ErrInvalidActionMethod", method, err)
+			}
+			for _, want := range []string{`"preflight"`, method} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not name %s", err, want)
+				}
+			}
+			// Refused before anything was written into the tree: the POST it
+			// also declared is not left behind, half registered.
+			if match, err := rt.Match(httptest.NewRequest(http.MethodPost, "/api", nil)); err == nil && match.Action != nil {
+				t.Errorf("POST /api matched action %q after the refused registration", match.Action.Name)
 			}
 		})
 	}

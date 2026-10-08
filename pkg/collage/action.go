@@ -49,6 +49,10 @@ func (b *ActionBuilder) WithPath(locale, pattern string) *ActionBuilder {
 
 // WithMethods declares the HTTP methods this action answers. A request to its path
 // with any other method is a 405 carrying an Allow header.
+//
+// OPTIONS, TRACE and CONNECT are refused at registration with
+// ErrInvalidActionMethod: the router answers OPTIONS itself, and the other two
+// are not something a page's URL should do.
 func (b *ActionBuilder) WithMethods(methods ...string) *ActionBuilder {
 	b.action.Methods = append(b.action.Methods, methods...)
 	return b

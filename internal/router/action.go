@@ -12,6 +12,18 @@ import (
 // ErrNoMethods reports an action that answers nothing.
 var ErrNoMethods = fmt.Errorf("collage: action declares no methods")
 
+// ErrInvalidActionMethod reports an action that declares OPTIONS, TRACE or
+// CONNECT. Those belong to the server, not to an action: the router answers
+// OPTIONS itself with the path's Allow list, and the forgery check counts OPTIONS
+// as a safe method — so an action that claimed it would change state with no
+// token checked at all. TRACE echoes a request back, and CONNECT asks for a
+// tunnel; neither is something a page's URL should do.
+var ErrInvalidActionMethod = fmt.Errorf("collage: action method is reserved for the server")
+
+// serverMethods are the methods an action may not declare. See
+// ErrInvalidActionMethod.
+var serverMethods = []string{http.MethodOptions, http.MethodTrace, http.MethodConnect}
+
 // RegisterAction implements Router.
 //
 // An action shares a tree node with whatever else claims its path, which is the
@@ -25,6 +37,9 @@ func (rt *router) RegisterAction(action *types.Action) error {
 	for _, method := range action.Methods {
 		if method != strings.ToUpper(method) {
 			return fmt.Errorf("collage: action %q: method %q must be upper case", action.Name, method)
+		}
+		if slices.Contains(serverMethods, method) {
+			return fmt.Errorf("%w: action %q declares %s", ErrInvalidActionMethod, action.Name, method)
 		}
 	}
 

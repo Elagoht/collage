@@ -30,6 +30,10 @@ var (
 	ErrNoActionHandler = core.ErrNoActionHandler
 	// ErrNoMethods is returned for an action that answers no method.
 	ErrNoMethods = router.ErrNoMethods
+	// ErrInvalidActionMethod is returned for an action that declares OPTIONS,
+	// TRACE or CONNECT. The router answers OPTIONS itself, and an action
+	// claiming it would skip the forgery check.
+	ErrInvalidActionMethod = router.ErrInvalidActionMethod
 	// ErrNilFragmentPath is returned for a WithFragmentPath given no fragment.
 	ErrNilFragmentPath = core.ErrNilFragmentPath
 )

@@ -220,7 +220,8 @@ func (b *PageBuilder) WithDependency(tags ...string) *PageBuilder {
 //
 // This is what an HTML form needs: a form's action is the page it sits on, so the
 // POST arrives at the page's URL. The action inherits the page's paths, in every
-// locale the page declares.
+// locale the page declares. OPTIONS, TRACE and CONNECT are refused at
+// registration with ErrInvalidActionMethod.
 //
 //	collage.NewPage("new-post").
 //		WithContent(form).
