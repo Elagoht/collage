@@ -221,6 +221,29 @@ panic in it is contained and logged at Warn with the plugin's name. Like
 ran — a `Shutdown` before the application started — or failed and was rolled
 back, so it must tolerate being called on a plugin that was never initialised.
 
+A plugin that does work only while the application is serving — a scheduler, a
+queue worker — implements `ServeHook`:
+
+```go
+func (p *Plugin) OnServe(ctx context.Context) { go p.run(ctx) }
+```
+
+`OnServe` is called once, in registration order, by `ListenAndServe`: after the
+port is bound — when `collage: listening` is logged — and before it serves. It
+is not called by `Start()` or `Handler()`, so not in a static build
+(`collage build`), not in a plugin command, not by an application that runs its
+own `http.Server` over `app.Handler()`, and not when `Shutdown` ran before
+`ListenAndServe`. `collage dev` serves through `ListenAndServe`, so it is called
+in development too, again on every restart.
+
+`ctx` derives from `context.Background()` and is cancelled when the drain
+starts, at the same moment `OnDrain` runs, whether the stop came from a signal
+or from `App.Shutdown(ctx)`. It means "start no new work"; finishing the work
+already running belongs in the plugin's `Shutdown`, which runs after the server
+stops and is bounded by the shutdown ctx. `OnServe` must not block: start
+goroutines and return. A panic in it is contained and logged at Warn with the
+plugin's name, and the server still serves.
+
 `Host` has no `Documents` method, and that is deliberate rather than an
 oversight: nothing outside the framework's own build step reads the document
 registry today (see `internal/core/document.go`'s `Documents`, which
@@ -264,6 +287,7 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | `BuildFinishedHook` | `OnBuildFinished` | Once, when a static build has written every file | reports with `ev.Warn`, `ev.Error` |
 | `StreamCloser` | `CloseStreams` | Once, when shutdown begins, before the server waits for open requests (see "Streams and shutdown") | nothing |
 | `DrainHook` | `OnDrain` | Once, when the drain starts, before `DrainDelay` and `CloseStreams`; may reach a plugin whose `Init` never ran or failed (see "Streams and shutdown") | nothing |
+| `ServeHook` | `OnServe` | Once, when `ListenAndServe` has bound its port, before it serves; never from `Start()`, `Handler()` or a build. Its ctx is cancelled when the drain starts | nothing |
 
 Two consequences of where `OnAfterRender` sits are worth stating plainly:
 
@@ -575,11 +599,14 @@ what earlier ones changed.
    startup and rolls back: every already-initialised plugin gets `Shutdown`, in
    reverse order, and the failing plugin does not (it never finished
    initialising).
-3. `OnDrain` — once, when a shutdown starts, for a `DrainHook`: before
+3. `OnServe` — once, for a `ServeHook`, when `ListenAndServe` has bound its
+   port and before it serves. Only `ListenAndServe` calls it; its ctx is
+   cancelled when the drain starts.
+4. `OnDrain` — once, when a shutdown starts, for a `DrainHook`: before
    `DrainDelay`, before `CloseStreams` and before the server stops. A `Shutdown`
    before the application started calls it too, without waiting, on plugins whose
    `Init` never ran.
-4. `Shutdown` — in reverse registration order, *after* the HTTP server has
+5. `Shutdown` — in reverse registration order, *after* the HTTP server has
    stopped, so a plugin is never torn out from under an in-flight request. Unlike
    `Init`, it never stops early: every plugin is given its chance and the failures
    are joined.

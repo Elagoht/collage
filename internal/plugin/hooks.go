@@ -180,6 +180,14 @@ type DrainHook interface {
 	OnDrain()
 }
 
+// ServeHook is implemented by a plugin that does work only while the
+// application is serving — a scheduler, a queue worker. OnServe is called once,
+// after ListenAndServe has bound its port and before it serves; ctx is
+// cancelled when the drain starts. It must not block: start goroutines.
+type ServeHook interface {
+	OnServe(ctx context.Context)
+}
+
 // Hoist adds html to the page's hoist area under key, after the render — what a
 // plugin that only learns what the page needs from its finished markup would
 // otherwise splice in by hand: a stylesheet for the code blocks it highlighted.

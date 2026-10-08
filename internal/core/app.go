@@ -411,6 +411,13 @@ type App struct {
 	// server. With a configured port of 0 it is the only place the port the
 	// kernel chose is recorded, which is what lets a test dial the server.
 	listenAddr net.Addr
+	// serveCancel cancels the ctx ListenAndServe hands ServeHook plugins. It is
+	// set with server, and the drain calls it first.
+	serveCancel context.CancelFunc
+	// drainStarted reports whether the drain has begun. A ListenAndServe that
+	// reaches its server after a drain already ran cancels its serve ctx at once,
+	// since no later drain will.
+	drainStarted bool
 	// listening is closed once ListenAndServe has finished deciding whether to
 	// serve — either because the server is accepting connections, or because the
 	// App was already shut down and it will not serve at all. Both paths close it,
@@ -943,6 +950,9 @@ func (a *App) buildFailed(err error) (http.Handler, error) {
 // because it was asked to stop did not fail. A failure to bind the port, or a
 // plugin Init that failed, is returned as an error.
 //
+// Once the port is bound it calls OnServe on every ServeHook plugin, with a ctx
+// the drain cancels.
+//
 // On the first signal it drains: DrainHook plugins are told, keep-alives are
 // turned off, and the server goes on serving for ServerConfig.DrainDelay. A
 // second signal ends that wait at once. Only then does ShutdownTimeout start, so
@@ -977,6 +987,12 @@ func (a *App) ListenAndServe() error {
 		return fmt.Errorf("collage: listen on %s: %w", server.Addr, err)
 	}
 
+	// The ctx ServeHook plugins work under. The drain cancels it; the defer
+	// cancels it on every other way out, a Serve that failed among them, so no
+	// plugin goroutine is left waiting on it.
+	serveCtx, serveCancel := context.WithCancel(context.Background())
+	defer serveCancel()
+
 	a.mu.Lock()
 	if a.closing {
 		// Shutdown already ran. Serving now would start something nothing is left
@@ -990,6 +1006,13 @@ func (a *App) ListenAndServe() error {
 	}
 	a.server = server
 	a.listenAddr = listener.Addr()
+	// Stored with server, before listening is closed, so a drain that starts
+	// from here on cancels it. One that ran earlier — a Shutdown racing this
+	// call, which drains before it marks the App closing — cannot, so cancel now.
+	a.serveCancel = serveCancel
+	if a.drainStarted {
+		serveCancel()
+	}
 	a.mu.Unlock()
 	a.listenOnce.Do(func() { close(a.listening) })
 
@@ -1001,6 +1024,13 @@ func (a *App) ListenAndServe() error {
 	// The address comes from the listener, not from the configuration, so a
 	// configured port of 0 reports the port the kernel actually chose.
 	a.Logger().Info("collage: listening", "addr", listener.Addr().String())
+
+	// Outside mu: a plugin's OnServe may call back into the App. A serve ctx
+	// already cancelled means the drain came first, and there is nothing to
+	// start.
+	if serveCtx.Err() == nil {
+		a.plugins.Serve(serveCtx)
+	}
 
 	served := make(chan error, 1)
 	go func() {
@@ -1037,14 +1067,21 @@ func (a *App) ListenAndServe() error {
 	}
 }
 
-// drain runs the one drain: plugins hear of it, kept-alive connections are
-// closed after their next response, and — with a server serving, a DrainDelay
-// and not in development — the server keeps serving for DrainDelay, or until
-// ctx is done or a second signal arrives.
+// drain runs the one drain: the ServeHook ctx is cancelled, plugins hear of it,
+// kept-alive connections are closed after their next response, and — with a
+// server serving, a DrainDelay and not in development — the server keeps
+// serving for DrainDelay, or until ctx is done or a second signal arrives.
 //
-// It takes mu only to read the server, and never holds it across the wait.
+// It takes mu only to cancel the serve ctx and to read the server, never across
+// a call into plugins, and never across the wait.
 func (a *App) drain(ctx context.Context) {
 	a.drainOnce.Do(func() {
+		a.mu.Lock()
+		a.drainStarted = true
+		if a.serveCancel != nil {
+			a.serveCancel()
+		}
+		a.mu.Unlock()
 		a.plugins.Drain()
 		a.mu.Lock()
 		server := a.server

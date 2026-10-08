@@ -254,6 +254,19 @@ func (r *Registry) Drain() {
 	}
 }
 
+// Serve calls OnServe on every plugin implementing ServeHook, in registration
+// order. A panic in one is contained and logged, so the others still start.
+// A nil Registry does nothing.
+func (r *Registry) Serve(ctx context.Context) {
+	for _, p := range r.snapshot() {
+		if hook, ok := p.(ServeHook); ok {
+			if err := safeCall(func() error { hook.OnServe(ctx); return nil }); err != nil {
+				r.logOrDefault().Warn("collage: serve hook panicked", "plugin", p.Name(), "err", err)
+			}
+		}
+	}
+}
+
 // PageResolved dispatches ev to every registered plugin implementing
 // PageResolvedHook, in registration order. It stops and returns a wrapped error at
 // the first hook failure, including a contained panic. A nil Registry, or a

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`ServeHook`.** A plugin implementing `OnServe(ctx)` — a scheduler, a queue
+  worker — is called once, in registration order, when `ListenAndServe` has
+  bound its port and before it serves. Its ctx is cancelled when the drain
+  starts, at the same moment `OnDrain` runs, whether the stop came from a signal
+  or from `App.Shutdown`. `Start()`, `Handler()`, a static build, a plugin
+  command and a `Shutdown` before `ListenAndServe` never call it; an application
+  serving `Handler()` from its own `http.Server` starts such plugins itself. A
+  panic in `OnServe` is contained and logged at Warn with the plugin's name, and
+  the server still serves. `OnServe` must not block.
+
 ## v0.54.0
 
 ### Fixed

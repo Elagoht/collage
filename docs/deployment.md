@@ -97,8 +97,10 @@ traffic.
 `ListenAndServe` traps `SIGINT` and `SIGTERM` and shuts down gracefully on either.
 `App.Shutdown(ctx)` does the same when you call it yourself. The order is fixed:
 
-1. **Drain.** Every plugin implementing `DrainHook` hears `OnDrain()`, once — a
-   health plugin turns its readiness check false here. Keep-alives are turned off:
+1. **Drain.** The ctx `ListenAndServe` gave `ServeHook` plugins in `OnServe` is
+   cancelled, so a scheduler starts no new work. Every plugin implementing
+   `DrainHook` hears `OnDrain()`, once — a health plugin turns its readiness
+   check false here. Keep-alives are turned off:
    idle kept-alive connections close at once, busy ones after their current
    response, and their clients reconnect through the balancer. The port stays open and requests are served as
    normal, for `Server.DrainDelay`.
@@ -155,6 +157,12 @@ once and goes straight on to stopping the server. A `Shutdown(ctx)` whose ctx is
 done ends it too. In development mode `DrainDelay` is ignored, so restarts stay
 instant; `OnDrain` still fires. A `Shutdown` before anything serves tells the
 plugins and does not wait, since there is no traffic to drain.
+
+`OnServe` is called only by `ListenAndServe`. An application that runs its own
+`http.Server` over `app.Handler()` gets no `OnServe`, so it must start such
+plugins itself and cancel their ctx when it begins to stop — for
+[`elagoht/jobs`](https://github.com/Elagoht/collage-jobs), call its
+`Start(ctx)` once the server is listening.
 
 ## TLS, and what serves it
 

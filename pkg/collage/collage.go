@@ -159,6 +159,12 @@ type StreamCloser = plugin.StreamCloser
 // ServerConfig.DrainDelay; it must not block.
 type DrainHook = plugin.DrainHook
 
+// ServeHook is implemented by a plugin that does work only while the
+// application is serving — a scheduler, a queue worker. OnServe is called once,
+// after ListenAndServe has bound its port and before it serves; ctx is
+// cancelled when the drain starts. It must not block: start goroutines.
+type ServeHook = plugin.ServeHook
+
 // PageResolvedHook is implemented by a plugin that wants to observe a request
 // having been resolved to a page, before rendering begins.
 type PageResolvedHook = plugin.PageResolvedHook
