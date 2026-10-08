@@ -3,10 +3,11 @@ package httpx
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"net/netip"
 	"strings"
+
+	"github.com/Elagoht/collage/internal/netaddr"
 )
 
 type trustedProxiesKey struct{}
@@ -74,9 +75,9 @@ func WithTrustedProxies(ctx context.Context, trusted []netip.Prefix) context.Con
 // visitor one client. The result is unmapped and has no zone; it is the zero
 // Addr too when RemoteAddr holds no address.
 func ClientIP(r *http.Request) netip.Addr {
-	remote := parseRemoteAddr(r.RemoteAddr)
+	remote := netaddr.Remote(r.RemoteAddr)
 	trusted, _ := r.Context().Value(trustedProxiesKey{}).([]netip.Prefix)
-	if !remote.IsValid() || !containsAddr(trusted, remote) {
+	if !remote.IsValid() || !netaddr.Contains(trusted, remote) {
 		return remote
 	}
 	client := remote
@@ -96,7 +97,7 @@ func ClientIP(r *http.Request) netip.Addr {
 				return netip.Addr{}
 			}
 			client = a
-			if !containsAddr(trusted, client) {
+			if !netaddr.Contains(trusted, client) {
 				return client
 			}
 			if comma < 0 {
@@ -124,26 +125,4 @@ func parseForwardedAddr(entry string) (netip.Addr, bool) {
 		}
 	}
 	return netip.Addr{}, false
-}
-
-// parseRemoteAddr is RemoteAddr's host, with or without a port.
-func parseRemoteAddr(remoteAddr string) netip.Addr {
-	host := remoteAddr
-	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
-		host = h
-	}
-	a, err := netip.ParseAddr(host)
-	if err != nil {
-		return netip.Addr{}
-	}
-	return a.Unmap().WithZone("")
-}
-
-func containsAddr(prefixes []netip.Prefix, a netip.Addr) bool {
-	for _, p := range prefixes {
-		if p.Contains(a) {
-			return true
-		}
-	}
-	return false
 }

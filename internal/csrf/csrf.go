@@ -34,12 +34,15 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Elagoht/collage/internal/ascii"
+	"github.com/Elagoht/collage/internal/netaddr"
 )
 
 // ErrMissing reports a request that carried no token at all.
@@ -73,6 +76,7 @@ type Guard struct {
 	maxAge     time.Duration // 0 disables the age check
 	now        func() time.Time
 	origin     *http.CrossOriginProtection
+	trusted    []netip.Prefix
 }
 
 // Config configures a Guard. Every field has a default.
@@ -90,6 +94,12 @@ type Config struct {
 	// Zero selects the default; a negative value disables the age check, keeping a
 	// token valid for as long as its signature verifies.
 	MaxAge time.Duration
+	// TrustedProxies are the proxies whose X-Forwarded-Proto is believed when
+	// deciding the cookie's Secure flag — Server.TrustedProxies, the set
+	// ClientIP believes X-Forwarded-For from. Empty believes the header from
+	// anyone, which is right for a server that only a proxy can reach and was
+	// the only behaviour before the field existed.
+	TrustedProxies []netip.Prefix
 	// Now overrides the clock, for tests.
 	Now func() time.Time
 }
@@ -114,6 +124,7 @@ func New(cfg Config) (*Guard, error) {
 		maxAge:     cfg.MaxAge,
 		now:        cfg.Now,
 		origin:     http.NewCrossOriginProtection(),
+		trusted:    slices.Clone(cfg.TrustedProxies),
 	}
 	switch {
 	case cfg.MaxAge == 0:
@@ -148,7 +159,14 @@ func New(cfg Config) (*Guard, error) {
 // forwardedHTTPS reports whether the proxy in front says r arrived over TLS. A
 // proxy that appends rather than replaces sends a list, "https, http", whose
 // first entry is the one the reader's own connection used.
-func forwardedHTTPS(r *http.Request) bool {
+//
+// With trusted proxies configured, the header is believed only from one of
+// them: anything else that sends it is a client choosing what the server
+// thinks of its own connection.
+func (g *Guard) forwardedHTTPS(r *http.Request) bool {
+	if len(g.trusted) > 0 && !netaddr.FromTrusted(g.trusted, r.RemoteAddr) {
+		return false
+	}
 	first, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
 	return ascii.EqualFold(strings.TrimSpace(first), "https")
 }
@@ -261,7 +279,8 @@ func (g *Guard) TokenFor(r *http.Request) (token string, minted bool, err error)
 // Lax, which by itself refuses the cross-site POST this protects against — the
 // signature is what covers the cases Lax does not, such as a sibling subdomain.
 // Secure whenever the request arrived over TLS, so a site that has TLS does not hand
-// its tokens to a plaintext one.
+// its tokens to a plaintext one — over TLS here, or at a proxy that says so in
+// X-Forwarded-Proto (believed only from Config.TrustedProxies when it is set).
 func (g *Guard) Cookie(r *http.Request, token string) *http.Cookie {
 	return &http.Cookie{
 		Name:     g.cookieName,
@@ -269,7 +288,7 @@ func (g *Guard) Cookie(r *http.Request, token string) *http.Cookie {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil || forwardedHTTPS(r),
+		Secure:   r.TLS != nil || g.forwardedHTTPS(r),
 	}
 }
 

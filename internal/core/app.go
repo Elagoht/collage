@@ -199,7 +199,8 @@ type ServerConfig struct {
 	// not wait. It is ignored in development mode.
 	DrainDelay time.Duration
 	// TrustedProxies are the proxies whose X-Forwarded-For collage.ClientIP
-	// believes, parsed from pkg/collage's strings. Empty trusts none.
+	// believes, parsed from pkg/collage's strings. Empty trusts none. The
+	// forgery guard believes X-Forwarded-Proto only from them when it is set.
 	TrustedProxies []netip.Prefix
 }
 
@@ -559,7 +560,7 @@ func New(cfg Config) (*App, error) {
 	// the cache's namespace, though: a body carrying another key's marker is
 	// treated as a miss where it is read (see httpx.Handler.cacheGet and
 	// buildCache).
-	guard, err := buildCSRF(cfg.Security, logger)
+	guard, err := buildCSRF(cfg.Security, cfg.Server.TrustedProxies, logger)
 	if err != nil {
 		return nil, fmt.Errorf("collage: csrf: %w", err)
 	}

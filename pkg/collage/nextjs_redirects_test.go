@@ -2,6 +2,7 @@ package collage_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -88,6 +89,27 @@ func TestNextJS_ListValuedForwardedProtoIsSecure(t *testing.T) {
 		cookies := w.Result().Cookies()
 		if len(cookies) != 1 || !cookies[0].Secure {
 			t.Errorf("X-Forwarded-Proto %q: cookies %v, want one Secure", proto, w.Header().Values("Set-Cookie"))
+		}
+	}
+}
+
+// Behind TrustedProxies, X-Forwarded-Proto is believed only from them: a client
+// that reaches the server directly cannot claim TLS it does not have.
+func TestForwardedProto_BelievedOnlyFromTrustedProxies(t *testing.T) {
+	h := nextSite(t, true, func(cfg *collage.Config) {
+		cfg.Server.TrustedProxies = []string{"10.0.0.1"}
+	}, func(app *collage.App) {
+		mustRegister(t, app, collage.NewPage("form").WithContent(collage.NewFragment("form-content", "form.html").Build()).WithPath("en", "/").Build())
+	})
+	for remote, secure := range map[string]bool{"10.0.0.1:5000": true, "203.0.113.9:5000": false} {
+		r := httptest.NewRequest(http.MethodGet, "/", nil)
+		r.RemoteAddr = remote
+		r.Header.Set("X-Forwarded-Proto", "https")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		cookies := w.Result().Cookies()
+		if len(cookies) != 1 || cookies[0].Secure != secure {
+			t.Errorf("from %s: cookies %v, want one with Secure=%v", remote, w.Header().Values("Set-Cookie"), secure)
 		}
 	}
 }

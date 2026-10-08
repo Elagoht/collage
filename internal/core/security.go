@@ -74,7 +74,10 @@ func baselineHeaders(cfg SecurityConfig) (frameOptions string, noSniff bool) {
 
 // buildCSRF returns the guard the application will use, or nil when forgery
 // checking is off.
-func buildCSRF(cfg SecurityConfig, logger *slog.Logger) (*csrf.Guard, error) {
+//
+// trusted is Server.TrustedProxies: the guard believes X-Forwarded-Proto only
+// from them, when there are any.
+func buildCSRF(cfg SecurityConfig, trusted []netip.Prefix, logger *slog.Logger) (*csrf.Guard, error) {
 	if cfg.DisableCSRF {
 		logger.Warn("collage: request-forgery protection is off; any site can submit this application's forms")
 		return nil, nil
@@ -101,6 +104,7 @@ func buildCSRF(cfg SecurityConfig, logger *slog.Logger) (*csrf.Guard, error) {
 		HeaderName:     cfg.CSRFHeaderName,
 		TrustedOrigins: cfg.CSRFTrustedOrigins,
 		MaxAge:         cfg.CSRFTokenTTL,
+		TrustedProxies: trusted,
 	})
 }
 

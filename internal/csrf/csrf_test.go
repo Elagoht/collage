@@ -5,6 +5,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -432,5 +433,48 @@ func TestToken_TamperedIssueTimeIsRefused(t *testing.T) {
 	tampered := parts[0] + "." + "99999999999" + "." + parts[2]
 	if g.valid(tampered) {
 		t.Error("a token with a rewritten issue time was accepted")
+	}
+}
+
+// X-Forwarded-Proto is a header anyone can send. With no trusted proxies it is
+// believed, as it always was; once TrustedProxies names the proxies in front,
+// it is believed only from them.
+func TestCookie_ForwardedProtoAndTrustedProxies(t *testing.T) {
+	trusted := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("::1/128")}
+	request := func(remote string, tls bool) *http.Request {
+		target := "http://example.com/"
+		if tls {
+			target = "https://example.com/"
+		}
+		r := httptest.NewRequest(http.MethodGet, target, nil)
+		r.RemoteAddr = remote
+		r.Header.Set("X-Forwarded-Proto", "https")
+		return r
+	}
+	open, _ := New(Config{Key: []byte("k")})
+	behind, err := New(Config{Key: []byte("k"), TrustedProxies: trusted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		guard  *Guard
+		remote string
+		tls    bool
+		secure bool
+	}{
+		{"no trusted proxies: believed from anyone", open, "203.0.113.9:4000", false, true},
+		{"trusted peer", behind, "10.1.2.3:4000", false, true},
+		{"trusted IPv6 peer", behind, "[::1]:4000", false, true},
+		{"trusted IPv4-mapped peer", behind, "[::ffff:10.1.2.3]:4000", false, true},
+		{"untrusted peer", behind, "203.0.113.9:4000", false, false},
+		{"unparsable peer", behind, "pipe", false, false},
+		{"untrusted peer over TLS", behind, "203.0.113.9:4000", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.guard.Cookie(request(tc.remote, tc.tls), "token").Secure; got != tc.secure {
+				t.Errorf("Secure = %v, want %v", got, tc.secure)
+			}
+		})
 	}
 }

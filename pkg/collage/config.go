@@ -189,6 +189,12 @@ type ServerConfig struct {
 	// the client and the server, a CDN's published ranges included. A range
 	// with zero bits ("0.0.0.0/0", "::/0") is accepted but logged at Warn by
 	// New: it lets any client name any address.
+	//
+	// It also decides whose X-Forwarded-Proto is believed when the forgery
+	// cookie's Secure flag is set. Set, only a request from one of these
+	// proxies can say it arrived over TLS. Empty, the header is believed from
+	// anyone — right for a server only a proxy can reach, and what an
+	// application that never set this has always had.
 	TrustedProxies []string
 }
 
