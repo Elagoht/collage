@@ -162,7 +162,25 @@ plugins and does not wait, since there is no traffic to drain.
 `http.Server` over `app.Handler()` gets no `OnServe`, so it must start such
 plugins itself and cancel their ctx when it begins to stop — for
 [`elagoht/jobs`](https://github.com/Elagoht/collage-jobs), call its
-`Start(ctx)` once the server is listening.
+`Start(ctx)` once the server is listening. It must also call `app.Shutdown(ctx)`
+after its server has stopped: that is what runs the plugins' `Shutdown`, and
+without it a queue's waiting items vanish without even being logged.
+
+```go
+ln, err := net.Listen("tcp", ":8080")
+if err != nil {
+	return err
+}
+srv := &http.Server{Handler: app.Handler()}
+go srv.Serve(ln)
+ctx, stopJobs := context.WithCancel(context.Background())
+j.Start(ctx) // the port is bound: start the jobs
+
+// On shutdown:
+stopJobs()                // the drain: no more triggers, Enqueue refused
+srv.Shutdown(shutdownCtx) // requests in flight finish
+app.Shutdown(shutdownCtx) // the plugins stop; jobs finishes its queues
+```
 
 ## TLS, and what serves it
 
