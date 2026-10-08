@@ -306,9 +306,11 @@ answers. Set it for:
 COLLAGE_DEV_HOST=app,mybox.lan
 ```
 
-Both the application in development mode and `collage dev`'s proxy read it, from
-the shell or `.env.development`. `collage dev` hands the program the list plus its
-own `HOST`, since the program listens on loopback but sees the browser's `Host`.
+An application in development mode reads it from its own process environment — run
+directly, set it in the shell or wherever the process gets its environment.
+`collage dev` reads it from the shell or `.env.development`, applies it to its
+proxy, and hands the program the list plus its own `HOST`, since the program
+listens on loopback but sees the browser's `Host`.
 A refused request's 403 names the setting. A tunnel such as ngrok is refused
 unless you list its name — on purpose: it puts the development pages on the
 internet.

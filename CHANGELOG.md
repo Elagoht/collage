@@ -16,10 +16,10 @@
 
 - **`COLLAGE_DEV_HOST`.** A comma-separated list of extra names a development
   server answers — a docker-compose service name, an `/etc/hosts` name,
-  several tenant hosts, a LAN name while bound to `0.0.0.0`. Read by an
-  application in development mode and by `collage dev`, from the shell or the
-  environment file; `collage dev` starts the program with the list plus its
-  own `HOST`.
+  several tenant hosts, a LAN name while bound to `0.0.0.0`. An application
+  in development mode reads it from its process environment; `collage dev`
+  reads it from the shell or the environment file, and starts the program
+  with the list plus its own `HOST`.
 - **`ServerConfig.ReadHeaderTimeout`.** A deadline for the request headers
   alone, so a client sending them a byte at a time is dropped early while a
   large body still gets the whole `ReadTimeout`. Zero, the default, uses
@@ -43,7 +43,12 @@
   `.test`, `.invalid` — nobody can register one to rebind with, and httptest's
   requests use `example.com`), `Server.Host`, or a name in `COLLAGE_DEV_HOST`.
   `collage dev`'s proxy applies the same rule, now shared, reserved names
-  included. The 403 quotes the refused Host and names the setting.
+  included. The 403 quotes the refused Host and names the setting. A capture
+  (`CaptureResponses`, which a development build runs with the production
+  `BaseURL`'s host) is not checked. **Upgrading:** a `DevMode` test or request
+  that uses a custom Host outside the reserved names — a tenant domain, say —
+  now gets 403; set it as `Server.Host`, list it in `COLLAGE_DEV_HOST`, or
+  use a reserved name such as `tenant.test`.
 - **`ListenAndServe` warns when development mode is reachable from other
   machines.** Bound to anything but loopback — `0.0.0.0`, `::`, a LAN
   address — with `DevMode` on, it logs one Warn that the

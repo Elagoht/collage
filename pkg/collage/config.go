@@ -75,11 +75,14 @@ type Config struct {
 	// for the effective value, which also considers Template.DevMode.
 	//
 	// In development the server answers only a request whose Host names this
-	// machine — localhost or a name under it, an IP address, or Server.Host —
-	// and refuses any other with 403, so a page on another site that makes its
-	// own name resolve here (DNS rebinding) cannot read the development error
-	// pages or the reload stream. Under "collage dev" the name its proxy listens
-	// on is allowed too.
+	// machine — localhost or a name under it, an IP address, a reserved name
+	// (example.com, example.net, example.org and names under them; names under
+	// .example, .test and .invalid), Server.Host, or a name in the
+	// comma-separated COLLAGE_DEV_HOST environment variable — and refuses any
+	// other with 403, so a page on another site that makes its own name resolve
+	// here (DNS rebinding) cannot read the development error pages or the
+	// reload stream. Under "collage dev" the name its proxy listens on is
+	// allowed too. CaptureResponses is not checked.
 	DevMode bool
 	// DevWatch lists directories, besides the templates and the mounts, whose
 	// changes reload a development page: content the application reads from disk
