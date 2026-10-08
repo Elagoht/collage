@@ -35,11 +35,14 @@
   name under `.localhost`, an IP address, or `Server.Host` — the rule
   `collage dev`'s proxy already applied, now shared. `collage dev` passes its
   own host to the program as `COLLAGE_DEV_HOST`, so a `HOST` name the proxy
-  allows is allowed behind it too. A test that sends dev-mode requests for
-  httptest's `example.com` names it as `Server.Host`.
+  allows is allowed behind it too. **Upgrading:** a test that drives a
+  `DevMode` application with `httptest.NewRequest` — whose Host is
+  `example.com` — or with `collagetest` now gets 403; set
+  `Server.Host: "example.com"` in that test's configuration, or send a
+  `localhost` Host.
 - **`ListenAndServe` warns when development mode is reachable from other
-  machines.** Bound to anything but loopback — `0.0.0.0`, `::`, an empty
-  host, a LAN address — with `DevMode` on, it logs one Warn that the
+  machines.** Bound to anything but loopback — `0.0.0.0`, `::`, a LAN
+  address — with `DevMode` on, it logs one Warn that the
   development error pages and tooling expose the application's internals.
 
 ### Docs

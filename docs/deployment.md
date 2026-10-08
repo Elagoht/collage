@@ -284,7 +284,7 @@ the reload stream, a development toolbar. Two guards keep them here:
   Running the binary directly with `COLLAGE_DEV=1` and `HOST=0.0.0.0`, a phone on
   the LAN reaches it by IP address; to use a name, set `HOST` to that name.
 - **A reachable address is warned about.** When `ListenAndServe` binds anything but
-  loopback in development — `0.0.0.0`, `::`, an empty host, a LAN address — it logs
+  loopback in development — `0.0.0.0`, `::`, a LAN address — it logs
   a Warn saying the development pages expose the application's internals.
 
 Neither applies in production, where `DevMode` is off and the `Host` is whatever
