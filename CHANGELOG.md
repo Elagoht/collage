@@ -23,11 +23,12 @@
 
 ### Changed
 
-- **A body that hit its bound answers `413`, whatever the handler returned.**
+- **A body that hit its bound answers `413`, whatever error the handler returned.**
   A handler that read past `MaxBodyBytes` and failed was a `413` only when its
   error wrapped the read's `*http.MaxBytesError`; one that replaced it with its
   own ("upload failed") was a `500`. Now the action checks whether its body ran
-  into the bound, for every action, and answers `413` with the limit.
+  into the bound, for every action, and answers `413` with the limit. The
+  handler's own error is kept in what is logged and handed to error hooks.
 
 ## v0.56.0
 

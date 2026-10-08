@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -15,14 +16,14 @@ import (
 type limitedBody struct {
 	io.ReadCloser
 	limit    int64
-	tooLarge bool
+	tooLarge atomic.Bool
 }
 
 func (b *limitedBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
-		b.tooLarge = true
+		b.tooLarge.Store(true)
 	}
 	return n, err
 }

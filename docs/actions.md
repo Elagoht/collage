@@ -212,7 +212,8 @@ have, and that handler is the one an anonymous caller will find.
 
 A handler that reads the body itself and runs into the limit is answered with `413`
 too, whatever error it returns — the read's own, or one of its own such as "upload
-failed". An action that reads a large body as a stream is in
+failed". That error is kept beside the 413, in the log and in what error hooks
+are handed. An action that reads a large body as a stream is in
 [Streaming bodies](#streaming-bodies).
 
 ## Forgery protection
@@ -320,7 +321,10 @@ collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPos
 - **The token comes in the header, and only there.** Finding it in a form field
   would mean parsing the body, so the field is not looked for: a request without
   `X-CSRF-Token` (or `Security.CSRFHeaderName`) is refused with `403`, and the
-  reason, `ErrCSRFHeaderRequired`, names the header. Send it from the page's own
+  reason, `ErrCSRFHeaderRequired`, names the header. The reason goes to the log
+  and to error hooks, and onto the built-in error page in development; the reader
+  sees only the 403, and an error page of the application's own hides it in
+  development too. Send it from the page's own
   token — the cookie is `HttpOnly`, so read the value from the input `{{csrfToken}}`
   renders (named `_csrf`, or `Security.CSRFFieldName`):
 
@@ -343,10 +347,11 @@ collage.NewAction("upload").WithPath("en", "/upload").WithMethods(http.MethodPos
   returns.
 - **Anything that parses the form consumes the stream.** `rc.Request.FormValue`,
   `ParseMultipartForm`, a helper such as `validate.Form` — each reads the body to
-  its end, and the handler finds nothing left. A plugin cannot do this by
-  accident: `BeforeActionEvent.Form()` returns `ErrStreamingBody` for such an
-  action without reading a byte. A plugin that inspects forms treats that error as
-  "this action has no form to check" and lets the request through.
+  its end, and the handler finds nothing left. `BeforeActionEvent.Form()` will not
+  do this: for such an action it returns `ErrStreamingBody` without reading a
+  byte, and a plugin that inspects forms treats that error as "this action has no
+  form to check" and lets the request through. A plugin that calls
+  `ev.Request.ParseForm()` itself still consumes the stream.
 
 Registration refuses `WithStreamingBody()` on an action answering none of `POST`,
 `PUT` or `PATCH`, with `ErrStreamingBodyMethod`.

@@ -88,7 +88,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		// read the body and dropped the error leaves it read past its bound,
 		// and the action answers for it. See boundBeforeMiddleware.
 		body = boundBody(w, r, limit)
-		if body.tooLarge {
+		if body.tooLarge.Load() {
 			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
 				actionBodyTooLarge(action, limit)))
 		}
@@ -160,9 +160,11 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		// whatever error it chose to say so with: one that wrapped the read's
 		// error is a 413 already, and one that replaced it with its own — "upload
 		// failed" — is the same request too large, not a fault of the server's.
-		if body != nil && body.tooLarge {
+		// The handler's own error is kept: it is what the operator reads.
+		if body != nil && body.tooLarge.Load() {
 			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRender,
-				actionBodyTooLarge(action, body.limit)))
+				errors.Join(fmt.Errorf("collage: action %q: the handler read past its body limit: %w", action.Name, err),
+					&http.MaxBytesError{Limit: body.limit})))
 		}
 		return h.serveFailure(w, r, route.failure(actionErrorStatus(err), stageRender,
 			fmt.Errorf("collage: action %q: %w", action.Name, err)))

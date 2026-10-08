@@ -280,13 +280,23 @@ func TestRegisterAction_StreamingNeedsBodyMethod(t *testing.T) {
 		t.Errorf("GET /upload matched action %q after the refused registration", match.Action.Name)
 	}
 
-	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch} {
-		t.Run(method, func(t *testing.T) {
+	for _, tc := range []struct {
+		methods []string
+		want    error
+	}{
+		{[]string{http.MethodPost}, nil},
+		{[]string{http.MethodPut}, nil},
+		{[]string{http.MethodPatch}, nil},
+		{[]string{http.MethodGet, http.MethodPost}, nil},
+		{[]string{http.MethodDelete}, ErrStreamingBodyMethod},
+		{[]string{http.MethodOptions}, ErrInvalidActionMethod},
+	} {
+		t.Run(strings.Join(tc.methods, ","), func(t *testing.T) {
 			rt := New(LocaleOptions{Default: "en"})
-			action := testAction("upload", "/upload", method)
+			action := testAction("upload", "/upload", tc.methods...)
 			action.StreamingBody = true
-			if err := rt.RegisterAction(action); err != nil {
-				t.Fatalf("RegisterAction(%s) = %v, want nil", method, err)
+			if err := rt.RegisterAction(action); !errors.Is(err, tc.want) {
+				t.Fatalf("RegisterAction(%v) = %v, want %v", tc.methods, err, tc.want)
 			}
 		})
 	}

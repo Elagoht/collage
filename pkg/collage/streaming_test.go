@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -19,12 +20,13 @@ type actionFunc = func(context.Context, *collage.RenderContext) (*collage.Action
 
 // streamingApp is an application with a form page to mint a token from, and one
 // action at /upload built by configure.
-func streamingApp(t *testing.T, csrf, devMode bool, configure func(*collage.ActionBuilder) *collage.ActionBuilder) http.Handler {
+func streamingApp(t *testing.T, csrf, devMode bool, configure func(*collage.ActionBuilder) *collage.ActionBuilder, plugins ...collage.Plugin) http.Handler {
 	t.Helper()
 	cfg := &collage.Config{
 		DevMode:  devMode,
 		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>x</p>`)}}, Root: "t"},
+		Plugins:  plugins,
 	}
 	if csrf {
 		cfg.Security = collage.SecurityConfig{CSRFKey: bytes.Repeat([]byte("k"), 32)}
@@ -295,5 +297,81 @@ func TestStreamingBody_PluginFormRefused(t *testing.T) {
 	}
 	if got != sent {
 		t.Errorf("the handler read %d bytes, want the %d sent", len(got), len(sent))
+	}
+}
+
+// A non-streaming action whose handler reads past its bound and fails is a 413
+// too, whatever error it returned — and the error it returned still reaches the
+// error hooks.
+func TestNonStreaming_HandlerOverreadIs413(t *testing.T) {
+	events := &eventRecorder{}
+	h := streamingApp(t, false, false, func(b *collage.ActionBuilder) *collage.ActionBuilder {
+		return b.WithMaxBodyBytes(16).WithHandler(func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+			_, _ = io.Copy(io.Discard, rc.Request.Body)
+			return nil, errors.New("upload failed")
+		})
+	}, events)
+	w := postUpload(h, strings.Repeat("x", 1024), "application/octet-stream", nil)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status %d, want 413", w.Code)
+	}
+	got := events.at("/upload")
+	if len(got) != 1 {
+		t.Fatalf("%d error events, want 1", len(got))
+	}
+	ev := got[0]
+	if ev.Status != http.StatusRequestEntityTooLarge {
+		t.Errorf("event status %d, want 413", ev.Status)
+	}
+	if !strings.Contains(ev.Err.Error(), "upload failed") {
+		t.Errorf("event error %q lost the handler's error", ev.Err)
+	}
+	if !strings.Contains(ev.Err.Error(), "the handler read past its body limit") {
+		t.Errorf("event error %q does not say the handler read past the limit", ev.Err)
+	}
+	var tooLarge *http.MaxBytesError
+	if !errors.As(ev.Err, &tooLarge) || tooLarge.Limit != 16 {
+		t.Errorf("event error %v carries no MaxBytesError for the limit", ev.Err)
+	}
+}
+
+// countingBody counts the bytes read from it.
+type countingBody struct {
+	io.Reader
+	n atomic.Int64
+}
+
+func (b *countingBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	b.n.Add(int64(n))
+	return n, err
+}
+
+func (b *countingBody) Close() error { return nil }
+
+// A streaming action's refused request — the forgery check on, no header — is
+// refused without a byte of its body read, and no form parsed.
+func TestStreamingBody_RefusalReadsNothing(t *testing.T) {
+	h := streamingApp(t, true, false, func(b *collage.ActionBuilder) *collage.ActionBuilder {
+		return b.WithStreamingBody().WithHandler(noopAction)
+	})
+	cookie := csrfCookie(t, h)
+	sent, contentType := multipartWithToken(t, cookie.Value)
+	body := &countingBody{Reader: strings.NewReader(sent)}
+	r := httptest.NewRequest(http.MethodPost, "/upload", body)
+	r.Host = "localhost:3000"
+	r.Header.Set("Content-Type", contentType)
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	r.AddCookie(cookie)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", w.Code)
+	}
+	if r.Form != nil || r.MultipartForm != nil {
+		t.Error("the form was parsed")
+	}
+	if n := body.n.Load(); n != 0 {
+		t.Errorf("%d bytes of the body were read, want 0", n)
 	}
 }
