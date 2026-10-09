@@ -1,7 +1,7 @@
 # Consent: a cookie-consent banner and gate, in the browser, readable on the server
 
 Date: 2026-10-09
-Status: approved design, pending implementation
+Status: implemented (elagoht/consent v0.1.0, elagoht/analytics v0.2.0)
 Roadmap: [v1.0 roadmap](../plans/2026-10-03-v1-roadmap.md), phase 3, "consent"
 ("the consent cookie is a Vary dimension; validates **A5**, repeatable hoist;
 integrates with analytics").
@@ -45,7 +45,8 @@ needed for the common case.
       "en": { "title": "…", "body": "…", "accept": "Accept all", "reject": "Reject all",
               "save": "Save choices", "settings": "Choose",
               "categories": { "necessary": "Necessary", "analytics": "Analytics", "media": "Embedded media" },
-              "placeholder": "This content loads from {host}.", "allow": "Allow {category}" }
+              "placeholder": "This content loads from {host}.", "allow": "Allow {category}",
+              "policy": "Privacy policy" }
     },
     "policyURL": "/privacy",
     "maxAgeDays": 180,
@@ -112,6 +113,10 @@ Other locales fall back to the default locale's text, key by key.
   grants that one category.
 - **Withdrawal.** When a grant is withdrawn, the page reloads, because a script
   that has run cannot be undone.
+- **Late nodes.** A `MutationObserver` gates nodes added after load, and nodes
+  whose `src`, `data-src`, `data-consent` or `type` change (collage-live
+  patches fragments in place). An activated script keeps the original's
+  `nonce`.
 - **Unknown category.** A `data-consent` naming a category that is not configured
   stays inert, and a `console.warn` names it.
 
@@ -123,10 +128,11 @@ Other locales fall back to the default locale's text, key by key.
   The cookie itself belongs to "necessary".
 - A malformed cookie or an older version counts as no decision.
 
-**Global Privacy Control.** When `navigator.globalPrivacyControl` is true, the
-banner opens with every non-required category off. Accept all still grants them,
-because the visitor's explicit choice wins. Until the visitor decides, nothing is
-granted.
+**Global Privacy Control.** Boxes are never pre-ticked, so GPC has no extra
+visible effect on the banner: every non-required category starts off, and Accept
+all still grants them, because the visitor's explicit choice wins. Until the
+visitor decides, nothing is granted. A plugin may add its own signal check
+(analytics' `RespectDNT` honours GPC even after a grant).
 
 **The JS API** is `window.collageConsent.get()` (granted categories),
 `.set({analytics: true, …})`, `.open()`, and a `collage:consent` event on
@@ -144,16 +150,24 @@ plugin's middleware:
 1. parses the cookie;
 2. computes the granted non-required categories, sorted and comma-joined (`""`
    when none);
-3. calls `collage.Vary(r, "Cookie", combo)`.
+3. sets the private request header `X-Collage-Consent` to the combo, overriding
+   any value the client sent, and calls `collage.Vary(r, "X-Collage-Consent", combo)`;
+4. adds `Vary: Cookie` to every response on those paths.
+
+It never varies on `Cookie` itself: that would keep the whole Cookie header,
+sessions included, in a render the cache shares between visitors.
 
 The collage cache then keys on the combo, so at most 2^(non-required) entries
-exist per page. The response carries `Vary: Cookie`, so a CDN keeps visitors
-apart. The cost is that these paths hardly cache at a CDN, which is why the
+exist per page. `Vary: Cookie` keeps visitors apart at a CDN. Paths under
+`/_live` and `/_collage` are skipped by segment, even with `serverPaths: ["/"]`
+(follow-up in core: `RenderFragment` should report a varied request as not
+shared). The cost is that these paths hardly cache at a CDN, which is why the
 setting is per path.
 
 **`Granted(rc, category)`:**
 - a required category is true;
-- otherwise it reads `collage.Varied(rc, "Cookie")` and reports whether the
+- otherwise it reads `collage.Varied(rc, "X-Collage-Consent")`, never the raw
+  header, and reports whether the
   category is in the combo;
 - if nothing was varied, because the path is not in `serverPaths`, it is a static
   export, or it is a capture request, it is false. A path outside `serverPaths`
@@ -206,8 +220,8 @@ results by POSTing them back, as collage-live's browser tests do.
 - **Focus**: it moves into the dialog and returns afterwards, and Escape closes
   the dialog without deciding.
 
-The JS tests skip when no Chrome is found (the CI matrix), and are required
-locally before release.
+The JS tests skip when `CI=true` unless `CHROME` is set (the CI matrix), and are
+required locally before release.
 
 ## Release
 
