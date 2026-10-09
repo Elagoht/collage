@@ -150,6 +150,7 @@ jobs:
           - collage-bundle
           - collage-cdnpurge
           - collage-compress
+          - collage-consent
           - collage-deploy
           - collage-devtoolbar
           - collage-errortrack
