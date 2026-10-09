@@ -65,11 +65,11 @@ needed for the common case.
 Other locales fall back to the default locale's text, key by key.
 
 **The script.**
-- The plugin serves one static file at `/_collage/consent.js`. It sets
+- The plugin serves one static file at `/_collage/consent/consent.js`. It sets
   `Content-Type: text/javascript; charset=utf-8` and `nosniff`, and the URL
   carries a content-hash query so a long cache is safe.
 - Through `AfterRender`/hoist, the plugin adds
-  `<script defer src="/_collage/consent.js?v=<hash>" data-…>` to the `head` area
+  `<script defer src="/_collage/consent/consent.js?v=<hash>" data-…>` to the `head` area
   of every HTML page, once per page.
 - The settings travel in `data-*` attributes: the version, the categories with
   their required flags, the text for the page's locale (JSON in one attribute,
@@ -180,7 +180,7 @@ the visitor saved).
 - Config validation, one case per rule.
 - The script tag is hoisted exactly once per page, with `data-*` for the page's
   locale and fallback text, and HTML-escaped.
-- `/_collage/consent.js` is served with the right type, nosniff and a long cache
+- `/_collage/consent/consent.js` is served with the right type, nosniff and a long cache
   under its hash.
 - A static export writes the JS file.
 - `serverPaths` matching respects segments.
