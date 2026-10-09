@@ -27,6 +27,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          # The newest 1.26 release, not whatever the runner image cached: a
+          # standard-library security fix is a patch release, and govulncheck
+          # fails on the one the image still carries.
+          check-latest: true
           cache: true
 
       # Formatting first: it is the cheapest failure and the one most likely to
@@ -57,6 +61,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          # The newest 1.26 release, not whatever the runner image cached: a
+          # standard-library security fix is a patch release, and govulncheck
+          # fails on the one the image still carries.
+          check-latest: true
           cache: true
 
       # Pinned, so a new release of a tool cannot turn a commit red that was
@@ -87,6 +95,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          # The newest 1.26 release, not whatever the runner image cached: a
+          # standard-library security fix is a patch release, and govulncheck
+          # fails on the one the image still carries.
+          check-latest: true
           cache: true
 
       - name: benchmarks, this commit
@@ -202,6 +214,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          # The newest 1.26 release, not whatever the runner image cached: a
+          # standard-library security fix is a patch release, and govulncheck
+          # fails on the one the image still carries.
+          check-latest: true
           cache: true
 
       # A workspace rather than a replace directive: it leaves the plugin's own
