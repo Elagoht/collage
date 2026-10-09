@@ -162,6 +162,7 @@ jobs:
           - collage-ogimage
           - collage-opti-image
           - collage-otel
+          - collage-paginate
           - collage-prometheus
           - collage-ratelimit
           - collage-redirects
