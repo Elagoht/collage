@@ -610,3 +610,90 @@ func TestPluginAdd_ClashWithOtherFile(t *testing.T) {
 	}
 	goBuild(t, dir)
 }
+
+// Final review I4: with an empty module cache, as after a fresh clone, del
+// still reads the manifests: the dependents guard holds, and a del by full
+// path removes the config section.
+func TestPluginDel_ColdModuleCache(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "base", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""),
+		fixturePlugin("acme", "ext", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"requires": ["acme/base"]`),
+	)
+	if code, _, e := pluginCmd(t, dir, "add", "acme/ext"); code != 0 {
+		t.Fatal(e)
+	}
+	t.Setenv("GOMODCACHE", t.TempDir())
+	before := projectFiles(t, dir)
+	if code, _, e := pluginCmd(t, dir, "del", "acme/base"); code != 1 || !strings.Contains(e, "acme/ext requires acme/base; remove it first") {
+		t.Fatalf("dependent: %d %s", code, e)
+	}
+	wantSameFiles(t, dir, before)
+
+	t.Setenv("GOMODCACHE", t.TempDir())
+	if code, _, e := pluginCmd(t, dir, "del", "github.com/acme/collage-ext"); code != 0 {
+		t.Fatal(e)
+	}
+	if cfg := readFile(t, dir, "plugins-config.json"); strings.Contains(cfg, "acme/ext") {
+		t.Fatalf("the section is left:\n%s", cfg)
+	}
+	goBuild(t, dir)
+}
+
+// Final review I4: a manifest del cannot read refuses it, naming the module,
+// rather than skipping the dependents guard.
+func TestPluginDel_UnreadableManifestRefuses(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "base", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""),
+		fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""),
+	)
+	for _, ref := range []string{"acme/base", "acme/greet"} {
+		if code, _, e := pluginCmd(t, dir, "add", ref); code != 0 {
+			t.Fatal(e)
+		}
+	}
+	// The cache is empty and nothing can fill it.
+	t.Setenv("GOMODCACHE", t.TempDir())
+	t.Setenv("GOPROXY", "off")
+	before := projectFiles(t, dir)
+	for _, ref := range []string{"acme/greet", "github.com/acme/collage-greet"} {
+		code, _, e := pluginCmd(t, dir, "del", ref)
+		if code != 1 || !strings.Contains(e, "collage: plugin del: cannot read the collage.json of github.com/acme/collage-") {
+			t.Fatalf("%s: %d %s", ref, code, e)
+		}
+		wantSameFiles(t, dir, before)
+	}
+}
+
+// Final review I4: an entry whose module has no collage.json, wired by hand,
+// requires nothing, so it does not stop a del.
+func TestPluginDel_HandAddedEntry(t *testing.T) {
+	needGo(t)
+	bare := fixturePlugin("acme", "bare", "v0.1.0", "func New() *Plugin { return &Plugin{} }", "")
+	delete(bare.Files, "collage.json")
+	dir := pluginProject(t, bare, fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""))
+	if code, _, e := pluginCmd(t, dir, "add", "acme/greet"); code != 0 {
+		t.Fatal(e)
+	}
+	cmd := exec.Command("go", "get", "github.com/acme/collage-bare@v0.1.0")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go get: %v\n%s", err, out)
+	}
+	f, err := parsePluginsFile([]byte(readFile(t, dir, "plugins.go")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.insert("github.com/acme/collage-bare", "bare", func(id string) string { return id + ".New()" }, 1, nil)
+	src, err := f.format()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, dir, map[string]string{"plugins.go": string(src)})
+	t.Setenv("GOMODCACHE", t.TempDir())
+	if code, out, e := pluginCmd(t, dir, "del", "acme/greet"); code != 0 {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	goBuild(t, dir)
+}

@@ -200,7 +200,7 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 	if err != nil {
 		return nil, err
 	}
-	info, err := c.listModule(ctx, dir, path)
+	info, err := c.locateModule(ctx, dir, path)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +243,7 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 	}
 	if len(added) > 0 {
 		// A required plugin's own requirements may have moved this one up.
-		final, err := c.listModule(ctx, dir, info.Path)
+		final, err := c.locateModule(ctx, dir, info.Path)
 		if err != nil {
 			return nil, err
 		}
@@ -359,11 +359,7 @@ func (c *CLI) attributable(ctx context.Context, dir, name string) (bool, error) 
 		}
 	}
 	for _, e := range entries {
-		info, err := c.listModule(ctx, dir, e.Import)
-		if err != nil {
-			continue
-		}
-		if m, err := plugincontract.ReadManifest(info.Dir); err == nil && m.Name == name {
+		if m, found, err := c.entryManifest(ctx, dir, e.Import); err == nil && found && m.Name == name {
 			return true, nil
 		}
 	}
@@ -415,12 +411,8 @@ func requiredVersion(gomod []byte, path string) string {
 // pluginOrder is the manifest order of the module importPath in the project
 // at dir; 0 when the module or its manifest cannot be read.
 func (c *CLI) pluginOrder(ctx context.Context, dir, importPath string) int {
-	info, err := c.listModule(ctx, dir, importPath)
-	if err != nil {
-		return 0
-	}
-	m, err := plugincontract.ReadManifest(info.Dir)
-	if err != nil {
+	m, found, err := c.entryManifest(ctx, dir, importPath)
+	if err != nil || !found {
 		return 0
 	}
 	return m.Order
@@ -604,6 +596,7 @@ type delEntry struct {
 	Import   string
 	Name     string // the manifest's name, or ""
 	Requires []string
+	Err      error // why the manifest could not be read, or nil
 }
 
 // label is how the entry is named to the user.
@@ -703,10 +696,10 @@ func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref,
 	var entries []delEntry
 	for _, e := range f.entries() {
 		d := delEntry{Import: e.Import}
-		if info, err := c.listModule(ctx, dir, e.Import); err == nil {
-			if m, err := plugincontract.ReadManifest(info.Dir); err == nil {
-				d.Name, d.Requires = m.Name, m.Requires
-			}
+		if m, found, err := c.entryManifest(ctx, dir, e.Import); err != nil {
+			d.Err = err
+		} else if found {
+			d.Name, d.Requires = m.Name, m.Requires
 		}
 		entries = append(entries, d)
 	}
@@ -719,6 +712,11 @@ func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref,
 		}
 	}
 	if target < 0 {
+		for _, e := range entries {
+			if e.Err != nil {
+				return "", "", fmt.Errorf("cannot read the collage.json of %s, so cannot tell whether it is %s: %w", e.Import, firstNonEmpty(ref.Short, ref.Path), e.Err)
+			}
+		}
 		var have []string
 		for _, e := range entries {
 			have = append(have, e.label())
@@ -730,9 +728,18 @@ func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref,
 		return "", "", fmt.Errorf("%s is not in plugins.go; it has: %s", firstNonEmpty(ref.Short, ref.Path), shown)
 	}
 	t := entries[target]
+	if t.Err != nil && ref.Short == "" {
+		return "", "", fmt.Errorf("cannot read the collage.json of %s, so the name of its section in plugins-config.json is unknown: %w", t.Import, t.Err)
+	}
 	name := t.Name
 	if name == "" {
 		name = ref.Short // the section's key, when the manifest cannot say
+	}
+	// Another entry whose manifest cannot be read may require this one.
+	for _, e := range entries {
+		if e.Err != nil && !ascii.EqualFold(e.Import, t.Import) && name != "" {
+			return "", "", fmt.Errorf("cannot read the collage.json of %s, so cannot tell whether it requires %s: %w", e.Import, name, e.Err)
+		}
 	}
 	for i, e := range entries {
 		if i == target || name == "" {

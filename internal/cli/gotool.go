@@ -8,6 +8,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
+
+	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
 
 // goOutput runs the go tool in dir and returns what it printed, for the
@@ -29,13 +32,46 @@ type moduleInfo struct {
 func (c *CLI) listModule(ctx context.Context, dir, path string) (moduleInfo, error) {
 	out, errOut, err := c.goOutput(ctx, dir, "list", "-m", "-json", "--", path)
 	if err != nil {
-		return moduleInfo{}, errors.New(string(bytes.TrimSpace(errOut)))
+		return moduleInfo{}, goError(errOut, err)
 	}
 	var m moduleInfo
 	if err := json.Unmarshal(out, &m); err != nil {
 		return moduleInfo{}, err
 	}
 	return m, nil
+}
+
+// locateModule is listModule, with the module's source fetched when the
+// module cache lacks it: go list -m does not download, and gives no Dir for a
+// module required but not yet in the cache, as after a fresh clone.
+func (c *CLI) locateModule(ctx context.Context, dir, path string) (moduleInfo, error) {
+	info, err := c.listModule(ctx, dir, path)
+	if err != nil || info.Dir != "" {
+		return info, err
+	}
+	if info.Version == "" {
+		return moduleInfo{}, fmt.Errorf("go list gave no version for %s", path)
+	}
+	return c.downloadModule(ctx, dir, info)
+}
+
+// entryManifest is the manifest of the module importPath, as the project at
+// dir requires it. found is false when the module has no collage.json: an
+// entry wired by hand, which has no name and requires nothing. An error says
+// the manifest could not be read at all.
+func (c *CLI) entryManifest(ctx context.Context, dir, importPath string) (m plugincontract.Manifest, found bool, err error) {
+	info, err := c.locateModule(ctx, dir, importPath)
+	if err != nil {
+		return plugincontract.Manifest{}, false, err
+	}
+	if _, err := os.Stat(filepath.Join(info.Dir, "collage.json")); errors.Is(err, fs.ErrNotExist) {
+		return plugincontract.Manifest{}, false, nil
+	}
+	m, err = plugincontract.ReadManifest(info.Dir)
+	if err != nil {
+		return plugincontract.Manifest{}, false, err
+	}
+	return m, true, nil
 }
 
 // downloadModule is "go mod download -json path@version" in dir: where the

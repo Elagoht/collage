@@ -13,7 +13,8 @@
   `plugins.go` and `plugins-config.json` as they were.
 - **`collage plugin del <owner/name>`.** It removes the plugin from `plugins.go`
   and `plugins-config.json`, prints the settings its section held, and runs
-  `go mod tidy`. It refuses while another plugin requires it.
+  `go mod tidy`. It refuses while another plugin requires it, and when it
+  cannot read another plugin's `collage.json` to tell.
 - **`collage plugin check [-release] [-run] [dir]`.** It checks a plugin
   repository against the contract `add` enforces:
   - a `collage.json` naming it `owner/name`;
