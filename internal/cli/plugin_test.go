@@ -316,6 +316,8 @@ func TestPluginAdd_BadConfigUndoesPluginsGo(t *testing.T) {
 			files := map[string]string{"plugins-config.json": "{"}
 			if pluginsGo != "" {
 				files["plugins.go"] = pluginsGo
+			} else if err := os.Remove(filepath.Join(dir, "plugins.go")); err != nil {
+				t.Fatal(err) // the scaffold ships one; this case has none
 			}
 			writeFiles(t, dir, files)
 			before := projectFiles(t, dir)
@@ -429,6 +431,24 @@ func TestPluginAdd_MixedCase(t *testing.T) {
 		t.Fatal("plugins.go does not import the declared path")
 	}
 	goBuild(t, dir)
+
+	// del finds it by the mixed-case short ref and by the lowercase full path.
+	for i, ref := range []string{"Acme/Greet", "github.com/acme/collage-greet"} {
+		if i > 0 {
+			if code, _, e := pluginCmd(t, dir, "add", "Acme/Greet"); code != 0 {
+				t.Fatal(e)
+			}
+		}
+		if code, out, e := pluginCmd(t, dir, "del", ref); code != 0 {
+			t.Fatalf("del %s: %d %s %s", ref, code, out, e)
+		}
+		for _, f := range []string{"plugins.go", "plugins-config.json", "go.mod"} {
+			if strings.Contains(strings.ToLower(readFile(t, dir, f)), "greet") {
+				t.Errorf("del %s: %s still names greet:\n%s", ref, f, readFile(t, dir, f))
+			}
+		}
+		goBuild(t, dir)
+	}
 }
 
 // failureRecorder runs go for real and records each go subcommand that failed.
