@@ -3,6 +3,7 @@ package collage
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/Elagoht/collage/internal/core"
@@ -126,17 +127,17 @@ func (b *DocumentBuilder) WithRedirect(from, to string, status int) *DocumentBui
 	if err := types.RedirectTextError(from, to); err != nil {
 		b.errs = append(b.errs, fmt.Errorf("document %q: %w", b.document.Name, err))
 	}
-	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, StatusCode: status})
+	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, Status: status})
 	return b
 }
 
-// WithPermanentRedirect adds a permanent redirect from the path pattern from to the
-// path to.
+// WithPermanentRedirect adds a redirect from the path pattern from to the path to
+// with status 301 Moved Permanently.
 func (b *DocumentBuilder) WithPermanentRedirect(from, to string) *DocumentBuilder {
 	if err := types.RedirectTextError(from, to); err != nil {
 		b.errs = append(b.errs, fmt.Errorf("document %q: %w", b.document.Name, err))
 	}
-	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, Permanent: true})
+	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, Status: http.StatusMovedPermanently})
 	return b
 }
 
@@ -156,8 +157,12 @@ func (b *DocumentBuilder) Dynamic() *DocumentBuilder {
 }
 
 // Incremental sets the document's strategy to StrategyIncremental and its CacheTTL
-// to ttl: serve from cache until ttl elapses since the last render.
+// to ttl: serve from cache until ttl elapses since the last render. A ttl of zero
+// or less records ErrInvalidTTL, retrievable via BuildErr.
 func (b *DocumentBuilder) Incremental(ttl time.Duration) *DocumentBuilder {
+	if ttl <= 0 {
+		b.errs = append(b.errs, fmt.Errorf("%w: document %q: Incremental(%v)", ErrInvalidTTL, b.document.Name, ttl))
+	}
 	b.document.Strategy = StrategyIncremental
 	b.document.CacheTTL = ttl
 	return b
@@ -179,8 +184,8 @@ func (b *DocumentBuilder) WithCacheParams(names ...string) *DocumentBuilder {
 	return b
 }
 
-// WithDependency appends tags to the document's cache dependency tags.
-func (b *DocumentBuilder) WithDependency(tags ...string) *DocumentBuilder {
+// WithDependencyTags appends tags to the document's cache dependency tags.
+func (b *DocumentBuilder) WithDependencyTags(tags ...string) *DocumentBuilder {
 	b.document.DependencyTags = append(b.document.DependencyTags, tags...)
 	return b
 }

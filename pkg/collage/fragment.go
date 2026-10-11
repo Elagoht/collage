@@ -3,6 +3,7 @@ package collage
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -95,7 +96,7 @@ func (b *FragmentBuilder) setData(d types.DataSource) *FragmentBuilder {
 	return b
 }
 
-// WithData sets what the fragment renders with — collage.Load, DataHandler,
+// WithData sets what the fragment renders with — collage.Load, LoadTagged,
 // Value or Effect. A page rendering a fragment with a handler, and declaring
 // no strategy, is dynamic. Setting data twice records ErrConflictingData. A
 // nil d leaves the fragment with no data.
@@ -158,9 +159,11 @@ func (b *FragmentBuilder) WithGuard(g GuardFunc) *FragmentBuilder {
 	return b
 }
 
-// WithSlot constrains the slot named name on the fragment being built: required,
-// the render fails with nothing bound to it; not allowMultiple, it holds one
-// fragment at most.
+// WithSlot constrains the slot named name on the fragment being built. With no
+// rule the slot is optional and holds any number of fragments; SlotRequired fails
+// the render with nothing bound to it; SlotSingle holds one fragment at most:
+//
+//	WithSlot("main", collage.SlotRequired, collage.SlotSingle)
 //
 // A slot needs no declaring otherwise. Its template calling {{slot "name"}} is
 // enough to render what is bound there, and WithSlotFragment or WithSlotResolver
@@ -169,8 +172,16 @@ func (b *FragmentBuilder) WithGuard(g GuardFunc) *FragmentBuilder {
 //
 // Naming a slot WithSlot already named records ErrDuplicateSlot, retrievable via
 // BuildErr, and leaves the slot untouched. Constraining a slot to one fragment
-// that already has more records ErrSlotOccupied.
-func (b *FragmentBuilder) WithSlot(name string, required, allowMultiple bool) *FragmentBuilder {
+// that already has more records ErrSlotOccupied, and a rule other than
+// SlotRequired or SlotSingle records ErrInvalidSlotDefinition.
+func (b *FragmentBuilder) WithSlot(name string, rules ...SlotRule) *FragmentBuilder {
+	for _, r := range rules {
+		if r != SlotRequired && r != SlotSingle {
+			b.errs = append(b.errs, fmt.Errorf("%w: rule %d", ErrInvalidSlotDefinition, r))
+		}
+	}
+	required := slices.Contains(rules, SlotRequired)
+	allowMultiple := !slices.Contains(rules, SlotSingle)
 	if b.declared[name] {
 		b.errs = append(b.errs, fmt.Errorf("%w: %q on fragment %q", ErrDuplicateSlot, name, b.fragment.Name))
 		return b
@@ -208,8 +219,8 @@ func (b *FragmentBuilder) WithSlotFragment(slotName string, child *Fragment) *Fr
 // time: resolve returns the fragments it holds for one request.
 //
 //	sections := collage.NewFragment("sections", "pages/sections.html").
-//		WithData(collage.DataHandler(loadSections)). // stores the section list under sectionsKey
-//		WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
+//		WithData(collage.LoadTagged(loadSections)). // stores the section list under sectionsKey
+//		WithSlotResolver("sections", func(ctx context.Context, rc *collage.RenderContext) ([]*collage.Fragment, error) {
 //			list, _ := sectionsKey.Get(rc)
 //			return fragmentsFor(list), nil
 //		}).
@@ -310,7 +321,7 @@ func (b *FragmentBuilder) WithFallback(f *Fragment) *FragmentBuilder {
 	return b
 }
 
-// WithTimeout sets the duration that bounds how long the fragment's DataHandler may
+// WithTimeout sets the duration that bounds how long the fragment's data handler may
 // run. A negative d records ErrInvalidTimeout, retrievable via BuildErr, and leaves
 // the fragment's Timeout unchanged.
 func (b *FragmentBuilder) WithTimeout(d time.Duration) *FragmentBuilder {

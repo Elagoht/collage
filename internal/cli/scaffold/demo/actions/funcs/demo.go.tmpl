@@ -20,7 +20,7 @@ func Count() collage.ActionHandlerFunc {
 		_ context.Context,
 		_ *collage.RenderContext,
 	) (*collage.ActionResult, error) {
-		result, err := collage.JSONOf(http.StatusOK, countResponse{Count: count.Increment()})
+		result, err := collage.JSON(http.StatusOK, countResponse{Count: count.Increment()})
 		if err != nil {
 			return nil, err
 		}

@@ -17,12 +17,9 @@ type Redirect struct {
 	From string
 	// To is the destination path the request is redirected to.
 	To string
-	// StatusCode is the HTTP status code to use. Zero selects a default based on
-	// Permanent; see EffectiveStatus.
-	StatusCode int
-	// Permanent reports whether the redirect should be treated as permanent when
-	// StatusCode is zero.
-	Permanent bool
+	// Status is the HTTP status code to use: 301, 302, 307 or 308. Zero means 302;
+	// see EffectiveStatus.
+	Status int
 }
 
 // RedirectTextError reports a control character in a redirect's from or to,
@@ -38,21 +35,18 @@ func RedirectTextError(from, to string) error {
 	return nil
 }
 
-// EffectiveStatus returns r.StatusCode when it is one of 301, 302, 307, or 308;
-// otherwise it returns 301 when r.Permanent, else 302.
+// EffectiveStatus returns r.Status when it is one of 301, 302, 307, or 308, and
+// 302 otherwise.
 func (r *Redirect) EffectiveStatus() int {
-	switch r.StatusCode {
+	switch r.Status {
 	case 301, 302, 307, 308:
-		return r.StatusCode
-	}
-	if r.Permanent {
-		return 301
+		return r.Status
 	}
 	return 302
 }
 
 // Validate reports whether r is well-formed: From and To are both non-empty and
-// start with "/" (ErrInvalidPath), and StatusCode is 0 or one of 301, 302, 307, 308
+// start with "/" (ErrInvalidPath), and Status is 0 or one of 301, 302, 307, 308
 // (ErrInvalidRedirectStatus). A control character in either is ErrInvalidRedirect.
 func (r *Redirect) Validate() error {
 	if err := RedirectTextError(r.From, r.To); err != nil {
@@ -69,10 +63,10 @@ func (r *Redirect) Validate() error {
 	if len(r.To) > 1 && (r.To[1] == '/' || r.To[1] == '\\') {
 		return fmt.Errorf("%w: redirect to %q leaves the site", ErrInvalidPath, r.To)
 	}
-	switch r.StatusCode {
+	switch r.Status {
 	case 0, 301, 302, 307, 308:
 	default:
-		return fmt.Errorf("%w: %d", ErrInvalidRedirectStatus, r.StatusCode)
+		return fmt.Errorf("%w: %d", ErrInvalidRedirectStatus, r.Status)
 	}
 	return nil
 }
@@ -220,8 +214,8 @@ func SetLayoutFragment(p *Page, f *Fragment) { p.layoutFragment = f }
 
 // Validate reports whether p is well-formed: Name is non-empty (ErrEmptyName),
 // ContentFragment is non-nil (ErrMissingContent), every entry in Paths starts with
-// "/" (ErrInvalidPath), CacheTTL is not negative (ErrInvalidTTL), CacheTTL is
-// positive when Strategy is StrategyIncremental (ErrMissingTTL), every redirect in
+// "/" (ErrInvalidPath), CacheTTL is not negative and is positive when Strategy is
+// StrategyIncremental (ErrInvalidTTL), every redirect in
 // Redirects validates, neither NotFoundPage nor ErrorPage is p itself
 // (ErrSelfErrorPage), and its root fragment validates. NotFoundPage and ErrorPage are not
 // recursed into: they are validated when registered in their own right.
@@ -237,11 +231,8 @@ func (p *Page) Validate() error {
 			return fmt.Errorf("%w: path %q for locale %q must start with \"/\"", ErrInvalidPath, path, locale)
 		}
 	}
-	if p.CacheTTL < 0 {
+	if p.CacheTTL < 0 || (p.Strategy == StrategyIncremental && p.CacheTTL == 0) {
 		return fmt.Errorf("%w: page %q", ErrInvalidTTL, p.Name)
-	}
-	if p.Strategy == StrategyIncremental && p.CacheTTL <= 0 {
-		return fmt.Errorf("%w: page %q", ErrMissingTTL, p.Name)
 	}
 	for _, redirect := range p.Redirects {
 		if err := redirect.Validate(); err != nil {

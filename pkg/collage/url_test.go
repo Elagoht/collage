@@ -38,7 +38,7 @@ func urlApp(t *testing.T) *collage.App {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
 	page := func(name, template string, paths map[string]string) *collage.Page {
 		builder := collage.NewPage(name).WithLayouts(layout).
 			WithContent(collage.NewFragment(name+"-content", template).Build()).Dynamic()

@@ -28,7 +28,7 @@ func buildTestApp(t *testing.T) *App {
 	}
 
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
+		WithSlot("content", SlotRequired, SlotSingle).
 		Build()
 	content := NewFragment("home-content", "pages/home.html").Build()
 	page := NewPage("home").

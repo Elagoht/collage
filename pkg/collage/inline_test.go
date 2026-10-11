@@ -170,7 +170,7 @@ func TestInlineFragment_FromAResolver(t *testing.T) {
 	app := inlineApp(t, false)
 	item := collage.NewInlineFragment("item", `<li>i</li>`).Build()
 	list := collage.NewInlineFragment("list", `<ul>{{slot "items"}}</ul>`).
-		WithSlotResolver("items", func(*collage.RenderContext) ([]*collage.Fragment, error) {
+		WithSlotResolver("items", func(context.Context, *collage.RenderContext) ([]*collage.Fragment, error) {
 			return []*collage.Fragment{item}, nil
 		}).Build()
 	if err := app.RegisterPage(collage.NewPage("l").WithContent(list).WithPath("en", "/l").Dynamic().Build()); err != nil {

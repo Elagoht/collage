@@ -14,14 +14,14 @@ import (
 
 // TestFragmentBuilder_MinimalApp builds the fragments of an application modelled
 // on the README's minimal one: a layout fragment declaring a required content
-// slot, and a home-content fragment with a DataHandler returning a data map and a
+// slot, and a home-content fragment with a LoadTagged handler returning a data map and a
 // tag slice.
 func TestFragmentBuilder_MinimalApp(t *testing.T) {
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
+		WithSlot("content", SlotRequired, SlotSingle).
 		Build()
 
-	homeContent := NewFragment("home-content", "pages/home.html").WithData(DataHandler(
+	homeContent := NewFragment("home-content", "pages/home.html").WithData(LoadTagged(
 		func(ctx context.Context, rc *RenderContext) (map[string]string, []string, error) {
 			data := map[string]string{
 				"Title": "Welcome Home",
@@ -62,19 +62,19 @@ func TestFragmentBuilder_MinimalApp(t *testing.T) {
 	}
 	data, tags, err := types.FragmentDataSource(homeContent).Handler(context.Background(), &RenderContext{})
 	if err != nil {
-		t.Fatalf("DataHandler() error = %v, want nil", err)
+		t.Fatalf("LoadTagged() error = %v, want nil", err)
 	}
 	dataMap, ok := data.(map[string]string)
 	if !ok || dataMap["Title"] != "Welcome Home" {
-		t.Errorf("DataHandler() data = %v, want map[Title:Welcome Home]", data)
+		t.Errorf("LoadTagged() data = %v, want map[Title:Welcome Home]", data)
 	}
 	if len(tags) != 1 || tags[0] != "homepage" {
-		t.Errorf("DataHandler() tags = %v, want [homepage]", tags)
+		t.Errorf("LoadTagged() tags = %v, want [homepage]", tags)
 	}
 }
 
 // TestFragmentBuilder_BlogPostContent builds the content fragment of a typical
-// blog post page: a Required() fragment whose DataHandler reads a path parameter,
+// blog post page: a Required() fragment whose data handler reads a path parameter,
 // fetches a post, and either returns the post tagged "post:<slug>" or an error that
 // would trigger the page's custom 500. fetchPost is a local stand-in for an
 // application's data access.
@@ -86,7 +86,7 @@ func TestFragmentBuilder_BlogPostContent(t *testing.T) {
 		return &fetchedPost{Slug: slug}, nil
 	}
 
-	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").WithData(DataHandler(
+	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").WithData(LoadTagged(
 		func(ctx context.Context, rc *RenderContext) (*fetchedPost, []string, error) {
 			slug := rc.PathParams["slug"]
 			post, err := fetchPost(slug)
@@ -111,18 +111,18 @@ func TestFragmentBuilder_BlogPostContent(t *testing.T) {
 	rc := &RenderContext{PathParams: map[string]string{"slug": "hello-world"}}
 	data, tags, err := types.FragmentDataSource(blogPostContent).Handler(context.Background(), rc)
 	if err != nil {
-		t.Fatalf("DataHandler() error = %v, want nil for a known slug", err)
+		t.Fatalf("LoadTagged() error = %v, want nil for a known slug", err)
 	}
 	if data == nil {
-		t.Error("DataHandler() data = nil, want the fetched post")
+		t.Error("LoadTagged() data = nil, want the fetched post")
 	}
 	if len(tags) != 1 || tags[0] != "post:hello-world" {
-		t.Errorf("DataHandler() tags = %v, want [post:hello-world]", tags)
+		t.Errorf("LoadTagged() tags = %v, want [post:hello-world]", tags)
 	}
 
 	rcMissing := &RenderContext{PathParams: map[string]string{}}
 	if _, _, err := types.FragmentDataSource(blogPostContent).Handler(context.Background(), rcMissing); err == nil {
-		t.Error("DataHandler() error = nil, want an error for a missing slug (triggers the 500 page)")
+		t.Error("LoadTagged() error = nil, want an error for a missing slug (triggers the 500 page)")
 	}
 }
 
@@ -144,8 +144,8 @@ func TestFragmentBuilder_BuildErr(t *testing.T) {
 			name: "duplicate slot",
 			build: func() *FragmentBuilder {
 				return NewFragment("parent", "parent.html").
-					WithSlot("content", false, false).
-					WithSlot("content", true, true)
+					WithSlot("content", SlotSingle).
+					WithSlot("content", SlotRequired)
 			},
 			wantErr: ErrDuplicateSlot,
 		},
@@ -156,7 +156,7 @@ func TestFragmentBuilder_BuildErr(t *testing.T) {
 				return NewFragment("parent", "parent.html").
 					WithSlotFragment("aside", child).
 					WithSlotFragment("aside", child).
-					WithSlot("aside", false, false)
+					WithSlot("aside", SlotSingle)
 			},
 			wantErr: ErrSlotOccupied,
 		},
@@ -171,7 +171,7 @@ func TestFragmentBuilder_BuildErr(t *testing.T) {
 			name: "nil slot fragment",
 			build: func() *FragmentBuilder {
 				return NewFragment("parent", "parent.html").
-					WithSlot("content", false, false).
+					WithSlot("content", SlotSingle).
 					WithSlotFragment("content", nil)
 			},
 			wantErr: ErrNilFragment,
@@ -218,10 +218,10 @@ type fetchedPost struct {
 
 type clockView struct{ Hour int }
 
-// A typed handler adapted by DataHandler hands its value through unchanged, tags
+// A typed handler adapted by LoadTagged hands its value through unchanged, tags
 // and all.
-func TestDataHandler_PassesTheTypedValueThrough(t *testing.T) {
-	handler := DataHandler(func(context.Context, *RenderContext) (clockView, []string, error) {
+func TestLoadTagged_PassesTheTypedValueThrough(t *testing.T) {
+	handler := LoadTagged(func(context.Context, *RenderContext) (clockView, []string, error) {
 		return clockView{Hour: 9}, []string{"clock"}, nil
 	})
 
@@ -239,9 +239,9 @@ func TestDataHandler_PassesTheTypedValueThrough(t *testing.T) {
 
 // On an error the data is dropped, so a nil pointer does not become a typed nil
 // that a template reads as present.
-func TestDataHandler_DropsDataOnError(t *testing.T) {
+func TestLoadTagged_DropsDataOnError(t *testing.T) {
 	failure := errors.New("upstream down")
-	handler := DataHandler(func(context.Context, *RenderContext) (*clockView, []string, error) {
+	handler := LoadTagged(func(context.Context, *RenderContext) (*clockView, []string, error) {
 		return nil, []string{"clock"}, failure
 	})
 
@@ -257,10 +257,10 @@ func TestDataHandler_DropsDataOnError(t *testing.T) {
 	}
 }
 
-func TestDataHandler_NilIsNil(t *testing.T) {
+func TestLoadTagged_NilIsNil(t *testing.T) {
 	var fn func(context.Context, *RenderContext) (clockView, []string, error)
-	if DataHandler(fn) != nil {
-		t.Error("DataHandler(nil) != nil, want a nil handler")
+	if LoadTagged(fn) != nil {
+		t.Error("LoadTagged(nil) != nil, want a nil handler")
 	}
 }
 

@@ -46,7 +46,7 @@ func prefixApp(t *testing.T, trailing bool) *collage.App {
 		page("home", map[string]string{"en": "/", "tr": "/"}).Build(),
 		page("about", map[string]string{"en": "/about", "tr": "/hakkinda"}).
 			WithAction(http.MethodPost, func(context.Context, *collage.RenderContext) (*collage.ActionResult, error) {
-				return collage.NoContent(http.StatusNoContent), nil
+				return collage.Status(http.StatusNoContent), nil
 			}).
 			Build(),
 	} {

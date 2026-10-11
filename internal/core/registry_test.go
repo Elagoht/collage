@@ -647,7 +647,7 @@ func TestRegisterPage_RejectsInvalidPage(t *testing.T) {
 		{
 			name:     "incremental without a ttl",
 			mutate:   func(p *types.Page) { p.CacheTTL = 0 },
-			expected: types.ErrMissingTTL,
+			expected: types.ErrInvalidTTL,
 		},
 		{
 			name:     "negative ttl",
@@ -870,7 +870,7 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 
 	page := newHomePage()
 	page.DependencyTags = []string{"homepage"}
-	page.Redirects = []*types.Redirect{{From: "/old", To: "/", Permanent: true}}
+	page.Redirects = []*types.Redirect{{From: "/old", To: "/", Status: http.StatusMovedPermanently}}
 
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -890,7 +890,7 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 	copied.DependencyTags[0] = "mutated"
 	copied.Strategy = types.StrategyDynamic
 	copied.Redirects[0].To = "/mutated"
-	copied.Redirects[0].StatusCode = 307
+	copied.Redirects[0].Status = 307
 
 	if page.Name != "home" {
 		t.Fatalf("live page name = %q, want home", page.Name)
@@ -907,7 +907,7 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 	if page.Strategy != types.StrategyIncremental {
 		t.Fatalf("live page strategy = %v, want incremental", page.Strategy)
 	}
-	if page.Redirects[0].To != "/" || page.Redirects[0].StatusCode != 0 {
+	if page.Redirects[0].To != "/" || page.Redirects[0].Status != http.StatusMovedPermanently {
 		t.Fatalf("live redirect = %+v, want it untouched by the copy", *page.Redirects[0])
 	}
 }

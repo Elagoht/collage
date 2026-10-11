@@ -319,7 +319,7 @@ type TemplateConfig struct {
 	// DevMode reloads templates from disk on every request instead of caching parsed
 	// templates. Its disjunction with Config.DevMode is IsDevMode's effective value.
 	DevMode bool
-	// Timeout is the default DataHandler timeout used when a fragment sets none.
+	// Timeout is the default data handler timeout used when a fragment sets none.
 	// Defaults to 5s.
 	//
 	// It also bounds every *document* handler, and is the only bound on one:

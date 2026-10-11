@@ -16,7 +16,7 @@ func TestNewDocument_BuildsTheSpecShape(t *testing.T) {
 			return []byte("<urlset/>"), []string{"blog:posts"}, nil
 		}).
 		Incremental(time.Hour).
-		WithDependency("site").
+		WithDependencyTags("site").
 		Build()
 
 	if doc.Name != "sitemap" || doc.ContentType != "application/xml" {

@@ -8,23 +8,20 @@ import (
 
 func TestRedirect_EffectiveStatus(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		permanent  bool
-		want       int
+		name   string
+		status int
+		want   int
 	}{
-		{"301 explicit", 301, false, 301},
-		{"302 explicit", 302, true, 302},
-		{"307 explicit", 307, false, 307},
-		{"308 explicit", 308, true, 308},
-		{"zero and permanent", 0, true, 301},
-		{"zero and not permanent", 0, false, 302},
-		{"non-standard code and permanent", 404, true, 301},
-		{"non-standard code and not permanent", 404, false, 302},
+		{"301 explicit", 301, 301},
+		{"302 explicit", 302, 302},
+		{"307 explicit", 307, 307},
+		{"308 explicit", 308, 308},
+		{"zero means 302", 0, 302},
+		{"non-standard code", 404, 302},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &Redirect{StatusCode: tt.statusCode, Permanent: tt.permanent}
+			r := &Redirect{Status: tt.status}
 			if got := r.EffectiveStatus(); got != tt.want {
 				t.Errorf("EffectiveStatus() = %d, want %d", got, tt.want)
 			}
@@ -38,13 +35,13 @@ func TestRedirect_Validate(t *testing.T) {
 		r       *Redirect
 		wantErr error
 	}{
-		{"valid with explicit status", &Redirect{From: "/a", To: "/b", StatusCode: 301}, nil},
+		{"valid with explicit status", &Redirect{From: "/a", To: "/b", Status: 301}, nil},
 		{"valid with zero status", &Redirect{From: "/a", To: "/b"}, nil},
 		{"empty from", &Redirect{From: "", To: "/b"}, ErrInvalidPath},
 		{"from missing leading slash", &Redirect{From: "a", To: "/b"}, ErrInvalidPath},
 		{"empty to", &Redirect{From: "/a", To: ""}, ErrInvalidPath},
 		{"to missing leading slash", &Redirect{From: "/a", To: "b"}, ErrInvalidPath},
-		{"invalid status code", &Redirect{From: "/a", To: "/b", StatusCode: 404}, ErrInvalidRedirectStatus},
+		{"invalid status code", &Redirect{From: "/a", To: "/b", Status: 404}, ErrInvalidRedirectStatus},
 		{"to another site", &Redirect{From: "/a", To: "//evil.example"}, ErrInvalidPath},
 		{"to another site by backslash", &Redirect{From: "/a", To: "/\\evil.example"}, ErrInvalidPath},
 	}
@@ -154,8 +151,8 @@ func TestPage_Validate(t *testing.T) {
 
 	t.Run("incremental strategy without ttl", func(t *testing.T) {
 		p := &Page{Name: "home", ContentFragment: validContent(), Strategy: StrategyIncremental}
-		if err := p.Validate(); !errors.Is(err, ErrMissingTTL) {
-			t.Fatalf("Validate() error = %v, want ErrMissingTTL", err)
+		if err := p.Validate(); !errors.Is(err, ErrInvalidTTL) {
+			t.Fatalf("Validate() error = %v, want ErrInvalidTTL", err)
 		}
 	})
 

@@ -47,7 +47,7 @@ func strategyApp(t *testing.T) *App {
 }
 
 func strategyLayout() *FragmentBuilder {
-	return NewFragment("layout", "layouts/default.html").WithSlot("content", true, false)
+	return NewFragment("layout", "layouts/default.html").WithSlot("content", SlotRequired, SlotSingle)
 }
 
 // TestAutoStrategy_FixedPageIsStatic: a page that declares no strategy and renders
@@ -99,14 +99,14 @@ func TestAutoStrategy_HandlerMakesDynamic(t *testing.T) {
 		},
 		"handler in a bound child": func() *Page {
 			child := NewFragment("child", "pages/data.html").WithData(effect).Build()
-			layout := strategyLayout().WithSlot("aside", false, false).WithSlotFragment("aside", child).Build()
+			layout := strategyLayout().WithSlot("aside", SlotSingle).WithSlotFragment("aside", child).Build()
 			return NewPage("p").WithLayouts(layout).
 				WithContent(NewFragment("content", "pages/data.html").Build()).
 				WithPath("en", "/").Build()
 		},
 		"slot resolver": func() *Page {
-			layout := strategyLayout().WithSlot("aside", false, true).
-				WithSlotResolver("aside", func(*RenderContext) ([]*Fragment, error) { return nil, nil }).
+			layout := strategyLayout().WithSlot("aside").
+				WithSlotResolver("aside", func(context.Context, *RenderContext) ([]*Fragment, error) { return nil, nil }).
 				Build()
 			return NewPage("p").WithLayouts(layout).
 				WithContent(NewFragment("content", "pages/data.html").Build()).
@@ -248,7 +248,7 @@ func TestSlots_NeedNoDeclaring(t *testing.T) {
 func TestWithSlot_ConstrainsInEitherOrder(t *testing.T) {
 	child := NewFragment("child", "child.html").Build()
 
-	after := NewFragment("a", "a.html").WithSlotFragment("s", child).WithSlot("s", true, false)
+	after := NewFragment("a", "a.html").WithSlotFragment("s", child).WithSlot("s", SlotRequired, SlotSingle)
 	if err := after.BuildErr(); err != nil {
 		t.Fatalf("WithSlot after a binding: BuildErr() = %v, want nil", err)
 	}
@@ -256,12 +256,12 @@ func TestWithSlot_ConstrainsInEitherOrder(t *testing.T) {
 		t.Errorf("slot = %+v, want required, single, and still holding its fill", slot)
 	}
 
-	single := NewFragment("b", "b.html").WithSlot("s", false, false).WithSlotFragment("s", child).WithSlotFragment("s", child)
+	single := NewFragment("b", "b.html").WithSlot("s", SlotSingle).WithSlotFragment("s", child).WithSlotFragment("s", child)
 	if err := single.BuildErr(); !errors.Is(err, ErrSlotOccupied) {
 		t.Errorf("second fill of a single slot: BuildErr() = %v, want ErrSlotOccupied", err)
 	}
 
-	twice := NewFragment("c", "c.html").WithSlotFragment("s", child).WithSlot("s", false, true).WithSlot("s", true, true)
+	twice := NewFragment("c", "c.html").WithSlotFragment("s", child).WithSlot("s").WithSlot("s", SlotRequired)
 	if err := twice.BuildErr(); !errors.Is(err, ErrDuplicateSlot) {
 		t.Errorf("WithSlot twice: BuildErr() = %v, want ErrDuplicateSlot", err)
 	}
@@ -300,7 +300,7 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 		"with a resolver of its own": {
 			page: func() *Page {
 				more := NewFragment("more", "pages/slotted.html").WithData(load).Static().
-					WithSlotResolver("x", func(*RenderContext) ([]*Fragment, error) { return nil, nil }).Build()
+					WithSlotResolver("x", func(context.Context, *RenderContext) ([]*Fragment, error) { return nil, nil }).Build()
 				return NewPage("p").WithLayouts(strategyLayout().WithSlotFragment("aside", more).Build()).
 					WithContent(NewFragment("content", "pages/data.html").Build()).
 					WithPath("en", "/").Build()

@@ -113,7 +113,7 @@ func checkerSite(t *testing.T, dev bool) (*collage.App, *checker) {
 		collage.NewPage("home").WithContent(collage.NewFragment("home", "home.html").Build()).WithPath("en", "/").Build(),
 		collage.NewPage("about").WithContent(collage.NewFragment("about", "about.html").Build()).
 			WithPath("en", "/about").WithPath("tr", "/hakkinda").Build(),
-		collage.NewPage("post").WithContent(collage.NewFragment("post", "post.html").WithData(collage.DataHandler(
+		collage.NewPage("post").WithContent(collage.NewFragment("post", "post.html").WithData(collage.LoadTagged(
 			func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 				return rc.Param("slug"), nil, nil
 			})).

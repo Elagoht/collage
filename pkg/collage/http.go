@@ -23,7 +23,7 @@ import (
 //	})
 //
 //	// in the fragment's data handler:
-//	lang, _ := collage.Varied(rc, "Accept-Language")
+//	lang, _ := collage.Varied(ctx, "Accept-Language")
 //
 // The value, not the raw header, enters the page cache's key, so two languages are
 // two entries rather than one per spelling of a browser's preferences. The header
@@ -49,26 +49,13 @@ func Vary(r *http.Request, header, value string) error {
 // request, and whether one was declared. It is how a data handler reads a cache
 // dimension: the value is part of the page's cache key, so reading it in a render
 // shared between readers is safe, where reading a raw context value is not — see
-// Vary. rc is the render's context; pass the RenderContext a data handler
-// receives.
+// Vary. ctx is the context a data handler, a document handler, a page's
+// StaticParams or a sitemap's LastMod receives.
 //
-//	lang, ok := collage.Varied(rc, "Accept-Language")
+//	lang, ok := collage.Varied(ctx, "Accept-Language")
 //
 // It reports ("", false) for a header no middleware varied on.
-func Varied(rc *RenderContext, header string) (string, bool) {
-	if rc == nil {
-		return "", false
-	}
-	return httpx.Varied(rc.Request, header)
-}
-
-// VariedContext is Varied for code that holds only a context — a page's
-// StaticParams, a document handler's ctx, a sitemap's LastMod:
-//
-//	tenant, ok := collage.VariedContext(ctx, "X-Tenant")
-//
-// It is as safe in a shared render as Varied is: the value is in the cache key.
-func VariedContext(ctx context.Context, header string) (string, bool) {
+func Varied(ctx context.Context, header string) (string, bool) {
 	return httpx.VariedContext(ctx, header)
 }
 

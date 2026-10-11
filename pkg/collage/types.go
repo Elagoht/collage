@@ -43,6 +43,17 @@ type SlotDefinition = types.SlotDefinition
 // FragmentBuilder.WithSlotResolver.
 type SlotResolverFunc = types.SlotResolverFunc
 
+// SlotRule constrains a slot declared with FragmentBuilder.WithSlot. A slot with
+// no rule is optional and holds any number of fragments.
+type SlotRule = types.SlotRule
+
+const (
+	// SlotRequired fails the render when nothing is bound to the slot.
+	SlotRequired = types.SlotRequired
+	// SlotSingle lets the slot hold one fragment at most.
+	SlotSingle = types.SlotSingle
+)
+
 // GuardFunc decides whether a request may reach what it guards. See
 // FragmentBuilder.WithGuard.
 type GuardFunc = types.GuardFunc
@@ -142,14 +153,11 @@ var ErrMissingContent = types.ErrMissingContent
 // called twice with data), or a document sets both WithBody and WithHandler.
 var ErrConflictingData = types.ErrConflictingData
 
-// ErrMissingTTL is returned when a page uses StrategyIncremental without a positive
-// CacheTTL.
-var ErrMissingTTL = types.ErrMissingTTL
-
 // ErrInvalidTimeout is returned when a fragment's Timeout is negative.
 var ErrInvalidTimeout = types.ErrInvalidTimeout
 
-// ErrInvalidTTL is returned when a page's CacheTTL is negative.
+// ErrInvalidTTL is returned when a page's or document's CacheTTL is negative, or
+// zero or less under StrategyIncremental: Incremental(0) records it.
 var ErrInvalidTTL = types.ErrInvalidTTL
 
 // ErrRequiredSlotUnfilled is returned when a fragment declares a slot as Required
@@ -187,7 +195,7 @@ var ErrInvalidPath = types.ErrInvalidPath
 
 // ErrNotFound reports that a fragment's data does not exist, as distinct from a
 // failure to fetch it. It is the one sentinel here that application code returns
-// rather than receives: a DataHandler that wraps it — fmt.Errorf("...: %w",
+// rather than receives: a data handler that wraps it — fmt.Errorf("...: %w",
 // collage.ErrNotFound) — makes a Required fragment's failure render the page's
 // NotFoundPage with a 404 instead of its ErrorPage with a 500. Without wrapping
 // it, every missing record is a 500 and a page-specific 404 page is unreachable.

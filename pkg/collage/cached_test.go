@@ -47,7 +47,7 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	card := collage.NewFragment("author", "author.html").WithData(collage.DataHandler(
+	card := collage.NewFragment("author", "author.html").WithData(collage.LoadTagged(
 		func(_ context.Context, rc *collage.RenderContext) (author, []string, error) {
 			id, _ := authorIDKey.Get(rc)
 			a, err := collage.Cached(rc, authorKey.With(id), time.Hour, []string{"author:" + id},
@@ -67,7 +67,7 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 		}
 		post := collage.NewFragment(fmt.Sprintf("post-%d", i), "post.html").WithData(collage.Effect(
 			func(_ context.Context, rc *collage.RenderContext) error { authorIDKey.Set(rc, id); return nil })).
-			WithSlot("author", true, false).WithSlotFragment("author", card).Build()
+			WithSlot("author", collage.SlotRequired, collage.SlotSingle).WithSlotFragment("author", card).Build()
 		page := collage.NewPage(fmt.Sprintf("p%d", i)).WithContent(post).
 			WithPath("en", fmt.Sprintf("/p/%d", i)).Incremental(time.Hour).Build()
 		if err := app.RegisterPage(page); err != nil {

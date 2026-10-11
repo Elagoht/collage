@@ -56,7 +56,7 @@ func TestNew_ServesThroughThePublicAPI(t *testing.T) {
 	}
 
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
+		WithSlot("content", SlotRequired, SlotSingle).
 		Build()
 	content := NewFragment("home-content", "pages/home.html").Build()
 	page := NewPage("home").
@@ -64,7 +64,7 @@ func TestNew_ServesThroughThePublicAPI(t *testing.T) {
 		WithContent(content).
 		WithPath("en", "/").
 		Incremental(5 * time.Minute).
-		WithDependency("homepage").
+		WithDependencyTags("homepage").
 		Build()
 
 	if err := app.RegisterPage(page); err != nil {
@@ -365,11 +365,11 @@ func TestPlugin_ImplementableFromThePublicPackage(t *testing.T) {
 	}
 
 	page := NewPage("home").
-		WithLayouts(NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()).
+		WithLayouts(NewFragment("layout", "layouts/default.html").WithSlot("content", SlotRequired, SlotSingle).Build()).
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).
 		WithPath("en", "/").
 		Static().
-		WithDependency("homepage").
+		WithDependencyTags("homepage").
 		Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)

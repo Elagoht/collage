@@ -31,10 +31,10 @@ func inspectedAppInternal(t *testing.T) *App {
 	if err != nil {
 		t.Fatal(err)
 	}
-	comments := NewFragment("comments", "comments.html").Shared().WithData(DataHandler(
+	comments := NewFragment("comments", "comments.html").Shared().WithData(LoadTagged(
 		func(context.Context, *RenderContext) (string, []string, error) { return "", nil, nil })).
 		Build()
-	post := NewFragment("post", "post.html").WithSlotFragment("comments", comments).WithSlot("aside", false, true).Build()
+	post := NewFragment("post", "post.html").WithSlotFragment("comments", comments).WithSlot("aside").Build()
 	layout := NewFragment("layout", "layout.html").Build()
 	if err := app.RegisterPage(NewPage("post").WithLayouts(layout).WithContent(post).
 		WithPath("en", "/blog/{slug}").WithPath("tr", "/yazi/{slug}").

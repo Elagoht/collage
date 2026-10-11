@@ -355,11 +355,11 @@ func TestNextjs_ABuiltLinkIsAlwaysAPathOnThisSite(t *testing.T) {
 // "<", ">", "&" and the two JavaScript line terminators escaped, so the same bytes
 // are safe inlined into a page's script as well as served, and still parse back
 // to what was sent.
-func TestNextjs_JSONOfEscapesWhatAScriptWouldMisread(t *testing.T) {
+func TestNextjs_JSONEscapesWhatAScriptWouldMisread(t *testing.T) {
 	sent := map[string]string{"evil": "<script></script>&\u2028\u2029"}
-	result, err := collage.JSONOf(http.StatusOK, sent)
+	result, err := collage.JSON(http.StatusOK, sent)
 	if err != nil {
-		t.Fatalf("JSONOf: %v", err)
+		t.Fatalf("JSON: %v", err)
 	}
 	const want = "{\"evil\":\"\\u003cscript\\u003e\\u003c/script\\u003e\\u0026\\u2028\\u2029\"}"
 	if got := string(result.Body); got != want {

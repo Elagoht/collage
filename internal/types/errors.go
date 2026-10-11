@@ -33,10 +33,6 @@ var ErrFragmentCycle = errors.New("collage: fragment cycle detected")
 // ErrMissingContent is returned when a page has no content fragment.
 var ErrMissingContent = errors.New("collage: missing content")
 
-// ErrMissingTTL is returned when a page uses StrategyIncremental without a positive
-// CacheTTL.
-var ErrMissingTTL = errors.New("collage: missing cache ttl for incremental strategy")
-
 // ErrConflictingData is returned when a fragment's data is set twice, or a
 // document gets both a fixed Body and a Handler. One of them would be ignored,
 // and which one is not something a reader of the builder chain can tell. The
@@ -46,8 +42,8 @@ var ErrConflictingData = errors.New("collage: conflicting data")
 // ErrInvalidTimeout is returned when a fragment's Timeout is negative.
 var ErrInvalidTimeout = errors.New("collage: invalid timeout")
 
-// ErrInvalidTTL is returned when a page's CacheTTL is negative. This is distinct
-// from ErrMissingTTL, which covers a zero CacheTTL under StrategyIncremental.
+// ErrInvalidTTL is returned when a page's or document's CacheTTL is negative, or
+// zero under StrategyIncremental.
 var ErrInvalidTTL = errors.New("collage: invalid cache ttl")
 
 // ErrRequiredSlotUnfilled is returned when a fragment declares a slot as Required

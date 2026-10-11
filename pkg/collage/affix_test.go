@@ -20,7 +20,7 @@ func TestAffixedDocumentBesideAPage(t *testing.T) {
 		return []map[string]string{{"slug": "hello"}, {"slug": "a.b"}}, nil
 	}
 	page := NewPage("post").
-		WithLayouts(NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()).
+		WithLayouts(NewFragment("layout", "layouts/default.html").WithSlot("content", SlotRequired, SlotSingle).Build()).
 		WithContent(NewFragment("post-content", "pages/home.html").Build()).
 		WithPath("en", "/blogs/{slug}").
 		WithStaticParams(slugs).

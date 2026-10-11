@@ -24,7 +24,6 @@ func TestErrNotFound_Exists(t *testing.T) {
 		ErrSlotOccupied,
 		ErrFragmentCycle,
 		ErrMissingContent,
-		ErrMissingTTL,
 		ErrInvalidTimeout,
 		ErrInvalidTTL,
 		ErrRequiredSlotUnfilled,

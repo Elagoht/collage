@@ -138,27 +138,27 @@ func RenderPage(p *Page) *ActionResult {
 	return &ActionResult{Page: p}
 }
 
-// JSON answers with body as application/json.
-func JSON(status int, body []byte) *ActionResult {
+// JSONBytes answers with body, already encoded, as application/json.
+func JSONBytes(status int, body []byte) *ActionResult {
 	return &ActionResult{Status: status, Body: body, ContentType: "application/json"}
 }
 
-// JSONOf answers with v marshalled as application/json:
+// JSON answers with v marshalled as application/json:
 //
-//	return collage.JSONOf(http.StatusOK, countResponse{Count: n})
+//	return collage.JSON(http.StatusOK, countResponse{Count: n})
 //
-// It is JSON with the json.Marshal and its error handled, which is every JSON
-// action's first three lines otherwise.
-func JSONOf[T any](status int, v T) (*ActionResult, error) {
+// It is JSONBytes with the json.Marshal and its error handled, which is every
+// JSON action's first three lines otherwise.
+func JSON[T any](status int, v T) (*ActionResult, error) {
 	body, err := json.Marshal(v)
 	if err != nil {
 		return nil, fmt.Errorf("collage: marshal JSON response: %w", err)
 	}
-	return JSON(status, body), nil
+	return JSONBytes(status, body), nil
 }
 
-// NoContent answers with a bare status and no body.
-func NoContent(status int) *ActionResult {
+// Status answers with a bare status and no body.
+func Status(status int) *ActionResult {
 	return &ActionResult{Status: status}
 }
 

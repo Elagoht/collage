@@ -97,7 +97,7 @@ func newCaptureCountingApp(t *testing.T, cache CacheConfig, plugins ...Plugin) (
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	layout := NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()
+	layout := NewFragment("layout", "layouts/default.html").WithSlot("content", SlotRequired, SlotSingle).Build()
 	page := NewPage("home").
 		WithLayouts(layout).
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).

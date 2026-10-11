@@ -16,10 +16,10 @@ import (
 // incremental caching.
 func TestPageBuilder_MinimalApp(t *testing.T) {
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
+		WithSlot("content", SlotRequired, SlotSingle).
 		Build()
 
-	homeContent := NewFragment("home-content", "pages/home.html").WithData(DataHandler(
+	homeContent := NewFragment("home-content", "pages/home.html").WithData(LoadTagged(
 		func(ctx context.Context, rc *RenderContext) (map[string]string, []string, error) {
 			return map[string]string{"Title": "Welcome Home"}, []string{"homepage"}, nil
 		})).
@@ -59,7 +59,7 @@ func TestPageBuilder_MinimalApp(t *testing.T) {
 // plus the two global error pages the example builds alongside it.
 func TestPageBuilder_BlogExample(t *testing.T) {
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
+		WithSlot("content", SlotRequired, SlotSingle).
 		Build()
 
 	blog404Content := NewFragment("blog-404", "errors/blog-404.html").
@@ -85,7 +85,7 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		return &fetchedPost{Slug: slug}, nil
 	}
 
-	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").WithData(DataHandler(
+	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").WithData(LoadTagged(
 		func(ctx context.Context, rc *RenderContext) (*fetchedPost, []string, error) {
 			slug := rc.PathParams["slug"]
 			post, err := fetchPost(slug)
@@ -107,7 +107,7 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		WithNotFoundPage(blog404Page).
 		WithErrorPage(blog500Page).
 		Incremental(10 * time.Minute).
-		WithDependency("blog:posts").
+		WithDependencyTags("blog:posts").
 		Build()
 
 	globalNotFound := NewPage("global-404").
@@ -131,11 +131,11 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 	if len(blogPostPage.Redirects) != 2 {
 		t.Fatalf("len(Redirects) = %d, want 2", len(blogPostPage.Redirects))
 	}
-	if blogPostPage.Redirects[0].From != "/old-blog/{slug}" || blogPostPage.Redirects[0].To != "/blog/{slug}" || blogPostPage.Redirects[0].StatusCode != 301 {
-		t.Errorf("Redirects[0] = %+v, want {From:/old-blog/{slug} To:/blog/{slug} StatusCode:301}", blogPostPage.Redirects[0])
+	if blogPostPage.Redirects[0].From != "/old-blog/{slug}" || blogPostPage.Redirects[0].To != "/blog/{slug}" || blogPostPage.Redirects[0].Status != 301 {
+		t.Errorf("Redirects[0] = %+v, want {From:/old-blog/{slug} To:/blog/{slug} Status:301}", blogPostPage.Redirects[0])
 	}
-	if blogPostPage.Redirects[1].From != "/temp-blog/{slug}" || blogPostPage.Redirects[1].To != "/blog/{slug}" || blogPostPage.Redirects[1].StatusCode != 302 {
-		t.Errorf("Redirects[1] = %+v, want {From:/temp-blog/{slug} To:/blog/{slug} StatusCode:302}", blogPostPage.Redirects[1])
+	if blogPostPage.Redirects[1].From != "/temp-blog/{slug}" || blogPostPage.Redirects[1].To != "/blog/{slug}" || blogPostPage.Redirects[1].Status != 302 {
+		t.Errorf("Redirects[1] = %+v, want {From:/temp-blog/{slug} To:/blog/{slug} Status:302}", blogPostPage.Redirects[1])
 	}
 	if blogPostPage.NotFoundPage != blog404Page {
 		t.Errorf("NotFoundPage = %v, want %v", blogPostPage.NotFoundPage, blog404Page)

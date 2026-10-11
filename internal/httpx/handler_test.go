@@ -645,7 +645,7 @@ func TestServeDevModeAddsRenderTimeHeader(t *testing.T) {
 
 func TestServeRedirect(t *testing.T) {
 	page := testPage("new", "/new", types.StrategyStatic)
-	page.Redirects = []*types.Redirect{{From: "/old", To: "/new", Permanent: true}}
+	page.Redirects = []*types.Redirect{{From: "/old", To: "/new", Status: http.StatusMovedPermanently}}
 	env := newEnv(t, []*types.Page{page})
 
 	res := env.get("/old")

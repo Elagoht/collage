@@ -3,6 +3,7 @@ package collage
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -99,17 +100,17 @@ func (b *PageBuilder) WithRedirect(from, to string, status int) *PageBuilder {
 	if err := types.RedirectTextError(from, to); err != nil {
 		b.errs = append(b.errs, fmt.Errorf("page %q: %w", b.page.Name, err))
 	}
-	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, StatusCode: status})
+	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, Status: status})
 	return b
 }
 
-// WithPermanentRedirect adds a permanent redirect from the path pattern from to the
-// path to.
+// WithPermanentRedirect adds a redirect from the path pattern from to the path to
+// with status 301 Moved Permanently.
 func (b *PageBuilder) WithPermanentRedirect(from, to string) *PageBuilder {
 	if err := types.RedirectTextError(from, to); err != nil {
 		b.errs = append(b.errs, fmt.Errorf("page %q: %w", b.page.Name, err))
 	}
-	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, Permanent: true})
+	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, Status: http.StatusMovedPermanently})
 	return b
 }
 
@@ -145,8 +146,12 @@ func (b *PageBuilder) Dynamic() *PageBuilder {
 }
 
 // Incremental sets the page's strategy to StrategyIncremental and its CacheTTL to
-// ttl: serve from cache until ttl elapses since the last render.
+// ttl: serve from cache until ttl elapses since the last render. A ttl of zero or
+// less records ErrInvalidTTL, retrievable via BuildErr.
 func (b *PageBuilder) Incremental(ttl time.Duration) *PageBuilder {
+	if ttl <= 0 {
+		b.errs = append(b.errs, fmt.Errorf("%w: page %q: Incremental(%v)", ErrInvalidTTL, b.page.Name, ttl))
+	}
 	b.page.Strategy = StrategyIncremental
 	b.page.CacheTTL = ttl
 	return b
@@ -210,8 +215,8 @@ func (b *PageBuilder) WithCacheParams(names ...string) *PageBuilder {
 	return b
 }
 
-// WithDependency appends tags to the page's cache dependency tags.
-func (b *PageBuilder) WithDependency(tags ...string) *PageBuilder {
+// WithDependencyTags appends tags to the page's cache dependency tags.
+func (b *PageBuilder) WithDependencyTags(tags ...string) *PageBuilder {
 	b.page.DependencyTags = append(b.page.DependencyTags, tags...)
 	return b
 }

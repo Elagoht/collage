@@ -220,7 +220,7 @@ type TemplateConfig struct {
 	Extension string
 	// DevMode reloads templates from disk on every render.
 	DevMode bool
-	// Timeout is the default DataHandler timeout used when a fragment sets none.
+	// Timeout is the default data handler timeout used when a fragment sets none.
 	// It is also the only bound on a document handler, which has no per-route
 	// Timeout field of its own. See pkg/collage.TemplateConfig.Timeout.
 	Timeout time.Duration

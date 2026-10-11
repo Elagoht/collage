@@ -488,9 +488,9 @@ func resolveSlots(rc *types.RenderContext, f *types.Fragment) (slotFills, error)
 			continue
 		}
 		var resolved []*types.Fragment
-		err := Execute(rc.Context(), 0, func(context.Context) error {
+		err := Execute(rc.Context(), 0, func(ctx context.Context) error {
 			var resolveErr error
-			resolved, resolveErr = slot.Resolve(rc)
+			resolved, resolveErr = slot.Resolve(ctx, rc)
 			return resolveErr
 		})
 		if err != nil {

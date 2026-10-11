@@ -357,7 +357,7 @@ func TestNextJS_MiddlewareRequestHeaderOverrides(t *testing.T) {
 	var method string
 	h := actionSite(t, false, []string{http.MethodPost}, func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
 		seen = rc.Request.Header.Clone()
-		return collage.NoContent(http.StatusNoContent), nil
+		return collage.Status(http.StatusNoContent), nil
 	}, func(app *collage.App) {
 		if err := app.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -393,7 +393,7 @@ func TestNextJS_MiddlewareRequestHeaderOverrides(t *testing.T) {
 // with no body, and to a URL that is not one, 404.
 func TestNextJS_OptionsRequest(t *testing.T) {
 	h := actionSite(t, false, []string{http.MethodPost}, func(context.Context, *collage.RenderContext) (*collage.ActionResult, error) {
-		return collage.NoContent(http.StatusNoContent), nil
+		return collage.Status(http.StatusNoContent), nil
 	}, func(app *collage.App) {
 		mustRegister(t, app, plainPage("static", "/static"))
 	})

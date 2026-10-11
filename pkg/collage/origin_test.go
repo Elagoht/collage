@@ -51,7 +51,7 @@ func originSite(t *testing.T, dev bool, logs *bytes.Buffer, p *hostOrigins) *col
 	if err != nil {
 		t.Fatal(err)
 	}
-	content := collage.NewFragment("o", "o.html").WithData(collage.DataHandler(
+	content := collage.NewFragment("o", "o.html").WithData(collage.LoadTagged(
 		func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 			return collage.BaseURL(rc), nil, nil
 		})).
@@ -141,7 +141,7 @@ func TestBaseURL_StaticRenderUsesConfig(t *testing.T) {
 // A fragment a plugin renders outside ServeHTTP follows the request's host too.
 func TestBaseURL_RenderFragmentFollowsTheHost(t *testing.T) {
 	app := originSite(t, false, nil, &hostOrigins{origins: map[string]string{"acme.test": "https://acme.example"}})
-	frag := collage.NewFragment("live", "o.html").WithData(collage.DataHandler(
+	frag := collage.NewFragment("live", "o.html").WithData(collage.LoadTagged(
 		func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 			return collage.BaseURL(rc), nil, nil
 		})).

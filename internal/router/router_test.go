@@ -193,7 +193,7 @@ func TestRouter_Register_DuplicateRoute_TrailingSlashNormalized(t *testing.T) {
 func TestRouter_Redirect_MatchWithParamSubstitution(t *testing.T) {
 	r := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
 	page := newTestPageWithRedirects("blog", map[string]string{"en": "/blog/{slug}"}, []*types.Redirect{
-		{From: "/old-blog/{slug}", To: "/blog/{slug}", Permanent: true},
+		{From: "/old-blog/{slug}", To: "/blog/{slug}", Status: http.StatusMovedPermanently},
 	})
 	mustRegister(t, r, page)
 
@@ -414,7 +414,7 @@ func TestRouter_RouteTable(t *testing.T) {
 		newTestPage("files", map[string]string{"en": "/files/{path...}"}),
 		newTestPage("shop-item", map[string]string{"en": "/shop/items/{itemID}"}),
 		newTestPageWithRedirects("archive", map[string]string{"en": "/archive"}, []*types.Redirect{
-			{From: "/old-archive", To: "/archive", Permanent: true},
+			{From: "/old-archive", To: "/archive", Status: http.StatusMovedPermanently},
 			{From: "/legacy/{year}", To: "/archive?year={year}"},
 		}),
 	}

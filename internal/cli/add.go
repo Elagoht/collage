@@ -578,7 +578,7 @@ func (g generator) action(notes []string) ([]fileChange, []string, error) {
 	var handler strings.Builder
 	fmt.Fprintf(&handler, "\n// Answers the %s action.\nfunc %s() collage.ActionHandlerFunc {\n\treturn func(\n\t\t_ context.Context,\n", g.req.name, g.pascal)
 	if standalone {
-		handler.WriteString("\t\t_ *collage.RenderContext,\n\t) (*collage.ActionResult, error) {\n\t\treturn collage.NoContent(http.StatusNoContent), nil\n\t}\n}\n")
+		handler.WriteString("\t\t_ *collage.RenderContext,\n\t) (*collage.ActionResult, error) {\n\t\treturn collage.Status(http.StatusNoContent), nil\n\t}\n}\n")
 	} else {
 		handler.WriteString("\t\trc *collage.RenderContext,\n\t) (*collage.ActionResult, error) {\n\t\treturn collage.RenderPage(rc.Page), nil\n\t}\n}\n")
 	}

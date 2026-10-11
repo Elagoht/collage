@@ -169,7 +169,7 @@ func cacheTestApp(t *testing.T, store Cache, enabled bool) (*App, http.Handler) 
 	page := NewPage("home").
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).
 		WithPath("en", "/").
-		WithDependency("homepage").
+		WithDependencyTags("homepage").
 		Static().
 		Build()
 	if err := app.RegisterPage(page); err != nil {
@@ -547,7 +547,7 @@ func TestDefaultContentSlot_IsTheSlotRegistrationFills(t *testing.T) {
 
 	page := NewPage("home").
 		WithLayouts(NewFragment("layout", "layouts/default.html").
-			WithSlot(DefaultContentSlot, true, false).
+			WithSlot(DefaultContentSlot, SlotRequired, SlotSingle).
 			Build()).
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).
 		WithPath("en", "/").
@@ -580,7 +580,7 @@ func TestRenderPath_ResultIsNameable(t *testing.T) {
 	page := NewPage("home").
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).
 		WithPath("en", "/").
-		WithDependency("homepage").
+		WithDependencyTags("homepage").
 		Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)

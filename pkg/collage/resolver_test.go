@@ -37,7 +37,7 @@ func sectionsApp(t *testing.T, order *[]string, mu *sync.Mutex, required, multip
 	}
 
 	section := func(name string) *collage.Fragment {
-		return collage.NewFragment("section-"+name, "section.html").WithData(collage.DataHandler(
+		return collage.NewFragment("section-"+name, "section.html").WithData(collage.LoadTagged(
 			func(context.Context, *collage.RenderContext) (string, []string, error) {
 				return name, []string{"section:" + name}, nil
 			})).
@@ -45,16 +45,23 @@ func sectionsApp(t *testing.T, order *[]string, mu *sync.Mutex, required, multip
 	}
 	known := map[string]*collage.Fragment{"hero": section("hero"), "posts": section("posts"), "about": section("about")}
 
-	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
-	builder := collage.NewFragment("sections", "sections.html").WithData(collage.DataHandler(
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
+	var rules []collage.SlotRule
+	if required {
+		rules = append(rules, collage.SlotRequired)
+	}
+	if !multiple {
+		rules = append(rules, collage.SlotSingle)
+	}
+	builder := collage.NewFragment("sections", "sections.html").WithData(collage.LoadTagged(
 		func(_ context.Context, rc *collage.RenderContext) (struct{}, []string, error) {
 			mu.Lock()
 			orderKey.Set(rc, append([]string(nil), (*order)...))
 			mu.Unlock()
 			return struct{}{}, nil, nil
 		})).
-		WithSlot("sections", required, multiple).
-		WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
+		WithSlot("sections", rules...).
+		WithSlotResolver("sections", func(_ context.Context, rc *collage.RenderContext) ([]*collage.Fragment, error) {
 			names, _ := orderKey.Get(rc)
 			var fragments []*collage.Fragment
 			for _, name := range names {
@@ -134,14 +141,14 @@ func TestSlotResolver_Rules(t *testing.T) {
 // One slot has one source of what is in it.
 func TestSlotResolver_CannotBeMixedWithBoundFragments(t *testing.T) {
 	child := collage.NewFragment("child", "child.html").Build()
-	resolve := func(*collage.RenderContext) ([]*collage.Fragment, error) { return nil, nil }
+	resolve := func(context.Context, *collage.RenderContext) ([]*collage.Fragment, error) { return nil, nil }
 
-	bound := collage.NewFragment("a", "a.html").WithSlot("s", false, true).
+	bound := collage.NewFragment("a", "a.html").WithSlot("s").
 		WithSlotFragment("s", child).WithSlotResolver("s", resolve)
 	if err := bound.BuildErr(); !errors.Is(err, collage.ErrSlotResolved) {
 		t.Errorf("resolver after a bound fragment: BuildErr() = %v, want ErrSlotResolved", err)
 	}
-	resolved := collage.NewFragment("b", "b.html").WithSlot("s", false, true).
+	resolved := collage.NewFragment("b", "b.html").WithSlot("s").
 		WithSlotResolver("s", resolve).WithSlotFragment("s", child)
 	if err := resolved.BuildErr(); !errors.Is(err, collage.ErrSlotResolved) {
 		t.Errorf("bound fragment after a resolver: BuildErr() = %v, want ErrSlotResolved", err)
@@ -152,5 +159,53 @@ func TestSlotResolver_CannotBeMixedWithBoundFragments(t *testing.T) {
 	}
 	if slot, ok := types.FragmentSlot(undeclared.Build(), "s"); !ok || slot.Required || !slot.AllowMultiple || slot.Resolve == nil {
 		t.Errorf("slot = %+v, want an optional multi-fill slot holding the resolver", slot)
+	}
+}
+
+// A resolver receives the render's context, so it reads a Vary dimension the
+// way a data handler does: the value a middleware declared picks the section.
+func TestSlotResolver_ReceivesTheRenderContext(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{
+			FS:   fstest.MapFS{"t/sections.html": {Data: []byte(`<main>{{slot "sections"}}</main>`)}},
+			Root: "t",
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := collage.Vary(r, "X-Section", r.Header.Get("X-Section")); err != nil {
+				t.Errorf("Vary: %v", err)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}); err != nil {
+		t.Fatalf("Use: %v", err)
+	}
+	known := map[string]*collage.Fragment{
+		"hero":  collage.NewInlineFragment("hero", `[hero]`).Build(),
+		"posts": collage.NewInlineFragment("posts", `[posts]`).Build(),
+	}
+	content := collage.NewFragment("sections", "sections.html").
+		WithSlotResolver("sections", func(ctx context.Context, _ *collage.RenderContext) ([]*collage.Fragment, error) {
+			name, _ := collage.Varied(ctx, "X-Section")
+			return []*collage.Fragment{known[name]}, nil
+		}).
+		Build()
+	page := collage.NewPage("home").WithContent(content).WithPath("en", "/").Dynamic().Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	for _, name := range []string{"hero", "posts"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("X-Section", name)
+		app.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "["+name+"]") {
+			t.Errorf("X-Section %s: %d %q", name, rec.Code, rec.Body.String())
+		}
 	}
 }

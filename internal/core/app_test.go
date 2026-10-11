@@ -493,7 +493,7 @@ func TestApp_RenderPathRejectsRedirect(t *testing.T) {
 	app := newTestApp(t, nil)
 
 	page := newHomePage()
-	page.Redirects = []*types.Redirect{{From: "/old", To: "/", Permanent: true}}
+	page.Redirects = []*types.Redirect{{From: "/old", To: "/", Status: http.StatusMovedPermanently}}
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}

@@ -23,7 +23,7 @@ type secretKey struct{}
 // straight from the context, or through collage.Varied.
 func cacheablePage(t *testing.T, vary bool, read func(context.Context, *collage.RenderContext) string) http.Handler {
 	t.Helper()
-	content := collage.NewFragment("secret", "s.html").WithData(collage.DataHandler(
+	content := collage.NewFragment("secret", "s.html").WithData(collage.LoadTagged(
 		func(ctx context.Context, rc *collage.RenderContext) (string, []string, error) {
 			return read(ctx, rc), nil, nil
 		})).
@@ -93,7 +93,7 @@ func TestSharedRender_DoesNotLeakContextBetweenReaders(t *testing.T) {
 // per-reader — is visible rather than silent.
 func TestSharedRender_DevModeWarnsOnHiddenContextRead(t *testing.T) {
 	var logs bytes.Buffer
-	content := collage.NewFragment("secret", "s.html").WithData(collage.DataHandler(
+	content := collage.NewFragment("secret", "s.html").WithData(collage.LoadTagged(
 		func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
 			secret, _ := ctx.Value(secretKey{}).(string)
 			return secret, nil, nil
@@ -131,8 +131,8 @@ func TestSharedRender_DevModeWarnsOnHiddenContextRead(t *testing.T) {
 // the middleware declaring it a Vary dimension — keeps each reader's value,
 // because each is its own cache entry.
 func TestSharedRender_VariedValueIsKeptPerReader(t *testing.T) {
-	h := cacheablePage(t, true, func(_ context.Context, rc *collage.RenderContext) string {
-		secret, _ := collage.Varied(rc, "X-Secret")
+	h := cacheablePage(t, true, func(ctx context.Context, _ *collage.RenderContext) string {
+		secret, _ := collage.Varied(ctx, "X-Secret")
 		return secret
 	})
 
@@ -224,8 +224,8 @@ func TestSharedDocument_DoesNotLeakContextBetweenReaders(t *testing.T) {
 
 // A varied value still reaches a cacheable document, one cache entry per value.
 func TestSharedDocument_VariedValueIsKeptPerReader(t *testing.T) {
-	h := cacheableDocument(t, true, true, func(_ context.Context, rc *collage.RenderContext) string {
-		secret, _ := collage.Varied(rc, "X-Secret")
+	h := cacheableDocument(t, true, true, func(ctx context.Context, _ *collage.RenderContext) string {
+		secret, _ := collage.Varied(ctx, "X-Secret")
 		return secret
 	})
 	if got := getDocSecret(h, "alice-secret"); got != "secret=alice-secret." {
@@ -249,9 +249,9 @@ func TestDynamicDocument_SeesContext(t *testing.T) {
 
 // A varied value reaches code that holds only a context — a cacheable document's
 // ctx, stripped of everything per-reader but the vary set.
-func TestVariedContext_InSharedDocument(t *testing.T) {
+func TestVaried_InSharedDocument(t *testing.T) {
 	h := cacheableDocument(t, true, true, func(ctx context.Context, _ *collage.RenderContext) string {
-		secret, _ := collage.VariedContext(ctx, "X-Secret")
+		secret, _ := collage.Varied(ctx, "X-Secret")
 		return secret
 	})
 	if got := getDocSecret(h, "alice-secret"); got != "secret=alice-secret." {
@@ -285,8 +285,8 @@ func (pageURLsLister) Init(_ context.Context, host collage.Host) error {
 }
 
 // StaticParams, reached through PageURLs from a shared document render, reads the
-// varied value with VariedContext: a URL set per tenant.
-func TestVariedContext_InStaticParams(t *testing.T) {
+// varied value with Varied: a URL set per tenant.
+func TestVaried_InStaticParams(t *testing.T) {
 	app, err := collage.New(&collage.Config{
 		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/s.html": {Data: []byte(`x`)}}, Root: "t"},
@@ -298,7 +298,7 @@ func TestVariedContext_InStaticParams(t *testing.T) {
 	}
 	post := collage.NewPage("post").WithContent(collage.NewFragment("p", "s.html").Build()).WithPath("en", "/posts/{slug}").
 		WithStaticParams(func(ctx context.Context, _ string) ([]map[string]string, error) {
-			tenant, _ := collage.VariedContext(ctx, "X-Secret")
+			tenant, _ := collage.Varied(ctx, "X-Secret")
 			return []map[string]string{{"slug": tenant + "-1"}, {"slug": tenant + "-2"}}, nil
 		}).Build()
 	if err := app.RegisterPage(post); err != nil {

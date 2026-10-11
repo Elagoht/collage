@@ -35,8 +35,20 @@ type SlotDefinition struct {
 	Resolve SlotResolverFunc
 }
 
-// SlotResolverFunc returns the fragments a slot holds for one render.
-type SlotResolverFunc func(rc *RenderContext) ([]*Fragment, error)
+// SlotResolverFunc returns the fragments a slot holds for one render. ctx is the
+// render's context, as a data handler receives it.
+type SlotResolverFunc func(ctx context.Context, rc *RenderContext) ([]*Fragment, error)
+
+// SlotRule constrains a declared slot. A slot with no rule is optional and holds
+// any number of fragments.
+type SlotRule int
+
+const (
+	// SlotRequired fails the render when nothing is bound to the slot.
+	SlotRequired SlotRule = iota + 1
+	// SlotSingle lets the slot hold one fragment at most.
+	SlotSingle
+)
 
 // Fragment is the framework's unit of composition: a template, an optional data
 // contract, and the slots it exposes to child fragments.
