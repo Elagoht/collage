@@ -65,6 +65,9 @@ func ReadConstructor(dir string) (Constructor, error) {
 		return Constructor{}, refuse("no Go package at the module root")
 	}
 	pkg := files[0].Name.Name
+	if pkg == "main" {
+		return Constructor{}, refuse("the module root is package main, which cannot be imported; make it the plugin's package")
+	}
 	types := map[string]*ast.TypeSpec{} // type name → its declaration
 	var fn *ast.FuncDecl
 	for _, f := range files {
@@ -163,6 +166,9 @@ func zeroArg(t ast.Expr, types map[string]*ast.TypeSpec) (string, error) {
 		}
 		switch ts.Type.(type) {
 		case *ast.StructType:
+			if !ast.IsExported(t.Name) {
+				return "", refuse(fmt.Sprintf("New takes %s, an unexported type another package cannot write; export it", t.Name))
+			}
 			return t.Name, nil
 		case *ast.InterfaceType:
 			return "nil", nil

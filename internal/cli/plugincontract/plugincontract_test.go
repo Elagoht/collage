@@ -113,6 +113,8 @@ func TestReadConstructor(t *testing.T) {
 		{decl: "func New(c context.Context) *Plugin { return nil }", bad: "another package"},
 		{decl: "func New(c *context.Context) *Plugin { return nil }", call: "p.New(nil)"},
 		{decl: "func New(e error) *Plugin { return nil }", call: "p.New(nil)"},
+		{decl: "type opts struct{}\nfunc New(o opts) *Plugin { return nil }", bad: "unexported"},
+		{decl: "type store interface{}\nfunc New(s store) *Plugin { return nil }", call: "p.New(nil)"},
 		{decl: "func New[T comparable]() *Plugin { return nil }", bad: "generic"},
 		{decl: "type G[T comparable] struct{}\nfunc New(g G) *Plugin { return nil }", bad: "generic"},
 		{decl: "func New(a, b string) *Plugin { return nil }", bad: "two parameters"},
@@ -149,6 +151,13 @@ func TestReadConstructorFiles(t *testing.T) {
 		c, err := ReadConstructor(dir)
 		if err != nil || c.Package != "p" || c.Call("p") != "p.New()" {
 			t.Fatalf("%+v, %v", c, err)
+		}
+	})
+	t.Run("package main", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{"main.go": src("main", newDecl)})
+		if _, err := ReadConstructor(dir); err == nil || !strings.Contains(err.Error(), "package main") {
+			t.Fatalf("err = %v", err)
 		}
 	})
 	t.Run("two packages", func(t *testing.T) {
