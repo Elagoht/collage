@@ -200,11 +200,6 @@ func (c *plainCache) Set(ctx context.Context, key string, content []byte, ttl ti
 	return c.inner.Set(ctx, key, content, ttl)
 }
 
-// Invalidate delegates to the wrapped cache.
-func (c *plainCache) Invalidate(ctx context.Context, tags []string) error {
-	return c.inner.Invalidate(ctx, tags)
-}
-
 // InvalidateKey delegates to the wrapped cache.
 func (c *plainCache) InvalidateKey(ctx context.Context, key string) error {
 	return c.inner.InvalidateKey(ctx, key)
@@ -220,19 +215,12 @@ type recordingPlugin struct {
 	events      []string
 	errs        []error
 	replaceHTML []byte
-	skipCache   bool
-	// cacheWritePages records the Page every OnCacheWrite carried, nils
-	// included: CacheWriteEvent.Page is nil for a document, and a test asserting
-	// that has to be able to see the nil rather than have it dropped.
-	cacheWritePages []*types.Page
 }
 
 var (
 	_ plugin.Plugin           = (*recordingPlugin)(nil)
-	_ plugin.PageResolvedHook = (*recordingPlugin)(nil)
 	_ plugin.BeforeRenderHook = (*recordingPlugin)(nil)
 	_ plugin.AfterRenderHook  = (*recordingPlugin)(nil)
-	_ plugin.CacheWriteHook   = (*recordingPlugin)(nil)
 	_ plugin.ErrorHook        = (*recordingPlugin)(nil)
 )
 
@@ -262,12 +250,6 @@ func (p *recordingPlugin) recorded() []string {
 	return append([]string(nil), p.events...)
 }
 
-// OnPageResolved records the hook.
-func (p *recordingPlugin) OnPageResolved(context.Context, *plugin.PageResolvedEvent) error {
-	p.record("PageResolved")
-	return nil
-}
-
 // OnBeforeRender records the hook.
 func (p *recordingPlugin) OnBeforeRender(context.Context, *plugin.BeforeRenderEvent) error {
 	p.record("BeforeRender")
@@ -285,18 +267,6 @@ func (p *recordingPlugin) OnAfterRender(_ context.Context, ev *plugin.AfterRende
 	return nil
 }
 
-// OnCacheWrite records the hook and suppresses the write when configured to.
-func (p *recordingPlugin) OnCacheWrite(_ context.Context, ev *plugin.CacheWriteEvent) error {
-	p.record("CacheWrite")
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.cacheWritePages = append(p.cacheWritePages, ev.Page)
-	if p.skipCache {
-		ev.Skip = true
-	}
-	return nil
-}
-
 // OnError records the hook along with the stage the failure came from, and keeps the
 // error itself so a test can assert which sentinel it carries.
 func (p *recordingPlugin) OnError(_ context.Context, ev *plugin.ErrorEvent) error {
@@ -305,14 +275,6 @@ func (p *recordingPlugin) OnError(_ context.Context, ev *plugin.ErrorEvent) erro
 	defer p.mu.Unlock()
 	p.errs = append(p.errs, ev.Err)
 	return nil
-}
-
-// cacheWritten returns a copy of the Page each OnCacheWrite carried, in dispatch
-// order, nils included.
-func (p *recordingPlugin) cacheWritten() []*types.Page {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]*types.Page(nil), p.cacheWritePages...)
 }
 
 // reportedErrors returns a copy of the errors passed to OnError, in dispatch order.
@@ -1026,7 +988,7 @@ func TestPluginHooksDispatchedInOrder(t *testing.T) {
 
 	env.get("/")
 
-	want := []string{"PageResolved", "BeforeRender", "AfterRender", "CacheWrite"}
+	want := []string{"BeforeRender", "AfterRender"}
 	got := recorder.recorded()
 	if len(got) != len(want) {
 		t.Fatalf("hooks = %v, want %v", got, want)
@@ -1038,7 +1000,7 @@ func TestPluginHooksDispatchedInOrder(t *testing.T) {
 	}
 }
 
-func TestCacheHitFiresPageResolvedButNotBeforeRender(t *testing.T) {
+func TestCacheHitFiresNoRenderHooks(t *testing.T) {
 	page := testPage("home", "/", types.StrategyStatic)
 	recorder := &recordingPlugin{}
 	env := newEnv(t, []*types.Page{page}, withPlugins(t, recorder))
@@ -1048,8 +1010,8 @@ func TestCacheHitFiresPageResolvedButNotBeforeRender(t *testing.T) {
 	env.get("/")
 
 	second := recorder.recorded()[before:]
-	if len(second) != 1 || second[0] != "PageResolved" {
-		t.Fatalf("hooks on a cache hit = %v, want only PageResolved: BeforeRenderHook documents that it does not fire when a cached render is served", second)
+	if len(second) != 0 {
+		t.Fatalf("hooks on a cache hit = %v, want none: BeforeRenderHook documents that it does not fire when a cached render is served", second)
 	}
 	if env.engine.pageCalls("home") != 1 {
 		t.Errorf("render calls = %d, want 1: the second request must have been a cache hit", env.engine.pageCalls("home"))
@@ -1076,30 +1038,6 @@ func TestAfterRenderHTMLReplacementReachesWireAndCache(t *testing.T) {
 	}
 	if env.engine.pageCalls("home") != 1 {
 		t.Errorf("render calls = %d, want 1", env.engine.pageCalls("home"))
-	}
-}
-
-func TestCacheWriteSkipPreventsWrite(t *testing.T) {
-	page := testPage("home", "/", types.StrategyStatic)
-	recorder := &recordingPlugin{skipCache: true}
-	env := newEnv(t, []*types.Page{page}, withPlugins(t, recorder))
-	env.engine.set("home", fakeRender{html: "<html>home</html>", tags: []string{"home"}})
-
-	res := env.get("/")
-
-	if res.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d: a skipped cache write still serves the page", res.Code, http.StatusOK)
-	}
-	if entries := env.cacheEntries(); entries != 0 {
-		t.Errorf("cache entries = %d, want 0 when a plugin skipped the write", entries)
-	}
-
-	keys, err := env.tracker.Resolve(context.Background(), []string{"home"})
-	if err != nil {
-		t.Fatalf("Resolve() = %v, want nil", err)
-	}
-	if len(keys) != 0 {
-		t.Errorf("tracked keys = %v, want none: nothing was written to track", keys)
 	}
 }
 
@@ -1131,7 +1069,7 @@ func TestOnErrorDispatchedForNotFoundAndServerError(t *testing.T) {
 
 func TestPluginHookErrorProduces500(t *testing.T) {
 	page := testPage("home", "/", types.StrategyStatic)
-	env := newEnv(t, []*types.Page{page}, withPlugins(t, &failingResolvePlugin{}))
+	env := newEnv(t, []*types.Page{page}, withPlugins(t, &failingBeforeRenderPlugin{}))
 
 	res := env.get("/")
 
@@ -1139,32 +1077,32 @@ func TestPluginHookErrorProduces500(t *testing.T) {
 		t.Fatalf("status = %d, want %d", res.Code, http.StatusInternalServerError)
 	}
 	if env.engine.totalCalls() != 0 {
-		t.Errorf("render calls = %d, want 0: a failing OnPageResolved stops before rendering", env.engine.totalCalls())
+		t.Errorf("render calls = %d, want 0: a failing OnBeforeRender stops before rendering", env.engine.totalCalls())
 	}
 }
 
-// failingResolvePlugin fails OnPageResolved, to exercise the hook-error path.
-type failingResolvePlugin struct{}
+// failingBeforeRenderPlugin fails OnBeforeRender, to exercise the hook-error path.
+type failingBeforeRenderPlugin struct{}
 
 var (
-	_ plugin.Plugin           = (*failingResolvePlugin)(nil)
-	_ plugin.PageResolvedHook = (*failingResolvePlugin)(nil)
+	_ plugin.Plugin           = (*failingBeforeRenderPlugin)(nil)
+	_ plugin.BeforeRenderHook = (*failingBeforeRenderPlugin)(nil)
 )
 
 // Name identifies the plugin.
-func (p *failingResolvePlugin) Name() string { return "failing-resolve" }
+func (p *failingBeforeRenderPlugin) Name() string { return "failing-before-render" }
 
 // Version reports the plugin's version.
-func (p *failingResolvePlugin) Version() string { return "1.0.0" }
+func (p *failingBeforeRenderPlugin) Version() string { return "1.0.0" }
 
 // Init does nothing.
-func (p *failingResolvePlugin) Init(context.Context, plugin.Host) error { return nil }
+func (p *failingBeforeRenderPlugin) Init(context.Context, plugin.Host) error { return nil }
 
 // Shutdown does nothing.
-func (p *failingResolvePlugin) Shutdown(context.Context) error { return nil }
+func (p *failingBeforeRenderPlugin) Shutdown(context.Context) error { return nil }
 
-// OnPageResolved always fails.
-func (p *failingResolvePlugin) OnPageResolved(context.Context, *plugin.PageResolvedEvent) error {
+// OnBeforeRender always fails.
+func (p *failingBeforeRenderPlugin) OnBeforeRender(context.Context, *plugin.BeforeRenderEvent) error {
 	return errBoom
 }
 
@@ -1893,7 +1831,7 @@ func TestPageRequestUnaffectedByMountsBeingConfigured(t *testing.T) {
 		t.Errorf("body = %q, want the rendered page", got)
 	}
 
-	want := []string{"PageResolved", "BeforeRender", "AfterRender", "CacheWrite"}
+	want := []string{"BeforeRender", "AfterRender"}
 	if got := recorder.recorded(); len(got) != len(want) {
 		t.Fatalf("hooks = %v, want %v", got, want)
 	} else {

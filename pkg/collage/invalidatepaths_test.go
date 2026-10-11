@@ -26,7 +26,11 @@ func (p *purger) Shutdown(context.Context) error           { return nil }
 func (p *purger) OnCacheInvalidate(_ context.Context, ev *collage.CacheInvalidateEvent) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.paths = append(p.paths, ev.Paths)
+	var paths []string
+	for _, e := range ev.Entries {
+		paths = append(paths, e.Path)
+	}
+	p.paths = append(p.paths, paths)
 	return nil
 }
 
@@ -76,7 +80,6 @@ func TestInvalidation_NamesThePaths(t *testing.T) {
 type entryRecorder struct {
 	mu      sync.Mutex
 	entries [][]collage.InvalidatedEntry
-	paths   [][]string
 }
 
 func (p *entryRecorder) Name() string                             { return "test/entries" }
@@ -87,11 +90,10 @@ func (p *entryRecorder) OnCacheInvalidate(_ context.Context, ev *collage.CacheIn
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.entries = append(p.entries, ev.Entries)
-	p.paths = append(p.paths, ev.Paths)
 	return nil
 }
 
-// One path cached under two hosts is two entries; Paths still names it once.
+// One path cached under two hosts is two entries.
 func TestInvalidation_EntriesCarryTheHost(t *testing.T) {
 	p := &entryRecorder{}
 	app, err := collage.New(&collage.Config{
@@ -124,8 +126,5 @@ func TestInvalidation_EntriesCarryTheHost(t *testing.T) {
 	want := "[{acme.test /posts/a} {acme.test /posts/b} {globex.test /posts/a}]"
 	if got != want {
 		t.Errorf("Entries = %s, want %s", got, want)
-	}
-	if paths := strings.Join(p.paths[0], ","); paths != "/posts/a,/posts/b" {
-		t.Errorf("Paths = %q, want /posts/a,/posts/b", paths)
 	}
 }

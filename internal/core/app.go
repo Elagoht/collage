@@ -1290,12 +1290,10 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 		a.data.Invalidate(tags)
 	}
 
-	// The URL paths of what is being dropped, read before the keys are forgotten:
+	// The pages and documents being dropped, read before the keys are forgotten:
 	// every cached entry carries a tag naming the path it was rendered for, and
 	// one naming the host it was cached for.
-	var paths []string
 	var entries []plugin.InvalidatedEntry
-	seenPath := make(map[string]bool)
 	seenEntry := make(map[plugin.InvalidatedEntry]bool)
 	for _, key := range keys {
 		keyTags, err := a.tracker.Tags(ctx, key)
@@ -1313,16 +1311,11 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 		if entry.Path == "" {
 			continue
 		}
-		if !seenPath[entry.Path] {
-			seenPath[entry.Path] = true
-			paths = append(paths, entry.Path)
-		}
 		if !seenEntry[entry] {
 			seenEntry[entry] = true
 			entries = append(entries, entry)
 		}
 	}
-	slices.Sort(paths)
 	slices.SortFunc(entries, func(x, y plugin.InvalidatedEntry) int {
 		if c := strings.Compare(x.Host, y.Host); c != 0 {
 			return c
@@ -1358,7 +1351,6 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 	// caller's slice through it.
 	if err := a.plugins.CacheInvalidate(ctx, &plugin.CacheInvalidateEvent{
 		Tags:    append([]string(nil), tags...),
-		Paths:   paths,
 		Entries: entries,
 	}); err != nil {
 		failures = errors.Join(failures, err)
@@ -1462,11 +1454,8 @@ func (a *App) renderResolved(
 	// unannotated where it annotated, with image URLs the server had rewritten left
 	// pointing at the origin — and nothing anywhere said so.
 	//
-	// PageResolved is deliberately not dispatched. Its contract is "once per
-	// request, immediately after the router resolves it", and a build is not a
-	// request; firing it would make every plugin counting requests count renders
-	// that nobody asked for. BeforeRender and AfterRender are about a render, which
-	// this unambiguously is, and they fire as a pair so a plugin that sets something
+	// BeforeRender and AfterRender are about a render, which this unambiguously
+	// is, and they fire as a pair so a plugin that sets something
 	// up in one and uses it in the other is not handed half of each.
 	if err := a.plugins.BeforeRender(ctx, &plugin.BeforeRenderEvent{
 		Context: rc,

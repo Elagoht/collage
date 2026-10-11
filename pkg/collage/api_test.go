@@ -1,9 +1,11 @@
 package collage_test
 
 import (
+	"context"
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
@@ -35,4 +37,19 @@ func TestAliasedTypes_MethodAllowlist(t *testing.T) {
 			t.Errorf("%v methods = %v, want %v", c.typ, got, c.want)
 		}
 	}
+}
+
+// A store that only gets, sets and drops entries is a Cache; invalidating tags
+// belongs to a TaggedCache, the only kind the framework invalidates.
+type getSetCache struct{}
+
+func (getSetCache) Get(context.Context, string) ([]byte, string, bool) { return nil, "", false }
+func (getSetCache) Set(context.Context, string, []byte, time.Duration) (string, error) {
+	return "", nil
+}
+func (getSetCache) InvalidateKey(context.Context, string) error { return nil }
+func (getSetCache) Clear(context.Context) error                 { return nil }
+
+func TestCache_GetSetIsEnough(t *testing.T) {
+	var _ collage.Cache = getSetCache{}
 }

@@ -24,8 +24,8 @@
 // not a sandbox boundary. The goal is to make accidental mutation hard and
 // deliberate mutation obvious — not to make mutation impossible, which Go's type
 // system cannot give us anyway without copying. Where mutation is actually
-// intended, it is explicit: AfterRenderEvent.HTML, and CacheWriteEvent's
-// Skip/TTL/Tags.
+// intended, it is explicit: AfterRenderEvent.HTML and
+// DocumentRenderedEvent.Body.
 //
 // This package must not import internal/render or pkg/collage: it is composed by
 // the app layer on top of render, not the other way around, and internal packages

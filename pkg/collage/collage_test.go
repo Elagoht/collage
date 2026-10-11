@@ -268,7 +268,7 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 // compile. It imports nothing but the standard library.
 // ---------------------------------------------------------------------------
 
-// hookPlugin implements Plugin and every one of the six hooks, recording which ones
+// hookPlugin implements Plugin and every one of the four hooks, recording which ones
 // fired and appending a marker to the rendered HTML.
 type hookPlugin struct {
 	mu    sync.Mutex
@@ -277,10 +277,8 @@ type hookPlugin struct {
 
 var (
 	_ Plugin              = (*hookPlugin)(nil)
-	_ PageResolvedHook    = (*hookPlugin)(nil)
 	_ BeforeRenderHook    = (*hookPlugin)(nil)
 	_ AfterRenderHook     = (*hookPlugin)(nil)
-	_ CacheWriteHook      = (*hookPlugin)(nil)
 	_ CacheInvalidateHook = (*hookPlugin)(nil)
 	_ ErrorHook           = (*hookPlugin)(nil)
 )
@@ -306,12 +304,6 @@ func (p *hookPlugin) Shutdown(context.Context) error {
 	return nil
 }
 
-// OnPageResolved records the call.
-func (p *hookPlugin) OnPageResolved(_ context.Context, _ *PageResolvedEvent) error {
-	p.record("OnPageResolved")
-	return nil
-}
-
 // OnBeforeRender records the call.
 func (p *hookPlugin) OnBeforeRender(_ context.Context, _ *BeforeRenderEvent) error {
 	p.record("OnBeforeRender")
@@ -323,12 +315,6 @@ func (p *hookPlugin) OnBeforeRender(_ context.Context, _ *BeforeRenderEvent) err
 func (p *hookPlugin) OnAfterRender(_ context.Context, ev *AfterRenderEvent) error {
 	p.record("OnAfterRender")
 	ev.HTML = append(ev.HTML, []byte("<!--plugin-->")...)
-	return nil
-}
-
-// OnCacheWrite records the call.
-func (p *hookPlugin) OnCacheWrite(_ context.Context, _ *CacheWriteEvent) error {
-	p.record("OnCacheWrite")
 	return nil
 }
 
@@ -407,8 +393,8 @@ func TestPlugin_ImplementableFromThePublicPackage(t *testing.T) {
 	}
 
 	for _, hook := range []string{
-		"Init", "OnPageResolved", "OnBeforeRender", "OnAfterRender",
-		"OnCacheWrite", "OnCacheInvalidate", "OnError", "Shutdown",
+		"Init", "OnBeforeRender", "OnAfterRender",
+		"OnCacheInvalidate", "OnError", "Shutdown",
 	} {
 		if got := hooks.count(hook); got == 0 {
 			t.Errorf("%s never fired", hook)

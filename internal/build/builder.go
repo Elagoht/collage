@@ -12,9 +12,8 @@
 // RenderPath and RenderDocumentPath run plugin Init first, memoised, and fire
 // BeforeRender and AfterRender around every page and DocumentRendered on every
 // document, so what a plugin contributes to a served page it contributes to a built
-// one. What does not fire for those renders is what is about a request or a cache
-// rather than a render: PageResolvedHook (a build is not a request) and
-// CacheWriteHook (a build writes files, not cache entries).
+// one. What does not fire for those renders is what is about a request rather than
+// a render.
 //
 // Once every file is written, a Renderer that is a ResponseCapturer — the
 // application — is asked for each file's path twice through its real handler, to

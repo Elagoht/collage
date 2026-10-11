@@ -221,19 +221,15 @@ type Command = plugin.Command
 // of collage's own.
 type RequestHook = plugin.RequestHook
 
-// RouteOf reports what the request carrying ctx resolved to: its kind — "page",
-// "document", "action", "mount", "handler" — and its name, the registered name or
-// the prefix. For a metric or a trace that must not be labelled with raw paths;
-// Metrics.HTTPResponse and a RequestHook's context carry it.
-func RouteOf(ctx context.Context) (kind, name string) { return httpx.RouteOf(ctx) }
-
 // Route is what a request resolved to: its kind, its registered name, the path
 // pattern it was registered with ("/blog/{slug}", no locale prefix) and the locale.
 type Route = httpx.Route
 
 // RouteInfo reports what the request carrying ctx resolved to, pattern and locale
 // included — a bounded label for a span or a metric, for pages, documents and
-// actions alike. The zero Route means it resolved to nothing.
+// actions alike. Kind is "page", "document", "action", "mount" or "handler"; Name
+// is the registered name, or the prefix of a mount or handler. The zero Route
+// means it resolved to nothing, or has not yet.
 func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
 
 // ClientIP is the address of the client r comes from. It is RemoteAddr's host,
@@ -267,23 +263,14 @@ type DrainHook = plugin.DrainHook
 // cancelled when the drain starts. It must not block: start goroutines.
 type ServeHook = plugin.ServeHook
 
-// PageResolvedHook is implemented by a plugin that wants to observe a request
-// having been resolved to a page, before rendering begins.
-type PageResolvedHook = plugin.PageResolvedHook
-
 // BeforeRenderHook is implemented by a plugin that wants to observe a render about
-// to start. Unlike PageResolvedHook it does not fire when a cached render is served
+// to start. It does not fire when a cached render is served
 // instead of a fresh one.
 type BeforeRenderHook = plugin.BeforeRenderHook
 
 // AfterRenderHook is implemented by a plugin that wants to observe, or post-process,
 // a render that just completed. It may replace the event's HTML.
 type AfterRenderHook = plugin.AfterRenderHook
-
-// CacheWriteHook is implemented by a plugin that wants to observe, or adjust, a
-// render result about to be written to the cache. It may suppress the write or
-// change its TTL and tags.
-type CacheWriteHook = plugin.CacheWriteHook
 
 // CacheInvalidateHook is implemented by a plugin that wants to observe a cache
 // invalidation.
@@ -357,9 +344,6 @@ type DocumentRenderedHook = plugin.DocumentRenderedHook
 // DocumentRenderedEvent describes a document that has just produced its body.
 type DocumentRenderedEvent = plugin.DocumentRenderedEvent
 
-// PageResolvedEvent describes a request having been resolved to a page.
-type PageResolvedEvent = plugin.PageResolvedEvent
-
 // BeforeRenderEvent describes a render about to start.
 type BeforeRenderEvent = plugin.BeforeRenderEvent
 
@@ -381,12 +365,6 @@ type PersonaliseHook = plugin.PersonaliseHook
 
 // PersonaliseEvent is one HTML response on its way to one reader.
 type PersonaliseEvent = plugin.PersonaliseEvent
-
-// CacheWriteEvent describes a render result about to be written to the cache, for
-// a page or a document alike. A plugin may set its Skip field or adjust its TTL
-// and Tags. Its Page field is nil for a document, so a hook that reads it must
-// check it first.
-type CacheWriteEvent = plugin.CacheWriteEvent
 
 // CacheInvalidateEvent describes a cache invalidation that has just happened.
 type CacheInvalidateEvent = plugin.CacheInvalidateEvent

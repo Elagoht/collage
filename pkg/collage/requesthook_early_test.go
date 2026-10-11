@@ -14,7 +14,7 @@ import (
 
 // earlyRecord is what recordingHook saw of one request: its escaped path, the
 // client ClientIP named inside OnRequest, the status finish heard, and the
-// route RouteOf names, read in finish from the context OnRequest was handed — as
+// route RouteInfo names, read in finish from the context OnRequest was handed — as
 // elagoht/otel names its span.
 type earlyRecord struct {
 	path   string
@@ -38,9 +38,9 @@ func (p *recordingHook) OnRequest(r *http.Request) (context.Context, func(int)) 
 	ctx := r.Context()
 	path, client := r.URL.EscapedPath(), collage.ClientIP(r).String()
 	return ctx, func(status int) {
-		kind, name := collage.RouteOf(ctx)
+		info := collage.RouteInfo(ctx)
 		p.mu.Lock()
-		p.records = append(p.records, earlyRecord{path: path, client: client, status: status, route: kind + ":" + name})
+		p.records = append(p.records, earlyRecord{path: path, client: client, status: status, route: info.Kind + ":" + info.Name})
 		p.mu.Unlock()
 	}
 }
@@ -114,7 +114,7 @@ func TestRequestHook_SeesEarlyRejections(t *testing.T) {
 				t.Errorf("ClientIP inside OnRequest = %q, want the forwarded 9.9.9.9", got[0].client)
 			}
 			if got[0].route != tt.route {
-				t.Errorf("RouteOf in finish = %q, want %q", got[0].route, tt.route)
+				t.Errorf("RouteInfo in finish = %q, want %q", got[0].route, tt.route)
 			}
 			if strings.Contains(tt.target, "%2f") && !strings.Contains(got[0].path, "%2f") {
 				t.Errorf("hook saw path %q, want the raw %%2f", got[0].path)

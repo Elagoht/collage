@@ -84,9 +84,6 @@ var _ Plugin = (*testPlugin)(nil)
 type hookPlugin struct {
 	testPlugin
 
-	pageResolvedErr    error
-	pageResolvedPanics bool
-
 	beforeRenderErr    error
 	beforeRenderPanics bool
 
@@ -94,23 +91,11 @@ type hookPlugin struct {
 	afterRenderPanics bool
 	afterRenderMutate func(ev *AfterRenderEvent)
 
-	cacheWriteErr    error
-	cacheWritePanics bool
-	cacheWriteMutate func(ev *CacheWriteEvent)
-
 	cacheInvalidateErr    error
 	cacheInvalidatePanics bool
 
 	errorErr    error
 	errorPanics bool
-}
-
-func (p *hookPlugin) OnPageResolved(ctx context.Context, ev *PageResolvedEvent) error {
-	p.log.add("OnPageResolved:" + p.name)
-	if p.pageResolvedPanics {
-		panic(errPluginPanic)
-	}
-	return p.pageResolvedErr
 }
 
 func (p *hookPlugin) OnBeforeRender(ctx context.Context, ev *BeforeRenderEvent) error {
@@ -132,17 +117,6 @@ func (p *hookPlugin) OnAfterRender(ctx context.Context, ev *AfterRenderEvent) er
 	return p.afterRenderErr
 }
 
-func (p *hookPlugin) OnCacheWrite(ctx context.Context, ev *CacheWriteEvent) error {
-	p.log.add("OnCacheWrite:" + p.name)
-	if p.cacheWritePanics {
-		panic(errPluginPanic)
-	}
-	if p.cacheWriteMutate != nil {
-		p.cacheWriteMutate(ev)
-	}
-	return p.cacheWriteErr
-}
-
 func (p *hookPlugin) OnCacheInvalidate(ctx context.Context, ev *CacheInvalidateEvent) error {
 	p.log.add("OnCacheInvalidate:" + p.name)
 	if p.cacheInvalidatePanics {
@@ -160,10 +134,8 @@ func (p *hookPlugin) OnError(ctx context.Context, ev *ErrorEvent) error {
 }
 
 var (
-	_ PageResolvedHook    = (*hookPlugin)(nil)
 	_ BeforeRenderHook    = (*hookPlugin)(nil)
 	_ AfterRenderHook     = (*hookPlugin)(nil)
-	_ CacheWriteHook      = (*hookPlugin)(nil)
 	_ CacheInvalidateHook = (*hookPlugin)(nil)
 	_ ErrorHook           = (*hookPlugin)(nil)
 )
@@ -425,17 +397,11 @@ func TestRegistry_PluginWithNoHooksIsNeverCalled(t *testing.T) {
 	mustRegister(t, r, hooked)
 
 	ctx := context.Background()
-	if err := r.PageResolved(ctx, &PageResolvedEvent{}); err != nil {
-		t.Fatalf("PageResolved() error = %v, want nil", err)
-	}
 	if err := r.BeforeRender(ctx, &BeforeRenderEvent{}); err != nil {
 		t.Fatalf("BeforeRender() error = %v, want nil", err)
 	}
 	if err := r.AfterRender(ctx, &AfterRenderEvent{}); err != nil {
 		t.Fatalf("AfterRender() error = %v, want nil", err)
-	}
-	if err := r.CacheWrite(ctx, &CacheWriteEvent{}); err != nil {
-		t.Fatalf("CacheWrite() error = %v, want nil", err)
 	}
 	if err := r.CacheInvalidate(ctx, &CacheInvalidateEvent{}); err != nil {
 		t.Fatalf("CacheInvalidate() error = %v, want nil", err)
@@ -449,8 +415,8 @@ func TestRegistry_PluginWithNoHooksIsNeverCalled(t *testing.T) {
 			t.Fatalf("plugin implementing no hooks was called: %q", call)
 		}
 	}
-	if len(log.get()) != 6 {
-		t.Fatalf("hooked plugin call count = %d, want 6 (one per hook)", len(log.get()))
+	if len(log.get()) != 4 {
+		t.Fatalf("hooked plugin call count = %d, want 4 (one per hook)", len(log.get()))
 	}
 }
 
