@@ -103,6 +103,10 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 
 	app, err := collage.New(&collage.Config{
 		DevMode: devMode,
+		// The origin readers reach the site at, "https://example.com", for
+		// the absolute URLs a sitemap, a canonical link or a feed is made
+		// of. Empty is fine until a plugin that writes one is added.
+		BaseURL: os.Getenv("BASE_URL"),
 		Server: collage.ServerConfig{
 			Host: envString("HOST", "localhost"),
 			Port: port,

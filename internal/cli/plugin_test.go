@@ -183,14 +183,14 @@ func TestPluginAdd_NoGoMod(t *testing.T) {
 }
 
 func TestPlugin_Usage(t *testing.T) {
-	for _, args := range [][]string{nil, {"frobnicate"}, {"add"}, {"add", "a/b", "c/d"}, {"add", "not a ref"}} {
+	for _, args := range [][]string{nil, {"frobnicate"}, {"add"}, {"del"}, {"add", "a/b", "@nope"}, {"add", "not a ref"}, {"del", "a/b", "x"}} {
 		c, _, errOut := testCLI()
 		if code := c.Run(context.Background(), append([]string{"plugin"}, args...)); code != 2 {
 			t.Errorf("plugin %v = %d, want 2\n%s", args, code, errOut)
 		}
 	}
 	c, out, _ := testCLI()
-	if code := c.Run(context.Background(), []string{"help", "plugin"}); code != 0 || !strings.Contains(out.String(), "collage plugin add <owner/name | module path>[@version] [-dir dir]") {
+	if code := c.Run(context.Background(), []string{"help", "plugin"}); code != 0 || !strings.Contains(out.String(), "collage plugin add <plugin>... [-dir dir]") {
 		t.Errorf("help plugin = %d\n%s", code, out)
 	}
 	c, out, _ = testCLI()

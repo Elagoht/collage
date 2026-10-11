@@ -155,7 +155,7 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		fmt.Fprintf(c.stdout(), "collage version %s\n", Version)
 		return 0
 	case "new":
-		return c.runNew(rest)
+		return c.runNew(ctx, rest)
 	case "add":
 		return c.runAdd(rest)
 	case "plugin":
@@ -285,7 +285,7 @@ func (c *CLI) printCommandHelp(w io.Writer, name string) error {
 		fmt.Fprint(w, addUsage)
 		return nil
 	case "plugin":
-		fmt.Fprint(w, pluginUsage)
+		fmt.Fprint(w, pluginUsage())
 		return nil
 	case "dev":
 		fmt.Fprint(w, devUsage)
