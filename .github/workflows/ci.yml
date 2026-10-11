@@ -230,3 +230,13 @@ jobs:
           go work init . ../collage
           go build ./...
           go test ./...
+
+      # The contract "collage plugin add" enforces: a manifest, a New that can be
+      # called with nothing configured, and a Name() that matches it. A library
+      # (collage-paginate) has no collage.json and is not a plugin.
+      - name: plugin contract
+        working-directory: ${{ matrix.plugin }}
+        run: |
+          if [ -f collage.json ]; then
+            go run ../collage/cmd/collage plugin check -run .
+          fi
