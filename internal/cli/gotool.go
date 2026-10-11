@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 )
@@ -35,6 +36,23 @@ func (c *CLI) listModule(ctx context.Context, dir, path string) (moduleInfo, err
 		return moduleInfo{}, err
 	}
 	return m, nil
+}
+
+// downloadModule is "go mod download -json path@version" in dir: where the
+// go tool put the module's source.
+func (c *CLI) downloadModule(ctx context.Context, dir string, m moduleInfo) (moduleInfo, error) {
+	out, errOut, err := c.goOutput(ctx, dir, "mod", "download", "-json", "--", m.Path+"@"+m.Version)
+	if err != nil {
+		return moduleInfo{}, goError(errOut, err)
+	}
+	var got moduleInfo
+	if err := json.Unmarshal(out, &got); err != nil {
+		return moduleInfo{}, err
+	}
+	if got.Dir == "" {
+		return moduleInfo{}, fmt.Errorf("go mod download gave no directory for %s@%s", m.Path, m.Version)
+	}
+	return got, nil
 }
 
 // fileSnapshot is the content of files before a change, so a failed change

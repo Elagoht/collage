@@ -19,7 +19,9 @@
   - a `collage.json` naming it `owner/name`;
   - a `New` that can be called with nothing configured;
   - with `-release`, a release tag;
-  - with `-run`, a throwaway application built with it.
+  - with `-run`, that `New`, called as `add` writes it, runs and returns a
+    plugin whose `Name()` is the manifest's name. It does not configure or
+    start the plugin.
 - **The manifest gains `requires`, `order` and `setup`.**
 - **`collage.FindPlugin[T](host)`.** It finds another of the application's
   plugins by type, from `Configure` or `Init`.

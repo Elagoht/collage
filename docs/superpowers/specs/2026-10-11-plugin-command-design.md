@@ -52,7 +52,8 @@ collage plugin check [dir]
   (`github.com/kisi/repo`, `gitlab.com/x/y`). It is used as written.
 
 `@version` is anything `go get` accepts (`@v0.1.2`, `@latest`). The default is
-`@latest`.
+`@upgrade`: it never moves a module down (from a prerelease above the latest
+release, say), and for a module `go.mod` does not have yet it is `@latest`.
 
 All three commands run in the project directory, the one that holds `go.mod`.
 `add` and `del` refuse to run outside a module.
@@ -85,9 +86,12 @@ A module is a collage plugin that `add` accepts when all of these hold:
      and `nil` for a pointer, interface, slice, map or func type
      (`uploads.New(nil)`).
 
-   Other shapes are refused, such as two parameters or a basic type. New must
-   return exactly one result. The plugin must work with that call and an empty
-   config section; this is the author's promise. `check -run` tests it.
+   Other shapes are refused, such as two parameters, a basic type or an
+   unexported struct type, which another package cannot write. New must return
+   exactly one result. A module root in `package main` is refused, since it
+   cannot be imported. New must succeed with that call; Configure or Init may
+   refuse a required field an empty section lacks, which is the startup error
+   the user then sees. `check -run` tests the call (see §6).
 5. **The module is released.** The resolved version is a semver tag. A
    pseudo-version (`v0.0.0-2026…-abcdef`) is refused, because an untagged repo
    gives no stable version to pin.
@@ -251,10 +255,15 @@ Nothing is written until the module has passed its checks.
 - Rule 5 (a release tag) is checked only with `-release`, which needs git: it
   reads the tags at `HEAD`.
 - `-run` also builds a throwaway program with `go run` against the repo. The
-  program calls the `New` that `add` would write, builds a `collage.App` with an
-  empty config section for the plugin, and checks that `Name()` equals the
-  manifest's `name` and that `New` succeeds. Required plugins are taken from the
-  module's own requirements; one that isn't there is skipped with a note.
+  program compiles the exact call `add` would write, in the same
+  `collage.Plugin` context `plugins.go` gives it, runs it, and checks that
+  `Name()` equals the manifest's `name`. It fails on a build error, a panic in
+  `New` or a `Name()` mismatch. It does not call `collage.New` or `Start`, so it
+  neither configures nor initialises the plugin: a required setting that an
+  empty config section lacks is the plugin's own startup error, not a contract
+  failure. The program imports only the checked plugin and collage, so required
+  plugins play no part. `go.mod`, `go.sum` and `go.work.sum` are put back
+  afterwards, and the program's directory is removed.
 - Our CI matrix runs `collage plugin check -run` on every plugin's latest tag.
   `collage-paginate` is a library, not a plugin, and is skipped.
 

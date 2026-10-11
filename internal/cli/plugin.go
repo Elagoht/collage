@@ -39,8 +39,10 @@ del removes the plugin from plugins.go and plugins-config.json, printing a
 section that held settings, and runs go mod tidy.
 
 check checks a plugin repository against the contract add enforces; with
--release it also wants a release tag at HEAD, and with -run it builds the
-plugin into a throwaway application.
+-release it also wants a release tag at HEAD, and with -run it calls New as add
+would write it and checks that Name() is the name collage.json gives. -run
+neither configures nor starts the plugin: a setting it requires is reported
+when the application starts.
 
   -dir   the directory of the project's package main (default ".")
 

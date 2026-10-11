@@ -118,26 +118,18 @@ func TestHighestReleaseTag(t *testing.T) {
 	}
 }
 
-func TestModFlag(t *testing.T) {
-	dir := t.TempDir()
-	if got := modFlag(dir, true); len(got) != 0 {
-		t.Errorf("not vendored: %v", got)
-	}
-	writeFiles(t, dir, map[string]string{"vendor/modules.txt": "# x\n"})
-	if got := modFlag(dir, false); len(got) != 0 {
-		t.Errorf("vendored, no requires: %v; want it built from vendor", got)
-	}
-	if got := modFlag(dir, true); len(got) != 1 || got[0] != "-mod=readonly" {
-		t.Errorf("vendored, requires: %v", got)
-	}
-}
-
-func TestCheckProgram_RequiredPluginsGetAConfigSection(t *testing.T) {
-	src := checkProgram("acme/greet", "github.com/acme/collage-greet", plugincontract.Constructor{Package: "greet"},
-		[]requiredPlugin{{Name: "acme/other", Path: "github.com/acme/collage-other", Constructor: plugincontract.Constructor{Package: "other", Arg: "nil"}}})
-	for _, want := range []string{`"acme/other": json.RawMessage("{}")`, `"acme/greet": json.RawMessage("{}")`, "req0.New(nil), p}"} {
+// Final review I3: the program -run builds compiles the call add writes,
+// where plugins.go has it, and starts no application.
+func TestCheckProgram(t *testing.T) {
+	src := checkProgram("acme/greet", "github.com/acme/collage-greet", plugincontract.Constructor{Package: "greet", Arg: "Options"})
+	for _, want := range []string{"var p collage.Plugin = plugin.New(plugin.Options{})", `p.Name() != "acme/greet"`} {
 		if !strings.Contains(src, want) {
 			t.Errorf("program lacks %s:\n%s", want, src)
+		}
+	}
+	for _, unwanted := range []string{"collage.New(", ".Start()"} {
+		if strings.Contains(src, unwanted) {
+			t.Errorf("program has %s:\n%s", unwanted, src)
 		}
 	}
 	if _, err := parser.ParseFile(token.NewFileSet(), "main.go", src, 0); err != nil {
@@ -149,30 +141,42 @@ func TestPluginCheck_Run(t *testing.T) {
 	needGo(t)
 	// The offline env; acme/other is served for the plugin that requires it.
 	fakeProxy(t, fixturePlugin("acme", "other", "v0.1.0", "func New(o *Options) *Plugin { return &Plugin{} }", ""))
+	const passed = "acme/greet: New runs, and Name() matches collage.json"
 	for _, tc := range []struct {
-		name, decl, want string
-		code             int
-		manifest, req    string
-		vendor           bool
+		name, decl, want, errWant string
+		code                      int
+		manifest, req             string
+		vendor                    bool
+		edit                      func(src string) string
 	}{
-		{name: "works", decl: "func New() *Plugin { return &Plugin{} }", want: "acme/greet: builds and starts"},
-		{name: "options", decl: "func New(o Options) *Plugin { return &Plugin{opts: o} }", want: "acme/greet: builds and starts"},
-		{name: "init fails", decl: "func New() *Plugin { return &Plugin{} }\nfunc init() { failInit = true }\nvar failInit bool", want: "init", code: 1},
-		{name: "requires, absent", decl: "func New() *Plugin { return &Plugin{} }", manifest: `"requires": ["acme/other"]`,
-			want: "acme/greet: acme/other is not among its requirements; checked without it\nacme/greet: builds and starts"},
+		{name: "works", decl: "func New() *Plugin { return &Plugin{} }", want: passed},
+		{name: "options", decl: "func New(o Options) *Plugin { return &Plugin{opts: o} }", want: passed},
+		// A required field an empty section lacks is the plugin's startup
+		// error, not a contract failure: -run neither configures nor starts.
+		{name: "Init refuses an empty config", decl: "func New() *Plugin { return &Plugin{} }", want: passed,
+			edit: func(src string) string {
+				src = strings.Replace(src, "opts, err := collage.PluginConfig(host, p.opts)",
+					"if p.opts.Greeting == \"\" { return errors.New(\"greeting is required\") }\n\topts, err := collage.PluginConfig(host, p.opts)", 1)
+				return strings.Replace(src, `"context"`, "\"context\"\n\t\"errors\"", 1)
+			}},
+		{name: "New panics", decl: "func New() *Plugin { panic(\"New exploded\") }", code: 1, errWant: "New exploded"},
+		{name: "Name mismatch", decl: "func New() *Plugin { return &Plugin{} }", code: 1, errWant: `Name() is "acme/other", collage.json says "acme/greet"`,
+			edit: func(src string) string {
+				return strings.Replace(src, `return "acme/greet" }`, `return "acme/other" }`, 1)
+			}},
+		{name: "New returns no plugin", decl: "func New() int { return 0 }", code: 1, errWant: "collage.Plugin"},
+		{name: "requires, absent", decl: "func New() *Plugin { return &Plugin{} }", manifest: `"requires": ["acme/other"]`, want: passed},
 		{name: "requires, present", decl: "func New() *Plugin { return &Plugin{} }", manifest: `"requires": ["acme/other"]`,
-			req: "require github.com/acme/collage-other v0.1.0\n\n", want: "acme/greet: builds and starts"},
-		// go list cannot compute "all" from a vendor directory, and acme/other
-		// is not vendored: the plugin's code does not import it.
+			req: "require github.com/acme/collage-other v0.1.0\n\n", want: passed},
+		// A required plugin the plugin's code does not import is not vendored;
+		// the program does not need it.
 		{name: "vendored, requires present", decl: "func New() *Plugin { return &Plugin{} }", manifest: `"requires": ["acme/other"]`,
-			req: "require github.com/acme/collage-other v0.1.0\n\n", want: "acme/greet: builds and starts", vendor: true},
+			req: "require github.com/acme/collage-other v0.1.0\n\n", want: passed, vendor: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := fixturePlugin("acme", "greet", "v0.1.0", tc.decl, tc.manifest)
-			if tc.name == "init fails" {
-				m.Files["plugin.go"] = strings.Replace(m.Files["plugin.go"], "opts, err := collage.PluginConfig(host, p.opts)",
-					"if failInit { return errors.New(\"refuses an empty config\") }\n\topts, err := collage.PluginConfig(host, p.opts)", 1)
-				m.Files["plugin.go"] = strings.Replace(m.Files["plugin.go"], `"context"`, "\"context\"\n\t\"errors\"", 1)
+			if tc.edit != nil {
+				m.Files["plugin.go"] = tc.edit(m.Files["plugin.go"])
 			}
 			dir := t.TempDir()
 			writeFiles(t, dir, m.Files)
@@ -210,11 +214,8 @@ func TestPluginCheck_Run(t *testing.T) {
 			if code != tc.code || !strings.Contains(out.String()+errOut.String(), tc.want) {
 				t.Fatalf("%d\n%s\n%s", code, out, errOut)
 			}
-			if tc.code != 0 && !strings.Contains(errOut.String(), "refuses an empty config") {
-				t.Fatalf("the plugin's own error is not shown:\n%s", errOut)
-			}
-			if tc.req != "" && strings.Contains(out.String(), "not among") {
-				t.Fatalf("the required plugin was left out:\n%s", out)
+			if !strings.Contains(errOut.String(), tc.errWant) {
+				t.Fatalf("the failure is not shown:\n%s", errOut)
 			}
 			// The throwaway program is gone, whether it started or not.
 			if left, _ := filepath.Glob(filepath.Join(dir, "collage-plugin-check-*")); len(left) > 0 {

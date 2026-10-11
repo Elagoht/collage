@@ -3,11 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -16,7 +14,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
 
@@ -26,7 +23,7 @@ func (c *CLI) runPluginCheck(ctx context.Context, args []string) int {
 	flags.SetOutput(c.stderr())
 	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage) }
 	release := flags.Bool("release", false, "also want a release tag at HEAD")
-	run := flags.Bool("run", false, "also build the plugin into a throwaway application and start it")
+	run := flags.Bool("run", false, "also run New as add would call it and check Name() against collage.json")
 
 	positional, flagArgs := splitPositional(args, map[string]bool{})
 	if err := flags.Parse(flagArgs); err != nil {
@@ -57,8 +54,8 @@ func (c *CLI) runPluginCheck(ctx context.Context, args []string) int {
 }
 
 // pluginCheck checks the plugin repository at dir against the contract add
-// enforces; with release, that HEAD carries a release tag; with run, that the
-// plugin builds into an application that starts.
+// enforces; with release, that HEAD carries a release tag; with run, that New
+// runs as add would call it and Name() matches the manifest.
 func (c *CLI) pluginCheck(ctx context.Context, dir string, release, run bool) error {
 	p, err := plugincontract.Check(dir, "")
 	if err != nil {
@@ -160,17 +157,19 @@ func compareNumeric(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// runPluginProgram writes a program that builds an application around the
-// plugin at dir, and the plugins it requires, into a directory inside dir,
-// and runs it there with go run; the directory is removed afterwards.
+// runPluginProgram writes a program into a directory inside dir that calls
+// the plugin's New as plugins.go would and checks its Name against the
+// manifest, and runs it there with go run; the directory is removed
+// afterwards. It neither configures nor starts the plugin: a required field
+// an empty config section lacks is the startup error the user then sees, not
+// a broken contract.
 func (c *CLI) runPluginProgram(ctx context.Context, dir string, p plugincontract.Plugin) error {
-	name := p.Manifest.Name
 	modulePath, err := readModulePath(dir)
 	if err != nil {
 		return err
 	}
-	// go mod download and a -mod=mod in GOFLAGS write go.sum; a check
-	// leaves the repository as it found it.
+	// A -mod=mod in GOFLAGS writes go.sum; a check leaves the repository as
+	// it found it.
 	snap, err := snapshot(filepath.Join(dir, "go.mod"), filepath.Join(dir, "go.sum"), filepath.Join(dir, "go.work.sum"))
 	if err != nil {
 		return err
@@ -180,121 +179,46 @@ func (c *CLI) runPluginProgram(ctx context.Context, dir string, p plugincontract
 			fmt.Fprintf(c.stderr(), "collage: plugin check: putting go.mod and go.sum back: %v\n", rerr)
 		}
 	}()
-	var reqs []requiredPlugin
-	if len(p.Manifest.Requires) > 0 {
-		mods, err := c.listAllModules(ctx, dir)
-		if err != nil {
-			return err
-		}
-		for _, r := range p.Manifest.Requires {
-			found := false
-			for _, m := range mods {
-				if !ascii.EqualFold(m.Path, plugincontract.ConventionalPath(r)) {
-					continue
-				}
-				if m.Dir == "" {
-					// go list -m does not download; go mod download says where it put it.
-					if m, err = c.downloadModule(ctx, dir, m); err != nil {
-						return fmt.Errorf("%s requires %s: %w", name, r, err)
-					}
-				}
-				con, err := plugincontract.ReadConstructor(m.Dir)
-				if err != nil {
-					return fmt.Errorf("%s requires %s: %w", name, r, err)
-				}
-				reqs = append(reqs, requiredPlugin{Name: r, Path: m.Path, Constructor: con})
-				found = true
-				break
-			}
-			if !found {
-				fmt.Fprintf(c.stdout(), "%s: %s is not among its requirements; checked without it\n", name, r)
-			}
-		}
-	}
-
 	tmp, err := os.MkdirTemp(dir, "collage-plugin-check-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	src := checkProgram(name, modulePath, p.Constructor, reqs)
+	src := checkProgram(p.Manifest.Name, modulePath, p.Constructor)
 	if err := os.WriteFile(filepath.Join(tmp, "main.go"), []byte(src), 0o644); err != nil {
 		return err
 	}
 	var errOut bytes.Buffer
-	if err := c.runner().Run(ctx, dir, nil, c.stdout(), &errOut, "go", append(append([]string{"run"}, modFlag(dir, len(p.Manifest.Requires) > 0)...), "./"+filepath.Base(tmp))...); err != nil {
+	if err := c.runner().Run(ctx, dir, nil, c.stdout(), &errOut, "go", "run", "./"+filepath.Base(tmp)); err != nil {
 		return goError(errOut.Bytes(), err)
 	}
 	return nil
 }
 
-// requiredPlugin is a plugin the checked one requires, as found among its
-// module's requirements.
-type requiredPlugin struct {
-	Name        string // the name the checked plugin's manifest requires
-	Path        string
-	Constructor plugincontract.Constructor
-}
-
-// checkProgram is the source of the program -run builds: it constructs the
-// plugin as add would, checks its Name against the manifest, and starts an
-// application with it and the plugins it requires before it.
-func checkProgram(name, modulePath string, con plugincontract.Constructor, reqs []requiredPlugin) string {
-	var imports, list, config strings.Builder
-	for i, r := range reqs {
-		ident := "req" + strconv.Itoa(i)
-		fmt.Fprintf(&imports, "\t%s %s\n", ident, strconv.Quote(r.Path))
-		list.WriteString(r.Constructor.Call(ident) + ", ")
-		fmt.Fprintf(&config, "\t\t%s: json.RawMessage(\"{}\"),\n", strconv.Quote(r.Name))
-	}
+// checkProgram is the source of the program -run builds: it calls New as add
+// writes it, in the []collage.Plugin context plugins.go gives the call, and
+// checks Name against the manifest.
+func checkProgram(name, modulePath string, con plugincontract.Constructor) string {
 	q := strconv.Quote(name)
-	fmt.Fprintf(&config, "\t\t%s: json.RawMessage(\"{}\"),\n", q)
 	return `// Code generated by collage plugin check; it is removed once it has run.
 
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
-	"testing/fstest"
-	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
 	plugin ` + strconv.Quote(modulePath) + `
-` + imports.String() + `)
+)
 
 func main() {
-	p := ` + con.Call("plugin") + `
+	var p collage.Plugin = ` + con.Call("plugin") + `
 	if p.Name() != ` + q + ` {
 		fmt.Fprintf(os.Stderr, "Name() is %q, collage.json says %q\n", p.Name(), ` + q + `)
 		os.Exit(1)
 	}
-	// No templates of its own: an empty directory, so only the plugin's
-	// own templates and pages are there.
-	templates := fstest.MapFS{"templates": &fstest.MapFile{Mode: fs.ModeDir | 0o755}}
-	app, err := collage.New(&collage.Config{
-		Template:     collage.TemplateConfig{FS: templates, Root: "templates"},
-		Plugins:      []collage.Plugin{` + list.String() + `p},
-		PluginConfig: map[string]json.RawMessage{
-` + config.String() + `		},
-	})
-	if err == nil {
-		err = app.Start()
-	}
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := app.Shutdown(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, "shutdown:", err)
-		os.Exit(1)
-	}
-	fmt.Println(` + strconv.Quote(name+": builds and starts") + `)
+	fmt.Println(` + strconv.Quote(name+": New runs, and Name() matches collage.json") + `)
 }
 `
 }
@@ -311,58 +235,4 @@ func readModulePath(dir string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("%s: go.mod has no module line", dir)
-}
-
-// downloadModule is "go mod download -json path@version" in dir.
-func (c *CLI) downloadModule(ctx context.Context, dir string, m moduleInfo) (moduleInfo, error) {
-	out, errOut, err := c.goOutput(ctx, dir, "mod", "download", "-json", "--", m.Path+"@"+m.Version)
-	if err != nil {
-		return moduleInfo{}, goError(errOut, err)
-	}
-	var got moduleInfo
-	if err := json.Unmarshal(out, &got); err != nil {
-		return moduleInfo{}, err
-	}
-	if got.Dir == "" {
-		return moduleInfo{}, fmt.Errorf("go mod download gave no directory for %s@%s", m.Path, m.Version)
-	}
-	return got, nil
-}
-
-// modFlag is the go flag -run's go commands take in dir: -mod=readonly when the
-// plugin vendors its dependencies and requires other plugins. The go tool
-// cannot list "all" from a vendor directory, and a required plugin the
-// plugin's own code does not import is not vendored, so the module cache is
-// used instead, without changing go.mod. A plugin that requires none builds
-// from its vendor directory, as it would anywhere else.
-func modFlag(dir string, requires bool) []string {
-	if !requires {
-		return nil
-	}
-	if _, err := os.Stat(filepath.Join(dir, "vendor", "modules.txt")); err == nil {
-		return []string{"-mod=readonly"}
-	}
-	return nil
-}
-
-// listAllModules is "go list -m -json all" in dir: the module and every
-// module it requires.
-func (c *CLI) listAllModules(ctx context.Context, dir string) ([]moduleInfo, error) {
-	out, errOut, err := c.goOutput(ctx, dir, append(append([]string{"list"}, modFlag(dir, true)...), "-m", "-json", "all")...)
-	if err != nil {
-		return nil, goError(errOut, err)
-	}
-	var mods []moduleInfo
-	dec := json.NewDecoder(bytes.NewReader(out))
-	for {
-		var m moduleInfo
-		err := dec.Decode(&m)
-		if errors.Is(err, io.EOF) {
-			return mods, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		mods = append(mods, m)
-	}
 }
