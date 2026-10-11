@@ -114,7 +114,7 @@ func TestReadConstructor(t *testing.T) {
 		{decl: "func New(c *context.Context) *Plugin { return nil }", call: "p.New(nil)"},
 		{decl: "func New(e error) *Plugin { return nil }", call: "p.New(nil)"},
 		{decl: "type opts struct{}\nfunc New(o opts) *Plugin { return nil }", bad: "unexported"},
-		{decl: "type store interface{}\nfunc New(s store) *Plugin { return nil }", call: "p.New(nil)"},
+		{decl: "type store interface{ Get() }\nfunc New(s store) *Plugin { return nil }", call: "p.New(nil)"},
 		{decl: "func New[T comparable]() *Plugin { return nil }", bad: "generic"},
 		{decl: "type G[T comparable] struct{}\nfunc New(g G) *Plugin { return nil }", bad: "generic"},
 		{decl: "func New(a, b string) *Plugin { return nil }", bad: "two parameters"},
