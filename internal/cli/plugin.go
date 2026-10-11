@@ -274,7 +274,7 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 	for _, e := range f.entries() {
 		orders = append(orders, c.pluginOrder(ctx, dir, e.Import))
 	}
-	ident := f.insert(info.Path, p.Constructor.Package, p.Constructor.Call, insertIndex(orders, p.Manifest.Order))
+	ident := f.insert(info.Path, p.Constructor.Package, p.Constructor.Call, insertIndex(orders, p.Manifest.Order), packageLevelNames(dir))
 	out, err := f.format()
 	if err != nil {
 		return nil, err
@@ -502,6 +502,52 @@ func goSources(dir string) ([]string, error) {
 		out = append(out, filepath.Join(dir, name))
 	}
 	return out, nil
+}
+
+// packageLevelNames are the names the package main files in dir other than
+// plugins.go declare at package level: an import in plugins.go named the
+// same would not compile. Imports are file-scoped and are left out, and so
+// are init and _, which do not bind a name.
+func packageLevelNames(dir string) map[string]bool {
+	names := map[string]bool{}
+	files, err := goSources(dir)
+	if err != nil {
+		return names
+	}
+	for _, path := range files {
+		if filepath.Base(path) == "plugins.go" {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
+		if err != nil || f.Name.Name != "main" {
+			continue
+		}
+		add := func(id *ast.Ident) {
+			if id.Name != "_" && id.Name != "init" {
+				names[id.Name] = true
+			}
+		}
+		for _, d := range f.Decls {
+			switch d := d.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil {
+					add(d.Name)
+				}
+			case *ast.GenDecl:
+				for _, s := range d.Specs {
+					switch s := s.(type) {
+					case *ast.ValueSpec:
+						for _, id := range s.Names {
+							add(id)
+						}
+					case *ast.TypeSpec:
+						add(s.Name)
+					}
+				}
+			}
+		}
+	}
+	return names
 }
 
 // checkPackageMain refuses a dir with no non-test Go file declaring package

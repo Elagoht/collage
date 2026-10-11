@@ -32,7 +32,7 @@ func TestPluginsFile_Skeleton(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ident := f.insert("github.com/Elagoht/collage-consent", "consent", func(id string) string { return id + ".New()" }, 0)
+	ident := f.insert("github.com/Elagoht/collage-consent", "consent", func(id string) string { return id + ".New()" }, 0, nil)
 	out, err := f.format()
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestPluginsFile_KeepsTheUsersEdits(t *testing.T) {
 	if got := f.entries(); len(got) != 2 || got[0].Ident != "sitemap" || got[1].Ident != "devtoolbar" {
 		t.Fatalf("entries %+v", got)
 	}
-	f.insert("github.com/Elagoht/collage-consent", "consent", func(id string) string { return id + ".New()" }, 1)
+	f.insert("github.com/Elagoht/collage-consent", "consent", func(id string) string { return id + ".New()" }, 1, nil)
 	out, _ := f.format()
 	s := string(out)
 	wantInOrder(t, s, `base := "https://example.com" // a statement of the user's own`,
@@ -74,13 +74,13 @@ func TestPluginsFile_KeepsTheUsersEdits(t *testing.T) {
 func TestPluginsFile_NameClash(t *testing.T) {
 	f, _ := parsePluginsFile(nil)
 	call := func(id string) string { return id + ".New()" }
-	a := f.insert("github.com/Elagoht/collage-live", "live", call, 0)
-	b := f.insert("github.com/someone/collage-live", "live", call, 1)
-	c := f.insert("github.com/x/collage-collage", "collage", call, 2)
+	a := f.insert("github.com/Elagoht/collage-live", "live", call, 0, nil)
+	b := f.insert("github.com/someone/collage-live", "live", call, 1, nil)
+	c := f.insert("github.com/x/collage-collage", "collage", call, 2, nil)
 	if a != "live" || b != "someoneLive" || c != "xCollage" {
 		t.Fatalf("idents %q %q %q", a, b, c)
 	}
-	d := f.insert("github.com/someone/collage-live-two", "live", call, 3) // live and someoneLive are taken
+	d := f.insert("github.com/someone/collage-live-two", "live", call, 3, nil) // live and someoneLive are taken
 	if d != "someoneLive2" {
 		t.Fatalf("third live = %q, want someoneLive2", d)
 	}
@@ -132,7 +132,7 @@ func roundTrip(t *testing.T, src string, at int, parts ...string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.insert("x.com/o/c", "c", newCall, at)
+	f.insert("x.com/o/c", "c", newCall, at, nil)
 	out, err := f.format()
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +186,7 @@ func TestPluginsFile_MultiLineElement(t *testing.T) {
 
 func TestPluginsFile_ImportBecomesBlock(t *testing.T) {
 	f, _ := parsePluginsFile(nil)
-	f.insert("x.com/o/c", "c", newCall, 0)
+	f.insert("x.com/o/c", "c", newCall, 0, nil)
 	out, _ := f.format()
 	if !strings.Contains(string(out), "import (\n\t\"github.com/Elagoht/collage/pkg/collage\"\n\n\tc \"x.com/o/c\"\n)\n") {
 		t.Fatalf("%s", out)
@@ -230,7 +230,7 @@ func TestPluginsFile_UnnamedImport(t *testing.T) {
 	if got := f.entries(); len(got) != 1 || got[0].Ident != "sitemap" || got[0].Import != "x.com/o/collage-sitemap" {
 		t.Fatalf("entries %+v", got)
 	}
-	if id := f.insert("y.com/p/collage-sitemap", "sitemap", newCall, 1); id != "pSitemap" {
+	if id := f.insert("y.com/p/collage-sitemap", "sitemap", newCall, 1, nil); id != "pSitemap" {
 		t.Fatalf("ident %q, want pSitemap", id)
 	}
 	g, _ := parsePluginsFile([]byte(src))
@@ -248,11 +248,45 @@ func TestPluginsFile_DeclaredNamesTaken(t *testing.T) {
 	src := pluginsHead + "var c = 1\n\ntype d struct{}\n\nfunc e() {}\n\nfunc plugins() []collage.Plugin {\n\tf := 2\n\t_ = f\n\treturn []collage.Plugin{}\n}\n"
 	p, _ := parsePluginsFile([]byte(src))
 	for _, n := range []string{"c", "d", "e", "f"} {
-		if id := p.insert("x.com/o/collage-"+n, n, newCall, 0); id != "o"+strings.ToUpper(n) {
+		if id := p.insert("x.com/o/collage-"+n, n, newCall, 0, nil); id != "o"+strings.ToUpper(n) {
 			t.Errorf("%s: ident %q", n, id)
 		}
 	}
 	if _, err := p.format(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Final review I1: a name another file of package main declares is taken too.
+func TestPluginsFile_ReservedNames(t *testing.T) {
+	f, _ := parsePluginsFile(nil)
+	id := f.insert("github.com/acme/collage-greet", "greet", func(id string) string { return id + ".New()" }, 0, map[string]bool{"greet": true})
+	if id != "acmeGreet" {
+		t.Fatalf("ident = %q, want acmeGreet", id)
+	}
+	if _, err := f.format(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPackageLevelNames(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"main.go":    "package main\n\nimport fmtx \"fmt\"\n\nfunc main() { fmtx.Println() }\n\nfunc init() {}\n",
+		"helpers.go": "package main\n\nvar (\n\tsession, _ = 1, 2\n)\n\nconst health = 1\n\ntype meta struct{}\n\nfunc (meta) feed() {}\n\nfunc greet() string { var local int; _ = local; return \"\" }\n",
+		"plugins.go": "package main\n\nfunc plugins() {}\n",
+		"x_test.go":  "package main\n\nfunc testOnly() {}\n",
+		"gen.go":     "//go:build ignore\n\npackage main\n\nfunc ignored() {}\n",
+	})
+	got := packageLevelNames(dir)
+	for _, n := range []string{"main", "session", "health", "meta", "greet"} {
+		if !got[n] {
+			t.Errorf("%s missing from %v", n, got)
+		}
+	}
+	for _, n := range []string{"fmtx", "init", "_", "feed", "local", "plugins", "testOnly", "ignored"} {
+		if got[n] {
+			t.Errorf("%s should not be reserved: %v", n, got)
+		}
 	}
 }

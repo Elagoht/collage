@@ -241,13 +241,15 @@ func insertIndex(orders []int, order int) int {
 }
 
 // identFor is the name the new import gets: pkgName if free, else
-// owner+PkgName, else that with 2, 3, … appended.
-func (f *pluginsFile) identFor(importPath, pkgName string) string {
+// owner+PkgName, else that with 2, 3, … appended. reserved holds further
+// names that are taken: those the package's other files declare, which an
+// import name would clash with.
+func (f *pluginsFile) identFor(importPath, pkgName string, reserved map[string]bool) string {
 	taken := f.importNames()
 	declared := f.declaredNames()
 	free := func(s string) bool {
 		_, used := taken[s]
-		return !used && !declared[s] && token.IsIdentifier(s) && s != "_"
+		return !used && !declared[s] && !reserved[s] && token.IsIdentifier(s) && s != "_"
 	}
 	if free(pkgName) {
 		return pkgName
@@ -321,12 +323,13 @@ func (f *pluginsFile) nextLine(o int) int {
 func blank(b []byte) bool { return len(bytes.TrimSpace(b)) == 0 }
 
 // insert adds the import, named explicitly, and an element call(ident) to the
-// list before entries()[at], or at the end. It returns the ident.
-func (f *pluginsFile) insert(importPath, pkgName string, call func(ident string) string, at int) string {
+// list before entries()[at], or at the end. It returns the ident, which is
+// none of the names in reserved (see identFor).
+func (f *pluginsFile) insert(importPath, pkgName string, call func(ident string) string, at int, reserved map[string]bool) string {
 	if f.err != nil {
 		return ""
 	}
-	ident := f.identFor(importPath, pkgName)
+	ident := f.identFor(importPath, pkgName, reserved)
 	elt := call(ident)
 	if _, err := parser.ParseExpr(elt); err != nil {
 		f.err = fmt.Errorf("plugins.go: the entry %q does not parse: %w", elt, err)

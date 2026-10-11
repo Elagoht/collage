@@ -594,3 +594,19 @@ func TestPluginDel_TidyFailureRestores(t *testing.T) {
 	}
 	wantSameFiles(t, dir, before)
 }
+
+// Final review I1: an import name may not clash with a name another file of
+// package main declares; the project still builds.
+func TestPluginAdd_ClashWithOtherFile(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t, fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""))
+	writeFiles(t, dir, map[string]string{"helpers.go": "package main\n\nfunc greet() string { return \"hi\" }\n\nvar _ = greet\n"})
+	code, out, errOut := pluginCmd(t, dir, "add", "acme/greet")
+	if code != 0 {
+		t.Fatalf("add = %d\n%s%s", code, out, errOut)
+	}
+	if !strings.Contains(readFile(t, dir, "plugins.go"), `acmeGreet "github.com/acme/collage-greet"`) {
+		t.Fatalf("plugins.go:\n%s", readFile(t, dir, "plugins.go"))
+	}
+	goBuild(t, dir)
+}
