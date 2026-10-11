@@ -92,3 +92,12 @@ func TestConfigHost_Origins(t *testing.T) {
 		t.Error("ConfigHost still has Dynamic")
 	}
 }
+
+// Configurer is found by type assertion, so a ConfigHost literal that drifted
+// from the framework's own would silently stop Configure being called rather
+// than fail to build. This pins it at compile time.
+type configurePlugin struct{ keepPlugin }
+
+func (configurePlugin) Configure(context.Context, collage.ConfigHost) error { return nil }
+
+var _ collage.Configurer = configurePlugin{}

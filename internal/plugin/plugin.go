@@ -52,7 +52,9 @@ import (
 // interface types are one type, so a plugin's Init(ctx, collage.Host) satisfies
 // this Plugin; and go doc prints a literal's methods where it prints nothing for
 // an alias of a named interface. A change to one literal must be made to the
-// other: pkg/collage's TestHost_MethodSet and its plugins' compile catch a miss.
+// other. A drifted Host or Plugin fails to build where pkg/collage hands its
+// plugins to the Registry; a drifted ConfigHost would only stop Configurer being
+// found by type assertion, so pkg/collage's host_test.go pins it with a var _.
 type Plugin = interface {
 	// Name identifies the plugin. It must be non-empty and unique among the
 	// plugins registered on the same Registry.
