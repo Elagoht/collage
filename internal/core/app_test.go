@@ -786,8 +786,7 @@ func TestNew_Failures(t *testing.T) {
 	})
 }
 
-// TestApp_DevMode: the effective flag is the disjunction of the two, so neither
-// can be set without development mode actually taking effect.
+// TestApp_DevMode: Config.DevMode is the one flag.
 func TestApp_DevMode(t *testing.T) {
 	for _, testCase := range []struct {
 		name     string
@@ -796,7 +795,6 @@ func TestApp_DevMode(t *testing.T) {
 	}{
 		{name: "neither", mutate: nil, expected: false},
 		{name: "config", mutate: func(cfg *Config) { cfg.DevMode = true }, expected: true},
-		{name: "template", mutate: func(cfg *Config) { cfg.Template.DevMode = true }, expected: true},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			if got := newTestApp(t, testCase.mutate).DevMode(); got != testCase.expected {
@@ -1094,18 +1092,16 @@ func TestPluginHost_CannotRecoverTheApp(t *testing.T) {
 // The cache key carries the request's raw query string, so an anonymous client can
 // mint unlimited distinct keys for one page; the cache itself is bounded by
 // MaxEntries, but every write also records the key in the dependency tracker and
-// nothing removes it when the cache evicts. Without Cache.MaxKeysPerTag the tracker
+// nothing removes it when the cache evicts. Without a cap the tracker
 // grew one key per request forever while the cache stayed at five entries.
 func TestDependencyTracker_IsBoundedUnderAKeyFlood(t *testing.T) {
 	const (
-		maxEntries    = 5
-		maxKeysPerTag = 5
-		requests      = 2000
+		maxEntries = 5
+		requests   = 2000
 	)
 
 	app := newTestApp(t, func(cfg *Config) {
 		cfg.Cache.MaxEntries = maxEntries
-		cfg.Cache.MaxKeysPerTag = maxKeysPerTag
 	})
 	if err := app.RegisterPage(newHomePage()); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -1124,8 +1120,8 @@ func TestDependencyTracker_IsBoundedUnderAKeyFlood(t *testing.T) {
 		t.Fatalf("tracker is %T, want *dependency.MemoryTracker", app.tracker)
 	}
 	stats := tracker.Stats()
-	if stats.Keys > maxKeysPerTag {
-		t.Fatalf("tracker holds %d keys after %d requests, want at most %d", stats.Keys, requests, maxKeysPerTag)
+	if stats.Keys > maxEntries {
+		t.Fatalf("tracker holds %d keys after %d requests, want at most %d", stats.Keys, requests, maxEntries)
 	}
 	if stats.Dropped == 0 {
 		t.Fatal("tracker dropped nothing: the cap was never reached, so this test proves nothing")
@@ -1202,23 +1198,23 @@ func TestCache_MaxBytesBoundsAQueryFlood(t *testing.T) {
 	}
 }
 
-// TestNew_MaxKeysPerTag_NegativeMeansUnlimited checks the other half of the
-// convention the rest of the configuration uses: zero is "use the default", and a
-// negative value is the caller explicitly accepting unbounded growth.
-func TestNew_MaxKeysPerTag_NegativeMeansUnlimited(t *testing.T) {
+// TestNew_TrackerCapFollowsMaxEntries checks the convention the rest of the
+// configuration uses: zero is "use the default", and a negative value is the
+// caller explicitly accepting unbounded growth, which the tracker spells as 0.
+func TestNew_TrackerCapFollowsMaxEntries(t *testing.T) {
 	cases := []struct {
 		name      string
 		configure int
 		want      int
 	}{
-		{name: "zero takes the default", configure: 0, want: defaultMaxKeysPerTag},
-		{name: "negative stays negative", configure: -1, want: -1},
+		{name: "zero takes the default", configure: 0, want: defaultMaxEntries},
+		{name: "negative is unlimited", configure: -1, want: 0},
 		{name: "positive is honoured", configure: 7, want: 7},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			app := newTestApp(t, func(cfg *Config) { cfg.Cache.MaxKeysPerTag = c.configure })
+			app := newTestApp(t, func(cfg *Config) { cfg.Cache.MaxEntries = c.configure })
 			tracker, ok := app.tracker.(*dependency.MemoryTracker)
 			if !ok {
 				t.Fatalf("tracker is %T, want *dependency.MemoryTracker", app.tracker)

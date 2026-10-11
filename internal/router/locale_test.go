@@ -35,15 +35,6 @@ func TestResolveLocale_PathPrefix_UnsupportedIsAnOrdinarySegment(t *testing.T) {
 	}
 }
 
-func TestResolveLocale_PathDisabled(t *testing.T) {
-	opts := LocaleOptions{Default: "en", Supported: []string{"en", "tr"}, DisablePathLocale: true}
-
-	locale, remaining := resolveLocale("/tr/blog/post", opts)
-	if locale != "en" || remaining != "/tr/blog/post" {
-		t.Fatalf("locale=%q remaining=%q, want en and the path unchanged", locale, remaining)
-	}
-}
-
 func TestResolveLocale_NoPrefixIsTheDefault(t *testing.T) {
 	opts := LocaleOptions{Default: "en", Supported: []string{"en", "tr"}}
 

@@ -173,7 +173,6 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 			FS:        templateFS,
 			Root:      "/tmp/templates",
 			Extension: ".gohtml",
-			DevMode:   true,
 			Timeout:   6 * time.Second,
 		},
 		Cache: CacheConfig{
@@ -184,9 +183,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 			MaxBytes:   43,
 		},
 		Locale: LocaleConfig{
-			Default:           "tr",
-			Supported:         []string{"tr", "en"},
-			DisablePathLocale: true,
+			Default:       "tr",
+			Supported:     []string{"tr", "en"},
+			PrefixDefault: true,
 		},
 		Observability: ObservabilityConfig{Metrics: metrics, Tracer: tracer},
 	}
@@ -229,8 +228,8 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	if core.Template.Root != "/tmp/templates" || core.Template.Extension != ".gohtml" {
 		t.Errorf("Template = %+v, want the configured root and extension", core.Template)
 	}
-	if !core.Template.DevMode || core.Template.Timeout != 6*time.Second {
-		t.Errorf("Template = %+v, want dev mode and a 6s timeout", core.Template)
+	if core.Template.Timeout != 6*time.Second {
+		t.Errorf("Template = %+v, want a 6s timeout", core.Template)
 	}
 	if !core.Cache.Enabled || core.Cache.Type != "memory" {
 		t.Errorf("Cache = %+v, want it enabled and of type memory", core.Cache)
@@ -247,8 +246,8 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	if len(core.Locale.Supported) != 2 || core.Locale.Supported[0] != "tr" {
 		t.Errorf("Locale.Supported = %v, want [tr en]", core.Locale.Supported)
 	}
-	if !core.Locale.DisablePathLocale {
-		t.Errorf("Locale = %+v, want path locales disabled", core.Locale)
+	if !core.Locale.PrefixDefault {
+		t.Errorf("Locale = %+v, want PrefixDefault carried over", core.Locale)
 	}
 	if core.Observability.Metrics != metrics {
 		t.Error("Observability.Metrics did not carry over")

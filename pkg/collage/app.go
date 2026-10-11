@@ -32,8 +32,8 @@ func New(cfg *Config) (*App, error) {
 	if cfg == nil {
 		return nil, errNilConfig
 	}
-	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
+	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
 	c, err := core.New(toCoreConfig(cfg))

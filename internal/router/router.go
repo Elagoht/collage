@@ -289,7 +289,7 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 	// bare is a request for the default locale without its prefix, on a router
 	// whose default locale has one: right for a document at the root, a redirect
 	// for anything else.
-	prefixDefault := rt.localeOptions.PrefixDefault && !rt.localeOptions.DisablePathLocale
+	prefixDefault := rt.localeOptions.PrefixDefault
 	bare := prefixDefault && remaining == path
 
 	segments, ok := decodeSegments(splitPath(remaining))
@@ -596,12 +596,8 @@ func (rt *router) ClaimedPaths() []ClaimedPath {
 	return claimed
 }
 
-// pathLocales returns the locales that appear as a URL path prefix, or nil when
-// path-locale resolution is disabled and none of them do.
+// pathLocales returns the locales that appear as a URL path prefix.
 func (rt *router) pathLocales() []string {
-	if rt.localeOptions.DisablePathLocale {
-		return nil
-	}
 	return rt.localeOptions.supportedLocales()
 }
 

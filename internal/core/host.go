@@ -175,7 +175,7 @@ var _ plugin.ConfigHost = (*configHostView)(nil)
 func (h *configHostView) ApplicationPlugins() []plugin.Plugin { return h.app.plugins.Plugins() }
 
 // DevMode reports whether the application is running in development mode.
-func (h *configHostView) DevMode() bool { return h.app.cfg.DevMode || h.app.cfg.Template.DevMode }
+func (h *configHostView) DevMode() bool { return h.app.cfg.DevMode }
 
 // BaseURL returns the site's public origin without a trailing slash, or "" when
 // the application set none.

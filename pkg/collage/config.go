@@ -2,7 +2,6 @@ package collage
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -15,13 +14,6 @@ import (
 	"github.com/Elagoht/collage/internal/plugin"
 )
 
-// errEmptyTemplateRoot is returned when Config.Template names no template source:
-// Root is empty and FS is nil.
-var errEmptyTemplateRoot = errors.New("collage: empty template root")
-
-// errEmptyLocaleDefault is returned when Config.Locale.Default is empty.
-var errEmptyLocaleDefault = errors.New("collage: empty default locale")
-
 // Config is the framework's top-level configuration.
 //
 // It is mirrored field for field by internal/core.Config. New applies the defaults
@@ -29,8 +21,8 @@ var errEmptyLocaleDefault = errors.New("collage: empty default locale")
 // which is how internal/core stays free of any dependency on this package. A field
 // added here must be added there, and to toCoreConfig, or it will simply be ignored.
 type Config struct {
-	// DevMode enables development-mode behaviour across the framework. See IsDevMode
-	// for the effective value, which also considers Template.DevMode.
+	// DevMode enables development-mode behaviour across the framework: templates
+	// reload from disk on every request, and a mount re-reads its files' hashes.
 	//
 	// In development the server answers only a request whose Host names this
 	// machine — localhost or a name under it, an IP address, a reserved name
@@ -60,7 +52,7 @@ type Config struct {
 	// choice is honoured: noticing a terminal is not a reason to override a
 	// decision somebody made on purpose. Pass a Logger to be certain.
 	//
-	// ApplyDefaults deliberately leaves it nil rather than filling in
+	// applyDefaults deliberately leaves it nil rather than filling in
 	// slog.Default(): nil is already unambiguous, and resolving it at construction
 	// keeps a Config comparable and free of a pointer the caller never supplied.
 	Logger *slog.Logger
@@ -77,7 +69,7 @@ type Config struct {
 	// port, and no path, query or fragment. An empty BaseURL is not an error — a
 	// site that builds no absolute URLs needs none, and a plugin that does may take
 	// its own — and Host.BaseURL reports it, without a trailing slash, to a plugin
-	// that asks. Validate rejects a value that is not a bare origin.
+	// that asks. New rejects a value that is not a bare origin.
 	BaseURL string
 
 	// Security configures request-forgery protection.
@@ -216,12 +208,12 @@ type SecurityConfig struct {
 	// have; a full Content-Security-Policy with frame-ancestors, HSTS and the rest
 	// is what the elagoht/secure plugin adds, and its headers override these.
 	FrameOptions string
-	// NoSniff, unless it points at false, sends X-Content-Type-Options: nosniff on
-	// every response, so a browser honours the declared Content-Type instead of
-	// guessing one and running a response as a type it was never meant to be. It is
-	// on by default because it is never wrong for a site that declares its types,
-	// which collage does.
-	NoSniff *bool
+	// DisableNoSniff stops the X-Content-Type-Options: nosniff header that is
+	// otherwise sent on every response, so a browser honours the declared
+	// Content-Type instead of guessing one and running a response as a type it was
+	// never meant to be. It is sent by default because it is never wrong for a
+	// site that declares its types, which collage does.
+	DisableNoSniff bool
 }
 
 // TemplateConfig configures template loading and rendering.
@@ -274,9 +266,6 @@ type TemplateConfig struct {
 	// its path under Root, extension included, as in "pages/home.html". Includes the
 	// leading dot; defaults to ".html".
 	Extension string
-	// DevMode reloads templates from disk on every request instead of caching parsed
-	// templates. Its disjunction with Config.DevMode is IsDevMode's effective value.
-	DevMode bool
 	// Timeout is the default data handler timeout used when a fragment sets none.
 	// Defaults to 5s.
 	//
@@ -290,6 +279,16 @@ type TemplateConfig struct {
 	// run past it.
 	Timeout time.Duration
 }
+
+// CacheType names a built-in cache implementation.
+type CacheType string
+
+const (
+	// CacheMemory keeps cache entries in the process's memory.
+	CacheMemory CacheType = "memory"
+	// CacheDisk keeps cache entries on disk, under CacheConfig.Dir, across restarts.
+	CacheDisk CacheType = "disk"
+)
 
 // CacheConfig configures the render output cache.
 type CacheConfig struct {
@@ -309,17 +308,17 @@ type CacheConfig struct {
 	// implementation without reflection, and which will panic on the first lookup.
 	// Leave the field unset instead.
 	Store Cache
-	// Type selects a built-in cache implementation when Store is nil: "memory",
+	// Type selects a built-in cache implementation when Store is nil: CacheMemory,
 	// which is also what an empty Type defaults to when Enabled is true and Store
-	// is nil, or "disk", which keeps entries under Dir across restarts (see Dir and
-	// Version).
-	Type string
+	// is nil, or CacheDisk, which keeps entries under Dir across restarts (see Dir
+	// and Version).
+	Type CacheType
 	// DefaultTTL is the cache entry lifetime used when a page does not set its own.
 	// Defaults to 5m.
 	DefaultTTL time.Duration
 	// MaxEntries caps the number of cache entries. Zero means "use the default"
-	// (ApplyDefaults sets it to 10000); a negative value means unlimited, and is left
-	// untouched by ApplyDefaults.
+	// (the default is 10000); a negative value means unlimited, and is left
+	// untouched by the defaults.
 	MaxEntries int
 	// MaxBytes caps the total size of what a built-in cache stores, in bytes.
 	// Zero means the cache type's default: 256 MiB for "memory", 1 GiB for
@@ -352,40 +351,10 @@ type CacheConfig struct {
 	// subdirectory named for a hash of it, so a different version reads a different
 	// directory and finds nothing; there is no check to forget.
 	//
-	// A disk cache is never used in development. Config.DevMode or
-	// Template.DevMode substitutes an in-memory one and says so, because that is
+	// A disk cache is never used in development. Config.DevMode substitutes an in-memory one and says so, because that is
 	// where the output changes between runs and nobody bumps a version to save a
 	// file.
 	Version string
-	// MaxKeysPerTag caps how many cache keys the framework's dependency tracker
-	// records under any one tag. Zero means "use the default" (ApplyDefaults sets
-	// it to 10000); a negative value means unlimited, and is left untouched by
-	// ApplyDefaults.
-	//
-	// The tracker is what resolves a dependency tag back to the cache keys built
-	// from it, and it is written on every cache write — but nothing removes from
-	// it when the cache evicts or expires an entry, so a key stays recorded until
-	// the tag it was recorded under is invalidated. The cache key carries the
-	// request's query string, so any client can mint unlimited distinct keys for
-	// one page; without a cap the tracker grows without bound while the cache
-	// itself stays at MaxEntries. This is that cap.
-	//
-	// Every cached path is a tag of its own, so a per-tag cap alone bounds the
-	// tracker at this value times the number of pages. With a built-in cache it
-	// is also held to MaxEntries keys in all, the most a cache of that size can
-	// still hold, dropping the oldest written first; a negative MaxEntries leaves
-	// that bound off. A custom Store keeps the per-tag bound only.
-	//
-	// When a tag is at the cap, recording a new key under it drops the oldest key
-	// recorded under that tag, from the tracker only. The built-in memory and disk
-	// caches index tags themselves (they implement TaggedCache), so InvalidateTags
-	// still reaches every entry they hold; the count InvalidateTagsN reports is
-	// then what the tracker resolved, which can be fewer. A custom Store that does
-	// not implement TaggedCache relies on the tracker alone, and for it a dropped
-	// key is one InvalidateTags no longer reaches until the entry expires. Set this
-	// above the number of live entries any one tag can plausibly cover, or negative
-	// for an unbounded tracker.
-	MaxKeysPerTag int
 }
 
 // LocaleConfig configures which locales the application's URLs carry.
@@ -403,9 +372,6 @@ type LocaleConfig struct {
 	// Supported lists the locales the application serves. Defaults to a slice
 	// containing only Default.
 	Supported []string
-	// DisablePathLocale turns off resolving the locale from the request path,
-	// e.g. /tr/blog/post, which leaves every request in Default.
-	DisablePathLocale bool
 	// PrefixDefault gives Default's pages a prefix of their own, like every other
 	// locale's: "/en/blog/post" beside "/tr/blog/post", with no language at the
 	// bare address. Links built by name carry it, and a page requested without it
@@ -416,7 +382,7 @@ type LocaleConfig struct {
 	// Documents are prefixed like pages — "/en/sitemap.xml" beside
 	// "/tr/sitemap.xml" — except one built with DocumentBuilder.AtRoot, like
 	// "/robots.txt", whose one address is the bare one: "/en/robots.txt"
-	// redirects there. Ignored when DisablePathLocale is set.
+	// redirects there.
 	PrefixDefault bool
 }
 
@@ -431,9 +397,9 @@ type ObservabilityConfig struct {
 	Tracer observability.Tracer
 }
 
-// ApplyDefaults fills every zero-valued field of c with the framework's default. It
+// applyDefaults fills every zero-valued field of c with the framework's default. It
 // is idempotent: applying it to an already-defaulted Config changes nothing.
-func (c *Config) ApplyDefaults() {
+func (c *Config) applyDefaults() {
 	if c.Server.Host == "" {
 		c.Server.Host = "localhost"
 	}
@@ -468,16 +434,13 @@ func (c *Config) ApplyDefaults() {
 	}
 
 	if c.Cache.Enabled && c.Cache.Store == nil && c.Cache.Type == "" {
-		c.Cache.Type = "memory"
+		c.Cache.Type = CacheMemory
 	}
 	if c.Cache.DefaultTTL == 0 {
 		c.Cache.DefaultTTL = 5 * time.Minute
 	}
 	if c.Cache.MaxEntries == 0 {
 		c.Cache.MaxEntries = 10000
-	}
-	if c.Cache.MaxKeysPerTag == 0 {
-		c.Cache.MaxKeysPerTag = 10000
 	}
 
 	if c.Locale.Default == "" {
@@ -488,35 +451,27 @@ func (c *Config) ApplyDefaults() {
 	}
 }
 
-// Validate reports whether c is well-formed: Server.Port is in 1..65535
-// (ErrInvalidPort), Template.Root is non-empty or Template.FS is set
-// (an empty-template-root error), Cache.Type is "memory" or "disk" when Cache.Enabled and
+// validate reports whether c is well-formed: Server.Port is in 1..65535
+// (ErrInvalidPort), Cache.Type is "memory" or "disk" when Cache.Enabled and
 // Cache.Store is nil (ErrInvalidCacheType; a caller-supplied Store makes Type
 // irrelevant) and a "disk" cache has a Cache.Dir (ErrEmptyCacheDir),
-// Locale.Default is non-empty
-// (an empty-default-locale error) and present in Locale.Supported
+// Locale.Default is present in Locale.Supported
 // (ErrLocaleDefaultNotSupported), and every duration field is not negative
 // (ErrNegativeDuration). It returns nil when c is well-formed.
-func (c *Config) Validate() error {
+func (c *Config) validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("%w: %d", ErrInvalidPort, c.Server.Port)
 	}
-	if c.Template.Root == "" && c.Template.FS == nil {
-		return errEmptyTemplateRoot
-	}
 	if c.Cache.Enabled && c.Cache.Store == nil {
 		switch c.Cache.Type {
-		case "memory":
-		case "disk":
+		case CacheMemory:
+		case CacheDisk:
 			if c.Cache.Dir == "" {
 				return ErrEmptyCacheDir
 			}
 		default:
 			return fmt.Errorf("%w: %q", ErrInvalidCacheType, c.Cache.Type)
 		}
-	}
-	if c.Locale.Default == "" {
-		return errEmptyLocaleDefault
 	}
 	if !slices.Contains(c.Locale.Supported, c.Locale.Default) {
 		return fmt.Errorf("%w: %q", ErrLocaleDefaultNotSupported, c.Locale.Default)
@@ -551,11 +506,4 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
-}
-
-// IsDevMode reports the config's effective development-mode flag: c.DevMode or
-// c.Template.DevMode. Use this method everywhere development mode is checked, rather
-// than reading either field directly, so the two flags cannot drift apart.
-func (c *Config) IsDevMode() bool {
-	return c.DevMode || c.Template.DevMode
 }

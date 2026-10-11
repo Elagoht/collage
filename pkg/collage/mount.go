@@ -10,9 +10,13 @@ type MountOption = asset.Option
 
 // WithCacheControl sets the Cache-Control header served with every file in a
 // mount.
-var WithCacheControl = asset.WithCacheControl
+func WithCacheControl(value string) MountOption {
+	return asset.WithCacheControl(value)
+}
 
 // WithoutBuildCopy stops a static build from copying a mount into its output. Use
 // it for a mount served from a CDN in production, or one large enough that
 // duplicating it into the build directory is not wanted.
-var WithoutBuildCopy = asset.WithoutBuildCopy
+func WithoutBuildCopy() MountOption {
+	return asset.WithoutBuildCopy()
+}

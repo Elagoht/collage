@@ -303,8 +303,8 @@ func TestValidate_StoreMakesCacheTypeIrrelevant(t *testing.T) {
 		Template: TemplateConfig{Root: "templates"},
 		Cache:    CacheConfig{Enabled: true, Store: newRecordingCache(), Type: "not-a-real-cache"},
 	}
-	withStore.ApplyDefaults()
-	if err := withStore.Validate(); err != nil {
+	withStore.applyDefaults()
+	if err := withStore.validate(); err != nil {
 		t.Errorf("Validate() with a Store = %v, want nil", err)
 	}
 
@@ -312,8 +312,8 @@ func TestValidate_StoreMakesCacheTypeIrrelevant(t *testing.T) {
 		Template: TemplateConfig{Root: "templates"},
 		Cache:    CacheConfig{Enabled: true, Type: "not-a-real-cache"},
 	}
-	withoutStore.ApplyDefaults()
-	if err := withoutStore.Validate(); !errors.Is(err, ErrInvalidCacheType) {
+	withoutStore.applyDefaults()
+	if err := withoutStore.validate(); !errors.Is(err, ErrInvalidCacheType) {
 		t.Errorf("Validate() without a Store = %v, want ErrInvalidCacheType", err)
 	}
 }

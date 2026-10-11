@@ -3,8 +3,10 @@ package collage_test
 import (
 	"context"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	gotypes "go/types"
 	"os"
 	"reflect"
 	"regexp"
@@ -111,5 +113,50 @@ func TestErrors_GoneFromAPI(t *testing.T) {
 func TestErrInvalidOrigin_DoesNotBlameBaseURL(t *testing.T) {
 	if strings.Contains(collage.ErrInvalidOrigin.Error(), "BaseURL") {
 		t.Errorf("message = %q", collage.ErrInvalidOrigin.Error())
+	}
+}
+
+// Review Focus 4: an untyped string literal still fills Cache.Type.
+func TestCacheType_UntypedLiteral(t *testing.T) {
+	c := collage.CacheConfig{Type: "disk"}
+	if c.Type != collage.CacheDisk {
+		t.Errorf("Type = %q", c.Type)
+	}
+	if collage.CacheMemory != "memory" {
+		t.Errorf("CacheMemory = %q", collage.CacheMemory)
+	}
+}
+
+// No exported variable holds a function: anyone could reassign it.
+func TestNoExportedFuncVars(t *testing.T) {
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files []*ast.File
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, e.Name(), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, f)
+	}
+	conf := gotypes.Config{Importer: importer.ForCompiler(fset, "source", nil)}
+	pkg, err := conf.Check("github.com/Elagoht/collage/pkg/collage", fset, files, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range pkg.Scope().Names() {
+		v, ok := pkg.Scope().Lookup(name).(*gotypes.Var)
+		if !ok || !v.Exported() {
+			continue
+		}
+		if _, isFunc := v.Type().Underlying().(*gotypes.Signature); isFunc {
+			t.Errorf("exported var %s holds a function; declare a func", name)
+		}
 	}
 }

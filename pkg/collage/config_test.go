@@ -8,9 +8,9 @@ import (
 	"time"
 )
 
-func TestConfig_ApplyDefaults(t *testing.T) {
+func TestConfig_applyDefaults(t *testing.T) {
 	var cfg Config
-	cfg.ApplyDefaults()
+	cfg.applyDefaults()
 
 	want := Config{
 		Server: ServerConfig{
@@ -27,9 +27,8 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 			Timeout:   5 * time.Second,
 		},
 		Cache: CacheConfig{
-			DefaultTTL:    5 * time.Minute,
-			MaxEntries:    10000,
-			MaxKeysPerTag: 10000,
+			DefaultTTL: 5 * time.Minute,
+			MaxEntries: 10000,
 		},
 		Locale: LocaleConfig{
 			Default:   "en",
@@ -38,46 +37,46 @@ func TestConfig_ApplyDefaults(t *testing.T) {
 	}
 
 	if !reflect.DeepEqual(cfg, want) {
-		t.Fatalf("ApplyDefaults() = %+v, want %+v", cfg, want)
+		t.Fatalf("applyDefaults() = %+v, want %+v", cfg, want)
 	}
 }
 
-func TestConfig_ApplyDefaults_Idempotent(t *testing.T) {
+func TestConfig_applyDefaults_Idempotent(t *testing.T) {
 	var cfg Config
-	cfg.ApplyDefaults()
+	cfg.applyDefaults()
 	once := cfg
 
-	cfg.ApplyDefaults()
+	cfg.applyDefaults()
 
 	if !reflect.DeepEqual(cfg, once) {
-		t.Fatalf("second ApplyDefaults() changed the config: got %+v, want %+v", cfg, once)
+		t.Fatalf("second applyDefaults() changed the config: got %+v, want %+v", cfg, once)
 	}
 }
 
-func TestConfig_ApplyDefaults_EnabledCacheGetsMemoryType(t *testing.T) {
+func TestConfig_applyDefaults_EnabledCacheGetsMemoryType(t *testing.T) {
 	cfg := Config{Cache: CacheConfig{Enabled: true}}
-	cfg.ApplyDefaults()
+	cfg.applyDefaults()
 
 	if cfg.Cache.Type != "memory" {
 		t.Errorf("Cache.Type = %q, want %q", cfg.Cache.Type, "memory")
 	}
 }
 
-func TestConfig_ApplyDefaults_DisabledCacheLeavesTypeEmpty(t *testing.T) {
+func TestConfig_applyDefaults_DisabledCacheLeavesTypeEmpty(t *testing.T) {
 	cfg := Config{Cache: CacheConfig{Enabled: false}}
-	cfg.ApplyDefaults()
+	cfg.applyDefaults()
 
 	if cfg.Cache.Type != "" {
 		t.Errorf("Cache.Type = %q, want empty (caching disabled)", cfg.Cache.Type)
 	}
 }
 
-func TestConfig_ApplyDefaults_PreservesExplicitValues(t *testing.T) {
+func TestConfig_applyDefaults_PreservesExplicitValues(t *testing.T) {
 	cfg := Config{
 		Server: ServerConfig{Host: "0.0.0.0", Port: 8080},
 		Locale: LocaleConfig{Default: "tr", Supported: []string{"tr", "en"}},
 	}
-	cfg.ApplyDefaults()
+	cfg.applyDefaults()
 
 	if cfg.Server.Host != "0.0.0.0" {
 		t.Errorf("Server.Host = %q, want %q (explicit value preserved)", cfg.Server.Host, "0.0.0.0")
@@ -93,25 +92,25 @@ func TestConfig_ApplyDefaults_PreservesExplicitValues(t *testing.T) {
 	}
 }
 
-// TestConfig_ApplyDefaults_PreservesOptOuts is the point of inverting LocaleConfig's
+// TestConfig_applyDefaults_PreservesOptOuts is the point of inverting LocaleConfig's
 // booleans and redefining CacheConfig.MaxEntries: a caller who explicitly opts out of
 // every locale source and asks for an unlimited cache must have that survive
-// ApplyDefaults, not get silently reverted because the opted-out value happens to
+// applyDefaults, not get silently reverted because the opted-out value happens to
 // look like a zero value.
-func TestConfig_ApplyDefaults_PreservesOptOuts(t *testing.T) {
+func TestConfig_applyDefaults_PreservesOptOuts(t *testing.T) {
 	cfg := Config{
 		Locale: LocaleConfig{
-			Default:           "en",
-			Supported:         []string{"en"},
-			DisablePathLocale: true,
+			Default:       "en",
+			Supported:     []string{"en"},
+			PrefixDefault: true,
 		},
 		Cache: CacheConfig{MaxEntries: -1},
 	}
 
-	cfg.ApplyDefaults()
+	cfg.applyDefaults()
 
-	if !cfg.Locale.DisablePathLocale {
-		t.Error("ApplyDefaults cleared DisablePathLocale")
+	if !cfg.Locale.PrefixDefault {
+		t.Error("applyDefaults cleared PrefixDefault")
 	}
 	if cfg.Cache.MaxEntries != -1 {
 		t.Errorf("Cache.MaxEntries = %d, want -1 (unlimited, unchanged)", cfg.Cache.MaxEntries)
@@ -120,7 +119,7 @@ func TestConfig_ApplyDefaults_PreservesOptOuts(t *testing.T) {
 
 // TestConfig_MinimalAppExample checks a Config literal modelled on the README's
 // minimal application, proving it still compiles against this package's field
-// names and passes ApplyDefaults and Validate unchanged.
+// names and passes applyDefaults and Validate unchanged.
 func TestConfig_MinimalAppExample(t *testing.T) {
 	cfg := &Config{
 		Server: ServerConfig{
@@ -130,21 +129,17 @@ func TestConfig_MinimalAppExample(t *testing.T) {
 		Template: TemplateConfig{
 			Root:      "./templates",
 			Extension: ".html",
-			DevMode:   true,
 		},
 		Cache: CacheConfig{
 			Enabled:    true,
-			Type:       "memory",
+			Type:       CacheMemory,
 			DefaultTTL: 5 * time.Minute,
 		},
 	}
 
-	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
+	cfg.applyDefaults()
+	if err := cfg.validate(); err != nil {
 		t.Fatalf("Validate() = %v, want nil", err)
-	}
-	if !cfg.IsDevMode() {
-		t.Error("IsDevMode() = false, want true (Template.DevMode was set)")
 	}
 }
 
@@ -152,7 +147,7 @@ func validConfig() Config {
 	cfg := Config{
 		Locale: LocaleConfig{Default: "en", Supported: []string{"en"}},
 	}
-	cfg.ApplyDefaults()
+	cfg.applyDefaults()
 	return cfg
 }
 
@@ -178,19 +173,9 @@ func TestConfig_Validate(t *testing.T) {
 			wantErr: ErrInvalidPort,
 		},
 		{
-			name:    "empty template root",
-			mutate:  func(c *Config) { c.Template.Root = "" },
-			wantErr: errEmptyTemplateRoot,
-		},
-		{
 			name:    "enabled cache with unsupported type",
 			mutate:  func(c *Config) { c.Cache.Enabled = true; c.Cache.Type = "redis" },
 			wantErr: ErrInvalidCacheType,
-		},
-		{
-			name:    "empty default locale",
-			mutate:  func(c *Config) { c.Locale.Default = "" },
-			wantErr: errEmptyLocaleDefault,
 		},
 		{
 			name:    "default locale not supported",
@@ -244,7 +229,7 @@ func TestConfig_Validate(t *testing.T) {
 			cfg := validConfig()
 			tt.mutate(&cfg)
 
-			err := cfg.Validate()
+			err := cfg.validate()
 			if tt.wantErr == nil {
 				if err != nil {
 					t.Fatalf("Validate() = %v, want nil", err)
@@ -258,35 +243,12 @@ func TestConfig_Validate(t *testing.T) {
 	}
 }
 
-func TestConfig_IsDevMode(t *testing.T) {
-	tests := []struct {
-		name        string
-		devMode     bool
-		templateDev bool
-		wantDevMode bool
-	}{
-		{"both false", false, false, false},
-		{"config only", true, false, true},
-		{"template only", false, true, true},
-		{"both true", true, true, true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := Config{DevMode: tt.devMode, Template: TemplateConfig{DevMode: tt.templateDev}}
-			if got := cfg.IsDevMode(); got != tt.wantDevMode {
-				t.Errorf("IsDevMode() = %v, want %v", got, tt.wantDevMode)
-			}
-		})
-	}
-}
-
-func TestConfig_ApplyDefaults_FSSetLeavesRootEmpty(t *testing.T) {
+func TestConfig_applyDefaults_FSSetLeavesRootEmpty(t *testing.T) {
 	// "./templates" is a working-directory-relative path, so defaulting it into an
 	// FS-backed config would silently look for a "templates" subdirectory inside the
 	// embedded filesystem. With FS set, an empty Root means the root of that FS.
 	c := Config{Template: TemplateConfig{FS: fstest.MapFS{}}}
-	c.ApplyDefaults()
+	c.applyDefaults()
 
 	if c.Template.Root != "" {
 		t.Errorf("Template.Root = %q, want %q (FS is set, so Root must not be defaulted)", c.Template.Root, "")
@@ -296,9 +258,9 @@ func TestConfig_ApplyDefaults_FSSetLeavesRootEmpty(t *testing.T) {
 	}
 }
 
-func TestConfig_ApplyDefaults_NoFSStillDefaultsRoot(t *testing.T) {
+func TestConfig_applyDefaults_NoFSStillDefaultsRoot(t *testing.T) {
 	c := Config{}
-	c.ApplyDefaults()
+	c.applyDefaults()
 
 	if c.Template.Root != "./templates" {
 		t.Errorf("Template.Root = %q, want %q", c.Template.Root, "./templates")
@@ -307,20 +269,10 @@ func TestConfig_ApplyDefaults_NoFSStillDefaultsRoot(t *testing.T) {
 
 func TestConfig_Validate_EmptyRootWithFSIsValid(t *testing.T) {
 	c := Config{Template: TemplateConfig{FS: fstest.MapFS{}}}
-	c.ApplyDefaults()
+	c.applyDefaults()
 
-	if err := c.Validate(); err != nil {
+	if err := c.validate(); err != nil {
 		t.Fatalf("Validate() error = %v, want nil (an FS with no Root is a complete template source)", err)
-	}
-}
-
-func TestConfig_Validate_EmptyRootWithoutFSIsInvalid(t *testing.T) {
-	// ApplyDefaults is deliberately not called: Validate must stand on its own for
-	// a caller that builds a Config by hand.
-	c := Config{Server: ServerConfig{Port: 8080}}
-
-	if err := c.Validate(); !errors.Is(err, errEmptyTemplateRoot) {
-		t.Fatalf("Validate() error = %v, want errEmptyTemplateRoot", err)
 	}
 }
 
@@ -330,12 +282,12 @@ func TestConfig_Validate_DiskCacheNeedsADirectory(t *testing.T) {
 	// than invented.
 	base := func() Config {
 		c := Config{Cache: CacheConfig{Enabled: true, Type: "disk"}}
-		c.ApplyDefaults()
+		c.applyDefaults()
 		return c
 	}
 
 	c := base()
-	if err := c.Validate(); !errors.Is(err, ErrEmptyCacheDir) {
+	if err := c.validate(); !errors.Is(err, ErrEmptyCacheDir) {
 		t.Errorf("Validate() = %v, want ErrEmptyCacheDir", err)
 	}
 
@@ -344,7 +296,7 @@ func TestConfig_Validate_DiskCacheNeedsADirectory(t *testing.T) {
 	// worse answer than the framework can work out for itself.
 	c = base()
 	c.Cache.Dir = "/tmp/collage"
-	if err := c.Validate(); err != nil {
+	if err := c.validate(); err != nil {
 		t.Errorf("Validate() with no version = %v, want nil", err)
 	}
 }

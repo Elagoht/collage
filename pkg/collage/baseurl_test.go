@@ -33,7 +33,7 @@ func (p *baseURLReader) Init(_ context.Context, host collage.Host) error {
 func validBaseConfig() *collage.Config {
 	return &collage.Config{
 		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{Root: "templates"},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{}},
 		Locale:   collage.LocaleConfig{Default: "en", Supported: []string{"en"}},
 	}
 }
@@ -53,8 +53,8 @@ func TestConfig_BaseURLValidation(t *testing.T) {
 	for _, v := range good {
 		cfg := validBaseConfig()
 		cfg.BaseURL = v
-		if err := cfg.Validate(); err != nil {
-			t.Errorf("Validate(BaseURL=%q) = %v, want nil", v, err)
+		if _, err := collage.New(cfg); err != nil {
+			t.Errorf("New(BaseURL=%q) = %v, want nil", v, err)
 		}
 	}
 
@@ -72,8 +72,8 @@ func TestConfig_BaseURLValidation(t *testing.T) {
 	for _, v := range bad {
 		cfg := validBaseConfig()
 		cfg.BaseURL = v
-		if err := cfg.Validate(); !errors.Is(err, collage.ErrInvalidOrigin) {
-			t.Errorf("Validate(BaseURL=%q) = %v, want ErrInvalidOrigin", v, err)
+		if _, err := collage.New(cfg); !errors.Is(err, collage.ErrInvalidOrigin) {
+			t.Errorf("New(BaseURL=%q) = %v, want ErrInvalidOrigin", v, err)
 		}
 	}
 }

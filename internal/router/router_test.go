@@ -756,23 +756,3 @@ func TestClaimedPathsReportsEveryRegistry(t *testing.T) {
 		t.Errorf("ClaimedPaths() reports %q (owner %q); the tr tree holds /hakkinda, not /about", "/tr/about", owner)
 	}
 }
-
-// TestClaimedPathsOmitsLocalePrefixesWhenPathLocaleIsDisabled proves the prefixed
-// forms are reported because they are reachable, not unconditionally: with path
-// locale resolution off, PrefixDefault is ignored and "/en/about" reaches nothing,
-// so it must not be claimed. (A path in "tr" there is refused outright: see
-// TestRegister_PathInUnreachableLocale_Rejected.)
-func TestClaimedPathsOmitsLocalePrefixesWhenPathLocaleIsDisabled(t *testing.T) {
-	rt := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr"}, DisablePathLocale: true, PrefixDefault: true})
-
-	page := &types.Page{Name: "about", Paths: map[string]string{"en": "/about"}}
-	if err := rt.Register(page); err != nil {
-		t.Fatalf("Register() = %v, want nil", err)
-	}
-
-	for _, claimed := range rt.ClaimedPaths() {
-		if claimed.Pattern != "/about" {
-			t.Errorf("ClaimedPaths() reports %q with path-locale resolution disabled; only %q is reachable", claimed.Pattern, "/about")
-		}
-	}
-}

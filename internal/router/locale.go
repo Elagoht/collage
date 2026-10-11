@@ -25,13 +25,10 @@ type LocaleOptions struct {
 	Default string
 	// Supported lists the locales, besides Default, a request may resolve to.
 	Supported []string
-	// DisablePathLocale disables resolving the locale from a leading path
-	// segment, such as "/tr/blog/post".
-	DisablePathLocale bool
 	// PrefixDefault gives Default a prefix of its own, as every other locale has:
 	// "/en/blog/post". A page or document requested without one is redirected to
 	// the address with it — except a document at the root (types.RootLocale),
-	// whose one address is the bare one. Ignored when DisablePathLocale is set.
+	// whose one address is the bare one.
 	PrefixDefault bool
 }
 
@@ -42,10 +39,6 @@ type LocaleOptions struct {
 func (opts LocaleOptions) checkReachable(owner, locale string) error {
 	if locale == opts.Default {
 		return nil
-	}
-	if opts.DisablePathLocale {
-		return fmt.Errorf("%w: %s has a path in %q, but DisablePathLocale leaves every request in the default locale %q",
-			types.ErrLocaleUnreachable, owner, locale, opts.Default)
 	}
 	if slices.Contains(opts.Supported, locale) {
 		return nil
@@ -82,9 +75,6 @@ func matchSupported(supported []string, tag string) (string, bool) {
 // Served as they are, /en/about and /TR/hakkinda would each be a second URL for a
 // page — a duplicate for a search engine and a second entry in the cache.
 func canonicalLocalePath(path string, opts LocaleOptions) (string, bool) {
-	if opts.DisablePathLocale {
-		return "", false
-	}
 	segments := splitPath(path)
 	if len(segments) == 0 {
 		return "", false
@@ -130,7 +120,7 @@ func resolveLocale(path string, opts LocaleOptions) (locale string, remaining st
 	supported := opts.supportedLocales()
 	segments := splitPath(path)
 
-	if !opts.DisablePathLocale && len(segments) > 0 {
+	if len(segments) > 0 {
 		if candidate, err := url.PathUnescape(segments[0]); err == nil {
 			if resolved, ok := matchSupported(supported, candidate); ok {
 				if len(segments) == 1 {
