@@ -465,7 +465,6 @@ func (fakeHost) Page(name string) (*types.Page, bool)                        { r
 func (fakeHost) InvalidateTags(ctx context.Context, tags ...string) error    { return nil }
 func (fakeHost) Logger() *slog.Logger                                        { return slog.Default() }
 func (fakeHost) RegisterCommand(cmd Command) error                           { return nil }
-func (fakeHost) RegisterPage(page *types.Page) error                         { return nil }
 func (fakeHost) RegisterDocument(doc *types.Document) error                  { return nil }
 func (fakeHost) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error { return nil }
 func (fakeHost) Handle(prefix string, handler http.Handler) error            { return nil }
@@ -474,13 +473,12 @@ func (fakeHost) RenderFragment(*http.Request, FragmentRequest) (*FragmentRender,
 }
 func (fakeHost) Use(func(http.Handler) http.Handler) error             { return nil }
 func (fakeHost) URL(string, string, map[string]string) (string, error) { return "", nil }
-func (fakeHost) FragmentURL(string, string, string, map[string]string) (string, error) {
-	return "", nil
-}
-func (fakeHost) Locales() (string, []string)                         { return "en", []string{"en"} }
-func (fakeHost) PageURLs(context.Context, string) ([]PageURL, error) { return nil, nil }
-func (fakeHost) BuildID() string                                     { return "test" }
-func (fakeHost) ServeStatus(http.ResponseWriter, *http.Request, int) {}
+func (fakeHost) OriginFor(context.Context, string) string              { return "" }
+func (fakeHost) MultiOrigin() bool                                     { return false }
+func (fakeHost) Locales() (string, []string)                           { return "en", []string{"en"} }
+func (fakeHost) PageURLs(context.Context, string) ([]PageURL, error)   { return nil, nil }
+func (fakeHost) BuildID() string                                       { return "test" }
+func (fakeHost) ServeStatus(http.ResponseWriter, *http.Request, int)   {}
 
 // hostFor is what Registry.Init takes: one host per plugin, chosen by name.
 func hostFor(string) Host { return fakeHost{} }

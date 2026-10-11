@@ -37,17 +37,24 @@ type Configurer interface {
 // It is narrower than Host, and narrower on purpose: at this point the application
 // has registered nothing, so there are no pages to read and nothing to invalidate.
 // Offering those here would mean offering them empty.
-type ConfigHost interface {
+//
+// Like Host it is an alias of an interface literal that pkg/collage declares too;
+// see Plugin.
+type ConfigHost = interface {
 	// DevMode reports whether the application is running in development mode.
 	DevMode() bool
 	// BaseURL returns the site's public origin without a trailing slash — the
 	// scheme and host an absolute URL is built on, from Config.BaseURL — or "" when
 	// the application set none, in which case a plugin that needs one takes its own.
 	BaseURL() string
+	// OriginFor is host's public origin: an OriginResolver's, else Config.BaseURL,
+	// which may be "". host is lower-cased, without its port.
+	OriginFor(ctx context.Context, host string) string
+	// MultiOrigin reports whether a plugin implementing OriginResolver is
+	// registered — among those registered so far, at Configure time.
+	MultiOrigin() bool
 	// Logger returns the application's structured logger.
 	Logger() *slog.Logger
-	// ConfigReader lets collage.PluginConfig read this plugin's configuration.
-	ConfigReader
 	// AddTemplateFunc registers fn as a template function under name. It returns
 	// ErrDuplicateTemplateFunc when another plugin already registered that name,
 	// because two plugins quietly overwriting each other's functions is a bug
@@ -75,6 +82,8 @@ type ConfigHost interface {
 	// Like AddTemplateFunc it must be called from Configure, and a name another
 	// plugin registered is ErrDuplicateTemplateFunc.
 	AddRenderFunc(name string, factory func(rc *types.RenderContext) any) error // any: html/template.FuncMap's own value type
+	// ConfigReader lets collage.PluginConfig read this plugin's configuration.
+	ConfigReader
 }
 
 // ErrDuplicateTemplateFunc is returned by ConfigHost.AddTemplateFunc when a name is

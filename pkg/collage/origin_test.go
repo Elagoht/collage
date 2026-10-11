@@ -17,8 +17,7 @@ import (
 // hostOrigins resolves hosts from a map, and records what its Host told it.
 type hostOrigins struct {
 	origins      map[string]string
-	dynamic      bool
-	sawOrigins   bool
+	multi        bool
 	initOriginOf string
 }
 
@@ -26,11 +25,8 @@ func (p *hostOrigins) Name() string                   { return "test/origins" }
 func (p *hostOrigins) Version() string                { return "0" }
 func (p *hostOrigins) Shutdown(context.Context) error { return nil }
 func (p *hostOrigins) Init(ctx context.Context, host collage.Host) error {
-	if origins, ok := host.(collage.Origins); ok {
-		p.sawOrigins = true
-		p.dynamic = origins.Dynamic()
-		p.initOriginOf = origins.OriginFor(ctx, "acme.test")
-	}
+	p.multi = host.MultiOrigin()
+	p.initOriginOf = host.OriginFor(ctx, "acme.test")
 	return nil
 }
 func (p *hostOrigins) Origin(_ context.Context, host string) (string, bool) {
@@ -165,13 +161,14 @@ func TestBaseURL_RenderFragmentFollowsTheHost(t *testing.T) {
 	}
 }
 
-// The Host a plugin receives offers Origins, and says origins are dynamic.
+// The Host a plugin receives answers a host's origin, and says origins vary by
+// host.
 func TestOrigins_Capability(t *testing.T) {
 	p := &hostOrigins{origins: map[string]string{"acme.test": "https://acme.example"}}
 	originSite(t, false, nil, p).Handler() // Init runs when the handler is built
-	if !p.sawOrigins || !p.dynamic || p.initOriginOf != "https://acme.example" {
-		t.Errorf("Init saw Origins=%v Dynamic=%v OriginFor=%q; want true, true, https://acme.example",
-			p.sawOrigins, p.dynamic, p.initOriginOf)
+	if !p.multi || p.initOriginOf != "https://acme.example" {
+		t.Errorf("Init saw MultiOrigin=%v OriginFor=%q; want true, https://acme.example",
+			p.multi, p.initOriginOf)
 	}
 }
 

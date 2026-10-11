@@ -276,8 +276,9 @@ func TestFindings_OnAnActionsPage(t *testing.T) {
 	}
 }
 
-// A page a plugin registers in Init is built: the build starts the application
-// before it enumerates pages.
+// A route a plugin registers in Init is built: the build starts the application
+// before it enumerates routes. Host has no RegisterPage, so the plugin's route
+// is a document.
 func TestBuild_RunsPluginInitFirst(t *testing.T) {
 	app, err := collage.New(&collage.Config{
 		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
@@ -291,8 +292,8 @@ func TestBuild_RunsPluginInitFirst(t *testing.T) {
 	if _, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out}); err != nil {
 		t.Fatal(err)
 	}
-	if body, err := os.ReadFile(out + "/from-plugin/index.html"); err != nil || !strings.Contains(string(body), "from a plugin") {
-		t.Errorf("the plugin's page was not built: %v %q", err, body)
+	if body, err := os.ReadFile(out + "/from-plugin.txt"); err != nil || !strings.Contains(string(body), "from a plugin") {
+		t.Errorf("the plugin's document was not built: %v %q", err, body)
 	}
 }
 
@@ -302,5 +303,6 @@ func (pagePlugin) Name() string                   { return "test/pages" }
 func (pagePlugin) Version() string                { return "0" }
 func (pagePlugin) Shutdown(context.Context) error { return nil }
 func (pagePlugin) Init(_ context.Context, host collage.Host) error {
-	return host.RegisterPage(collage.NewPage("from-plugin").WithContent(collage.NewFragment("p", "p.html").Build()).WithPath("en", "/from-plugin").Build())
+	return host.RegisterDocument(collage.NewDocument("from-plugin", "text/plain").WithPath("en", "/from-plugin.txt").
+		WithBody([]byte("from a plugin")).Static().Build())
 }

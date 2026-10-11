@@ -3,6 +3,8 @@ package collage
 import (
 	"context"
 	"errors"
+	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/netip"
 
@@ -23,14 +25,28 @@ import (
 // somewhere the author never chose.
 var ErrNilConfig = errors.New("collage: nil config")
 
-// Plugin is the minimum contract every plugin implements: Name, Version, Init, and
-// Shutdown. A plugin opts into the framework's hooks by additionally implementing
-// whichever hook interfaces it needs.
-type Plugin = plugin.Plugin
+// Plugin is the minimum contract every plugin implements. A plugin opts into the
+// framework's hooks by additionally implementing whichever hook interfaces it
+// needs.
+type Plugin = interface {
+	// Name identifies the plugin. It must be non-empty and unique among the
+	// application's plugins.
+	Name() string
+	// Version reports the plugin's own version string, for diagnostics.
+	Version() string
+	// Init prepares the plugin to run, using host to read startup state and
+	// contribute routes and commands. Init runs once, in registration order,
+	// before the first request is served. A returned error aborts startup, and the
+	// plugins already initialised are shut down.
+	Init(ctx context.Context, host Host) error
+	// Shutdown releases whatever the plugin acquired in Init. It runs once, in
+	// reverse registration order, either at normal shutdown or to roll back a
+	// failed startup.
+	Shutdown(ctx context.Context) error
+}
 
-// Host is the capability surface a plugin receives in Init: DevMode, Pages, Page,
-// InvalidateTags, Logger, RegisterCommand, RegisterPage, RegisterDocument,
-// and Mount, and nothing else — plus the ConfigReader PluginConfig reads through.
+// Host is the capability surface a plugin receives in Init, plus the ConfigReader
+// PluginConfig reads through.
 //
 // The value handed to Init is deliberately not the *App. *App has most of these
 // methods, but it also has Shutdown, ListenAndServe, Handler, and RenderPath, and a
@@ -38,7 +54,101 @@ type Plugin = plugin.Plugin
 // could assert its Host parameter to an interface naming those and recover them
 // without ever referring to *App by name. What Init receives is a narrow forwarding
 // value instead, so the assertion has nothing to find.
-type Host = plugin.Host
+//
+// No type outside collage implements Host: its ConfigReader's one method is
+// unexported. A plugin's test that needs a Host embeds a real one.
+type Host = interface {
+	// --- The environment ---
+	//
+	// DevMode reports whether the application is running in development mode.
+	DevMode() bool
+	// BaseURL returns the site's public origin without a trailing slash — the
+	// scheme and host an absolute URL is built on, from Config.BaseURL — or "" when
+	// the application set none, in which case a plugin that needs one takes its own.
+	BaseURL() string
+	// OriginFor is host's public origin: an OriginResolver's, else Config.BaseURL,
+	// which may be "". host is lower-cased, without its port. It is how a plugin
+	// that writes absolute URLs outside a render — an invalidation, a command —
+	// learns a host's origin.
+	OriginFor(ctx context.Context, host string) string
+	// MultiOrigin reports whether a plugin implementing OriginResolver is
+	// registered — whether origins vary by host — so an empty Config.BaseURL is
+	// not, by itself, a misconfiguration.
+	MultiOrigin() bool
+	// Locales returns the default locale and every supported one, the default
+	// included, in the order they were configured.
+	Locales() (defaultLocale string, supported []string)
+	// BuildID names the build of the program serving — Config.Cache.Version, or
+	// a fingerprint of the executable — for a plugin versioning what a browser
+	// keeps across deploys: a service worker's caches, an asset's query string.
+	BuildID() string
+	// Logger returns the application's structured logger.
+	Logger() *slog.Logger
+
+	// --- Contributing routes ---
+	//
+	// RegisterCommand registers cmd as one of the application's CLI subcommands.
+	RegisterCommand(cmd Command) error
+	// RegisterDocument registers a document the plugin contributes, on the same
+	// terms as App.RegisterDocument.
+	RegisterDocument(doc *Document) error
+	// Mount serves fsys under prefix, on the same terms as App.Mount. A plugin
+	// that rewrites URLs into its own namespace — an image optimiser, say — uses
+	// this to serve what it rewrote to.
+	Mount(prefix string, fsys fs.FS, opts ...MountOption) error
+	// Handle serves handler for every request under prefix, on the same terms as
+	// App.Handle: a prefix ending in "/", refused when it shadows a registered
+	// route. It is for what a file system cannot answer — an event stream, a
+	// WebSocket.
+	Handle(prefix string, handler http.Handler) error
+
+	// --- Wrapping requests ---
+	//
+	// Use adds middleware around the handling of every request, as App.Use does,
+	// after the application's: a plugin's headers, limits and cookies wrap what
+	// the application's middleware produced.
+	Use(middleware func(http.Handler) http.Handler) error
+
+	// --- Reading the site map ---
+	//
+	// Pages returns every page registered with the application, each a defensive
+	// copy: the Page and its Paths, Redirects and DependencyTags are copied, so
+	// mutating them does not affect the framework's own. The copy goes one level
+	// deep — writing through a value a copied container holds reaches the
+	// original — and the fragment pointers are shared.
+	Pages() []*Page
+	// Page returns the page registered under name, and whether one was found.
+	// The returned Page is a defensive copy, on the same terms as Pages.
+	Page(name string) (*Page, bool)
+	// PageURLs returns every URL the page registered as name answers — one per
+	// locale for a fixed path, one per locale and parameter set for a pattern its
+	// WithStaticParams lists; a pattern without it has none a plugin could know.
+	// It is what a sitemap is made of.
+	PageURLs(ctx context.Context, name string) ([]PageURL, error)
+	// URL returns the path of the page or document registered as name, in
+	// locale, with params filling its pattern — App.URL, with its strictness.
+	URL(name, locale string, params map[string]string) (string, error)
+
+	// --- Acting at request time ---
+	//
+	// RenderFragment renders one fragment a page opened at its own URL with
+	// WithFragmentPath, for r, as a request to that URL would — and hands back the
+	// parts rather than a response, so it can travel over a stream the plugin
+	// owns. A fragment the page did not open is ErrUnknownFragmentPath: nothing is
+	// reachable here that is not reachable over HTTP. The fragment's guard runs
+	// for r as it would for a request to that URL, and a refusal is
+	// ErrGuardRefused: send that reader nothing.
+	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
+	// ServeStatus answers r with status and the page the application shows for
+	// it — its not-found page for 404 and 410, its error page otherwise — for a
+	// plugin answering a request itself that should look like the site.
+	ServeStatus(w http.ResponseWriter, r *http.Request, status int)
+	// InvalidateTags invalidates every cache entry associated with any of tags.
+	InvalidateTags(ctx context.Context, tags ...string) error
+
+	// ConfigReader lets PluginConfig read this plugin's configuration.
+	ConfigReader
+}
 
 // FetchHeader marks a request a script made with fetch. An action redirecting it
 // answers 204 with the destination in LocationHeader, so the script navigates once
@@ -189,8 +299,41 @@ type ErrorHook = plugin.ErrorHook
 // RegisterPlugin refuses it, because Configure has already run by then.
 type Configurer = plugin.Configurer
 
-// ConfigHost is the narrower capability surface Configure receives.
-type ConfigHost = plugin.ConfigHost
+// ConfigHost is the narrower capability surface Configure receives. At that point
+// the application has registered nothing, so there are no pages to read and
+// nothing to invalidate.
+type ConfigHost = interface {
+	// DevMode reports whether the application is running in development mode.
+	DevMode() bool
+	// BaseURL returns the site's public origin without a trailing slash, from
+	// Config.BaseURL, or "" when the application set none.
+	BaseURL() string
+	// OriginFor is host's public origin: an OriginResolver's, else Config.BaseURL,
+	// which may be "". host is lower-cased, without its port.
+	OriginFor(ctx context.Context, host string) string
+	// MultiOrigin reports whether a plugin implementing OriginResolver is
+	// registered — among those registered so far, at Configure time.
+	MultiOrigin() bool
+	// Logger returns the application's structured logger.
+	Logger() *slog.Logger
+	// AddTemplateFunc registers fn as a template function under name. It returns
+	// ErrDuplicateTemplateFunc when another plugin already registered that name.
+	// It must be called from Configure: templates are parsed when construction
+	// finishes, and a function added after that is one no template can call.
+	AddTemplateFunc(name string, fn any) error // any: restates html/template.FuncMap's own value type
+	// WrapMount registers a transformation applied to every mounted filesystem, in
+	// the order the wrappers were registered. A minifier returns an fs.FS whose
+	// files are already minified; Range requests keep working on it.
+	WrapMount(wrap func(fs.FS) fs.FS)
+	// AddRenderFunc registers a template function made anew for each render:
+	// factory is called with the render's context and returns the function the
+	// templates call, which can then read what that render holds — a nonce set in
+	// BeforeRender, the render's locale. Like AddTemplateFunc it must be called
+	// from Configure, and a name already registered is ErrDuplicateTemplateFunc.
+	AddRenderFunc(name string, factory func(rc *RenderContext) any) error // any: html/template.FuncMap's own value type
+	// ConfigReader lets PluginConfig read this plugin's configuration.
+	ConfigReader
+}
 
 // ConfigReader is a host PluginConfig reads a plugin's configuration through:
 // the Host given to Init and the ConfigHost given to Configure.
@@ -255,10 +398,6 @@ type InvalidatedEntry = plugin.InvalidatedEntry
 // OriginResolver is implemented by a plugin that knows the public origin of a
 // host the site is served on. See collage.BaseURL.
 type OriginResolver = plugin.OriginResolver
-
-// Origins is a capability of Host and ConfigHost: host.(collage.Origins) gives a
-// plugin a host's origin outside a render, and whether origins vary by host.
-type Origins = plugin.Origins
 
 // ParseOrigin checks that raw is a bare origin, scheme://host[:port], and returns
 // it without a trailing slash; anything else is ErrInvalidBaseURL.

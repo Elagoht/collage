@@ -46,7 +46,14 @@ import (
 // lifecycle — reacting to a render, a cache write, an error, and so on — is opt-in:
 // a plugin implements whichever hook interfaces below it needs, and the Registry
 // discovers them by type assertion.
-type Plugin interface {
+//
+// Plugin, Host and ConfigHost are aliases of interface literals, and pkg/collage
+// declares the same literals spelled with its own names. Two identical unnamed
+// interface types are one type, so a plugin's Init(ctx, collage.Host) satisfies
+// this Plugin; and go doc prints a literal's methods where it prints nothing for
+// an alias of a named interface. A change to one literal must be made to the
+// other: pkg/collage's TestHost_MethodSet and its plugins' compile catch a miss.
+type Plugin = interface {
 	// Name identifies the plugin. It must be non-empty and unique among the
 	// plugins registered on the same Registry.
 	Name() string
@@ -90,39 +97,43 @@ type Plugin interface {
 // the framework's live *types.Page rather than a copy, to avoid that allocation
 // on every render. A plugin that mutates a Page reached that way is on its own;
 // see the package doc comment.
-type Host interface {
+//
+// Host embeds ConfigReader, whose one method is unexported, so no type outside
+// collage implements it: a method added later breaks nobody.
+type Host = interface {
+	// --- The environment ---
+	//
 	// DevMode reports whether the application is running in development mode.
 	DevMode() bool
 	// BaseURL returns the site's public origin without a trailing slash — the
 	// scheme and host an absolute URL is built on, from Config.BaseURL — or "" when
 	// the application set none, in which case a plugin that needs one takes its own.
 	BaseURL() string
-	// Pages returns every page registered with the application, each a defensive
-	// copy — see the Host doc comment for exactly what "defensive copy" means
-	// here. Mutating a returned Page does not affect the framework's own, with the
-	// one limit that a copied container is copied one level deep: replacing a
-	// Page.Paths entry on the copy is safe, but writing through a value that entry
-	// holds, were it a nested map, slice, or pointer, reaches the original.
-	Pages() []*types.Page
-	// Page returns the page registered under name, and whether one was found.
-	// The returned Page is a defensive copy, on the same terms as Pages.
-	Page(name string) (*types.Page, bool)
-	// InvalidateTags invalidates every cache entry associated with any of tags.
-	InvalidateTags(ctx context.Context, tags ...string) error
+	// OriginFor is host's public origin: an OriginResolver's, else Config.BaseURL,
+	// which may be "". host is lower-cased, without its port. It is how a plugin
+	// that writes absolute URLs outside a render — an invalidation, a command —
+	// learns a host's origin.
+	OriginFor(ctx context.Context, host string) string
+	// MultiOrigin reports whether a plugin implementing OriginResolver is
+	// registered — whether origins vary by host — so an empty Config.BaseURL is
+	// not, by itself, a misconfiguration.
+	MultiOrigin() bool
+	// Locales returns the default locale and every supported one, the default
+	// included, in the order they were configured.
+	Locales() (defaultLocale string, supported []string)
+	// BuildID names the build of the program serving — Config.Cache.Version, or
+	// a fingerprint of the executable — for a plugin versioning what a browser
+	// keeps across deploys: a service worker's caches, an asset's query string.
+	BuildID() string
 	// Logger returns the application's structured logger.
 	Logger() *slog.Logger
+
+	// --- Contributing routes ---
+	//
 	// RegisterCommand registers cmd with the application's CLI. It is consumed by
 	// the CLI; a Host implementation that has no CLI may simply store
 	// cmd or reject it, at its own discretion.
 	RegisterCommand(cmd Command) error
-	// ConfigReader lets collage.PluginConfig read this plugin's configuration.
-	ConfigReader
-	// RegisterPage registers a page the plugin contributes. It fails on the same
-	// terms as the application's own registration — a duplicate name, a path
-	// another route already claims — and for the same reason: a plugin's page
-	// colliding with the application's is a startup error, not a race decided by
-	// registration order.
-	RegisterPage(page *types.Page) error
 	// RegisterDocument registers a document the plugin contributes.
 	RegisterDocument(doc *types.Document) error
 	// Mount serves fsys under prefix. A plugin that rewrites URLs into its own
@@ -133,6 +144,37 @@ type Host interface {
 	// a registered route. It is for what a file system cannot answer — an event
 	// stream, a WebSocket.
 	Handle(prefix string, handler http.Handler) error
+
+	// --- Wrapping requests ---
+	//
+	// Use adds middleware around the handling of every request, as the
+	// application's own Use does, after the application's: a plugin's headers,
+	// limits and cookies wrap what the application's middleware produced.
+	Use(middleware func(http.Handler) http.Handler) error
+
+	// --- Reading the site map ---
+	//
+	// Pages returns every page registered with the application, each a defensive
+	// copy — see the Host doc comment for exactly what "defensive copy" means
+	// here. Mutating a returned Page does not affect the framework's own, with the
+	// one limit that a copied container is copied one level deep: replacing a
+	// Page.Paths entry on the copy is safe, but writing through a value that entry
+	// holds, were it a nested map, slice, or pointer, reaches the original.
+	Pages() []*types.Page
+	// Page returns the page registered under name, and whether one was found.
+	// The returned Page is a defensive copy, on the same terms as Pages.
+	Page(name string) (*types.Page, bool)
+	// PageURLs returns every URL the page registered as name answers — one per
+	// locale for a fixed path, one per locale and parameter set for a pattern its
+	// WithStaticParams lists; a pattern without it has none a plugin could know.
+	// It is what a sitemap is made of.
+	PageURLs(ctx context.Context, name string) ([]PageURL, error)
+	// URL returns the path of the page or document registered as name, in
+	// locale, with params filling its pattern — App.URL, with its strictness.
+	URL(name, locale string, params map[string]string) (string, error)
+
+	// --- Acting at request time ---
+	//
 	// RenderFragment renders one fragment a page opened at its own URL with
 	// WithFragmentPath, for r, as a request to that URL would — and hands back the
 	// parts rather than a response, so it can travel over a stream the plugin
@@ -141,32 +183,15 @@ type Host interface {
 	// for r as it would for a request to that URL, and a refusal is
 	// ErrGuardRefused: send that reader nothing.
 	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
-	// Use adds middleware around the handling of every request, as the
-	// application's own Use does, after the application's: a plugin's headers,
-	// limits and cookies wrap what the application's middleware produced.
-	Use(middleware func(http.Handler) http.Handler) error
-	// URL returns the path of the page or document registered as name, in
-	// locale, with params filling its pattern — App.URL, with its strictness.
-	URL(name, locale string, params map[string]string) (string, error)
-	// FragmentURL returns the path page opened for its fragment with
-	// WithFragmentPath — App.FragmentURL.
-	FragmentURL(page, fragment, locale string, params map[string]string) (string, error)
-	// Locales returns the default locale and every supported one, the default
-	// included, in the order they were configured.
-	Locales() (defaultLocale string, supported []string)
-	// PageURLs returns every URL the page registered as name answers — one per
-	// locale for a fixed path, one per locale and parameter set for a pattern its
-	// WithStaticParams lists; a pattern without it has none a plugin could know.
-	// It is what a sitemap is made of.
-	PageURLs(ctx context.Context, name string) ([]PageURL, error)
-	// BuildID names the build of the program serving — Config.Cache.Version, or
-	// a fingerprint of the executable — for a plugin versioning what a browser
-	// keeps across deploys: a service worker's caches, an asset's query string.
-	BuildID() string
 	// ServeStatus answers r with status and the page the application shows for
 	// it — its not-found page for 404 and 410, its error page otherwise — for a
 	// plugin answering a request itself that should look like the site.
 	ServeStatus(w http.ResponseWriter, r *http.Request, status int)
+	// InvalidateTags invalidates every cache entry associated with any of tags.
+	InvalidateTags(ctx context.Context, tags ...string) error
+
+	// ConfigReader lets collage.PluginConfig read this plugin's configuration.
+	ConfigReader
 }
 
 // Lister is implemented by the hosts collage hands plugins: the application's

@@ -51,16 +51,3 @@ func hasHostname(origin string) bool {
 type OriginResolver interface {
 	Origin(ctx context.Context, host string) (origin string, ok bool)
 }
-
-// Origins is a capability of the Host and ConfigHost a plugin receives: reach it
-// with a type assertion, host.(collage.Origins). It is how a plugin that writes
-// absolute URLs outside a render — an invalidation, a command — learns a host's
-// origin, and whether origins vary by host at all.
-type Origins interface {
-	// OriginFor is host's origin: an OriginResolver's, else Config.BaseURL, which
-	// may be "".
-	OriginFor(ctx context.Context, host string) string
-	// Dynamic reports whether a plugin implementing OriginResolver is registered,
-	// so an empty Config.BaseURL is not, by itself, a misconfiguration.
-	Dynamic() bool
-}

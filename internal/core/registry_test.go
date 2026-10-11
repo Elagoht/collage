@@ -1125,9 +1125,9 @@ func TestRegisterPageInnermostHandBoundStillCopies(t *testing.T) {
 	}
 }
 
-// A page built by hand — a plugin through Host.RegisterPage, or a Page literal —
-// with only LayoutFragment set is the one-layout chain it looks like, not a page
-// whose layout silently renders without its content.
+// A page built by hand — a Page literal — with only LayoutFragment set is the
+// one-layout chain it looks like, not a page whose layout silently renders
+// without its content.
 func TestRegisterPageLoneLayoutFragmentIsAChain(t *testing.T) {
 	app := newTestApp(t, nil)
 	page := newHomePage()

@@ -244,10 +244,9 @@ func (a *App) bindContent(p *types.Page) error {
 }
 
 // normalizeChain reconciles the two layout fields of a page that did not come
-// from the builder — a plugin's page through Host.RegisterPage, a Page literal —
-// before folding reads them. The builder keeps them agreeing: LayoutChain is the
-// chain and LayoutFragment its outermost entry. A page with only LayoutFragment
-// is the one-layout chain it looks like; one whose LayoutFragment is some other
+// from the builder — a Page literal — before folding reads them. The builder
+// keeps them agreeing: LayoutChain is the chain and LayoutFragment its outermost
+// entry. A page with only LayoutFragment is the one-layout chain it looks like; one whose LayoutFragment is some other
 // fragment says two things about what wraps it, and a nil chain entry is a
 // fragment that is not there — both are refused rather than guessed at.
 func normalizeChain(p *types.Page) error {
