@@ -276,15 +276,16 @@ func TestPackageLevelNames(t *testing.T) {
 		"helpers.go": "package main\n\nvar (\n\tsession, _ = 1, 2\n)\n\nconst health = 1\n\ntype meta struct{}\n\nfunc (meta) feed() {}\n\nfunc greet() string { var local int; _ = local; return \"\" }\n",
 		"plugins.go": "package main\n\nfunc plugins() {}\n",
 		"x_test.go":  "package main\n\nfunc testOnly() {}\n",
+		"y_test.go":  "package main_test\n\nfunc external() {}\n",
 		"gen.go":     "//go:build ignore\n\npackage main\n\nfunc ignored() {}\n",
 	})
 	got := packageLevelNames(dir)
-	for _, n := range []string{"main", "session", "health", "meta", "greet"} {
+	for _, n := range []string{"main", "session", "health", "meta", "greet", "testOnly"} {
 		if !got[n] {
 			t.Errorf("%s missing from %v", n, got)
 		}
 	}
-	for _, n := range []string{"fmtx", "init", "_", "feed", "local", "plugins", "testOnly", "ignored"} {
+	for _, n := range []string{"fmtx", "init", "_", "feed", "local", "plugins", "external", "ignored"} {
 		if got[n] {
 			t.Errorf("%s should not be reserved: %v", n, got)
 		}

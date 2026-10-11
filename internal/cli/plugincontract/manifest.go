@@ -56,17 +56,56 @@ func ReadManifest(dir string) (Manifest, error) {
 	if err := dec.Decode(&f); err != nil {
 		return Manifest{}, refuse(fmt.Sprintf("collage.json: %v", err))
 	}
+	m := Manifest{Name: f.Name, Requires: f.Requires, Order: f.Order, Setup: f.Setup}
+	if err := checkManifest(dec, m); err != nil {
+		return Manifest{}, err
+	}
+	return m, nil
+}
+
+// ReadManifestLenient reads dir/collage.json as a newer manifest schema may
+// write it: unknown keys are ignored, and only name, requires and order are
+// read. Malformed JSON and an invalid name are still refused. It is for the
+// manifests of plugins already in a project, which a newer collage may have
+// added; the plugin being added, removed or checked is read with ReadManifest.
+func ReadManifestLenient(dir string) (Manifest, error) {
+	b, err := os.ReadFile(filepath.Join(dir, "collage.json"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return Manifest{}, refuse("no collage.json at the module root")
+	}
+	if err != nil {
+		return Manifest{}, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	var f struct {
+		Name     string   `json:"name"`
+		Requires []string `json:"requires"`
+		Order    int      `json:"order"`
+	}
+	if err := dec.Decode(&f); err != nil {
+		return Manifest{}, refuse(fmt.Sprintf("collage.json: %v", err))
+	}
+	m := Manifest{Name: f.Name, Requires: f.Requires, Order: f.Order}
+	if err := checkManifest(dec, m); err != nil {
+		return Manifest{}, err
+	}
+	return m, nil
+}
+
+// checkManifest refuses text after the manifest's JSON value, and a name or
+// requirement that is not a plugin name.
+func checkManifest(dec *json.Decoder, m Manifest) error {
 	var extra json.RawMessage
 	if err := dec.Decode(&extra); err != io.EOF {
-		return Manifest{}, refuse("collage.json: more than one JSON value, or text after it")
+		return refuse("collage.json: more than one JSON value, or text after it")
 	}
-	if !ValidName(f.Name) {
-		return Manifest{}, refuse(fmt.Sprintf("collage.json: name %q is not owner/name in lowercase letters, digits and dashes", f.Name))
+	if !ValidName(m.Name) {
+		return refuse(fmt.Sprintf("collage.json: name %q is not owner/name in lowercase letters, digits and dashes", m.Name))
 	}
-	for _, r := range f.Requires {
+	for _, r := range m.Requires {
 		if !ValidName(r) {
-			return Manifest{}, refuse(fmt.Sprintf("collage.json: requires %q, which is not a plugin name", r))
+			return refuse(fmt.Sprintf("collage.json: requires %q, which is not a plugin name", r))
 		}
 	}
-	return Manifest{Name: f.Name, Requires: f.Requires, Order: f.Order, Setup: f.Setup}, nil
+	return nil
 }

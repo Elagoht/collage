@@ -775,3 +775,60 @@ func (*Plugin) Shutdown(context.Context) error { return nil }
 	}
 	goBuild(t, dir)
 }
+
+// handWire go-gets importPath and adds ident.New() for it to plugins.go, as
+// a user editing the file would.
+func handWire(t *testing.T, dir, importPath, version, pkg string) {
+	t.Helper()
+	cmd := exec.Command("go", "get", importPath+"@"+version)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("go get: %v\n%s", err, out)
+	}
+	f, err := parsePluginsFile([]byte(readFile(t, dir, "plugins.go")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.insert(importPath, pkg, func(id string) string { return id + ".New()" }, 1, nil)
+	src, err := f.format()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, dir, map[string]string{"plugins.go": string(src)})
+	goBuild(t, dir)
+}
+
+// Re-review 1: an entry built from a subpackage of a dependency is not a
+// contract plugin (rule 3); go list -m cannot locate it, and it stops no del.
+func TestPluginDel_DependencySubpackageEntry(t *testing.T) {
+	needGo(t)
+	util := fixturePlugin("acme", "util", "v0.1.0", "func New() *Plugin { return &Plugin{} }", "")
+	util.Files["sub/sub.go"] = "package sub\n\nimport util \"github.com/acme/collage-util\"\n\nfunc New() *util.Plugin { return util.New() }\n"
+	dir := pluginProject(t, util, fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""))
+	if code, _, e := pluginCmd(t, dir, "add", "acme/greet"); code != 0 {
+		t.Fatal(e)
+	}
+	handWire(t, dir, "github.com/acme/collage-util/sub", "v0.1.0", "sub")
+	if code, out, e := pluginCmd(t, dir, "del", "acme/greet"); code != 0 {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	goBuild(t, dir)
+}
+
+// Re-review 2: another entry's manifest is read leniently: a key from a
+// newer manifest schema stops no del.
+func TestPluginDel_NewerManifestKey(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "newer", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"futureKey": 1`),
+		fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""),
+	)
+	if code, _, e := pluginCmd(t, dir, "add", "acme/greet"); code != 0 {
+		t.Fatal(e)
+	}
+	handWire(t, dir, "github.com/acme/collage-newer", "v0.1.0", "newer")
+	if code, out, e := pluginCmd(t, dir, "del", "acme/greet"); code != 0 {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	goBuild(t, dir)
+}

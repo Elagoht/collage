@@ -285,3 +285,29 @@ func TestCheck(t *testing.T) {
 		t.Errorf("errors point at the authors page: %v", err)
 	}
 }
+
+// Re-review 2: other entries' manifests are read leniently: unknown keys pass,
+// malformed JSON and invalid names do not.
+func TestReadManifestLenient(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"collage.json": `{"name":"a/b","requires":["c/d"],"order":3,"futureKey":{"x":1}}`})
+	m, err := ReadManifestLenient(dir)
+	if err != nil || m.Name != "a/b" || len(m.Requires) != 1 || m.Requires[0] != "c/d" || m.Order != 3 {
+		t.Fatalf("%+v, %v", m, err)
+	}
+	if _, err := ReadManifest(dir); err == nil {
+		t.Fatal("the strict read let an unknown key through")
+	}
+	for name, body := range map[string]string{
+		"malformed":   `{"name":"a/b"`,
+		"bad name":    `{"name":"A/b"}`,
+		"bad require": `{"name":"a/b","requires":["nope"]}`,
+		"trailing":    `{"name":"a/b"} x`,
+	} {
+		d := t.TempDir()
+		write(t, d, map[string]string{"collage.json": body})
+		if _, err := ReadManifestLenient(d); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

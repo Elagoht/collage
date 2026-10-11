@@ -360,7 +360,7 @@ func (c *CLI) attributable(ctx context.Context, dir, name string) (bool, error) 
 		}
 	}
 	for _, e := range entries {
-		if m, found, err := c.entryManifest(ctx, dir, e.Import); err == nil && found && m.Name == name {
+		if m, found, err := c.entryManifest(ctx, dir, e.Import, plugincontract.ReadManifestLenient); err == nil && found && m.Name == name {
 			return true, nil
 		}
 	}
@@ -381,6 +381,33 @@ func (e *cycleError) Error() string { return "cycle: " + strings.Join(e.chain, "
 
 // requiredVersion is the version go.mod's text requires of module path, or "".
 func requiredVersion(gomod []byte, path string) string {
+	for _, r := range goModRequires(gomod) {
+		if ascii.EqualFold(r[0], path) {
+			return r[1]
+		}
+	}
+	return ""
+}
+
+// requiredModule is the module go.mod's text requires that the package
+// importPath belongs to: the longest required path equal to it or a path
+// prefix of it, or "" when none is.
+func requiredModule(gomod []byte, importPath string) string {
+	best := ""
+	lower := ascii.LowerString(importPath)
+	for _, r := range goModRequires(gomod) {
+		p := ascii.LowerString(r[0])
+		if (lower == p || strings.HasPrefix(lower, p+"/")) && len(r[0]) > len(best) {
+			best = r[0]
+		}
+	}
+	return best
+}
+
+// goModRequires are the module paths and versions go.mod's text requires,
+// in the order it gives them.
+func goModRequires(gomod []byte) [][2]string {
+	var out [][2]string
 	inBlock := false
 	for _, line := range strings.Split(string(gomod), "\n") {
 		if i := strings.Index(line, "//"); i >= 0 {
@@ -402,17 +429,17 @@ func requiredVersion(gomod []byte, path string) string {
 		case !inBlock:
 			continue
 		}
-		if len(fields) == 2 && ascii.EqualFold(strings.Trim(fields[0], `"`), path) {
-			return fields[1]
+		if len(fields) == 2 {
+			out = append(out, [2]string{strings.Trim(fields[0], `"`), fields[1]})
 		}
 	}
-	return ""
+	return out
 }
 
 // pluginOrder is the manifest order of the module importPath in the project
 // at dir; 0 when the module or its manifest cannot be read.
 func (c *CLI) pluginOrder(ctx context.Context, dir, importPath string) int {
-	m, found, err := c.entryManifest(ctx, dir, importPath)
+	m, found, err := c.entryManifest(ctx, dir, importPath, plugincontract.ReadManifestLenient)
 	if err != nil || !found {
 		return 0
 	}
@@ -511,7 +538,7 @@ func goSources(dir string) ([]string, error) {
 }
 
 // packageLevelNames are the names the package main files in dir other than
-// plugins.go declare at package level: an import in plugins.go named the
+// plugins.go, test files included, declare at package level: an import in plugins.go named the
 // same would not compile. Imports are file-scoped and are left out, and so
 // are init and _, which do not bind a name.
 func packageLevelNames(dir string) map[string]bool {
@@ -519,6 +546,15 @@ func packageLevelNames(dir string) map[string]bool {
 	files, err := goSources(dir)
 	if err != nil {
 		return names
+	}
+	// go test compiles a package main _test.go file with plugins.go, so its
+	// names clash too; a package main_test file is a package of its own.
+	tests, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	for _, path := range tests {
+		name := filepath.Base(path)
+		if ok, err := build.Default.MatchFile(dir, name); err == nil && ok && !strings.HasPrefix(name, ".") && !strings.HasPrefix(name, "_") {
+			files = append(files, path)
+		}
 	}
 	for _, path := range files {
 		if filepath.Base(path) == "plugins.go" {
@@ -708,7 +744,7 @@ func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref,
 	var entries []delEntry
 	for _, e := range f.entries() {
 		d := delEntry{Import: e.Import}
-		if m, found, err := c.entryManifest(ctx, dir, e.Import); err != nil {
+		if m, found, err := c.entryManifest(ctx, dir, e.Import, plugincontract.ReadManifestLenient); err != nil {
 			d.Err = err
 		} else if found {
 			d.Name, d.Requires = m.Name, m.Requires
@@ -740,6 +776,14 @@ func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref,
 		return "", "", fmt.Errorf("%s is not in plugins.go; it has: %s", firstNonEmpty(ref.Short, ref.Path), shown)
 	}
 	t := entries[target]
+	if ref.Short == "" && t.Err == nil {
+		// The plugin being removed is held to the manifest schema this
+		// collage knows, as add and check hold it; the others were read
+		// leniently.
+		if _, _, err := c.entryManifest(ctx, dir, t.Import, plugincontract.ReadManifest); err != nil {
+			t.Err = err
+		}
+	}
 	if t.Err != nil && ref.Short == "" {
 		return "", "", fmt.Errorf("cannot read the collage.json of %s, so the name of its section in plugins-config.json is unknown: %w", t.Import, t.Err)
 	}

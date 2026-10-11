@@ -9,8 +9,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
 
@@ -56,23 +56,33 @@ func (c *CLI) locateModule(ctx context.Context, dir, path string) (moduleInfo, e
 	return c.downloadModule(ctx, dir, info)
 }
 
-// entryManifest is the manifest of the module importPath, as the project at
-// dir requires it. found is false when the module has no collage.json, or
-// when the import is a package of the project's own module: an entry wired by
-// hand, which has no name and requires nothing. An error says the manifest
-// could not be read at all.
-func (c *CLI) entryManifest(ctx context.Context, dir, importPath string) (m plugincontract.Manifest, found bool, err error) {
-	if own, err := readModulePath(dir); err == nil && (importPath == own || strings.HasPrefix(importPath, own+"/")) {
+// entryManifest is the manifest of the module plugins.go's import importPath
+// belongs to, read with read. found is false, with no error, for an entry
+// that is not a contract plugin (rule 3: the plugin package is the module
+// root), so it has no name and requires nothing:
+//   - an import go.mod requires no module for: a package of the project's own
+//     module, or of the standard library;
+//   - a subpackage of a required module;
+//   - a module with no collage.json, wired by hand.
+//
+// An error says the manifest could not be read at all.
+func (c *CLI) entryManifest(ctx context.Context, dir, importPath string, read func(string) (plugincontract.Manifest, error)) (m plugincontract.Manifest, found bool, err error) {
+	gomod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return plugincontract.Manifest{}, false, err
+	}
+	mod := requiredModule(gomod, importPath)
+	if mod == "" || !ascii.EqualFold(mod, importPath) {
 		return plugincontract.Manifest{}, false, nil
 	}
-	info, err := c.locateModule(ctx, dir, importPath)
+	info, err := c.locateModule(ctx, dir, mod)
 	if err != nil {
 		return plugincontract.Manifest{}, false, err
 	}
 	if _, err := os.Stat(filepath.Join(info.Dir, "collage.json")); errors.Is(err, fs.ErrNotExist) {
 		return plugincontract.Manifest{}, false, nil
 	}
-	m, err = plugincontract.ReadManifest(info.Dir)
+	m, err = read(info.Dir)
 	if err != nil {
 		return plugincontract.Manifest{}, false, err
 	}
