@@ -60,7 +60,8 @@ type BuildReport struct {
 	// ErrBuildFindings in Errors.
 	Findings []Finding
 	// Errors lists every render, path-resolution or write failure. Build's
-	// returned error is errors.Join of exactly these.
+	// returned error is errors.Join of exactly these, except when the build
+	// stopped before rendering; see Build.
 	Errors []error
 	// Duration is how long the Build call took.
 	Duration time.Duration
@@ -125,7 +126,9 @@ func reportFrom(r *build.Report) *BuildReport {
 // The report is returned alongside the error, so a caller can print what was
 // written as well as what failed. The error is errors.Join of BuildReport.Errors,
 // except when the build stopped before rendering — the application failed to
-// start, or OutDir was refused — where it is that failure alone.
+// start, two outputs collided (ErrOutputPathCollision), or OutDir was refused —
+// where it is that failure alone. A build stopped by a start failure or a
+// collision has not touched OutDir.
 func Build(ctx context.Context, app *App, opts BuildOptions) (*BuildReport, error) {
 	if app == nil || app.c == nil {
 		return nil, ErrNilApp

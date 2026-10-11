@@ -367,25 +367,26 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		}
 	}
 
+	tasks, skipped, enumerateErrs := b.enumerate(ctx)
+	docTasks, docSkipped, docEnumerateErrs := b.enumerateDocuments(ctx)
+
+	// Checked before OutDir is prepared, so a collision costs no work and touches
+	// nothing: a Clean build would otherwise have emptied OutDir already, and the
+	// 404 pages, mounted files and BuildFinished would still follow. It has to be
+	// its own pass rather than a check inside the write: the writes run
+	// concurrently, and "did anyone else already claim this file" is exactly the
+	// question a concurrent writer cannot answer about itself.
+	if err := b.checkNoOutputCollisions(tasks, docTasks); err != nil {
+		report.Errors = []error{err}
+		report.Duration = time.Since(start)
+		return report, err
+	}
+	report.Skipped = skipped
+
 	outDirResolved, err := b.prepareOutDir()
 	if err != nil {
 		report.Duration = time.Since(start)
 		return report, err
-	}
-
-	tasks, skipped, enumerateErrs := b.enumerate(ctx)
-	report.Skipped = skipped
-
-	// Checked before anything renders, so a collision costs no work and leaves no
-	// half-built directory. It has to be its own pass rather than a check inside
-	// the write: the writes run concurrently, and "did anyone else already claim
-	// this file" is exactly the question a concurrent writer cannot answer about
-	// itself.
-	docTasks, docSkipped, docEnumerateErrs := b.enumerateDocuments(ctx)
-	if err := b.checkNoOutputCollisions(tasks, docTasks); err != nil {
-		enumerateErrs = append(enumerateErrs, err)
-		tasks = nil
-		docTasks = nil
 	}
 
 	written := make([]string, len(tasks))
