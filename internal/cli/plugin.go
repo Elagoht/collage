@@ -128,7 +128,8 @@ func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 		fmt.Fprintf(c.stderr(), "collage: plugin add: %v\n", err)
 		return 2
 	}
-	return c.addPlugins(ctx, *dir, refs)
+	code, _ := c.addPlugins(ctx, *dir, refs)
+	return code
 }
 
 // restoreUnlessCommitted returns a guard to defer and a commit to call once
@@ -647,6 +648,12 @@ func (c *CLI) runPluginDel(ctx context.Context, args []string) int {
 	if err != nil {
 		fmt.Fprintf(c.stderr(), "collage: plugin del: %v\n", err)
 		return 2
+	}
+	for _, r := range refs {
+		if r.ref.Version != "" {
+			fmt.Fprintf(c.stderr(), "collage: plugin del: %s@%s: del takes no version\n", r.label, r.ref.Version)
+			return 2
+		}
 	}
 	return c.delPlugins(ctx, *dir, refs)
 }

@@ -59,7 +59,9 @@ func (w *withFlag) String() string { return strings.Join(*w, ",") }
 
 func (w *withFlag) Set(v string) error {
 	for _, p := range strings.Split(v, ",") {
-		*w = append(*w, strings.TrimSpace(p))
+		if p = strings.TrimSpace(p); p != "" {
+			*w = append(*w, p)
+		}
 	}
 	return nil
 }
@@ -69,14 +71,22 @@ func (w *withFlag) Set(v string) error {
 // one does not pull the project back to it. A variable so the tests can point
 // the project at this repository instead.
 var prepareWith = func(ctx context.Context, c *CLI, dir string) error {
-	version := "v" + Version
-	if Version == "devel" || plugincontract.IsPseudoVersion(version) {
-		version = "latest"
-	}
-	if _, errOut, err := c.goOutput(ctx, dir, "get", "--", "github.com/Elagoht/collage@"+version); err != nil {
+	if _, errOut, err := c.goOutput(ctx, dir, "get", "--", "github.com/Elagoht/collage@"+collageQuery(Version)); err != nil {
 		return goError(errOut, err)
 	}
 	return nil
+}
+
+// collageQuery is the version of collage to ask go get for, given this CLI's
+// version: the release it is, or latest for a build that is not one — a
+// checkout, a pseudo-version, or a tree with changes (+dirty) — which go get
+// could not fetch.
+func collageQuery(version string) string {
+	v := "v" + version
+	if version == "devel" || strings.Contains(version, "+") || plugincontract.IsPseudoVersion(v) {
+		return "latest"
+	}
+	return v
 }
 
 // runNew implements the "new" command.
@@ -117,6 +127,12 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 		return 2
 	}
 
+	withGiven := false
+	fs.Visit(func(f *flag.Flag) { withGiven = withGiven || f.Name == "with" })
+	if withGiven && len(with) == 0 {
+		fmt.Fprintln(c.stderr(), "collage: new: --with: want a plugin or a @bundle")
+		return 2
+	}
 	var refs []namedRef
 	if len(with) > 0 {
 		var err error
@@ -152,8 +168,7 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 			fmt.Fprintf(c.stderr(), "collage: new: --with: %v\n", err)
 			code = 1
 		} else {
-			code = c.addPlugins(ctx, targetDir, refs)
-			tidied = true
+			code, tidied = c.addPlugins(ctx, targetDir, refs)
 		}
 		fmt.Fprintln(out)
 	}

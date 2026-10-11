@@ -2,12 +2,17 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
+
+func plugincontractRef(path string) plugincontract.Ref { return plugincontract.Ref{Path: path} }
 
 // withBundles replaces the bundle table for one test.
 func withBundles(t *testing.T, b []bundle) {
@@ -255,7 +260,7 @@ func TestNew_WithFailure(t *testing.T) {
 
 // A --with that cannot be read is refused before anything is written.
 func TestNew_WithRefusedFirst(t *testing.T) {
-	for _, with := range []string{"@nope", "prod", "acme/x,a/b/c", ""} {
+	for _, with := range []string{"@nope", "prod", "acme/x,a/b/c", "", " , "} {
 		dir := filepath.Join(t.TempDir(), "app")
 		c, _, errOut := testCLI()
 		code := c.Run(context.Background(), []string{"new", "app", "-dir", dir, "--with", with})
@@ -265,5 +270,72 @@ func TestNew_WithRefusedFirst(t *testing.T) {
 		if _, err := os.Stat(dir); err == nil {
 			t.Errorf("--with %q scaffolded anyway", with)
 		}
+	}
+}
+
+// del takes no version: one given anywhere on the list refuses the whole
+// command before anything is removed.
+func TestPluginDel_VersionRefusedFirst(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t, multiFixtures()...)
+	if code, _, e := pluginCmd(t, dir, "add", "acme/greet", "acme/plain"); code != 0 {
+		t.Fatal(e)
+	}
+	before := projectFiles(t, dir)
+	code, _, errOut := pluginCmd(t, dir, "del", "acme/greet", "acme/plain@v0.2.0")
+	if code != 2 || !strings.Contains(errOut, "del takes no version") {
+		t.Fatalf("del = %d, want 2\n%s", code, errOut)
+	}
+	wantSameFiles(t, dir, before)
+}
+
+// A blank line separates one plugin's output from the next, and none comes
+// before the first.
+func TestPluginAdd_ManyNoLeadingBlank(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t, multiFixtures()...)
+	_, out, _ := pluginCmd(t, dir, "add", "acme/broken", "acme/plain")
+	if !strings.HasPrefix(out, "added acme/plain") {
+		t.Errorf("output starts with a blank line:\n%q", out)
+	}
+}
+
+func TestLabelled(t *testing.T) {
+	r := namedRef{label: "elagoht/meta", ref: plugincontractRef("github.com/elagoht/collage-meta")}
+	for msg, want := range map[string]string{
+		"elagoht/meta: no collage.json":                             "elagoht/meta: no collage.json",
+		"elagoht/metadata: no collage.json":                         "elagoht/meta: elagoht/metadata: no collage.json",
+		"github.com/elagoht/collage-meta v0.0.0-x is not a release": "github.com/elagoht/collage-meta v0.0.0-x is not a release",
+		"github.com/elagoht/collage-metas: not found":               "elagoht/meta: github.com/elagoht/collage-metas: not found",
+	} {
+		if got := labelled(r, errors.New(msg)); got != want {
+			t.Errorf("labelled(%q) = %q, want %q", msg, got, want)
+		}
+	}
+}
+
+func TestCollageQuery(t *testing.T) {
+	for v, want := range map[string]string{
+		"devel":                                "latest",
+		"0.59.0":                               "v0.59.0",
+		"0.58.1-0.20261011120000-abcdef123456": "latest",
+		"0.58.1-0.20261011120000-abcdef123456+dirty": "latest",
+		"0.59.0+dirty": "latest",
+	} {
+		if got := collageQuery(v); got != want {
+			t.Errorf("collageQuery(%q) = %q, want %q", v, got, want)
+		}
+	}
+}
+
+func TestWithFlag(t *testing.T) {
+	var w withFlag
+	for _, v := range []string{"@blog,", " acme/x ,@prod", ""} {
+		if err := w.Set(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := strings.Join(w, "|"); got != "@blog|acme/x|@prod" {
+		t.Errorf("withFlag = %q", got)
 	}
 }

@@ -34,12 +34,15 @@ func (e *requiredError) Error() string {
 	return fmt.Sprintf("%s requires %s; remove it first", e.by, e.target)
 }
 
-// labelled is err named for label, unless its message already starts with
-// the plugin's name or path.
+// labelled is err named for r, unless its message already starts with the
+// plugin's name or path, as a word of its own.
 func labelled(r namedRef, err error) string {
 	msg := err.Error()
 	for _, prefix := range []string{r.label, r.ref.Path} {
-		if prefix != "" && strings.HasPrefix(msg, prefix) {
+		if prefix == "" {
+			continue
+		}
+		if rest, ok := strings.CutPrefix(msg, prefix); ok && (rest == "" || strings.ContainsAny(rest[:1], ": @")) {
 			return msg
 		}
 	}
@@ -47,13 +50,13 @@ func labelled(r namedRef, err error) string {
 }
 
 // addPlugins adds refs to the project at dir, one by one, each in a step of
-// its own whose files are put back when it fails, and returns the exit code:
-// 1 when any failed. With several, the setup notes are printed together at
-// the end, after a summary.
-func (c *CLI) addPlugins(ctx context.Context, dir string, refs []namedRef) int {
-	fail := func(err error) int {
+// its own whose files are put back when it fails, and returns the exit code,
+// 1 when any failed, and whether any was added. With several, the setup notes
+// are printed together at the end, after a summary.
+func (c *CLI) addPlugins(ctx context.Context, dir string, refs []namedRef) (int, bool) {
+	fail := func(err error) (int, bool) {
 		fmt.Fprintf(c.stderr(), "collage: plugin add: %v\n", err)
-		return 1
+		return 1, false
 	}
 	if err := checkPackageMain(dir); err != nil {
 		return fail(err)
@@ -92,7 +95,7 @@ func (c *CLI) addPlugins(ctx context.Context, dir string, refs []namedRef) int {
 					got[j].Setup = ""
 				}
 			}
-			if i > 0 {
+			if len(added) > 1 {
 				fmt.Fprintln(c.stdout())
 			}
 		}
@@ -119,10 +122,13 @@ func (c *CLI) addPlugins(ctx context.Context, dir string, refs []namedRef) int {
 		fmt.Fprintln(c.stdout(), "plugins.go is new: give it to collage.New once —")
 		fmt.Fprintln(c.stdout(), "\tPlugins: plugins(),")
 	}
-	if len(failed) > 0 || len(untried) > 0 {
-		return 1
+	if !multi && len(untried) > 0 {
+		fmt.Fprintf(c.stderr(), "collage: plugin add: %s: interrupted\n", untried[0])
 	}
-	return 0
+	if len(failed) > 0 || len(untried) > 0 {
+		return 1, len(added) > 0
+	}
+	return 0, len(added) > 0
 }
 
 // addOne adds ref and the plugins it requires, then tidies go.mod; the files
@@ -235,6 +241,9 @@ func (c *CLI) delPlugins(ctx context.Context, dir string, refs []namedRef) int {
 		}
 	}
 
+	if !multi && len(untried) > 0 {
+		fmt.Fprintf(c.stderr(), "collage: plugin del: %s: interrupted\n", untried[0])
+	}
 	if multi {
 		c.printSummary([][2]string{{"removed", strings.Join(removed, ", ")}, {"failed", strings.Join(failed, ", ")}, {"not added", strings.Join(absent, ", ")}, {"not tried", strings.Join(untried, ", ")}})
 	}
@@ -247,9 +256,6 @@ func (c *CLI) delPlugins(ctx context.Context, dir string, refs []namedRef) int {
 // delOne removes ref, then tidies go.mod; the files it touches are put back
 // as they were when it fails, is interrupted, or panics.
 func (c *CLI) delOne(ctx context.Context, dir string, ref plugincontract.Ref) (string, string, error) {
-	if ref.Version != "" {
-		return "", "", fmt.Errorf("%s@%s: del takes no version", firstNonEmpty(ref.Short, ref.Path), ref.Version)
-	}
 	pluginsPath := filepath.Join(dir, "plugins.go")
 	src, err := readIfExists(pluginsPath)
 	if err != nil {
