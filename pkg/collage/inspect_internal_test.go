@@ -1,8 +1,10 @@
-package collage_test
+package collage
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"html/template"
 	"io"
 	"net/http"
@@ -12,39 +14,39 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/Elagoht/collage/pkg/collage"
+	"github.com/Elagoht/collage/internal/core"
 )
 
-func inspectedApp(t *testing.T) *collage.App {
+func inspectedAppInternal(t *testing.T) *App {
 	t.Helper()
-	app, err := collage.New(&collage.Config{
-		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{FS: fstest.MapFS{
+	app, err := New(&Config{
+		Server: ServerConfig{Host: "localhost", Port: 3000},
+		Template: TemplateConfig{FS: fstest.MapFS{
 			"t/layout.html":   {Data: []byte(`{{slot "content"}}`)},
 			"t/post.html":     {Data: []byte(`{{slot "comments"}}{{slot "aside"}}`)},
 			"t/comments.html": {Data: []byte(`c`)},
 		}, Root: "t", Funcs: template.FuncMap{"shout": strings.ToUpper}},
-		Locale: collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
+		Locale: LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	comments := collage.NewFragment("comments", "comments.html").Shared().WithData(collage.DataHandler(
-		func(context.Context, *collage.RenderContext) (string, []string, error) { return "", nil, nil })).
+	comments := NewFragment("comments", "comments.html").Shared().WithData(DataHandler(
+		func(context.Context, *RenderContext) (string, []string, error) { return "", nil, nil })).
 		Build()
-	post := collage.NewFragment("post", "post.html").WithSlotFragment("comments", comments).WithSlot("aside", false, true).Build()
-	layout := collage.NewFragment("layout", "layout.html").Build()
-	if err := app.RegisterPage(collage.NewPage("post").WithLayouts(layout).WithContent(post).
+	post := NewFragment("post", "post.html").WithSlotFragment("comments", comments).WithSlot("aside", false, true).Build()
+	layout := NewFragment("layout", "layout.html").Build()
+	if err := app.RegisterPage(NewPage("post").WithLayouts(layout).WithContent(post).
 		WithPath("en", "/blog/{slug}").WithPath("tr", "/yazi/{slug}").
 		WithFragmentPath("en", "/blog/{slug}/comments", comments).Build()); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.RegisterDocument(collage.NewDocument("feed", "application/rss+xml").AtRoot("/feed.xml").WithBody([]byte("x")).Build()); err != nil {
+	if err := app.RegisterDocument(NewDocument("feed", "application/rss+xml").AtRoot("/feed.xml").WithBody([]byte("x")).Build()); err != nil {
 		t.Fatal(err)
 	}
-	if err := app.RegisterAction(collage.NewAction("subscribe").WithPath("en", "/subscribe").WithMethods(http.MethodPost).
-		WithHandler(func(context.Context, *collage.RenderContext) (*collage.ActionResult, error) {
-			return collage.SeeOther("/"), nil
+	if err := app.RegisterAction(NewAction("subscribe").WithPath("en", "/subscribe").WithMethods(http.MethodPost).
+		WithHandler(func(context.Context, *RenderContext) (*ActionResult, error) {
+			return SeeOther("/"), nil
 		}).Build()); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +59,7 @@ func inspectedApp(t *testing.T) *collage.App {
 // Inspect describes the application as an editor needs it: names, patterns,
 // parameters, the slots each template fills, functions and files.
 func TestInspect(t *testing.T) {
-	in := inspectedApp(t).Inspect()
+	in := inspectedAppInternal(t).Inspect()
 	if in.Version != 1 || in.TemplateRoot != "t" || in.DefaultLocale != "en" || strings.Join(in.Locales, ",") != "en,tr" {
 		t.Errorf("header = %+v", in)
 	}
@@ -71,7 +73,7 @@ func TestInspect(t *testing.T) {
 	if len(p.FragmentPaths) != 1 || p.FragmentPaths[0].Fragment != "comments" || p.FragmentPaths[0].Pattern != "/blog/{slug}/comments" {
 		t.Errorf("fragment paths = %+v", p.FragmentPaths)
 	}
-	frags := map[string]collage.InspectedFragment{}
+	frags := map[string]core.InspectedFragment{}
 	for _, f := range in.Fragments {
 		frags[f.Name] = f
 	}
@@ -102,28 +104,28 @@ func TestInspect(t *testing.T) {
 
 // `go run . collage-inspect` prints the same as JSON.
 func TestDispatchCommands_Inspect(t *testing.T) {
-	app := inspectedApp(t)
+	app := inspectedAppInternal(t)
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	stdout := os.Stdout
 	os.Stdout = w
-	code, err := collage.DispatchCommands(context.Background(), app, []string{collage.InspectCommand})
+	code, err := DispatchCommands(context.Background(), app, []string{inspectCommandName()})
 	os.Stdout = stdout
 	w.Close()
 	out, _ := io.ReadAll(r)
 	if code != 0 || err != nil {
 		t.Fatalf("DispatchCommands = %d, %v", code, err)
 	}
-	var in collage.Inspection
+	var in core.Inspection
 	if err := json.Unmarshal(out, &in); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
 	if len(in.Pages) != 1 || in.Pages[0].Name != "post" {
 		t.Errorf("decoded = %+v", in)
 	}
-	if code, err := collage.DispatchCommands(context.Background(), inspectedApp(t), []string{collage.InspectCommand, "extra"}); code != 2 || err == nil {
+	if code, err := DispatchCommands(context.Background(), inspectedAppInternal(t), []string{inspectCommandName(), "extra"}); code != 2 || err == nil {
 		t.Errorf("with an argument: %d, %v", code, err)
 	}
 }
@@ -131,9 +133,9 @@ func TestDispatchCommands_Inspect(t *testing.T) {
 // A chained, guarded page reports its layouts outermost first and the spine
 // fragments that carry a guard, in the order they are asked.
 func TestInspectLayoutsAndGuards(t *testing.T) {
-	app, err := collage.New(&collage.Config{
-		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{FS: fstest.MapFS{
+	app, err := New(&Config{
+		Server: ServerConfig{Host: "localhost", Port: 3000},
+		Template: TemplateConfig{FS: fstest.MapFS{
 			"t/layout.html": {Data: []byte(`{{slot "content"}}`)},
 			"t/panel.html":  {Data: []byte(`p`)},
 		}, Root: "t"},
@@ -141,11 +143,11 @@ func TestInspectLayoutsAndGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	allow := func(context.Context, *http.Request) (*collage.GuardDecision, error) { return nil, nil }
-	private := collage.NewFragment("private", "layout.html").WithGuard(allow).Build()
-	auth := collage.NewFragment("auth", "layout.html").Build()
-	panel := collage.NewFragment("panel", "panel.html").WithGuard(allow).Build()
-	if err := app.RegisterPage(collage.NewPage("panel").WithLayouts(private, auth).WithContent(panel).
+	allow := func(context.Context, *http.Request) (*GuardDecision, error) { return nil, nil }
+	private := NewFragment("private", "layout.html").WithGuard(allow).Build()
+	auth := NewFragment("auth", "layout.html").Build()
+	panel := NewFragment("panel", "panel.html").WithGuard(allow).Build()
+	if err := app.RegisterPage(NewPage("panel").WithLayouts(private, auth).WithContent(panel).
 		WithPath("en", "/panel").Build()); err != nil {
 		t.Fatal(err)
 	}
@@ -161,9 +163,9 @@ func TestInspectLayoutsAndGuards(t *testing.T) {
 // A layout shared by two pages is one fragment the author wrote, reported once
 // — not once per page's private copy of its slot table.
 func TestInspectSharedLayoutOnce(t *testing.T) {
-	app, err := collage.New(&collage.Config{
-		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{FS: fstest.MapFS{
+	app, err := New(&Config{
+		Server: ServerConfig{Host: "localhost", Port: 3000},
+		Template: TemplateConfig{FS: fstest.MapFS{
 			"t/layout.html": {Data: []byte(`{{slot "content"}}`)},
 			"t/page.html":   {Data: []byte(`p`)},
 		}, Root: "t"},
@@ -171,11 +173,11 @@ func TestInspectSharedLayoutOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	master := collage.NewFragment("master", "layout.html").Build()
-	auth := collage.NewFragment("auth", "layout.html").Build()
+	master := NewFragment("master", "layout.html").Build()
+	auth := NewFragment("auth", "layout.html").Build()
 	for _, name := range []string{"a", "b"} {
-		if err := app.RegisterPage(collage.NewPage(name).WithLayouts(master, auth).
-			WithContent(collage.NewFragment(name, "page.html").Build()).WithPath("en", "/"+name).Build()); err != nil {
+		if err := app.RegisterPage(NewPage(name).WithLayouts(master, auth).
+			WithContent(NewFragment(name, "page.html").Build()).WithPath("en", "/"+name).Build()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -190,7 +192,7 @@ func TestInspectSharedLayoutOnce(t *testing.T) {
 
 func TestInspectDataType(t *testing.T) {
 	got := map[string]*string{}
-	for _, f := range inspectedApp(t).Inspect().Fragments {
+	for _, f := range inspectedAppInternal(t).Inspect().Fragments {
 		got[f.Name] = f.DataType
 	}
 	if p := got["post"]; p == nil || *p != "nil" {
@@ -212,23 +214,23 @@ type inspectUser struct {
 }
 
 func TestInspectJSONDataTypes(t *testing.T) {
-	app, err := collage.New(&collage.Config{
-		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{FS: fstest.MapFS{
+	app, err := New(&Config{
+		Server: ServerConfig{Host: "localhost", Port: 3000},
+		Template: TemplateConfig{FS: fstest.MapFS{
 			"t/a.html": {Data: []byte(`{{slot "b"}}{{slot "c"}}`)},
 			"t/b.html": {Data: []byte(`x`)},
 			"t/c.html": {Data: []byte(`{{.}}`)},
 		}, Root: "t"},
-		Locale: collage.LocaleConfig{Default: "en", Supported: []string{"en"}},
+		Locale: LocaleConfig{Default: "en", Supported: []string{"en"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := collage.NewFragment("b", "b.html").WithoutTypeCheck().WithData(collage.Load(
-		func(context.Context, *collage.RenderContext) (any, error) { return nil, nil })).Build() // any: data of unknown type, which inspect writes as null
-	c := collage.NewFragment("c", "c.html").WithData(collage.Value(inspectUser{})).Build()
-	a := collage.NewFragment("a", "a.html").WithSlotFragment("b", b).WithSlotFragment("c", c).Build()
-	if err := app.RegisterPage(collage.NewPage("p").WithContent(a).WithPath("en", "/").Build()); err != nil {
+	b := NewFragment("b", "b.html").WithoutTypeCheck().WithData(Load(
+		func(context.Context, *RenderContext) (any, error) { return nil, nil })).Build() // any: data of unknown type, which inspect writes as null
+	c := NewFragment("c", "c.html").WithData(Value(inspectUser{})).Build()
+	a := NewFragment("a", "a.html").WithSlotFragment("b", b).WithSlotFragment("c", c).Build()
+	if err := app.RegisterPage(NewPage("p").WithContent(a).WithPath("en", "/").Build()); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := json.Marshal(app.Inspect())
@@ -236,12 +238,53 @@ func TestInspectJSONDataTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 	js := string(raw)
-	for _, want := range []string{`"dataType":null`, `"dataType":"nil"`, `"typeCheck":false`, `"dataType":"collage_test.inspectUser"`, `"types":{`, `"collage_test.inspectUser":{"kind":"struct"`,
-		`{"name":"InspectBase","type":"collage_test.InspectBase","embedded":true}`, `{"name":"ID","type":"int"}`,
-		`"collage_test.inspectFriends":{"kind":"slice","elem":"collage_test.inspectUser"}`,
-		`"collage_test.inspectIndex":{"kind":"map","key":"string","elem":"*collage_test.inspectUser"}`} {
+	for _, want := range []string{`"dataType":null`, `"dataType":"nil"`, `"typeCheck":false`, `"dataType":"collage.inspectUser"`, `"types":{`, `"collage.inspectUser":{"kind":"struct"`,
+		`{"name":"InspectBase","type":"collage.InspectBase","embedded":true}`, `{"name":"ID","type":"int"}`,
+		`"collage.inspectFriends":{"kind":"slice","elem":"collage.inspectUser"}`,
+		`"collage.inspectIndex":{"kind":"map","key":"string","elem":"*collage.inspectUser"}`} {
 		if !strings.Contains(js, want) {
 			t.Errorf("inspect JSON lacks %s:\n%s", want, js)
 		}
+	}
+}
+
+var updateGolden = flag.Bool("update", false, "rewrite testdata golden files")
+
+func inspectCommandName() string { return inspectCommand }
+
+func captureStdout(t *testing.T, fn func()) []byte {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	was := os.Stdout
+	os.Stdout = w
+	done := make(chan []byte)
+	go func() { b, _ := io.ReadAll(r); done <- b }()
+	fn()
+	w.Close()
+	os.Stdout = was
+	return <-done
+}
+
+func TestInspect_GoldenJSON(t *testing.T) {
+	app := inspectedAppInternal(t)
+	out := captureStdout(t, func() {
+		if code, err := DispatchCommands(context.Background(), app, []string{inspectCommandName()}); err != nil || code != 0 {
+			t.Errorf("DispatchCommands = %d, %v", code, err)
+		}
+	})
+	if *updateGolden {
+		if err := os.WriteFile("testdata/inspect.golden.json", out, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile("testdata/inspect.golden.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(out, want) {
+		t.Errorf("collage inspect output changed:\n%s", out)
 	}
 }
