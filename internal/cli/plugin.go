@@ -225,6 +225,22 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 		}
 		added = append(added, more...)
 	}
+	if len(added) > 0 {
+		// A required plugin's own requirements may have moved this one up.
+		final, err := c.listModule(ctx, dir, info.Path)
+		if err != nil {
+			return nil, err
+		}
+		if final.Version != info.Version {
+			if p, err = plugincontract.Check(final.Dir, ref.Short); err != nil {
+				return nil, fmt.Errorf("%s: %w", label, err)
+			}
+			if plugincontract.IsPseudoVersion(final.Version) {
+				return nil, fmt.Errorf("%s %s is not a release; tag one (git tag v0.1.0) and push it", final.Path, final.Version)
+			}
+		}
+		info = final
+	}
 
 	pluginsPath := filepath.Join(dir, "plugins.go")
 	src, err := readIfExists(pluginsPath)
@@ -286,9 +302,11 @@ var declaredPath = regexp.MustCompile(`module declares its path as: (\S+)`)
 // declares (owner/name is lowercased; a GitHub owner may not be) is fetched
 // again by the declared path, once.
 func (c *CLI) goGet(ctx context.Context, dir string, ref plugincontract.Ref) (string, error) {
+	// upgrade is latest for a module go.mod lacks, and never moves one it
+	// has down: from a prerelease, say, to an older release.
 	version := ref.Version
 	if version == "" {
-		version = "latest"
+		version = "upgrade"
 	}
 	_, errOut, err := c.goOutput(ctx, dir, "get", "--", ref.Path+"@"+version)
 	if err == nil {

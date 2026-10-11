@@ -466,3 +466,47 @@ func TestCycleError(t *testing.T) {
 		t.Error("an open chain reported closed")
 	}
 }
+
+// Fix round 1: a bare add never moves a plugin down, here from a prerelease
+// above the latest release.
+func TestPluginAdd_NoDowngrade(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "greet", "v0.2.0", "func New() *Plugin { return &Plugin{} }", ""),
+		fixturePlugin("acme", "greet", "v0.3.0-rc.1", "func New() *Plugin { return &Plugin{} }", ""),
+	)
+	if code, _, e := pluginCmd(t, dir, "add", "acme/greet@v0.3.0-rc.1"); code != 0 {
+		t.Fatal(e)
+	}
+	code, out, e := pluginCmd(t, dir, "add", "acme/greet")
+	if code != 0 || !strings.Contains(out, "acme/greet is already added") || strings.Contains(out, "now at") {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	if !strings.Contains(readFile(t, dir, "go.mod"), "github.com/acme/collage-greet v0.3.0-rc.1") {
+		t.Fatalf("go.mod moved:\n%s", readFile(t, dir, "go.mod"))
+	}
+}
+
+// Fix round 1: A requires B and C, which both require D; one add gives one
+// entry each.
+func TestPluginAdd_RequiresDiamond(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "a", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"requires": ["acme/b", "acme/c"]`),
+		fixturePlugin("acme", "b", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"requires": ["acme/d"]`),
+		fixturePlugin("acme", "c", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"requires": ["acme/d"]`),
+		fixturePlugin("acme", "d", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""),
+	)
+	code, out, e := pluginCmd(t, dir, "add", "acme/a")
+	if code != 0 {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	wantInOrder(t, out, "added acme/d", "added acme/b", "added acme/c", "added acme/a")
+	src := readFile(t, dir, "plugins.go")
+	for _, call := range []string{"a.New()", "b.New()", "c.New()", "d.New()"} {
+		if n := strings.Count(src, "\t"+call); n != 1 {
+			t.Errorf("%s appears %d times:\n%s", call, n, src)
+		}
+	}
+	goBuild(t, dir)
+}
