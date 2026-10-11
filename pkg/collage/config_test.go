@@ -92,26 +92,16 @@ func TestConfig_applyDefaults_PreservesExplicitValues(t *testing.T) {
 	}
 }
 
-// TestConfig_applyDefaults_PreservesOptOuts is the point of inverting LocaleConfig's
-// booleans and redefining CacheConfig.MaxEntries: a caller who explicitly opts out of
-// every locale source and asks for an unlimited cache must have that survive
-// applyDefaults, not get silently reverted because the opted-out value happens to
-// look like a zero value.
+// TestConfig_applyDefaults_PreservesOptOuts: a caller who asks for no entry cap
+// must have that survive applyDefaults, not get silently reverted because the
+// opted-out value happens to look like a zero value.
 func TestConfig_applyDefaults_PreservesOptOuts(t *testing.T) {
 	cfg := Config{
-		Locale: LocaleConfig{
-			Default:       "en",
-			Supported:     []string{"en"},
-			PrefixDefault: true,
-		},
 		Cache: CacheConfig{MaxEntries: -1},
 	}
 
 	cfg.applyDefaults()
 
-	if !cfg.Locale.PrefixDefault {
-		t.Error("applyDefaults cleared PrefixDefault")
-	}
 	if cfg.Cache.MaxEntries != -1 {
 		t.Errorf("Cache.MaxEntries = %d, want -1 (unlimited, unchanged)", cfg.Cache.MaxEntries)
 	}
@@ -119,7 +109,7 @@ func TestConfig_applyDefaults_PreservesOptOuts(t *testing.T) {
 
 // TestConfig_MinimalAppExample checks a Config literal modelled on the README's
 // minimal application, proving it still compiles against this package's field
-// names and passes applyDefaults and Validate unchanged.
+// names and passes applyDefaults and validate unchanged.
 func TestConfig_MinimalAppExample(t *testing.T) {
 	cfg := &Config{
 		Server: ServerConfig{

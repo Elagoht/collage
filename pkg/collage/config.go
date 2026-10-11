@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/internal/httpx"
-	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
 )
 
@@ -319,6 +318,10 @@ type CacheConfig struct {
 	// MaxEntries caps the number of cache entries. Zero means "use the default"
 	// (the default is 10000); a negative value means unlimited, and is left
 	// untouched by the defaults.
+	//
+	// It also caps how many keys the framework tracks under one dependency tag,
+	// so a small MaxEntries weakens tag invalidation for a custom Store that is
+	// not a TaggedCache. A negative value keeps that per-tag cap at 10000.
 	MaxEntries int
 	// MaxBytes caps the total size of what a built-in cache stores, in bytes.
 	// Zero means the cache type's default: 256 MiB for "memory", 1 GiB for
@@ -351,9 +354,9 @@ type CacheConfig struct {
 	// subdirectory named for a hash of it, so a different version reads a different
 	// directory and finds nothing; there is no check to forget.
 	//
-	// A disk cache is never used in development. Config.DevMode substitutes an in-memory one and says so, because that is
-	// where the output changes between runs and nobody bumps a version to save a
-	// file.
+	// A disk cache is never used in development. Config.DevMode substitutes an
+	// in-memory one and says so, because that is where the output changes between
+	// runs and nobody bumps a version to save a file.
 	Version string
 }
 
@@ -392,9 +395,9 @@ type LocaleConfig struct {
 // so they never have to nil-check these fields themselves.
 type ObservabilityConfig struct {
 	// Metrics receives framework counters and timings. nil means no-op.
-	Metrics observability.Metrics
+	Metrics Metrics
 	// Tracer starts spans around framework operations. nil means no-op.
-	Tracer observability.Tracer
+	Tracer Tracer
 }
 
 // applyDefaults fills every zero-valued field of c with the framework's default. It

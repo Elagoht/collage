@@ -109,8 +109,10 @@ var ErrEmptyTemplateRoot = errors.New("collage: empty template root")
 // Config.Cache.MaxEntries is left at zero. It matches the cache's own default entry
 // cap: a tag cannot usefully resolve to more live cache entries than the cache
 // holds, and an unbounded tracker in front of a bounded cache is how a
-// query-string flood turns into a memory leak. The public layer fills the same
-// value in, so this fallback only matters for a Config built here directly.
+// query-string flood turns into a memory leak. It is also the fallback for the
+// cache's and the data cache's entry cap, and the per-tag cap of the tracker when
+// MaxEntries is negative. The public layer fills the same value in, so the
+// fallback only matters for a Config built here directly.
 const defaultMaxEntries = 10000
 
 // Config is internal/core's mirror of pkg/collage.Config. The two structs are kept
@@ -574,14 +576,18 @@ func New(cfg Config) (*App, error) {
 	// a bounded cache from sitting behind an unbounded index. Every cached path is
 	// a tag of its own, so the cap is held per tag and in all: a cache holds at
 	// most MaxEntries entries, so no more keys than that can still be live. A
-	// negative MaxEntries, an unlimited cache, leaves the tracker unlimited too,
-	// which is MemoryTracker's own meaning for a non-positive value.
+	// negative MaxEntries means no entry cap on the cache, not an unbounded
+	// tracker: the cache is still bounded by MaxBytes while the tracker is not
+	// pruned on eviction, so each tag keeps the default cap.
 	tracker := dependency.NewMemory()
-	if cfg.Cache.MaxEntries > 0 {
+	switch {
+	case cfg.Cache.MaxEntries > 0:
 		tracker.MaxKeysPerTag = cfg.Cache.MaxEntries
 		if cfg.Cache.Store == nil {
 			tracker.MaxKeys = cfg.Cache.MaxEntries
 		}
+	default:
+		tracker.MaxKeysPerTag = defaultMaxEntries
 	}
 
 	app.tmpl = tmpl

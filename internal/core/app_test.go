@@ -1200,7 +1200,7 @@ func TestCache_MaxBytesBoundsAQueryFlood(t *testing.T) {
 
 // TestNew_TrackerCapFollowsMaxEntries checks the convention the rest of the
 // configuration uses: zero is "use the default", and a negative value is the
-// caller explicitly accepting unbounded growth, which the tracker spells as 0.
+// caller dropping the cache's entry cap; the tracker stays bounded at the default.
 func TestNew_TrackerCapFollowsMaxEntries(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -1208,7 +1208,7 @@ func TestNew_TrackerCapFollowsMaxEntries(t *testing.T) {
 		want      int
 	}{
 		{name: "zero takes the default", configure: 0, want: defaultMaxEntries},
-		{name: "negative is unlimited", configure: -1, want: 0},
+		{name: "negative keeps the tracker bounded", configure: -1, want: defaultMaxEntries},
 		{name: "positive is honoured", configure: 7, want: 7},
 	}
 
