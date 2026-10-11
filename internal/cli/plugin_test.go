@@ -49,9 +49,10 @@ func TestPluginAdd(t *testing.T) {
 	}
 	wantInOrder(t, out, "added acme/greet v0.1.0", "plugins.go", "greet.New(greet.Options{})",
 		"plugins-config.json", `"acme/greet": {}`)
-	// The minimal scaffold does not call plugins() yet (Task 7 makes it), so
-	// add says how to wire it.
-	wantInOrder(t, out, "plugins.go is new: give it to collage.New once", "Plugins: plugins(),")
+	// The scaffold's main.go already passes plugins() to collage.New.
+	if strings.Contains(out, "plugins.go is new") {
+		t.Errorf("add told a scaffolded project to wire plugins():\n%s", out)
+	}
 	if code, out, errOut := pluginCmd(t, dir, "add", "acme/plain"); code != 0 || !strings.Contains(out, "Pass it nothing.") {
 		t.Fatalf("add plain = %d\n%s%s", code, out, errOut)
 	}
@@ -60,6 +61,23 @@ func TestPluginAdd(t *testing.T) {
 	wantInOrder(t, readFile(t, dir, "plugins-config.json"), `"acme/greet": {}`, `"acme/plain": {}`)
 	wantInOrder(t, readFile(t, dir, "go.mod"), "github.com/acme/collage-greet v0.1.0", "github.com/acme/collage-plain v0.2.0")
 	goBuild(t, dir)
+}
+
+// A main.go that does not call plugins() is told how to wire it.
+func TestPluginAdd_HintWhenUnwired(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t, fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""))
+	main := readFile(t, dir, "main.go")
+	unwired := strings.Replace(main, "Plugins: plugins(),", "", 1)
+	if unwired == main {
+		t.Fatal("main.go has no Plugins: plugins(), to remove")
+	}
+	writeFiles(t, dir, map[string]string{"main.go": unwired})
+	code, out, errOut := pluginCmd(t, dir, "add", "acme/greet")
+	if code != 0 {
+		t.Fatalf("add = %d\n%s%s", code, out, errOut)
+	}
+	wantInOrder(t, out, "added acme/greet v0.1.0", "plugins.go is new: give it to collage.New once", "Plugins: plugins(),")
 }
 
 // Review Focus 3: a module that breaks the contract leaves every file as it was.
@@ -120,7 +138,7 @@ func TestPluginAdd_PseudoVersionRefused(t *testing.T) {
 	needGo(t)
 	const pseudo = "v0.0.0-20261001000000-abcdefabcdef"
 	dir := pluginProject(t, fixturePlugin("acme", "greet", pseudo, "func New() *Plugin { return &Plugin{} }", ""))
-	gomod := readFile(t, dir, "go.mod")
+	gomod, plugins := readFile(t, dir, "go.mod"), readFile(t, dir, "plugins.go")
 	code, _, errOut := pluginCmd(t, dir, "add", "acme/greet@"+pseudo)
 	if code != 1 || !strings.Contains(errOut, "collage: plugin add: github.com/acme/collage-greet "+pseudo+" is not a release; tag one (git tag v0.1.0) and push it") {
 		t.Fatalf("code %d\n%s", code, errOut)
@@ -128,8 +146,8 @@ func TestPluginAdd_PseudoVersionRefused(t *testing.T) {
 	if got := readFile(t, dir, "go.mod"); got != gomod || strings.Contains(got, "collage-greet") {
 		t.Error("go.mod changed")
 	}
-	if _, err := os.Stat(filepath.Join(dir, "plugins.go")); err == nil {
-		t.Error("plugins.go was written")
+	if readFile(t, dir, "plugins.go") != plugins {
+		t.Error("plugins.go changed")
 	}
 }
 

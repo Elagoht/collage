@@ -143,6 +143,7 @@ func TestRun_New_ScaffoldsExpectedFiles(t *testing.T) {
 		".gitignore",
 		".env.example",
 		"plugins-config.json",
+		"plugins.go",
 		filepath.Join("pages", "landing", "home.go"),
 		filepath.Join("pages", "demo", "hello.go"),
 		filepath.Join("fragments", "layouts", "main.go"),
@@ -311,7 +312,7 @@ func TestRun_New_Minimal(t *testing.T) {
 		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
 	}
 
-	want := []string{".gitignore", "README.md", "go.mod", "main.go", "embed.go", "embed_dev.go", "routes.go",
+	want := []string{".gitignore", "README.md", "go.mod", "main.go", "embed.go", "embed_dev.go", "routes.go", "plugins.go",
 		"fragments/layouts/main.go", "fragments/pages/landing/home.go", "pages/landing/home.go",
 		"templates/layouts/default.html", "templates/pages/home.html", "static/app.css"}
 	var got []string
@@ -328,6 +329,14 @@ func TestRun_New_Minimal(t *testing.T) {
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("the minimal template wrote\n  %v\nwant\n  %v", got, want)
+	}
+	// plugins.go is the file "collage plugin add" edits, as it would write it
+	// for a project that had none, and main.go hands its list to collage.New.
+	if b, _ := os.ReadFile(filepath.Join(target, "plugins.go")); string(b) != pluginsSkeleton {
+		t.Errorf("plugins.go =\n%s\nwant\n%s", b, pluginsSkeleton)
+	}
+	if b, _ := os.ReadFile(filepath.Join(target, "main.go")); !strings.Contains(string(b), "Plugins: plugins(),") {
+		t.Errorf("main.go does not pass plugins() to collage.New:\n%s", b)
 	}
 	home, _ := os.ReadFile(filepath.Join(target, "templates", "pages", "home.html"))
 	if strings.TrimSpace(string(home)) != "<h1>Hello from {{.Name}}</h1>" {

@@ -69,7 +69,7 @@ type addedPlugin struct {
 // runPlugin implements the "plugin" command: it dispatches its subcommand.
 func (c *CLI) runPlugin(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(c.stderr(), "collage: plugin: want a subcommand: add, del")
+		fmt.Fprintln(c.stderr(), "collage: plugin: want a subcommand: add, del, check")
 		fmt.Fprintln(c.stderr())
 		fmt.Fprint(c.stderr(), pluginUsage)
 		return 2
@@ -82,6 +82,8 @@ func (c *CLI) runPlugin(ctx context.Context, args []string) int {
 		return c.runPluginAdd(ctx, args[1:])
 	case "del":
 		return c.runPluginDel(ctx, args[1:])
+	case "check":
+		return c.runPluginCheck(ctx, args[1:])
 	}
 	fmt.Fprintf(c.stderr(), "collage: plugin: unknown subcommand %q\n\n", args[0])
 	fmt.Fprint(c.stderr(), pluginUsage)
