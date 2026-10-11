@@ -129,7 +129,7 @@ func fieldCount(l *ast.FieldList) int {
 	return n
 }
 
-// buildOK reports whether the //go:build line in f's leading comments (if any)
+// buildOK reports whether the //go:build line in f's leading comments (when there is one)
 // holds for the current GOOS and GOARCH. "ignore" is never set; "gc", "unix"
 // and the go1.N release tags are; cgo and every other tag are not.
 func buildOK(f *ast.File) bool {
