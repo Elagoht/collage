@@ -200,11 +200,7 @@ func TestFindings_DevOverlay(t *testing.T) {
 func TestFindings_Build(t *testing.T) {
 	app, c := checkerSite(t, false)
 	out := t.TempDir()
-	builder, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatal(err)
-	}
-	report, err := builder.Build(context.Background())
+	report, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out})
 	if !errors.Is(err, collage.ErrBuildFindings) {
 		t.Fatalf("Build = %v, want ErrBuildFindings", err)
 	}
@@ -292,11 +288,7 @@ func TestBuild_RunsPluginInitFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := t.TempDir()
-	b, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := b.Build(context.Background()); err != nil {
+	if _, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out}); err != nil {
 		t.Fatal(err)
 	}
 	if body, err := os.ReadFile(out + "/from-plugin/index.html"); err != nil || !strings.Contains(string(body), "from a plugin") {

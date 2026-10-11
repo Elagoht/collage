@@ -622,11 +622,7 @@ func TestNextjs_AParamValueRoundTripsThroughItsLink(t *testing.T) {
 func TestNextjs_ABuildWritesEachValueUnderItsOwnName(t *testing.T) {
 	app := paramApp(t, encodedSlugs...)
 	out := t.TempDir()
-	builder, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := builder.Build(context.Background()); err != nil {
+	if _, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	for _, value := range encodedSlugs {
@@ -682,11 +678,7 @@ func TestNextjs_ABuildRefusesValuesThatDoNotFitThePattern(t *testing.T) {
 			t.Fatalf("RegisterPage: %v", err)
 		}
 		out := t.TempDir()
-		builder, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: out})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := builder.Build(context.Background()); !errors.Is(err, collage.ErrRouteParams) {
+		if _, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out}); !errors.Is(err, collage.ErrRouteParams) {
 			t.Errorf("%s: Build = %v, want ErrRouteParams", c.name, err)
 		}
 		var written []string

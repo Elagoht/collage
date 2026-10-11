@@ -2,21 +2,40 @@ package collage_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
+// mountTemplateRoot writes the minimal template set an App needs to start, and
+// returns its directory. It is this package's own copy of collage_test.go's (the
+// internal test package's) templateRoot: an external test package cannot reach
+// an internal test helper of the package under test.
+func mountTemplateRoot(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	path := filepath.Join(root, "pages", "home.html")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(`<h1>Welcome Home</h1>`), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	return root
+}
+
 // TestDocumentResult_IsNameableFromOutsideThePackage is the reachability test for
 // App.RenderDocumentPath's return type, and it lives in the external test package
-// for the same reason TestMounts_ElementTypeIsNameableFromOutsideThePackage does:
-// the import list is the proof. render.DocumentResult lives in internal/render,
+// because the import list is the proof. render.DocumentResult lives in internal/render,
 // unreachable from outside this module, so without the collage.DocumentResult
 // alias none of the declarations below would compile.
 //
-// This is the sixth instance of one defect. App is a bare alias of core.App, so
-// its methods are public surface that never appears in package collage's own
-// source, and a return type reached only that way is easy to miss: a caller can
+// This was the sixth instance of one defect. App was then a bare alias of
+// core.App, so its methods were public surface that never appeared in package
+// collage's own source, and a return type reached only that way was easy to miss: a caller can
 // always write `result := app.RenderDocumentPath(...)`, and the gap only shows up
 // when it tries to store the value in a field, pass it to a helper, or declare a
 // variable of that type. RenderPath's Result alias exists to avoid exactly this;

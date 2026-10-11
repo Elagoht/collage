@@ -83,7 +83,7 @@ func TestBuild_SkipsDynamicStrategyDocuments(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	if len(report.Skipped) != 1 || report.Skipped[0].Page != "live" || report.Skipped[0].Locale != "" {
+	if len(report.Skipped) != 1 || report.Skipped[0].Name != "live" || report.Skipped[0].Locale != "" {
 		t.Fatalf("Skipped = %+v", report.Skipped)
 	}
 	if report.Skipped[0].Reason == "" {
@@ -120,7 +120,7 @@ func TestBuild_SkipsADynamicPatternWithoutStaticParams(t *testing.T) {
 		t.Fatalf("Skipped = %v, want 1 entry", report.Skipped)
 	}
 	got := report.Skipped[0]
-	if got.Page != "api-item" || got.Locale != "en" || got.Reason != ErrDynamicPathUnresolved.Error() {
+	if got.Name != "api-item" || got.Locale != "en" || got.Reason != ErrDynamicPathUnresolved.Error() {
 		t.Fatalf("Skipped[0] = %+v", got)
 	}
 	if len(report.Written) != 0 {

@@ -49,11 +49,7 @@ func buildLegacySite(t *testing.T, rules []collage.BuiltRedirect) (*legacyRules,
 	if err := app.RegisterNotFoundPage(missing); err != nil {
 		t.Fatal(err)
 	}
-	builder, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = builder.Build(context.Background())
+	_, err = collage.Build(context.Background(), app, collage.BuildOptions{OutDir: t.TempDir()})
 	return l, err
 }
 

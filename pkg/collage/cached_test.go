@@ -102,11 +102,7 @@ func (s *authorSite) get(t *testing.T, i int, preview bool) string {
 // Thirty pages by two authors ask for each author once — exported or served.
 func TestCached_SharesAcrossPages(t *testing.T) {
 	site := newAuthorSite(t, false)
-	builder, err := collage.NewBuilder(site.app, collage.BuildOptions{OutDir: t.TempDir(), Concurrency: 8})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := builder.Build(context.Background()); err != nil {
+	if _, err := collage.Build(context.Background(), site.app, collage.BuildOptions{OutDir: t.TempDir(), Concurrency: 8}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	if got := site.fetched(); got["A"] != 1 || got["B"] != 1 {

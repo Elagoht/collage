@@ -1,28 +1,123 @@
 package collage
 
 import (
+	"context"
+	"time"
+
 	"github.com/Elagoht/collage/internal/build"
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// Builder renders an application's static-eligible pages and documents to files
-// under BuildOptions.OutDir, and copies its mounted files beside them. Construct
-// one with NewBuilder.
-type Builder = build.Builder
+// BuildOptions configures a static build. See Build.
+type BuildOptions struct {
+	// OutDir is the directory the build writes under. It must not be empty;
+	// Build returns ErrEmptyOutDir otherwise.
+	OutDir string
+	// Locales restricts the build to these locales. An empty Locales builds every
+	// locale each page declares in its own paths.
+	Locales []string
+	// Clean removes OutDir's existing contents (not OutDir itself) before writing.
+	// Build refuses to run at all when OutDir resolves to a filesystem root, and
+	// refuses to clean (though it still writes) when OutDir resolves to a
+	// repository root; see ErrDangerousOutDir.
+	Clean bool
+	// Concurrency bounds how many pages render and write at once. Zero or negative
+	// means 1. The report is the same whatever the value: results are merged back
+	// in registration order.
+	Concurrency int
+	// AllowDegraded writes a page whose render had at least one failed fragment
+	// instead of recording ErrDegradedRender against it. It is off by default: a
+	// file has no TTL, so a degraded page written to disk stays degraded until the
+	// next build. Either way the failures are in BuildReport.Errors, and a render
+	// that produced no markup at all is still refused, with ErrEmptyRender.
+	AllowDegraded bool
+}
 
-// BuildOptions configures a static build. See NewBuilder.
-type BuildOptions = build.Options
+// internal converts o to the build engine's options, field by field.
+func (o BuildOptions) internal() build.Options {
+	return build.Options{
+		OutDir:        o.OutDir,
+		Locales:       o.Locales,
+		Clean:         o.Clean,
+		Concurrency:   o.Concurrency,
+		AllowDegraded: o.AllowDegraded,
+	}
+}
 
-// BuildReport summarizes the outcome of a Builder.Build call.
-type BuildReport = build.Report
+// BuildReport summarizes the outcome of a Build call.
+type BuildReport struct {
+	// Written lists the absolute paths of the files written: one per page or
+	// document, plus one per copied mounted file.
+	Written []string
+	// Skipped lists every page or document, or locale of one, the build could not
+	// produce statically.
+	Skipped []SkipRecord
+	// Warnings lists every page or document that was written but is not the whole
+	// of what the served one is, such as one whose content depends on a query
+	// string, which a file cannot carry.
+	Warnings []WarningRecord
+	// Findings lists what plugins checking the output reported, about each page
+	// and about the build as a whole. An error-level finding also puts
+	// ErrBuildFindings in Errors.
+	Findings []Finding
+	// Errors lists every render, path-resolution or write failure. Build's
+	// returned error is errors.Join of exactly these.
+	Errors []error
+	// Duration is how long the Build call took.
+	Duration time.Duration
+}
 
 // SkipRecord describes one page or document, or one locale of one, that a static
 // build could not produce, and why.
-type SkipRecord = build.SkipRecord
+type SkipRecord struct {
+	// Name is the skipped page's or document's name.
+	Name string
+	// Locale is the locale that was skipped, or "" when the whole page or document
+	// was skipped regardless of locale.
+	Locale string
+	// Reason explains why it was skipped.
+	Reason string
+	// Err is the sentinel for the reason — ErrNotStatic, ErrGuarded,
+	// ErrDynamicPathUnresolved, ErrUnresolvedToken, ErrDuplicateOutputPath — for a
+	// caller that acts on the kind of skip rather than reading the sentence.
+	Err error
+}
 
 // WarningRecord describes a page or document a static build wrote, but not all
 // of: one whose content depends on a query string. See BuildReport.Warnings.
-type WarningRecord = build.WarningRecord
+type WarningRecord struct {
+	// Name is the page's or document's name.
+	Name string
+	// Reason explains what the written file does not contain.
+	Reason string
+}
+
+// reportFrom converts the build engine's report, field by field. Nil stays nil,
+// for the report and for each of its slices.
+func reportFrom(r *build.Report) *BuildReport {
+	if r == nil {
+		return nil
+	}
+	out := &BuildReport{
+		Written:  r.Written,
+		Findings: r.Findings,
+		Errors:   r.Errors,
+		Duration: r.Duration,
+	}
+	if r.Skipped != nil {
+		out.Skipped = make([]SkipRecord, len(r.Skipped))
+		for i, s := range r.Skipped {
+			out.Skipped[i] = SkipRecord{Name: s.Name, Locale: s.Locale, Reason: s.Reason, Err: s.Err}
+		}
+	}
+	if r.Warnings != nil {
+		out.Warnings = make([]WarningRecord, len(r.Warnings))
+		for i, w := range r.Warnings {
+			out.Warnings[i] = WarningRecord{Name: w.Name, Reason: w.Reason}
+		}
+	}
+	return out
+}
 
 // ErrBuildFindings is in a build's errors when a plugin reported an error-level
 // finding. The pages were written; what was found is in BuildReport.Findings.
@@ -42,14 +137,10 @@ var ErrRedirectShadowsFile = build.ErrRedirectShadowsFile
 // a collision costs no work and leaves no half-built output directory.
 var ErrOutputPathCollision = build.ErrOutputPathCollision
 
-// ErrNilRenderer is returned by NewBuilder when app is nil.
-var ErrNilRenderer = build.ErrNilRenderer
+// ErrEmptyOutDir is returned by Build when BuildOptions.OutDir is empty.
+var ErrEmptyOutDir = build.ErrInvalidOutDir
 
-// ErrInvalidOutDir is returned by NewBuilder when BuildOptions.OutDir is
-// empty.
-var ErrInvalidOutDir = build.ErrInvalidOutDir
-
-// ErrDangerousOutDir is returned by Builder.Build when BuildOptions.OutDir
+// ErrDangerousOutDir is returned by Build when BuildOptions.OutDir
 // resolves — after symlinks are followed — to a filesystem root, which Build
 // refuses to write into at all, or when BuildOptions.Clean is true and OutDir
 // additionally resolves to a repository root.
@@ -105,33 +196,24 @@ var ErrBuildPanic = build.ErrBuildPanic
 // can return a single newline.
 var ErrEmptyDocumentBody = types.ErrEmptyDocumentBody
 
-// NewBuilder returns a static-site builder that renders app's pages and
-// documents, and copies app's mounted assets, according to opts, ready for
-// Build. It returns ErrNilRenderer when app is nil and ErrInvalidOutDir when
-// opts.OutDir is empty.
+// Build renders app's static pages and documents into opts.OutDir, copies its
+// mounted files beside them, and reports what it wrote, skipped and warned about.
+// It returns ErrNilApp for a nil app and ErrEmptyOutDir for an empty OutDir.
 //
-// This is a thin wrapper, not a second implementation: *App (an alias for
-// *internal/core.App) already satisfies internal/build's own narrow Renderer
-// interface — Pages, RenderPath, Documents, RenderDocumentPath and Mounts —
-// so NewBuilder does nothing beyond handing app to build.New. Every safety
-// check Build performs (symlink-escape containment, the dangerous-output-
-// directory refusals) is internal/build's own, not reimplemented here. Which
-// mounts a build copies is answered entirely by app.Mounts(), reached through
-// Renderer, not by anything on BuildOptions: a caller cannot hand New one
-// application's pages alongside a different application's mounts, because
-// there is no field through which to do so.
-//
-// The nil check here is not redundant with build.New's own: app arrives as
-// the concrete *App, and handing a nil *App to build.New's Renderer parameter
-// would box it into a non-nil interface value with a nil underlying pointer —
-// which build.New's own "app == nil" check cannot see through. Checking the
-// concrete pointer here, before that boxing happens, is what makes
-// ErrNilRenderer actually reachable through this wrapper.
-func NewBuilder(app *App, opts BuildOptions) (*Builder, error) {
-	if app == nil {
-		return nil, ErrNilRenderer
+// The report is returned alongside the error, so a caller can print what was
+// written as well as what failed. The error is errors.Join of BuildReport.Errors,
+// except when the build stopped before rendering — the application failed to
+// start, or OutDir was refused — where it is that failure alone.
+func Build(ctx context.Context, app *App, opts BuildOptions) (*BuildReport, error) {
+	if app == nil || app.c == nil {
+		return nil, ErrNilApp
 	}
-	return build.New(app, opts)
+	b, err := build.New(app.c, opts.internal())
+	if err != nil {
+		return nil, err
+	}
+	r, err := b.Build(ctx)
+	return reportFrom(r), err
 }
 
 // ErrNotStatic is a SkipRecord's Err for a page or document declared Dynamic(),

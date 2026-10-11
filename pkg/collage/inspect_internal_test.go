@@ -59,7 +59,7 @@ func inspectedAppInternal(t *testing.T) *App {
 // Inspect describes the application as an editor needs it: names, patterns,
 // parameters, the slots each template fills, functions and files.
 func TestInspect(t *testing.T) {
-	in := inspectedAppInternal(t).Inspect()
+	in := inspectedAppInternal(t).c.Inspect()
 	if in.Version != 1 || in.TemplateRoot != "t" || in.DefaultLocale != "en" || strings.Join(in.Locales, ",") != "en,tr" {
 		t.Errorf("header = %+v", in)
 	}
@@ -151,7 +151,7 @@ func TestInspectLayoutsAndGuards(t *testing.T) {
 		WithPath("en", "/panel").Build()); err != nil {
 		t.Fatal(err)
 	}
-	p := app.Inspect().Pages[0]
+	p := app.c.Inspect().Pages[0]
 	if got := strings.Join(p.Layouts, ","); got != "private,auth" {
 		t.Errorf("Layouts = %q, want private,auth", got)
 	}
@@ -182,7 +182,7 @@ func TestInspectSharedLayoutOnce(t *testing.T) {
 		}
 	}
 	count := map[string]int{}
-	for _, f := range app.Inspect().Fragments {
+	for _, f := range app.c.Inspect().Fragments {
 		count[f.Name]++
 	}
 	if count["master"] != 1 || count["auth"] != 1 {
@@ -192,7 +192,7 @@ func TestInspectSharedLayoutOnce(t *testing.T) {
 
 func TestInspectDataType(t *testing.T) {
 	got := map[string]*string{}
-	for _, f := range inspectedAppInternal(t).Inspect().Fragments {
+	for _, f := range inspectedAppInternal(t).c.Inspect().Fragments {
 		got[f.Name] = f.DataType
 	}
 	if p := got["post"]; p == nil || *p != "nil" {
@@ -233,7 +233,7 @@ func TestInspectJSONDataTypes(t *testing.T) {
 	if err := app.RegisterPage(NewPage("p").WithContent(a).WithPath("en", "/").Build()); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := json.Marshal(app.Inspect())
+	raw, err := json.Marshal(app.c.Inspect())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,4 +287,28 @@ func TestInspect_GoldenJSON(t *testing.T) {
 	if !bytes.Equal(out, want) {
 		t.Errorf("collage inspect output changed:\n%s", out)
 	}
+}
+
+// An inline fragment is inspected as inline, with no template path.
+func TestInspect_InlineFragment(t *testing.T) {
+	app, err := New(&Config{
+		Server:   ServerConfig{Host: "localhost", Port: 0},
+		Template: TemplateConfig{FS: fstest.MapFS{"templates/layouts/default.html": {Data: []byte(`{{slot "content"}}`)}}, Root: "templates"},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := app.RegisterPage(NewPage("p").WithContent(NewInlineFragment("card", `<p/>`).Build()).
+		WithPath("en", "/p").Build()); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	for _, f := range app.c.Inspect().Fragments {
+		if f.Name == "card" {
+			if !f.Inline || f.Template != "" {
+				t.Fatalf("inspected = %+v, want inline and no template path", f)
+			}
+			return
+		}
+	}
+	t.Fatal("inline fragment not inspected")
 }

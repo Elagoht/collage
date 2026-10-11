@@ -35,8 +35,8 @@ func TestPrintBuildReport_EverySkipIsNamed(t *testing.T) {
 	report := &BuildReport{
 		Written: []string{"/tmp/x/index.html"},
 		Skipped: []SkipRecord{
-			{Page: "signup", Reason: "page uses the dynamic render strategy"},
-			{Page: "admin", Locale: "tr", Reason: "no path for this locale"},
+			{Name: "signup", Reason: "page uses the dynamic render strategy"},
+			{Name: "admin", Locale: "tr", Reason: "no path for this locale"},
 		},
 		Duration: 2 * time.Millisecond,
 	}
@@ -62,7 +62,7 @@ func TestPrintBuildReport_LongFileListsAreTruncated(t *testing.T) {
 	}
 	report := &BuildReport{
 		Written: written,
-		Skipped: []SkipRecord{{Page: "signup", Reason: "dynamic"}},
+		Skipped: []SkipRecord{{Name: "signup", Reason: "dynamic"}},
 	}
 
 	out := printed(t, report, nil)
@@ -82,7 +82,7 @@ func TestPrintBuildReport_LongFileListsAreTruncated(t *testing.T) {
 func TestPrintBuildReport_SummaryCountsEverything(t *testing.T) {
 	report := &BuildReport{
 		Written:  []string{"/tmp/x/a.html", "/tmp/x/b.html"},
-		Skipped:  []SkipRecord{{Page: "signup", Reason: "dynamic"}},
+		Skipped:  []SkipRecord{{Name: "signup", Reason: "dynamic"}},
 		Errors:   []error{errors.New("render failed")},
 		Duration: 1500 * time.Millisecond,
 	}
@@ -125,7 +125,7 @@ func TestPrintBuildReport_Warnings(t *testing.T) {
 	var out strings.Builder
 	PrintBuildReport(&out, &BuildReport{
 		Written:  []string{"/tmp/dist/blogs/index.html"},
-		Warnings: []WarningRecord{{Page: "blogs", Reason: "reads the query parameters page"}},
+		Warnings: []WarningRecord{{Name: "blogs", Reason: "reads the query parameters page"}},
 	}, nil)
 	got := out.String()
 	if !strings.Contains(got, "1 warning") || !strings.Contains(got, "blogs  reads the query parameters page") {

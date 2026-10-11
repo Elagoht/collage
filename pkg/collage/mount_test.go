@@ -1,55 +1,23 @@
-// Package collage_test proves, from entirely outside package collage, that
-// App.Mounts()'s return type is fully usable with nothing but the standard
-// library and pkg/collage imported. It is a separate, external test package
-// (not "package collage") specifically so that its import list is the proof:
-// if Mount's element type needed internal/asset to be named, this file could
-// not compile without importing it, and internal/asset is unreachable from
-// outside this module.
-package collage_test
+package collage
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 	"testing/fstest"
-
-	"github.com/Elagoht/collage/pkg/collage"
 )
 
-// mountTemplateRoot writes the minimal template set an App needs to start, and
-// returns its directory. It is this file's own copy of collage_test.go's (the
-// internal test package's) templateRoot: an external test package cannot reach
-// an internal test helper of the package under test.
-func mountTemplateRoot(t *testing.T) string {
-	t.Helper()
-
-	root := t.TempDir()
-	path := filepath.Join(root, "pages", "home.html")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte(`<h1>Welcome Home</h1>`), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	return root
-}
-
-// TestMounts_ElementTypeIsNameableFromOutsideThePackage declares a
-// []*collage.Mount — the exact type App.Mounts() returns, through the
-// App = core.App alias — and reads two of its methods off an element, using
-// only pkg/collage and the standard library.
+// TestMounts_ElementTypeHasAPublicName declares a []*Mount —
+// the exact type the application's mounts are listed as — and reads its methods
+// off an element, using only pkg/collage's names.
 //
-// Before the Mount alias existed, App.Mounts() could still be *called* from
-// here, but its element type could not be *named*: internal/asset, where
-// asset.Mount actually lives, is unreachable from outside this module, so a
-// caller here could declare no variable, slice, or function parameter of that
-// type. That is the same defect App.RenderPath's Result alias exists to avoid
-// for *render.Result — every type the public API hands back must be nameable
-// by the caller, and this test is what stands guard over that for Mounts.
-func TestMounts_ElementTypeIsNameableFromOutsideThePackage(t *testing.T) {
-	app, err := collage.New(&collage.Config{
-		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{Root: mountTemplateRoot(t)},
+// App no longer exposes Mounts (a static build is the one reader, through
+// Build), so this test lives inside the package and reads the list through the
+// application it wraps. Mount stays exported: what the test guards is that the
+// element type has a pkg/collage name, so the build's view of a mount never
+// needs internal/asset spelled out.
+func TestMounts_ElementTypeHasAPublicName(t *testing.T) {
+	app, err := New(&Config{
+		Server:   ServerConfig{Host: "localhost", Port: 3000},
+		Template: TemplateConfig{Root: templateRoot(t)},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -57,14 +25,14 @@ func TestMounts_ElementTypeIsNameableFromOutsideThePackage(t *testing.T) {
 
 	err = app.Mount("/static/", fstest.MapFS{
 		"app.css": {Data: []byte("body{color:red}")},
-	}, collage.WithCacheControl("public, max-age=60"))
+	}, WithCacheControl("public, max-age=60"))
 	if err != nil {
 		t.Fatalf("Mount: %v", err)
 	}
 
 	app.Handler() // closes registration; Mounts is readable either side of this.
 
-	var mounts []*collage.Mount = app.Mounts()
+	var mounts []*Mount = app.c.Mounts()
 	if len(mounts) != 1 {
 		t.Fatalf("Mounts() = %d entries, want 1", len(mounts))
 	}

@@ -23,11 +23,7 @@ func TestBuild_CaptureLeavesNoCacheEntries(t *testing.T) {
 	cacheDir := t.TempDir()
 	app, marked := newCaptureCountingApp(t, CacheConfig{Enabled: true, Type: "disk", Dir: cacheDir}, &buildReader{})
 
-	builder, err := NewBuilder(app, BuildOptions{OutDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	if _, err := builder.Build(context.Background()); err != nil {
+	if _, err := Build(context.Background(), app, BuildOptions{OutDir: t.TempDir()}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	if n := countFiles(t, cacheDir); n != 0 {
@@ -68,11 +64,7 @@ func TestBuild_NothingIsCapturedWithoutABuildReader(t *testing.T) {
 			plugins = append(plugins, &buildReader{})
 		}
 		app, marked := newCaptureCountingApp(t, CacheConfig{}, plugins...)
-		builder, err := NewBuilder(app, BuildOptions{OutDir: t.TempDir()})
-		if err != nil {
-			t.Fatalf("NewBuilder: %v", err)
-		}
-		report, err := builder.Build(context.Background())
+		report, err := Build(context.Background(), app, BuildOptions{OutDir: t.TempDir()})
 		if err != nil {
 			t.Fatalf("Build: %v", err)
 		}
@@ -236,11 +228,7 @@ func newNonceApp(t *testing.T, devMode bool, plugin *nonceReader) *App {
 
 func buildNonceApp(t *testing.T, app *App) *BuildReport {
 	t.Helper()
-	builder, err := NewBuilder(app, BuildOptions{OutDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	report, err := builder.Build(context.Background())
+	report, err := Build(context.Background(), app, BuildOptions{OutDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}

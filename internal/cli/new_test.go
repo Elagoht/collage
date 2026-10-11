@@ -220,7 +220,7 @@ func TestRun_New_Scaffold_Compiles(t *testing.T) {
 	runIn(goBin, "test", "./...")
 
 	// The scaffold's own -collage-build path is not a hand-rolled writer: it
-	// calls collage.NewBuilder, the framework's own static builder. Running it
+	// calls collage.Build, the framework's own static builder. Running it
 	// for real here, and checking what it wrote, is the check that "collage
 	// export" reaches that builder — with its containment checks — rather than
 	// some weaker stand-in the scaffold carries on its own.

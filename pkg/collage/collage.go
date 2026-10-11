@@ -23,14 +23,6 @@ import (
 // somewhere the author never chose.
 var ErrNilConfig = errors.New("collage: nil config")
 
-// App owns every subsystem and the server lifecycle. It is an alias for
-// internal/core's App, not a wrapper, so the methods documented there — RegisterPage,
-// RegisterNotFoundPage, RegisterErrorPage, RegisterPlugin, RegisterCommand,
-// Commands, Pages, Page, DevMode, Logger, InvalidateTags, InvalidateTagsN,
-// RenderPath, Handler, ListenAndServe, and Shutdown — are called directly on the
-// value New returns, with no forwarding layer in between.
-type App = core.App
-
 // Plugin is the minimum contract every plugin implements: Name, Version, Init, and
 // Shutdown. A plugin opts into the framework's hooks by additionally implementing
 // whichever hook interfaces it needs.
@@ -507,28 +499,6 @@ var ErrPanic = httpx.ErrPanic
 // plugin reacting to "this asset request failed" needs no finer distinction than
 // that. A panic recovered while serving a mount is reported as ErrPanic instead.
 var ErrAssetFailed = httpx.ErrAssetFailed
-
-// New builds an App from cfg: it applies the framework's defaults to every field
-// left at its zero value, validates the result, converts it into the internal
-// configuration, and constructs the application.
-//
-// cfg is mutated in place by the defaulting step, so the caller can read back
-// exactly what the application was built with. Passing nil returns ErrNilConfig.
-//
-// Every failure mode is reported here rather than at the first request: an invalid
-// configuration (see Config.Validate), a template root that does not exist, or a
-// template that does not parse.
-func New(cfg *Config) (*App, error) {
-	if cfg == nil {
-		return nil, ErrNilConfig
-	}
-
-	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-	return core.New(toCoreConfig(cfg))
-}
 
 // toCoreConfig converts the public Config into internal/core's mirror of it. The
 // conversion is written out field by field on purpose: the compiler cannot tell us

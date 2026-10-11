@@ -58,7 +58,7 @@ func (b *Builder) enumerateDocuments(ctx context.Context) ([]documentTask, []Ski
 	for _, doc := range b.app.Documents() {
 		if !doc.Strategy.Cacheable() {
 			skipped = append(skipped, SkipRecord{
-				Page:   doc.Name,
+				Name:   doc.Name,
 				Reason: fmt.Sprintf("document uses the %s render strategy, which cannot be built statically", doc.Strategy),
 				Err:    ErrNotStatic,
 			})
@@ -149,7 +149,7 @@ func (b *Builder) dedupeDocumentTargets(outDirResolved string, tasks []documentT
 
 		if owner, taken := claimed[target]; taken {
 			skipped = append(skipped, SkipRecord{
-				Page:   task.doc.Name,
+				Name:   task.doc.Name,
 				Locale: task.locale,
 				Reason: fmt.Sprintf("%v: path %q resolves to the same output file as locale %q's path %q",
 					ErrDuplicateOutputPath, task.path, owner.locale, owner.path),

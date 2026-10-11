@@ -11,9 +11,9 @@ import (
 	"github.com/Elagoht/collage/internal/core"
 )
 
-// ErrNilApp is returned by DispatchCommands when passed a nil *App. There is nothing
-// to dispatch against and nothing to start, and inventing an application would run a
-// program the caller never built.
+// ErrNilApp is returned by Build and DispatchCommands when passed a nil *App, or
+// one New did not return. There is nothing to build or dispatch against, and
+// inventing an application would run a program the caller never built.
 var ErrNilApp = errors.New("collage: nil app")
 
 // ErrUnknownCommand is returned by DispatchCommands when args is empty or names no
@@ -49,8 +49,9 @@ var ErrUnknownCommand = errors.New("collage: unknown command")
 // started.
 //
 // It dispatches plugin commands, and two of its own: "collage-inspect", which prints
-// App.Inspect as JSON for an editor or a linter, and "collage-check", which prints
-// App.Check's findings. "dev", "build", "export" and the
+// a description of the application as versioned JSON for an editor or a linter
+// (what `collage inspect` reads), and "collage-check", which prints App.Check's
+// findings. "dev", "build", "export" and the
 // rest belong to the `collage` binary, which invokes this program rather than the
 // other way round, and a program that wants a usage listing has App.Commands.
 //
@@ -76,7 +77,7 @@ var ErrUnknownCommand = errors.New("collage: unknown command")
 //	// no plugin claimed it: carry on and serve
 //	log.Fatal(app.ListenAndServe())
 func DispatchCommands(ctx context.Context, app *App, args []string) (int, error) {
-	if app == nil {
+	if app == nil || app.c == nil {
 		return 2, ErrNilApp
 	}
 	if ctx == nil {
@@ -115,8 +116,8 @@ func DispatchCommands(ctx context.Context, app *App, args []string) (int, error)
 	return 2, fmt.Errorf("%w: %q", ErrUnknownCommand, name)
 }
 
-// inspectCommand is the command DispatchCommands answers itself with App.Inspect,
-// as indented JSON on standard output: `go run . collage-inspect`, which is what
+// inspectCommand is the command DispatchCommands answers itself with a description
+// of the application, as indented JSON on standard output: `go run . collage-inspect`, which is what
 // `collage inspect` and editor extensions run. Prefixed, so no plugin's command is
 // taken.
 const inspectCommand = "collage-inspect"
@@ -127,7 +128,7 @@ func inspect(app *App, args []string) (int, error) {
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(app.Inspect()); err != nil {
+	if err := enc.Encode(app.c.Inspect()); err != nil {
 		return 1, err
 	}
 	return 0, nil

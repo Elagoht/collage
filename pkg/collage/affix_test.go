@@ -59,11 +59,7 @@ func TestAffixedDocumentBesideAPage(t *testing.T) {
 	}
 
 	out := t.TempDir()
-	builder, err := NewBuilder(app, BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := builder.Build(context.Background()); err != nil {
+	if _, err := Build(context.Background(), app, BuildOptions{OutDir: out}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	for file, want := range map[string]string{

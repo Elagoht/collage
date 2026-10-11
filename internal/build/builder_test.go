@@ -457,7 +457,7 @@ func TestBuild_DynamicPage_NoProvider_Skipped(t *testing.T) {
 		t.Fatalf("Skipped = %v, want 1 entry", report.Skipped)
 	}
 	got := report.Skipped[0]
-	if got.Page != "post" || got.Locale != "en" || got.Reason != ErrDynamicPathUnresolved.Error() {
+	if got.Name != "post" || got.Locale != "en" || got.Reason != ErrDynamicPathUnresolved.Error() {
 		t.Fatalf("Skipped[0] = %+v", got)
 	}
 	if len(report.Written) != 0 {
@@ -479,7 +479,7 @@ func TestBuild_DynamicStrategySkipped(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	if len(report.Skipped) != 1 || report.Skipped[0].Page != "live" || report.Skipped[0].Locale != "" {
+	if len(report.Skipped) != 1 || report.Skipped[0].Name != "live" || report.Skipped[0].Locale != "" {
 		t.Fatalf("Skipped = %+v", report.Skipped)
 	}
 	if len(report.Written) != 0 {
@@ -828,7 +828,7 @@ func TestBuild_ReportContents(t *testing.T) {
 	if len(report.Written) != 1 || report.Written[0] != filepath.Join(out, "written", "index.html") {
 		t.Fatalf("Written = %v", report.Written)
 	}
-	if len(report.Skipped) != 1 || report.Skipped[0].Page != "skipped" {
+	if len(report.Skipped) != 1 || report.Skipped[0].Name != "skipped" {
 		t.Fatalf("Skipped = %+v", report.Skipped)
 	}
 	if len(report.Errors) != 1 || !errors.Is(report.Errors[0], renderErr) {

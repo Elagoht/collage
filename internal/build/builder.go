@@ -54,7 +54,7 @@ import (
 var ErrNilRenderer = errors.New("collage: nil renderer")
 
 // ErrInvalidOutDir is returned by New when Options.OutDir is empty.
-var ErrInvalidOutDir = errors.New("collage: invalid output directory")
+var ErrInvalidOutDir = errors.New("collage: empty output directory")
 
 // ErrDangerousOutDir is returned by Build when Options.OutDir resolves — after
 // symlinks are followed — to a filesystem root, which Build refuses to write into
@@ -240,7 +240,7 @@ type Options struct {
 // cannot carry.
 func queryWarning(name string, params []string) WarningRecord {
 	return WarningRecord{
-		Page: name,
+		Name: name,
 		Reason: fmt.Sprintf("reads the query parameters %s, and a static file has no query string: only the version without them was written",
 			strings.Join(params, ", ")),
 	}
@@ -248,9 +248,8 @@ func queryWarning(name string, params []string) WarningRecord {
 
 // WarningRecord describes a page or document the build wrote, but not all of.
 type WarningRecord struct {
-	// Page is the page's or document's Name, named Page for the reason
-	// SkipRecord.Page is.
-	Page string
+	// Name is the page's or document's Name.
+	Name string
 	// Reason explains what the written file does not contain.
 	Reason string
 }
@@ -258,11 +257,10 @@ type WarningRecord struct {
 // SkipRecord describes one page or document, or one locale of one, that a static
 // build could not produce, and why.
 type SkipRecord struct {
-	// Page is the skipped page's or document's Name. The field is not renamed for
-	// documents: a page and a document are never skipped in the same pass over
-	// the same registry, so one field unambiguously names whichever kind of route
-	// this record describes.
-	Page string
+	// Name is the skipped page's or document's Name. A page and a document are
+	// never skipped in the same pass over the same registry, so one field
+	// unambiguously names whichever kind of route this record describes.
+	Name string
 	// Locale is the specific locale that was skipped. It is empty when the whole
 	// page or document was skipped regardless of locale (a non-cacheable render
 	// strategy).
@@ -434,7 +432,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 				// Skipped rather than failed. Nothing is wrong with the page; it
 				// has a form, and a form needs the server a built site lacks.
 				taskSkips[i] = &SkipRecord{
-					Page:   task.page.Name,
+					Name:   task.page.Name,
 					Locale: task.locale,
 					Reason: unresolvedTokenReason,
 					Err:    ErrUnresolvedToken,
@@ -1021,7 +1019,7 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 		}
 		if !page.Strategy.Cacheable() {
 			skipped = append(skipped, SkipRecord{
-				Page:   page.Name,
+				Name:   page.Name,
 				Reason: fmt.Sprintf("page uses the %s render strategy, which cannot be built statically", page.Strategy),
 				Err:    ErrNotStatic,
 			})
@@ -1029,7 +1027,7 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 		}
 		if page.Guarded() {
 			skipped = append(skipped, SkipRecord{
-				Page:   page.Name,
+				Name:   page.Name,
 				Reason: "page has a guard, and a file on a static host has no guard in front of it",
 				Err:    ErrGuarded,
 			})
@@ -1178,7 +1176,7 @@ type pathInstance struct {
 func expandPattern(ctx context.Context, kind, name, locale, pattern string, list types.StaticParamsFunc) ([]pathInstance, *SkipRecord, []error) {
 	if list == nil {
 		return nil, &SkipRecord{
-			Page:   name,
+			Name:   name,
 			Locale: locale,
 			Reason: ErrDynamicPathUnresolved.Error(),
 			Err:    ErrDynamicPathUnresolved,
@@ -1408,7 +1406,7 @@ func verifyNoSymlinksBeneath(outDirResolved, target string) error {
 func (b *Builder) prepareOutDir() (string, error) {
 	absOutDir, err := filepath.Abs(b.opts.OutDir)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidOutDir, err)
+		return "", fmt.Errorf("collage: output directory %q: %w", b.opts.OutDir, err)
 	}
 	cleanOutDir := filepath.Clean(absOutDir)
 
