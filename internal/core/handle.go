@@ -6,13 +6,9 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/httpx"
 )
-
-// ErrInvalidHandlerPrefix reports a Handle prefix that is not a slash-delimited
-// path, or is "/" alone. A handler at "/" would take every request from every
-// page; wrap app.Handler() in a mux of your own if that is what you want.
-var ErrInvalidHandlerPrefix = errors.New("collage: handler prefix must begin with \"/\" and not be \"/\"")
 
 // ErrNilHandler reports a Handle or Use call given nothing to run.
 var ErrNilHandler = errors.New("collage: nil handler")
@@ -33,7 +29,7 @@ var ErrNilHandler = errors.New("collage: nil handler")
 // ErrAppStarted once the server has started.
 func (a *App) Handle(prefix string, handler http.Handler) error {
 	if prefix == "/" || !strings.HasPrefix(prefix, "/") || strings.HasPrefix(prefix, "//") || strings.Contains(prefix, "/.") {
-		return fmt.Errorf("%w: %q", ErrInvalidHandlerPrefix, prefix)
+		return fmt.Errorf("%w: a handler prefix must begin with \"/\" and not be \"/\": %q", asset.ErrInvalidPrefix, prefix)
 	}
 	if handler == nil {
 		return fmt.Errorf("%w: at %q", ErrNilHandler, prefix)

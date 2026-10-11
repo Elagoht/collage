@@ -9,9 +9,8 @@ import (
 )
 
 // ErrInvalidOrigin is returned by ParseOrigin for anything that is not a bare
-// origin. pkg/collage exports it as ErrInvalidBaseURL, the error Config.BaseURL
-// is refused with.
-var ErrInvalidOrigin = errors.New("collage: BaseURL must be a bare origin, scheme://host[:port]")
+// origin. pkg/collage exports it as ErrInvalidOrigin.
+var ErrInvalidOrigin = errors.New("collage: invalid origin: want scheme://host[:port] with no path, query or fragment")
 
 // ParseOrigin checks that raw is a bare origin — an http or https scheme, a host,
 // and nothing else: no path beyond "/", no query, no fragment, no user info — and

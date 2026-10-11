@@ -107,8 +107,8 @@ func TestNew_AppliesDefaults(t *testing.T) {
 // TestNew_Rejections covers every way New refuses to build an application.
 func TestNew_Rejections(t *testing.T) {
 	t.Run("nil config", func(t *testing.T) {
-		if _, err := New(nil); !errors.Is(err, ErrNilConfig) {
-			t.Fatalf("New(nil) = %v, want ErrNilConfig", err)
+		if _, err := New(nil); !errors.Is(err, errNilConfig) {
+			t.Fatalf("New(nil) = %v, want errNilConfig", err)
 		}
 	})
 
@@ -128,7 +128,7 @@ func TestNew_Rejections(t *testing.T) {
 			Cache:    CacheConfig{Enabled: true, Type: "redis"},
 		}
 		// Config.Validate rejects it before the conversion ever happens, which is
-		// why ErrUnsupportedCache is the internal backstop and not this error.
+		// why the internal backstop is not the error returned here.
 		if _, err := New(cfg); !errors.Is(err, ErrInvalidCacheType) {
 			t.Fatalf("New = %v, want ErrInvalidCacheType", err)
 		}

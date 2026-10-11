@@ -2,7 +2,6 @@ package collage
 
 import (
 	"context"
-	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -14,16 +13,8 @@ import (
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
-	"github.com/Elagoht/collage/internal/router"
-	"github.com/Elagoht/collage/internal/template"
 	"github.com/Elagoht/collage/internal/types"
 )
-
-// ErrNilConfig is returned by New when passed a nil *Config. A nil config is a
-// programming mistake rather than a request for the defaults: Config carries the
-// template root, and silently inventing one would put the application's templates
-// somewhere the author never chose.
-var ErrNilConfig = errors.New("collage: nil config")
 
 // Plugin is the minimum contract every plugin implements. A plugin opts into the
 // framework's hooks by additionally implementing whichever hook interfaces it
@@ -378,7 +369,7 @@ type InvalidatedEntry = plugin.InvalidatedEntry
 type OriginResolver = plugin.OriginResolver
 
 // ParseOrigin checks that raw is a bare origin, scheme://host[:port], and returns
-// it without a trailing slash; anything else is ErrInvalidBaseURL.
+// it without a trailing slash; anything else is ErrInvalidOrigin.
 func ParseOrigin(raw string) (string, error) { return plugin.ParseOrigin(raw) }
 
 // ErrorEvent describes a failure encountered while serving a request.
@@ -456,161 +447,6 @@ const (
 func ETag(content []byte) string {
 	return cache.ETag(content)
 }
-
-// ErrAppStarted is returned by the registration methods once the application has
-// started.
-var ErrAppStarted = core.ErrAppStarted
-
-// ErrNilPage is returned by the page registration methods when passed a nil page.
-var ErrNilPage = core.ErrNilPage
-
-// ErrDuplicatePage is returned when a page is registered under a name another page
-// already holds.
-var ErrDuplicatePage = core.ErrDuplicatePage
-
-// ErrTemplateNotFound is returned when a page's fragment names a template the engine
-// has not loaded — at registration, and again at render time if one is somehow
-// reached.
-var ErrTemplateNotFound = core.ErrTemplateNotFound
-
-// ErrUnregisteredErrorPage is returned when the application starts and a registered
-// page references a NotFoundPage or ErrorPage that was never registered itself. An
-// unregistered error page never has its content bound into its layout, so it would
-// silently render empty at the moment it was needed.
-var ErrUnregisteredErrorPage = core.ErrUnregisteredErrorPage
-
-// ErrPageNotFound is returned by App.RenderPath when a path resolves to no page.
-var ErrPageNotFound = core.ErrPageNotFound
-
-// ErrEmptyCommandName is returned by App.RegisterCommand for a command with no name.
-var ErrEmptyCommandName = core.ErrEmptyCommandName
-
-// ErrDuplicateCommand is returned by App.RegisterCommand for a name another command
-// already holds.
-var ErrDuplicateCommand = core.ErrDuplicateCommand
-
-// ErrUnsupportedCache is returned by New when Cache.Enabled is set, no Cache.Store
-// was supplied, and Cache.Type names an implementation the framework cannot build.
-var ErrUnsupportedCache = core.ErrUnsupportedCache
-
-// ErrInvalidPattern is returned when a page path or redirect source is malformed:
-// it does not start with "/", contains an empty segment, contains a placeholder
-// with an empty name, holds two placeholders in one segment ("{name}.{ext}"),
-// places a catch-all ("{name...}") anywhere but last, or puts text around one.
-var ErrInvalidPattern = router.ErrInvalidPattern
-
-// ErrDuplicateRoute is returned when a page path, or a redirect source, is already
-// registered for the same locale.
-var ErrDuplicateRoute = router.ErrDuplicateRoute
-
-// ErrAmbiguousParameterName is returned when two patterns use different parameter
-// names at the same position, such as "/blog/{slug}" and "/blog/{id}/edit": a route
-// node carries one dynamic edge, so the two names cannot both be right.
-var ErrAmbiguousParameterName = router.ErrAmbiguousParameterName
-
-// ErrOverlappingPattern is returned when two placeholders with text around them
-// at the same position cross: some segment matches both and neither is more
-// specific, such as "/a{x}" and "/{x}b", which "/aXb" matches both of. Disjoint
-// ones ("{slug}.md" and "{slug}.json") and nested ones ("{slug}.min.md" within
-// "{slug}.md", every one within "{slug}") are fine: the more specific wins,
-// whatever the order of registration.
-var ErrOverlappingPattern = router.ErrOverlappingPattern
-
-// ErrRedirectShadowsPage is returned when a redirect's source path is also a
-// registered page path, in either registration order: one of the two would be
-// unreachable.
-var ErrRedirectShadowsPage = router.ErrRedirectShadowsPage
-
-// ErrUnsubstitutedPlaceholder is returned when a redirect's destination contains a
-// "{name}" its source pattern does not capture, so it could never be substituted at
-// match time.
-var ErrUnsubstitutedPlaceholder = router.ErrUnsubstitutedPlaceholder
-
-// ErrUnsafeRedirectTarget is the failure a plugin's ErrorHook receives, under the
-// stage "route", when a redirect's destination is not a single-slash-prefixed
-// relative path once its placeholders are substituted — a protocol-relative
-// "//host" or "/\host", or one carrying a control character. The framework
-// percent-escapes every substituted value, so this reports a redirect whose own To
-// is unsafe. The request is answered with a 500 rather than a Location header
-// nobody should follow.
-var ErrUnsafeRedirectTarget = router.ErrUnsafeRedirectTarget
-
-// ErrTemplateRootMissing is returned, wrapped, by New when Config.Template.Root
-// does not exist or is not a directory. It is the most common startup failure there
-// is, and it is worth telling apart from a template that exists but does not parse.
-var ErrTemplateRootMissing = template.ErrTemplateRootMissing
-
-// ErrNilPlugin is returned by App.RegisterPlugin when passed a nil Plugin.
-var ErrNilPlugin = plugin.ErrNilPlugin
-
-// ErrEmptyPluginName is returned by App.RegisterPlugin when the plugin's Name
-// method returns the empty string.
-var ErrEmptyPluginName = plugin.ErrEmptyPluginName
-
-// ErrDuplicatePlugin is returned by App.RegisterPlugin when a plugin with the same
-// Name is already registered.
-var ErrDuplicatePlugin = plugin.ErrDuplicatePlugin
-
-// ErrDuplicateTemplateFunc is returned by ConfigHost.AddTemplateFunc when another
-// plugin already registered that name.
-var ErrDuplicateTemplateFunc = plugin.ErrDuplicateTemplateFunc
-
-// ErrUnknownPluginConfig is returned when the application starts — by Start,
-// Handler, ListenAndServe or a render, not by New, because a plugin can still be
-// registered in between — if Config.PluginConfig holds a key
-// matching no registered plugin — the typo case, which would otherwise leave a
-// plugin running on defaults and an operator certain it was configured.
-var ErrUnknownPluginConfig = plugin.ErrUnknownPluginConfig
-
-// ErrConfigurerRegisteredLate is returned by RegisterPlugin for a plugin
-// implementing Configurer, which must be supplied in Config.Plugins instead.
-var ErrConfigurerRegisteredLate = core.ErrConfigurerRegisteredLate
-
-// ErrMaxDepthExceeded is the render failure reported when a fragment tree nests
-// deeper than the engine allows, which almost always means a fragment was bound,
-// directly or indirectly, into one of its own slots.
-var ErrMaxDepthExceeded = render.ErrMaxDepthExceeded
-
-// ErrNoRootFragment is the render failure reported for a page with neither a layout
-// fragment nor a content fragment.
-var ErrNoRootFragment = render.ErrNoRootFragment
-
-// ErrRequiredSlotEmpty is the render failure reported when a fragment declares a
-// slot Required and nothing is bound to it. It is distinct from
-// ErrRequiredSlotUnfilled, which reports the same condition at validation time: this
-// one is a per-render failure subject to the fragment failure policy.
-var ErrRequiredSlotEmpty = render.ErrRequiredSlotEmpty
-
-// ErrNoRoute is the error a plugin's ErrorHook receives when no route matched the
-// request. It is deliberately not ErrNotFound: both produce a 404, and a plugin
-// asking why needs to tell an unmatched URL (a routing or link problem) from a
-// missing record (a content one).
-var ErrNoRoute = httpx.ErrNoRoute
-
-// ErrEmptyErrorPage is the error a plugin's ErrorHook receives, under the stage
-// "error_page", when a registered error page rendered successfully but produced no
-// markup. It is the failure nobody finds out about otherwise, because the client
-// still receives a plausible-looking built-in page.
-var ErrEmptyErrorPage = httpx.ErrEmptyErrorPage
-
-// ErrPanic is the error a plugin's ErrorHook receives, under the stage "panic", when
-// something panicked while serving a request and the framework recovered it into a
-// 500. It covers a panic anywhere the request touches code the framework did not
-// write — a Router, Cache, Metrics, or Tracer implementation, or a plugin hook — but
-// not one inside a data handler or a template function, which the render engine
-// recovers itself as a PanicError.
-//
-// The error wraps a *PanicError as well, so errors.As reaches the panic value and
-// the stack it was raised on, and errors.Is reaches the value when it was an error.
-var ErrPanic = httpx.ErrPanic
-
-// ErrAssetFailed is the error a plugin's ErrorHook receives, under the stage
-// "asset", when a mounted asset request completes with a status of 400 or above.
-// It is one sentinel for every such status — a 404 for a missing file and a 405
-// for a disallowed method both report it — rather than one per code, since a
-// plugin reacting to "this asset request failed" needs no finer distinction than
-// that. A panic recovered while serving a mount is reported as ErrPanic instead.
-var ErrAssetFailed = httpx.ErrAssetFailed
 
 // toCoreConfig converts the public Config into internal/core's mirror of it. The
 // conversion is written out field by field on purpose: the compiler cannot tell us

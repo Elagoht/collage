@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Elagoht/collage/internal/core"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -33,27 +32,6 @@ type DocumentResult = render.DocumentResult
 // the dependency tags the body was derived from, and an error. Returning an error
 // that wraps ErrNotFound makes the response a 404 rather than a 500.
 type DocumentHandlerFunc = types.DocumentHandlerFunc
-
-// ErrNilDocument is returned by RegisterDocument when passed a nil document.
-var ErrNilDocument = types.ErrNilDocument
-
-// ErrEmptyContentType is returned when a document declares no content type. A
-// document's content type is static and required: the framework writes it on every
-// response and never guesses it.
-var ErrEmptyContentType = types.ErrEmptyContentType
-
-// ErrNoDocumentHandler is returned when a document declares neither a handler nor a
-// body. Unlike a page, a document has no template to fall back on, so it must have
-// one or the other.
-var ErrNoDocumentHandler = types.ErrNoDocumentHandler
-
-// ErrDuplicateDocument is returned when a document is registered under a name
-// another document already holds.
-var ErrDuplicateDocument = core.ErrDuplicateDocument
-
-// ErrDocumentNotFound is returned by App.RenderDocumentPath when a path resolves to
-// no document — including when it resolves to a page or a redirect instead.
-var ErrDocumentNotFound = core.ErrDocumentNotFound
 
 // DocumentBuilder builds a Document through a fluent chain of WithX calls. See the
 // package doc comment for how builder errors are accumulated and why it is safe to

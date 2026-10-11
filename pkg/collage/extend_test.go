@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -489,10 +490,10 @@ func TestRegisterPlugin_DuplicateIsMatchable(t *testing.T) {
 	if err := app.RegisterPlugin(&namedPlugin{name: "twice"}); !errors.Is(err, ErrDuplicatePlugin) {
 		t.Fatalf("second RegisterPlugin = %v, want ErrDuplicatePlugin", err)
 	}
-	if err := app.RegisterPlugin(&namedPlugin{name: ""}); !errors.Is(err, ErrEmptyPluginName) {
+	if err := app.RegisterPlugin(&namedPlugin{name: ""}); !errors.Is(err, plugin.ErrEmptyPluginName) {
 		t.Fatalf("RegisterPlugin with an empty name = %v, want ErrEmptyPluginName", err)
 	}
-	if err := app.RegisterPlugin(nil); !errors.Is(err, ErrNilPlugin) {
+	if err := app.RegisterPlugin(nil); !errors.Is(err, plugin.ErrNilPlugin) {
 		t.Fatalf("RegisterPlugin(nil) = %v, want ErrNilPlugin", err)
 	}
 }

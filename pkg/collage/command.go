@@ -3,25 +3,12 @@ package collage
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/Elagoht/collage/internal/core"
 )
-
-// ErrNilApp is returned by Build and DispatchCommands when passed a nil *App, or
-// one New did not return. There is nothing to build or dispatch against, and
-// inventing an application would run a program the caller never built.
-var ErrNilApp = errors.New("collage: nil app")
-
-// ErrUnknownCommand is returned by DispatchCommands when args is empty or names no
-// command any registered plugin contributed. It is the signal to fall through to
-// whatever the program does by default — serving, building, or printing its own
-// usage — so test for it with errors.Is rather than treating every non-nil error as
-// fatal.
-var ErrUnknownCommand = errors.New("collage: unknown command")
 
 // DispatchCommands runs the plugin-contributed CLI subcommand named by args[0], with
 // args[1:] as its arguments, and returns the exit code the program should use

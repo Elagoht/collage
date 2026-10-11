@@ -526,7 +526,7 @@ An `ErrorHook` can classify what it receives with `errors.Is`:
 `collage.ErrEmptyErrorPage` (a registered error page rendered nothing),
 `collage.ErrAssetFailed` (a mounted asset request completed with a 4xx or 5xx —
 one sentinel for every such status), `collage.ErrMaxDepthExceeded`,
-`collage.ErrRequiredSlotEmpty`, `collage.ErrNoRootFragment`, and
+`collage.ErrRequiredSlotEmpty`, and
 `collage.PanicError` through `errors.As`.
 
 `ErrorEvent.Stage` names where in the pipeline the failure happened (`"route"`,
@@ -592,7 +592,7 @@ what earlier ones changed.
 1. `RegisterPlugin` — before the application starts. Afterwards it returns
    `collage.ErrAppStarted`, since `Init` has already run and already seen the
    registered pages. A nil plugin, an empty name, and a duplicate name are
-   rejected with `collage.ErrNilPlugin`, `collage.ErrEmptyPluginName`, and
+   refused with an error, and a duplicate name with
    `collage.ErrDuplicatePlugin`.
 2. `Init` — once, in registration order, when the application starts: what
    `Start()`, `Handler()`, `ListenAndServe()`, `RenderPath` and

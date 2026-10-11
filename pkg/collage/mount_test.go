@@ -5,16 +5,10 @@ import (
 	"testing/fstest"
 )
 
-// TestMounts_ElementTypeHasAPublicName declares a []*Mount —
-// the exact type the application's mounts are listed as — and reads its methods
-// off an element, using only pkg/collage's names.
-//
-// App no longer exposes Mounts (a static build is the one reader, through
-// Build), so this test lives inside the package and reads the list through the
-// application it wraps. Mount stays exported: what the test guards is that the
-// element type has a pkg/collage name, so the build's view of a mount never
-// needs internal/asset spelled out.
-func TestMounts_ElementTypeHasAPublicName(t *testing.T) {
+// TestMounts_ReportPrefixCopyAndFS reads the mounts off the application a
+// wrapped App holds. App does not expose Mounts (a static build is the one
+// reader, through Build), so the test lives inside the package.
+func TestMounts_ReportPrefixCopyAndFS(t *testing.T) {
 	app, err := New(&Config{
 		Server:   ServerConfig{Host: "localhost", Port: 3000},
 		Template: TemplateConfig{Root: templateRoot(t)},
@@ -32,7 +26,7 @@ func TestMounts_ElementTypeHasAPublicName(t *testing.T) {
 
 	app.Handler() // closes registration; Mounts is readable either side of this.
 
-	var mounts []*Mount = app.c.Mounts()
+	mounts := app.c.Mounts()
 	if len(mounts) != 1 {
 		t.Fatalf("Mounts() = %d entries, want 1", len(mounts))
 	}

@@ -2,12 +2,17 @@ package collage
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"log/slog"
 	"net/http"
 
 	"github.com/Elagoht/collage/internal/core"
 )
+
+// errNilConfig is returned by New when passed a nil *Config. A nil config is a
+// programming error, not a request for defaults.
+var errNilConfig = errors.New("collage: nil config")
 
 // App is a collage application: its pages, documents, actions, plugins and the
 // server that answers them. New returns one; the zero value is not usable.
@@ -17,7 +22,7 @@ type App struct{ c *core.App }
 // left at its zero value, validates the result and constructs the application.
 //
 // cfg is mutated in place by the defaulting step, so the caller can read back
-// exactly what the application was built with. Passing nil returns ErrNilConfig:
+// exactly what the application was built with. Passing nil returns an error:
 // a nil config is a mistake, not a request for the defaults.
 //
 // Every failure mode is reported here rather than at the first request: an invalid
@@ -25,7 +30,7 @@ type App struct{ c *core.App }
 // parse.
 func New(cfg *Config) (*App, error) {
 	if cfg == nil {
-		return nil, ErrNilConfig
+		return nil, errNilConfig
 	}
 	cfg.ApplyDefaults()
 	if err := cfg.Validate(); err != nil {

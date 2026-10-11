@@ -40,7 +40,7 @@ func validBaseConfig() *collage.Config {
 
 // TestConfig_BaseURLValidation: a bare origin is accepted (empty included), and
 // anything with a path, query, fragment, credentials, wrong scheme or no host is
-// refused with ErrInvalidBaseURL.
+// refused with ErrInvalidOrigin.
 func TestConfig_BaseURLValidation(t *testing.T) {
 	good := []string{
 		"", // unset is fine
@@ -72,8 +72,8 @@ func TestConfig_BaseURLValidation(t *testing.T) {
 	for _, v := range bad {
 		cfg := validBaseConfig()
 		cfg.BaseURL = v
-		if err := cfg.Validate(); !errors.Is(err, collage.ErrInvalidBaseURL) {
-			t.Errorf("Validate(BaseURL=%q) = %v, want ErrInvalidBaseURL", v, err)
+		if err := cfg.Validate(); !errors.Is(err, collage.ErrInvalidOrigin) {
+			t.Errorf("Validate(BaseURL=%q) = %v, want ErrInvalidOrigin", v, err)
 		}
 	}
 }

@@ -780,8 +780,8 @@ func TestNew_Failures(t *testing.T) {
 	t.Run("unsupported cache type", func(t *testing.T) {
 		cfg := testConfig(root)
 		cfg.Cache.Type = "redis"
-		if _, err := New(cfg); !errors.Is(err, ErrUnsupportedCache) {
-			t.Fatalf("New = %v, want ErrUnsupportedCache", err)
+		if _, err := New(cfg); !errors.Is(err, ErrInvalidCacheType) {
+			t.Fatalf("New = %v, want ErrInvalidCacheType", err)
 		}
 	})
 }

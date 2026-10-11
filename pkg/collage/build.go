@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/Elagoht/collage/internal/build"
-	"github.com/Elagoht/collage/internal/types"
 )
 
 // BuildOptions configures a static build. See Build.
@@ -119,83 +118,6 @@ func reportFrom(r *build.Report) *BuildReport {
 	return out
 }
 
-// ErrBuildFindings is in a build's errors when a plugin reported an error-level
-// finding. The pages were written; what was found is in BuildReport.Findings.
-var ErrBuildFindings = build.ErrFindings
-
-// ErrDuplicateRedirect is in a build's errors when two redirects — pages',
-// documents' or RedirectSource plugins' — share one From.
-var ErrDuplicateRedirect = build.ErrDuplicateRedirect
-
-// ErrRedirectShadowsFile is in a build's errors when a redirect's From is the
-// path of a file the build wrote ("/a" or "/a/" for a directory's index.html).
-var ErrRedirectShadowsFile = build.ErrRedirectShadowsFile
-
-// ErrOutputPathCollision is returned by Build when two pages would be written to
-// the same file — two patterns differing only in a trailing slash, or
-// StaticParams listing one set of values twice. It is reported before anything renders, so
-// a collision costs no work and leaves no half-built output directory.
-var ErrOutputPathCollision = build.ErrOutputPathCollision
-
-// ErrEmptyOutDir is returned by Build when BuildOptions.OutDir is empty.
-var ErrEmptyOutDir = build.ErrInvalidOutDir
-
-// ErrDangerousOutDir is returned by Build when BuildOptions.OutDir
-// resolves — after symlinks are followed — to a filesystem root, which Build
-// refuses to write into at all, or when BuildOptions.Clean is true and OutDir
-// additionally resolves to a repository root.
-var ErrDangerousOutDir = build.ErrDangerousOutDir
-
-// ErrPathEscapesOutDir is returned when a resolved output path falls outside
-// BuildOptions.OutDir, including when a component of the path is a symlink
-// that would otherwise carry the write outside it.
-var ErrPathEscapesOutDir = build.ErrPathEscapesOutDir
-
-// ErrDynamicPathUnresolved is recorded, as SkipRecord.Err and in
-// SkipRecord.Reason, when a page's or document's path pattern for a locale
-// contains a "{param}" segment and it was built without WithStaticParams.
-var ErrDynamicPathUnresolved = build.ErrDynamicPathUnresolved
-
-// ErrDuplicateOutputPath is recorded, as SkipRecord.Err and in SkipRecord.Reason,
-// when two document build tasks resolve to the same output file —
-// StaticParams listing one set of values twice. One pattern in two locales is not
-// a collision: a non-default locale's document is written under its prefix,
-// "/tr/sitemap.xml". One task is built and the rest are skipped by name, rather
-// than racing to overwrite one file.
-var ErrDuplicateOutputPath = build.ErrDuplicateOutputPath
-
-// ErrDegradedRender is recorded in BuildReport.Errors, and no file is written,
-// when a page renders with at least one failed fragment and
-// BuildOptions.AllowDegraded is false.
-var ErrDegradedRender = build.ErrDegradedRender
-
-// ErrEmptyRender is recorded in BuildReport.Errors, and no file is written, when
-// a page renders successfully but produces no markup at all. It is refused
-// regardless of BuildOptions.AllowDegraded.
-var ErrEmptyRender = build.ErrEmptyRender
-
-// ErrUnresolvedToken is recorded in BuildReport.Errors when the not-found page
-// rendered for a static build still contains a request-forgery token placeholder. A
-// built site has no server to replace it with a reader's own token, and no server to
-// submit the form to. Any other page carrying one is not written either, but is
-// recorded in BuildReport.Skipped: it is served rather than exported.
-var ErrUnresolvedToken = build.ErrUnresolvedToken
-
-// ErrBuildPanic is recorded in BuildReport.Errors when rendering or writing one
-// page or document panicked. The build recovers it, records it against that page
-// or document, and continues with the rest.
-var ErrBuildPanic = build.ErrBuildPanic
-
-// ErrEmptyDocumentBody is recorded in BuildReport.Errors, and no file is written,
-// when a document renders successfully but produces no body — the same condition
-// internal/httpx serves as a 500 for a live request, reused here (from
-// internal/types, where it lives alongside ErrNotFound as a property of a
-// document's handler contract rather than of HTTP serving or of static building)
-// rather than a second sentinel for the same failure mode. See
-// DocumentHandlerFunc: a handler that genuinely wants to serve an empty document
-// can return a single newline.
-var ErrEmptyDocumentBody = types.ErrEmptyDocumentBody
-
 // Build renders app's static pages and documents into opts.OutDir, copies its
 // mounted files beside them, and reports what it wrote, skipped and warned about.
 // It returns ErrNilApp for a nil app and ErrEmptyOutDir for an empty OutDir.
@@ -215,12 +137,3 @@ func Build(ctx context.Context, app *App, opts BuildOptions) (*BuildReport, erro
 	r, err := b.Build(ctx)
 	return reportFrom(r), err
 }
-
-// ErrNotStatic is a SkipRecord's Err for a page or document declared Dynamic(),
-// which a static build does not write.
-var ErrNotStatic = build.ErrNotStatic
-
-// ErrGuarded is a SkipRecord's Err for a page whose layout chain or content
-// fragment carries a guard, which a static build does not write: a file on a
-// static host has no guard in front of it.
-var ErrGuarded = build.ErrGuarded

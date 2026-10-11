@@ -2,8 +2,14 @@ package collage_test
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"reflect"
+	"regexp"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,4 +58,58 @@ func (getSetCache) Clear(context.Context) error                 { return nil }
 
 func TestCache_GetSetIsEnough(t *testing.T) {
 	var _ collage.Cache = getSetCache{}
+}
+
+// Every exported sentinel is declared in errors.go, so the list a user reads is
+// the whole list.
+func TestErrors_AllInErrorsGo(t *testing.T) {
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, e.Name(), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			g, ok := d.(*ast.GenDecl)
+			if !ok || g.Tok != token.VAR {
+				continue
+			}
+			for _, s := range g.Specs {
+				for _, n := range s.(*ast.ValueSpec).Names {
+					if strings.HasPrefix(n.Name, "Err") && e.Name() != "errors.go" {
+						t.Errorf("%s declared in %s", n.Name, e.Name())
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestErrors_GoneFromAPI(t *testing.T) {
+	src, err := os.ReadFile("errors.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"ErrNilConfig", "ErrNilPage", "ErrNilPlugin", "ErrEmptyCommandName",
+		"ErrEmptyPluginName", "ErrNoRootFragment", "ErrEmptyCacheVersion", "ErrDictKeyNotString",
+		"ErrDictOddArgs", "ErrNoMountForAsset", "ErrEmptyLocaleDefault", "ErrEmptyTemplateRoot",
+		"ErrUnsupportedCache", "ErrInvalidHandlerPrefix", "ErrInvalidBaseURL", "ErrNoMethods",
+		"ErrMissingTTL", "ErrNilRenderer", "ErrInvalidOutDir"} {
+		if regexp.MustCompile(`\b` + name + `\s*=`).Match(src) {
+			t.Errorf("%s is still exported", name)
+		}
+	}
+}
+
+func TestErrInvalidOrigin_DoesNotBlameBaseURL(t *testing.T) {
+	if strings.Contains(collage.ErrInvalidOrigin.Error(), "BaseURL") {
+		t.Errorf("message = %q", collage.ErrInvalidOrigin.Error())
+	}
 }

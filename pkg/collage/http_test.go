@@ -210,8 +210,8 @@ func TestHandle_ExactPath(t *testing.T) {
 func TestHandle_Rejections(t *testing.T) {
 	app := langApp(t, false, nil)
 	for _, prefix := range []string{"/", "api/", "//api/", "/api/../x"} {
-		if err := app.Handle(prefix, http.NotFoundHandler()); !errors.Is(err, collage.ErrInvalidHandlerPrefix) {
-			t.Errorf("Handle(%q) = %v, want ErrInvalidHandlerPrefix", prefix, err)
+		if err := app.Handle(prefix, http.NotFoundHandler()); !errors.Is(err, collage.ErrInvalidPrefix) {
+			t.Errorf("Handle(%q) = %v, want ErrInvalidPrefix", prefix, err)
 		}
 	}
 	if err := app.Handle("/api/", nil); !errors.Is(err, collage.ErrNilHandler) {

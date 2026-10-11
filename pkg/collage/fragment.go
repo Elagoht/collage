@@ -9,10 +9,6 @@ import (
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// ErrDuplicateSlot is returned when FragmentBuilder.WithSlot is called twice with the
-// same slot name on the same fragment.
-var ErrDuplicateSlot = errors.New("collage: slot already declared")
-
 // FragmentBuilder builds a Fragment through a fluent chain of WithX calls. See the
 // package doc comment for how builder errors are accumulated and why it is safe to
 // ignore them until registration.

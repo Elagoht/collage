@@ -11,9 +11,9 @@ import (
 	"sync"
 )
 
-// ErrInvalidPrefix reports a mount prefix that is empty, "/", or not a
-// slash-delimited path. A mount at "/" would swallow every route.
-var ErrInvalidPrefix = errors.New("collage: invalid mount prefix")
+// ErrInvalidPrefix reports a mount or handler prefix that is empty, "/", or not a
+// slash-delimited path. A mount or handler at "/" would swallow every route.
+var ErrInvalidPrefix = errors.New("collage: invalid prefix")
 
 // ErrNilFS reports that a mount was given no file system.
 var ErrNilFS = errors.New("collage: nil mount file system")

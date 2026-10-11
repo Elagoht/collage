@@ -97,10 +97,10 @@ var ErrEmptyCommandName = errors.New("collage: empty command name")
 // Name is already registered.
 var ErrDuplicateCommand = errors.New("collage: duplicate command name")
 
-// ErrUnsupportedCache is returned by New when Config.Cache.Enabled is true,
+// ErrInvalidCacheType is returned by New when Config.Cache.Enabled is true,
 // Config.Cache.Store is nil, and Config.Cache.Type names an implementation this
-// package cannot build.
-var ErrUnsupportedCache = errors.New("collage: unsupported cache type")
+// package cannot build. pkg/collage exports it as ErrInvalidCacheType.
+var ErrInvalidCacheType = errors.New("collage: invalid cache type")
 
 // ErrEmptyTemplateRoot is returned by New when Config.Template.Root is empty.
 var ErrEmptyTemplateRoot = errors.New("collage: empty template root")
@@ -472,7 +472,7 @@ type App struct {
 // so New applies only the fallbacks it needs to construct working subsystems: an
 // empty Template.Extension becomes ".html" and an empty Locale.Default becomes
 // "en". It returns ErrEmptyTemplateRoot
-// for an empty Template.Root, ErrUnsupportedCache for an enabled cache of an
+// for an empty Template.Root, ErrInvalidCacheType for an enabled cache of an
 // unknown type, and a wrapped template error when the template root cannot be
 // loaded.
 //

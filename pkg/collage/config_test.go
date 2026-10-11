@@ -180,7 +180,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name:    "empty template root",
 			mutate:  func(c *Config) { c.Template.Root = "" },
-			wantErr: ErrEmptyTemplateRoot,
+			wantErr: errEmptyTemplateRoot,
 		},
 		{
 			name:    "enabled cache with unsupported type",
@@ -190,7 +190,7 @@ func TestConfig_Validate(t *testing.T) {
 		{
 			name:    "empty default locale",
 			mutate:  func(c *Config) { c.Locale.Default = "" },
-			wantErr: ErrEmptyLocaleDefault,
+			wantErr: errEmptyLocaleDefault,
 		},
 		{
 			name:    "default locale not supported",
@@ -319,8 +319,8 @@ func TestConfig_Validate_EmptyRootWithoutFSIsInvalid(t *testing.T) {
 	// a caller that builds a Config by hand.
 	c := Config{Server: ServerConfig{Port: 8080}}
 
-	if err := c.Validate(); !errors.Is(err, ErrEmptyTemplateRoot) {
-		t.Fatalf("Validate() error = %v, want ErrEmptyTemplateRoot", err)
+	if err := c.Validate(); !errors.Is(err, errEmptyTemplateRoot) {
+		t.Fatalf("Validate() error = %v, want errEmptyTemplateRoot", err)
 	}
 }
 

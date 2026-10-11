@@ -10,59 +10,17 @@ import (
 	"slices"
 	"time"
 
-	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
 )
 
-// ErrInvalidPort is returned when Config.Server.Port is outside the valid TCP port
-// range 1..65535.
-var ErrInvalidPort = errors.New("collage: invalid port")
-
-// ErrEmptyTemplateRoot is returned when Config.Template names no template source:
+// errEmptyTemplateRoot is returned when Config.Template names no template source:
 // Root is empty and FS is nil.
-var ErrEmptyTemplateRoot = errors.New("collage: empty template root")
+var errEmptyTemplateRoot = errors.New("collage: empty template root")
 
-// ErrEmptyCacheDir is returned when Cache.Type is "disk" and Cache.Dir is empty.
-var ErrEmptyCacheDir = cache.ErrEmptyCacheDir
-
-// ErrEmptyCacheVersion is the disk cache's refusal to open without a version. New
-// never returns it: an empty Cache.Version is derived from the running executable,
-// and when that cannot be read the application falls back to an in-memory cache
-// and logs why, rather than failing. It is exported so the sentinel has a name
-// should that change, and it is not a check a caller needs to make today.
-var ErrEmptyCacheVersion = cache.ErrEmptyCacheVersion
-
-// ErrInvalidCacheType is returned when Config.Cache.Enabled is true, no
-// Config.Cache.Store is supplied, and Config.Cache.Type is neither "memory" nor
-// "disk".
-var ErrInvalidCacheType = errors.New("collage: invalid cache type")
-
-// ErrEmptyLocaleDefault is returned when Config.Locale.Default is empty.
-var ErrEmptyLocaleDefault = errors.New("collage: empty default locale")
-
-// ErrLocaleDefaultNotSupported is returned when Config.Locale.Default is not present
-// in Config.Locale.Supported.
-var ErrLocaleDefaultNotSupported = errors.New("collage: default locale not in supported locales")
-
-// ErrNegativeDuration is returned when a Config duration field is negative. It is
-// shared deliberately across all eight duration fields Validate checks
-// (Server.ReadTimeout, Server.ReadHeaderTimeout, Server.WriteTimeout,
-// Server.IdleTimeout, Server.ShutdownTimeout, Server.DrainDelay, Template.Timeout,
-// Cache.DefaultTTL): unlike
-// types.ErrInvalidTimeout and types.ErrInvalidTTL, which mean genuinely different
-// things to a caller (a fragment's data-fetch deadline versus a page's cache
-// lifetime), a negative value in any of these eight fields is the same failure mode —
-// "you passed a negative duration" — differing only in which field tripped. Validate
-// names the offending field in the wrapped message (%w: %s); callers that need to
-// distinguish which field failed should inspect that message rather than expect a
-// per-field sentinel.
-var ErrNegativeDuration = errors.New("collage: negative duration")
-
-// ErrInvalidBaseURL is returned when Config.BaseURL is set to something that is not
-// a bare origin, and by ParseOrigin.
-var ErrInvalidBaseURL = plugin.ErrInvalidOrigin
+// errEmptyLocaleDefault is returned when Config.Locale.Default is empty.
+var errEmptyLocaleDefault = errors.New("collage: empty default locale")
 
 // Config is the framework's top-level configuration.
 //
@@ -532,11 +490,11 @@ func (c *Config) ApplyDefaults() {
 
 // Validate reports whether c is well-formed: Server.Port is in 1..65535
 // (ErrInvalidPort), Template.Root is non-empty or Template.FS is set
-// (ErrEmptyTemplateRoot), Cache.Type is "memory" or "disk" when Cache.Enabled and
+// (an empty-template-root error), Cache.Type is "memory" or "disk" when Cache.Enabled and
 // Cache.Store is nil (ErrInvalidCacheType; a caller-supplied Store makes Type
 // irrelevant) and a "disk" cache has a Cache.Dir (ErrEmptyCacheDir),
 // Locale.Default is non-empty
-// (ErrEmptyLocaleDefault) and present in Locale.Supported
+// (an empty-default-locale error) and present in Locale.Supported
 // (ErrLocaleDefaultNotSupported), and every duration field is not negative
 // (ErrNegativeDuration). It returns nil when c is well-formed.
 func (c *Config) Validate() error {
@@ -544,7 +502,7 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("%w: %d", ErrInvalidPort, c.Server.Port)
 	}
 	if c.Template.Root == "" && c.Template.FS == nil {
-		return ErrEmptyTemplateRoot
+		return errEmptyTemplateRoot
 	}
 	if c.Cache.Enabled && c.Cache.Store == nil {
 		switch c.Cache.Type {
@@ -558,7 +516,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	if c.Locale.Default == "" {
-		return ErrEmptyLocaleDefault
+		return errEmptyLocaleDefault
 	}
 	if !slices.Contains(c.Locale.Supported, c.Locale.Default) {
 		return fmt.Errorf("%w: %q", ErrLocaleDefaultNotSupported, c.Locale.Default)

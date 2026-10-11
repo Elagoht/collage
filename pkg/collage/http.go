@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/Elagoht/collage/internal/core"
 	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -119,22 +118,3 @@ func BaseURL(rc *RenderContext) string {
 func SkipCache(r *http.Request) error {
 	return httpx.SkipCache(r)
 }
-
-// ErrVaryTooLate is returned by Vary once the request's cache key has been
-// computed. Declare dimensions from middleware.
-var ErrVaryTooLate = httpx.ErrVaryTooLate
-
-// ErrVaryOutsideRequest is returned by Vary for a request no collage handler is
-// serving.
-var ErrVaryOutsideRequest = httpx.ErrVaryOutsideRequest
-
-// ErrInvalidHandlerPrefix is returned by App.Handle for a prefix that does not
-// begin and end with "/", or is "/" alone.
-var ErrInvalidHandlerPrefix = core.ErrInvalidHandlerPrefix
-
-// ErrNilHandler is returned by App.Handle and App.Use when given nothing to run.
-var ErrNilHandler = core.ErrNilHandler
-
-// ErrHandlerFailed is reported to error hooks when a handler mounted with
-// App.Handle answers with a server error.
-var ErrHandlerFailed = httpx.ErrHandlerFailed
