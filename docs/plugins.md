@@ -147,14 +147,14 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `Logger() *slog.Logger` | The application's structured logger |
 | `RegisterCommand(Command) error` | Contribute a CLI subcommand |
 | `ConfigReader` (embedded) | What `collage.PluginConfig(host, defaults)` reads this plugin's section of `Config.PluginConfig` through — see [Configuration](#configuration) |
-| `RegisterPage(*Page) error` | Contribute a page, on the same terms as the application's own |
 | `RegisterDocument(*Document) error` | Contribute a document |
 | `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
 | `Handle(prefix, http.Handler) error` | Serve a handler under a prefix ending in `/`, or at one exact path without it (`/metrics`), as `App.Handle` does — an event stream, a WebSocket |
 | `RenderFragment(r, FragmentRequest) (*FragmentRender, error)` | Render a fragment a page opened with `WithFragmentPath`, in parts — see below |
 | `Use(middleware) error` | Wrap every request, where the plugin was registered: for one in `Config.Plugins`, outside the application's own middleware — see [http.md](http.md) |
 | `URL(name, locale, params) (string, error)` | The path of a page or document, as `App.URL` builds it |
-| `FragmentURL(page, fragment, locale, params) (string, error)` | The path of a fragment path, as `App.FragmentURL` builds it |
+| `OriginFor(ctx, host) string` | The public origin of a host: an `OriginResolver`'s, else `Config.BaseURL` |
+| `MultiOrigin() bool` | Whether an `OriginResolver` is registered, so origins vary by host |
 | `Locales() (default, supported)` | The default locale and every supported one |
 | `PageURLs(ctx, name) ([]PageURL, error)` | Every URL a page answers, in every locale, a pattern's `WithStaticParams` expanded — a sitemap's contents |
 | `BuildID() string` | The build serving — `Config.Cache.Version`, or a fingerprint of the executable — for versioning what a browser keeps across deploys |
@@ -258,7 +258,7 @@ build the method for yet.
 of exported fields. `Pages` and `Page` hand back a defensive copy — the struct,
 plus its `Paths`, `Redirects`, and `DependencyTags` containers — so writing
 through one of those cannot reach the framework's own page. But the fragment
-pointers inside it (`LayoutFragment`, `ContentFragment`, `NotFoundPage`,
+pointers inside it (`LayoutChain`, `ContentFragment`, `NotFoundPage`,
 `ErrorPage`) stay shared, and the per-request **event** types carry the live
 `*Page` rather than a copy, deliberately: copying a page and its fragment tree on
 every render would defeat a cache-first framework's hot path.
@@ -270,20 +270,18 @@ reports it, and without the detector it corrupts whatever container was written 
 The framework does not defend against that and does not claim to. In-process Go plugins are trusted code,
 not a sandbox: the goal is to make accidental mutation hard and deliberate
 mutation obvious. Where mutation *is* intended it is explicit —
-`AfterRenderEvent.HTML`, and `CacheWriteEvent`'s `Skip`, `TTL`, and `Tags`.
+`AfterRenderEvent.HTML`.
 
 ## The hooks
 
 | Interface | Method | Fires | May change |
 | --- | --- | --- | --- |
-| `PageResolvedHook` | `OnPageResolved` | After routing and the page's guards, before anything else — including on a cache hit. **Pages only**, never a document (see "Documents dispatch four hooks, not seven" below), and never a request a guard blocked: it never reached the page | nothing |
 | `BeforeRenderHook` | `OnBeforeRender` | Immediately before a fresh render; **not** on a cache hit. **Pages only** — including an error page, and a page an action answers with | nothing |
 | `BeforeActionHook` | `OnBeforeAction` | Before an action's handler: after the page's guards, the action's body limit and the forgery check. **Actions only**. `ev.Form()` parses the submission through the action's limit, once, for the handler too | `ev.Result`, which answers in the handler's place and stops dispatch |
 | `RequestHook` | `OnRequest` | First, before collage's request span, middleware and routing — also for a request answered before routing (an encoded slash, a dirty path); returns the context to serve under and a function told the final status | the request's context |
 | `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure), `ev.DependencyTags` and `ev.Values` (read with a key's `In`). **Pages only**, on the same terms | `ev.HTML`, `ev.Hoist(area, key, html)`; reports with `ev.Warn`, `ev.Error` |
 | `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
-| `CacheWriteHook` | `OnCacheWrite` | Before a render result is stored — for a page or a document alike | `ev.Skip`, `ev.TTL`, `ev.Tags` |
-| `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike; `ev.Paths` names the URL paths dropped | nothing |
+| `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike; `ev.Entries` names each dropped entry's host and URL path | nothing |
 | `ErrorHook` | `OnError` | On any failure while serving a request — a page, a document, or a mounted asset alike | nothing |
 | `BuildFinishedHook` | `OnBuildFinished` | Once, when a static build has written every file | reports with `ev.Warn`, `ev.Error` |
 | `StreamCloser` | `CloseStreams` | Once, when shutdown begins, before the server waits for open requests (see "Streams and shutdown") | nothing |
@@ -299,8 +297,7 @@ Two consequences of where `OnAfterRender` sits are worth stating plainly:
 - **A rendered error page runs it too**, and `OnBeforeRender` before it (since
   v0.7.0), so the 404 a server answers with is minified and annotated like the
   `404.html` an export writes. So does a page an action answers with — a form
-  re-rendered with its validation errors is a page. Neither runs `OnPageResolved`:
-  nothing was resolved to them.
+  re-rendered with its validation errors is a page.
 
 ### Adding to the head after the render
 
@@ -343,19 +340,15 @@ resolver that panics is logged and skipped. Application code reads the result wi
 `collage.BaseURL(rc)`, which is safe in a cached render because the host is in the
 cache key. A site without a resolver sees no change.
 
-A plugin that builds absolute URLs itself reaches the same answer through the
-`Origins` capability, by type assertion on the `Host` it was given. `Host` gains no
-method for it:
+A plugin that builds absolute URLs itself asks the `Host` it was given:
 
 ```go
-if o, ok := host.(collage.Origins); ok {
-	origin := o.OriginFor(ctx, "acme.test") // a resolver's, else Config.BaseURL
-	varies := o.Dynamic()                   // is a resolver registered?
-}
+origin := host.OriginFor(ctx, "acme.test") // a resolver's, else Config.BaseURL
+varies := host.MultiOrigin()               // is a resolver registered?
 ```
 
 `CacheInvalidateHook` events carry `ev.Entries`, each a `Host` and a `Path`, so a
-purge can build every URL against the right origin; `ev.Paths` stays as it was.
+purge can build every URL against the right origin.
 
 ### Rewriting each response: `PersonaliseHook`
 
@@ -424,17 +417,18 @@ It also sees the requests collage answers before routing: a path with an encoded
 slash (`/a%2f..%2fb`), answered 404, and a dirty path (`/a/../b`, `//b`),
 redirected to its clean spelling with 301, or 308 for a method other than GET and
 HEAD. These are a scanner's probes more often than not, so a plugin counting them —
-a ban, a log line — must see them. For such a request `RouteOf` is empty and
+a ban, a log line — must see them. For such a request `RouteInfo` is the zero `Route` and
 `r.URL` is the raw path as it came in; `Metrics.HTTPResponse` and collage's request
 span are not called for it. The development reload stream is the one request no
 hook sees.
 
-`collage.RouteOf(ctx)` reports what the request resolved to — `"page"`, `"document"`,
-`"action"`, `"mount"` or `"handler"`, and the registered name or prefix — from that
-context, which `Metrics.HTTPResponse` also receives: a metric or a span can be
-labelled with the route rather than the raw path. `collage.RouteInfo(ctx)` adds
-the pattern the route was registered with — `/blog/{slug}`, without a locale
-prefix — and the locale, for pages, documents and actions alike.
+`collage.RouteInfo(ctx)` reports what the request resolved to — a `Route` whose
+`Kind` is `"page"`, `"document"`, `"action"`, `"mount"` or `"handler"` and whose
+`Name` is the registered name or prefix — from that context, which
+`Metrics.HTTPResponse` also receives: a metric or a span can be labelled with the
+route rather than the raw path. It carries the pattern the route was registered
+with — `/blog/{slug}`, without a locale prefix — and the locale, for pages,
+documents and actions alike.
 
 `collage.ClientIP(r)` is the client the request comes from, behind the proxies
 the application lists in `Server.TrustedProxies` (see
@@ -481,40 +475,18 @@ is written. `ev.Files` lists each file with its kind (`page`, `document`, `asset
 the URL path it answers and its place on disk; `ev.Warn(path, rule, message)` and
 `ev.Error` report against a page.
 
-### Documents dispatch four hooks, not seven
+### Documents dispatch three hooks, not six
 
 A document (`collage.NewDocument`) dispatches `OnDocumentRendered`,
-`OnCacheWrite`, `OnCacheInvalidate`, and `OnError`. It does **not** dispatch
-`OnPageResolved`, `OnBeforeRender`, or `OnAfterRender` — those three are about a
-page render, and a document handler is not one: `AfterRenderEvent.HTML` would be a
-lie for a zip file or a JPEG, and there is no `*Page` for `PageResolvedEvent.Page`
-to carry. A plugin that post-processes output implements `OnDocumentRendered` for
+`OnCacheInvalidate`, and `OnError`. It does **not** dispatch `OnBeforeRender` or
+`OnAfterRender` — those are about a page render, and a document handler is not
+one: `AfterRenderEvent.HTML` would be a lie for a zip file or a JPEG, and there is
+no `*Page` for `BeforeRenderEvent.Page` to carry. A plugin that post-processes output implements `OnDocumentRendered` for
 documents (see [Documents](#documents) below); one that stamps every page from
 `OnAfterRender` alone stamps nothing on a sitemap. `ErrorEvent.Page` is `nil` for
 a document failure — the event's `Path` already identifies the route, and the
 framework's own log line names the document. See `docs/documents.md` for the full
 reasoning; this table and that page are kept in agreement on it.
-
-**`CacheWriteEvent.Page` is `nil` for a document too**, and for the same reason:
-nothing rendered it from a page. `OnCacheWrite` is one of the four hooks a
-document *does* dispatch, so this is the one nil a plugin written for pages will
-actually meet:
-
-```go
-func (p *myPlugin) OnCacheWrite(_ context.Context, ev *collage.CacheWriteEvent) error {
-	if ev.Page == nil {
-		// A document: ev.Key, ev.TTL and ev.Tags are all still valid.
-		return nil
-	}
-	ev.TTL = p.ttlFor(ev.Page.Name)
-	return nil
-}
-```
-
-Getting that check wrong is worse than it looks. `safeCall` contains the panic,
-so the request still completes — but the cache write it was dispatched for is
-abandoned, so the document is **never cached**, on any request, and the only
-symptom is one error line per request.
 
 A mounted asset request dispatches only `OnError`, and only for a 4xx or 5xx
 response, or for a panic recovered while serving it: an asset is neither a page
@@ -569,22 +541,19 @@ Hooks are dispatched in **registration order**. Every hook call is panic-guarded
 a panicking hook fails like a returning-an-error hook rather than taking the
 process down.
 
-- `OnPageResolved`, `OnBeforeRender`, `OnAfterRender`, `OnDocumentRendered` — the
+- `OnBeforeRender`, `OnAfterRender`, `OnDocumentRendered` — the
   first error stops dispatch and fails the request with a 500.
 - `OnBeforeAction` — the first error stops dispatch and fails the request: `413`
   when it wraps `*http.MaxBytesError`, as a body past the action's limit read
   through `ev.Form()` does, and `500` otherwise. The first plugin to set
   `ev.Result` is the last one asked, and the handler never runs.
-- `OnCacheWrite` — an error (or `ev.Skip`) suppresses the cache write, and the
-  request still succeeds. The page has already rendered; serving it uncached beats
-  turning a cache problem into a 500.
 - `OnCacheInvalidate` — dispatched from `InvalidateTags`, not from a request; an
   error is joined into what `InvalidateTags` returns.
 - `OnError` — an error is logged and swallowed, and dispatch continues to the
   remaining plugins. An error handler that itself errors must not recurse into
   another round of error handling.
 
-For `OnAfterRender`, `OnDocumentRendered` and `OnCacheWrite`, later plugins see
+For `OnAfterRender` and `OnDocumentRendered`, later plugins see
 what earlier ones changed.
 
 ## Lifecycle
@@ -623,7 +592,7 @@ by name with `collage.DispatchCommands` — run as `go run . <command>`, because
 `collage` binary never loads your plugins, and so never sees their commands. A
 scaffolded `main.go` already does this. A command with an empty name, or a name
 another command already holds, is refused at `RegisterCommand`
-(`collage.ErrEmptyCommandName`, `collage.ErrDuplicateCommand`). Name it something
+(`collage.ErrDuplicateCommand` for a repeated name). Name it something
 other than the binary's built-ins (`new`, `dev`, `build`, `export`, `serve`,
 `version`, `help`) all the same: `go run . build` and `collage build` doing
 different things is a trap for whoever types the wrong one. See
@@ -680,8 +649,8 @@ app, err := collage.New(&collage.Config{
 | `AddTemplateFunc`, `AddRenderFunc` | yes | — |
 | `WrapMount` | yes | — |
 | `Pages`, `Page`, `InvalidateTags` | — | yes |
-| `URL`, `FragmentURL`, `Locales`, `PageURLs` | — | yes |
-| `RegisterPage`, `RegisterDocument`, `Mount`, `Handle`, `Use` | — | yes |
+| `URL`, `Locales`, `PageURLs`, `OriginFor`, `MultiOrigin` | — | yes |
+| `RegisterDocument`, `Mount`, `Handle`, `Use` | — | yes |
 | `RenderFragment` | — | yes |
 | `RegisterCommand` | — | yes |
 
@@ -740,16 +709,13 @@ asked for can hand the builder exactly the right set — and the built site need
 nothing running behind it. A routed document cannot be enumerated that way when its
 path is dynamic, because a build has no way to guess what would be requested.
 
-`PageResolved` deliberately does not fire. Its contract is "once per request,
-immediately after the router resolves it", and a build is not a request; firing it
-would make every plugin counting requests count renders nobody asked for.
 `BeforeRender` and `AfterRender` fire as a pair, so a plugin that sets something up
 in one and uses it in the other is not handed half of each.
 
 The header capture that follows the writes is different: when a
 `BuildFinishedHook` plugin is registered to read what it finds, it asks the
 application's handler for every written file's path, twice, so middleware and the
-request hooks — `PageResolved` included — do see those requests. A plugin that
+request hooks do see those requests. A plugin that
 counts or limits traffic skips them with `collage.IsCapture(r.Context())`. A plugin
 whose redirects a static host should carry implements `collage.RedirectSource`;
 its rules reach `BuildFinishedHook` in `ev.Redirects`. See
@@ -874,7 +840,7 @@ and snippet bodies use VS Code's snippet syntax. Every field but `name` is optio
 The editor learns which of those functions the application actually has, and every
 page, fragment, slot and mounted file by name, from `collage inspect` (see the CLI
 guide) — which is `go run . collage-inspect`, answered by `DispatchCommands` with
-`App.Inspect` as JSON.
+the application's description as JSON.
 
 ## Third-party plugins need no mechanism
 

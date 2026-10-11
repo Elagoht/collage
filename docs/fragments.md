@@ -157,7 +157,7 @@ accumulated:
 
 ```go
 builder := collage.NewFragment("sidebar", "partials/sidebar.html").
-	WithSlot("widgets", true, false).
+	WithSlot("widgets", collage.SlotRequired, collage.SlotSingle).
 	WithSlotFragment("widgets", recentPosts)
 
 sidebar := builder.Build()
@@ -269,14 +269,16 @@ sidebar := collage.NewFragment("sidebar", "partials/sidebar.html").
 
 A slot holds any number of fragments, rendered in binding order and
 concatenated, and a slot nothing is bound to renders nothing.
-`WithSlot(name, required, allowMultiple)` is for when that is not what you want,
-and may come before or after the bindings it constrains:
+`WithSlot(name, rules...)` is for when that is not what you want, and may come
+before or after the bindings it constrains. A rule is a `collage.SlotRule`:
 
-- `required` — the render fails if nothing is bound to the slot. This is enforced
-  before the template runs, so a required slot is caught even if the template
-  never asks for it.
-- `allowMultiple` set to false — one fragment at most; binding a second is
+- `collage.SlotRequired` — the render fails if nothing is bound to the slot. This
+  is enforced before the template runs, so a required slot is caught even if the
+  template never asks for it.
+- `collage.SlotSingle` — one fragment at most; binding a second is
   `ErrSlotOccupied`.
+
+Any other value is recorded as `ErrInvalidSlotDefinition`.
 
 A typo on either side of a binding — `WithSlotFragment("sidbar", ...)` against
 `{{slot "sidebar"}}` — fails registration with `ErrUnknownSlot`: a fragment bound
@@ -293,8 +295,8 @@ editor chose — bind a resolver instead of fragments:
 var sectionsKey = collage.NewKey[[]block]("sections")
 
 page := collage.NewFragment("sections", "pages/sections.html").
-	WithData(collage.DataHandler(loadSections)). // sectionsKey.Set(rc, blocks)
-	WithSlotResolver("sections", func(rc *collage.RenderContext) ([]*collage.Fragment, error) {
+	WithData(collage.LoadTagged(loadSections)). // sectionsKey.Set(rc, blocks)
+	WithSlotResolver("sections", func(ctx context.Context, rc *collage.RenderContext) ([]*collage.Fragment, error) {
 		blocks, _ := sectionsKey.Get(rc)
 		fragments := make([]*collage.Fragment, 0, len(blocks))
 		for _, b := range blocks {
@@ -392,7 +394,7 @@ constructors make one, and each says where the data comes from:
 
 | Constructor | What it runs | The template's `.` |
 | --- | --- | --- |
-| `collage.DataHandler(fn)`, `fn` returning `(T, []string, error)` | `fn`, on every render, reporting its dependency tags | `T` |
+| `collage.LoadTagged(fn)`, `fn` returning `(T, []string, error)` | `fn`, on every render, reporting its dependency tags | `T` |
 | `collage.Load(fn)`, `fn` returning `(T, error)` | `fn`, on every render, reporting no tags | `T` |
 | `collage.Value(v)` | nothing: `v` is handed over on every render | `v`'s type |
 | `collage.Effect(fn)`, `fn` returning `error` | `fn`, on every render, for what it declares | nothing |
@@ -411,7 +413,7 @@ func loadPost(ctx context.Context, rc *collage.RenderContext) (*Post, []string, 
 }
 
 collage.NewFragment("blog-post", "pages/blog-post.html").
-	WithData(collage.DataHandler(loadPost)).
+	WithData(collage.LoadTagged(loadPost)).
 	Build()
 ```
 
@@ -451,7 +453,7 @@ calling `WithData` twice with data is `collage.ErrConflictingData` at
 registration. A nil `Data` — `WithData(nil)`, or a constructor handed a nil
 function — is no data, and conflicts with nothing.
 
-A handler made with `DataHandler` returns three things:
+A handler made with `LoadTagged` returns three things:
 
 - **data** — whatever the fragment's template renders with. Each fragment gets its
   own; a child does not inherit its parent's. On an error the data is dropped,
@@ -705,7 +707,7 @@ and `collage inspect` marks it `"typeCheck": false`:
 
 ```go
 collage.NewFragment("post-body", "pages/post.html").
-	WithData(collage.DataHandler(loadPost)).
+	WithData(collage.LoadTagged(loadPost)).
 	WithoutTypeCheck().
 	Build()
 ```
@@ -721,7 +723,7 @@ against the type it holds.
 
 ```go
 postContent := collage.NewFragment("blog-post", "pages/blog-post.html").
-	WithData(collage.DataHandler(loadPost)).
+	WithData(collage.LoadTagged(loadPost)).
 	Required().
 	Build()
 
@@ -878,7 +880,7 @@ function: that is where the data comes from anyway.
 
 ## Development mode
 
-`Config.DevMode` (or `Config.Template.DevMode`) reloads every template from disk
+`Config.DevMode` reloads every template from disk
 before each render, turns on the failed-fragment comments, adds an
 `X-Collage-Render-Time` header, and lets the built-in error page show the failing
 fragment and the full error chain. **It must be off in production**: those
