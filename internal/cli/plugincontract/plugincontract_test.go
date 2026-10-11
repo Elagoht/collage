@@ -175,6 +175,39 @@ func TestReadConstructorFiles(t *testing.T) {
 			t.Fatalf("%+v, %v", c, err)
 		}
 	})
+	other := "windows"
+	if runtime.GOOS == "windows" {
+		other = "linux"
+	}
+	dup := "package p\n\nfunc New() *Plugin { return nil }\n"
+	t.Run("multi-underscore OS suffix", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{"p.go": src("p", newDecl), "a_b_c_" + other + ".go": dup})
+		if _, err := ReadConstructor(dir); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("multi-underscore OS and arch suffix", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{"p.go": src("p", newDecl), "a_b_" + other + "_amd64.go": dup})
+		if _, err := ReadConstructor(dir); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("OS word in the middle is not a suffix", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{"p.go": src("p", ""), "a_" + other + "_foo.go": dup})
+		if c, err := ReadConstructor(dir); err != nil || c.Call("p") != "p.New()" {
+			t.Fatalf("%+v, %v", c, err)
+		}
+	})
+	t.Run("legacy +build line", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{"p.go": src("p", newDecl), "old.go": "// +build ignore\n\npackage main\n\nfunc New() {}\n"})
+		if _, err := ReadConstructor(dir); err != nil {
+			t.Fatal(err)
+		}
+	})
 	t.Run("constraint excludes current OS", func(t *testing.T) {
 		dir := t.TempDir()
 		write(t, dir, map[string]string{

@@ -3,12 +3,11 @@ package plugincontract
 import (
 	"fmt"
 	"go/ast"
-	"go/build/constraint"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 )
 
@@ -43,15 +42,17 @@ func ReadConstructor(dir string) (Constructor, error) {
 	var files []*ast.File
 	for _, e := range entries {
 		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") || otherPlatformName(n) {
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
 			continue
 		}
 		path := filepath.Join(dir, n)
-		head, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly|parser.ParseComments)
+		// MatchFile applies the file-name suffix rules and the //go:build and
+		// // +build lines exactly as go build does, for the current platform.
+		ok, err := build.Default.MatchFile(dir, n)
 		if err != nil {
-			return Constructor{}, refuse(fmt.Sprintf("%s does not parse: %v", n, err))
+			return Constructor{}, refuse(fmt.Sprintf("%s: %v", n, err))
 		}
-		if !buildOK(head) {
+		if !ok {
 			continue
 		}
 		f, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
@@ -127,57 +128,6 @@ func fieldCount(l *ast.FieldList) int {
 		}
 	}
 	return n
-}
-
-// buildOK reports whether the //go:build line in f's leading comments (when there is one)
-// holds for the current GOOS and GOARCH. "ignore" is never set; "gc", "unix"
-// and the go1.N release tags are; cgo and every other tag are not.
-func buildOK(f *ast.File) bool {
-	for _, g := range f.Comments {
-		if g.Pos() >= f.Package {
-			break
-		}
-		for _, c := range g.List {
-			if !constraint.IsGoBuild(c.Text) {
-				continue
-			}
-			x, err := constraint.Parse(c.Text)
-			if err != nil {
-				return false
-			}
-			return x.Eval(func(tag string) bool {
-				switch {
-				case tag == runtime.GOOS || tag == runtime.GOARCH || tag == "gc":
-					return true
-				case tag == "unix":
-					return runtime.GOOS != "windows" && runtime.GOOS != "plan9" && runtime.GOOS != "js" && runtime.GOOS != "wasip1"
-				case strings.HasPrefix(tag, "go1."):
-					return true
-				}
-				return false
-			})
-		}
-	}
-	return true
-}
-
-var (
-	knownOS   = map[string]bool{"aix": true, "android": true, "darwin": true, "dragonfly": true, "freebsd": true, "illumos": true, "ios": true, "js": true, "linux": true, "netbsd": true, "openbsd": true, "plan9": true, "solaris": true, "wasip1": true, "windows": true}
-	knownArch = map[string]bool{"386": true, "amd64": true, "arm": true, "arm64": true, "loong64": true, "mips": true, "mips64": true, "mips64le": true, "mipsle": true, "ppc64": true, "ppc64le": true, "riscv64": true, "s390x": true, "wasm": true}
-)
-
-// otherPlatformName reports whether a file name ends _<os>.go, _<arch>.go or
-// _<os>_<arch>.go for a platform other than the current one. The lists are the
-// toolchain's usual ones, not every historical port.
-func otherPlatformName(n string) bool {
-	parts := strings.Split(strings.TrimSuffix(n, ".go"), "_")
-	for i := 1; i < len(parts) && i >= len(parts)-2; i++ {
-		switch p := parts[i]; {
-		case knownOS[p] && p != runtime.GOOS, knownArch[p] && p != runtime.GOARCH:
-			return true
-		}
-	}
-	return false
 }
 
 // zeroArg is how the zero value of t is written in plugins.go.
