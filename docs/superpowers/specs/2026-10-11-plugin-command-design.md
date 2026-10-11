@@ -61,9 +61,16 @@ All three commands run in the project directory, the one that holds `go.mod`.
 
 A module is a collage plugin that `add` accepts when all of these hold:
 
-1. **A manifest exists.** The module root has a `collage.json` that validates
-   against the manifest schema (`collage-plugin-manifest.schema.json`, shipped
-   with the editor extension and embedded in the CLI).
+1. **A manifest exists.** The module root has a `collage.json` that decodes
+   strictly:
+   - every top-level key must be one the manifest schema
+     (`collage-plugin-manifest.schema.json`, shipped with the editor extension)
+     allows;
+   - the fields the CLI uses (`name`, `requires`, `order`, `setup`) must be
+     well formed.
+
+   Full JSON Schema validation stays with the extension. The CLI uses only
+   the standard library.
 2. **The name is well formed.** The manifest's `name` is `owner/name`, both
    segments `[a-z0-9][a-z0-9-]*`. A short ref must match it: `add elagoht/consent`
    needs `name: "elagoht/consent"`. The name is also what the plugin's `Name()`
@@ -142,9 +149,9 @@ func plugins() []collage.Plugin {
   import. `del` only removes the entries and the import of one module.
 
 **Package and location.**
-- The file is written in the package that holds `main.go`. That is the package
-  whose directory `go list -f '{{.Name}}'` reports as `main`.
-- A project with several main packages must say which one with `-dir`.
+- The file is written into the directory given by `-dir` (default `.`).
+- That directory must hold a non-test `package main` file and the project's
+  `go.mod`.
 
 **Imports.**
 - An import always carries an explicit name, so the call and the import read
@@ -259,13 +266,15 @@ Nothing is written until the module has passed its checks.
 - **uploads** fits as `uploads.New(nil)`, which already uses the disk store under
   `dir`. It needs no change beyond the `check -run` pass.
 - **websocket**: `New(lv *live.Plugin)` with `nil` fails today. Fix:
-  - With a nil `lv`, `Init` finds the live plugin among the application's
+  - With a nil `lv`, `Configure` finds the live plugin among the application's
     plugins through a new core helper:
     `collage.FindPlugin[T collage.Plugin](host) (T, bool)`.
-  - Its manifest gets `requires: ["elagoht/live"]`, and `order: 1` so it sits
-    after live.
-  - live must therefore be registered, and initialised, before websocket. The
-    helper reports plugins whose `Init` has already run, in list order.
+  - It then calls `UseTransport`, which live needs before the application is
+    built.
+  - The helper sees every plugin in the application's list, configured or
+    initialised or not, from both `Configure` and `Init`.
+  - The manifest gets `requires: ["elagoht/live"]` and `order: -1`, so
+    websocket is configured before live.
 - **Ordering:** health, fail2ban, compress and devtoolbar gain their manifest
   `order`.
 - **Every plugin** must pass `check -run`. A plugin that fails is fixed in a
@@ -279,9 +288,6 @@ Nothing is written until the module has passed its checks.
 - **`collage.FindPlugin`** is additive. Phase 5 will place it among the
   optional host capabilities.
 - **The scaffold** gains `plugins.go` and `Plugins: plugins()`.
-- **`collage check`** (the project check) reports one thing: an entry in
-  `plugins.go` whose module is no longer in `go.mod`, a broken state that
-  `go build` would also report.
 
 ## Testing
 
