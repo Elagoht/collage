@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -195,4 +196,132 @@ func TestPluginAdd_Order(t *testing.T) {
 	}
 	wantInOrder(t, readFile(t, dir, "plugins.go"), "early.New(),", "greet.New(),", "late.New(),")
 	goBuild(t, dir)
+}
+
+// projectFiles are the files add may change, with their content; absent files
+// are missing from the map.
+func projectFiles(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	for _, f := range []string{"go.mod", "go.sum", "plugins.go", "plugins-config.json"} {
+		if b, err := os.ReadFile(filepath.Join(dir, f)); err == nil {
+			files[f] = string(b)
+		}
+	}
+	return files
+}
+
+func wantSameFiles(t *testing.T, dir string, before map[string]string) {
+	t.Helper()
+	after := projectFiles(t, dir)
+	for _, f := range []string{"go.mod", "go.sum", "plugins.go", "plugins-config.json"} {
+		was, existed := before[f]
+		is, exists := after[f]
+		if existed != exists || was != is {
+			t.Errorf("%s changed:\nbefore (%v) %q\nafter  (%v) %q", f, existed, was, exists, is)
+		}
+	}
+}
+
+// interruptedTidy runs go for real, except "go mod tidy", which fails as a
+// child killed by Ctrl-C does.
+type interruptedTidy struct{}
+
+func (interruptedTidy) Run(ctx context.Context, dir string, env []string, stdout, stderr io.Writer, name string, args ...string) error {
+	if name == "go" && len(args) >= 2 && args[0] == "mod" && args[1] == "tidy" {
+		return context.Canceled
+	}
+	return execRunner{}.Run(ctx, dir, env, stdout, stderr, name, args...)
+}
+
+// Review fix 1: a step interrupted after plugins.go and the config are
+// written still puts all four files back.
+func TestPluginAdd_InterruptedTidyRestores(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t, fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""))
+	writeFiles(t, dir, map[string]string{
+		"plugins.go":          pluginsSkeleton,
+		"plugins-config.json": "{\n  \"other/thing\": {\"a\": 1}\n}\n",
+		"go.sum":              "",
+	})
+	before := projectFiles(t, dir)
+	c, out, errOut := testCLI()
+	c.Runner = interruptedTidy{}
+	code := c.Run(context.Background(), []string{"plugin", "add", "acme/greet", "-dir", dir})
+	if code != 1 || !strings.Contains(errOut.String(), "collage: plugin add: ") {
+		t.Fatalf("add = %d\n%s%s", code, out, errOut)
+	}
+	wantSameFiles(t, dir, before)
+}
+
+// panickingTidy runs go for real, except "go mod tidy", which panics: a bug
+// in a step after the writes.
+type panickingTidy struct{}
+
+func (panickingTidy) Run(ctx context.Context, dir string, env []string, stdout, stderr io.Writer, name string, args ...string) error {
+	if name == "go" && len(args) >= 2 && args[0] == "mod" && args[1] == "tidy" {
+		panic("tidy exploded")
+	}
+	return execRunner{}.Run(ctx, dir, env, stdout, stderr, name, args...)
+}
+
+// Review fix 1: a panic after the writes restores the files, then goes on.
+func TestPluginAdd_PanicRestores(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t, fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""))
+	before := projectFiles(t, dir)
+	c, _, _ := testCLI()
+	c.Runner = panickingTidy{}
+	func() {
+		defer func() {
+			if r := recover(); r != "tidy exploded" {
+				t.Errorf("recovered %v, want the runner's panic", r)
+			}
+		}()
+		c.Run(context.Background(), []string{"plugin", "add", "acme/greet", "-dir", dir})
+	}()
+	wantSameFiles(t, dir, before)
+}
+
+// Review fix 2: plugins.go is written before plugins-config.json is read; a
+// config that is not JSON undoes the plugins.go write.
+func TestPluginAdd_BadConfigUndoesPluginsGo(t *testing.T) {
+	needGo(t)
+	mod := fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", "")
+	for name, pluginsGo := range map[string]string{
+		"absent":   "",
+		"existing": strings.Replace(pluginsSkeleton, "func plugins()", "// mine, keep me\nfunc plugins()", 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := pluginProject(t, mod)
+			files := map[string]string{"plugins-config.json": "{"}
+			if pluginsGo != "" {
+				files["plugins.go"] = pluginsGo
+			}
+			writeFiles(t, dir, files)
+			before := projectFiles(t, dir)
+			code, out, errOut := pluginCmd(t, dir, "add", "acme/greet")
+			if code != 1 || !strings.Contains(errOut, "collage: plugin add: ") {
+				t.Fatalf("add = %d\n%s%s", code, out, errOut)
+			}
+			wantSameFiles(t, dir, before)
+		})
+	}
+}
+
+// Review fix 3: a package main file go build would not compile does not make
+// the directory a program's.
+func TestPluginAdd_IgnoredMainIsNoMain(t *testing.T) {
+	fakeProxy(t) // should the check let it through, go get stays offline
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"go.mod":  "module x\n",
+		"gen.go":  "//go:build ignore\n\npackage main\n\nfunc main() {}\n",
+		"lib.go":  "package lib\n",
+		"_old.go": "package main\n",
+	})
+	code, _, errOut := pluginCmd(t, dir, "add", "acme/greet")
+	if code != 1 || !strings.Contains(errOut, "holds no package main") {
+		t.Fatalf("code %d\n%s", code, errOut)
+	}
 }

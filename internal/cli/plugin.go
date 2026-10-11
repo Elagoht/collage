@@ -7,13 +7,16 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 
 	"github.com/Elagoht/collage/internal/cli/plugincontract"
@@ -124,16 +127,32 @@ func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 		return fail(err)
 	}
 
+	// Ctrl-C stops the go child rather than this process, so the files are
+	// still put back; a panic in a step puts them back too, then goes on.
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	done := false
+	defer func() {
+		if done {
+			return
+		}
+		r := recover()
+		if rerr := snap.restore(); rerr != nil {
+			fmt.Fprintf(c.stderr(), "collage: plugin add: putting the files back: %v\n", rerr)
+		}
+		if r != nil {
+			panic(r)
+		}
+	}()
+
 	added, err := c.pluginAdd(ctx, *dir, ref, map[string]bool{})
 	if err == nil {
 		err = c.goTidy(ctx, *dir)
 	}
 	if err != nil {
-		if rerr := snap.restore(); rerr != nil {
-			err = errors.Join(err, fmt.Errorf("putting the files back: %w", rerr))
-		}
 		return fail(err)
 	}
+	done = true
 
 	c.printAdded(added)
 	if !callsPlugins(*dir) {
@@ -281,7 +300,7 @@ func readIfExists(path string) ([]byte, error) {
 	return b, err
 }
 
-// goSources are the non-test Go files directly in dir.
+// goSources are the non-test Go files directly in dir that go build compiles.
 func goSources(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -290,9 +309,16 @@ func goSources(dir string) ([]string, error) {
 	var out []string
 	for _, e := range entries {
 		name := e.Name()
-		if e.Type().IsRegular() && strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, "_test.go") {
-			out = append(out, filepath.Join(dir, name))
+		if !e.Type().IsRegular() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") ||
+			strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
+			continue
 		}
+		// MatchFile applies the file-name suffix rules and the //go:build
+		// lines as go build does: a file it would not compile is not looked at.
+		if ok, err := build.Default.MatchFile(dir, name); err != nil || !ok {
+			continue
+		}
+		out = append(out, filepath.Join(dir, name))
 	}
 	return out, nil
 }
