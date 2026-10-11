@@ -39,7 +39,8 @@ func TestAliasedTypes_MethodAllowlist(t *testing.T) {
 		{reflect.TypeOf((*collage.Result)(nil)), []string{"Degraded"}},
 		{reflect.TypeOf((*collage.Document)(nil)), []string{"Locales", "PathFor", "RootPath", "Validate"}},
 		{reflect.TypeOf((*collage.Action)(nil)), nil},
-		{reflect.TypeOf((*collage.RenderContext)(nil)), []string{"ActionURL", "Asset", "Context", "Hoist", "HoistAlternate", "HoistLink", "HoistMeta", "HoistProperty", "HoistStylesheet", "HoistTitle", "Hoisted", "Param", "URL", "WithContext", "WithFragment"}},
+		{reflect.TypeOf((*collage.RenderContext)(nil)), []string{"ActionURL", "Asset", "Context", "Hoist", "HoistAlternate", "HoistLink", "HoistMeta", "HoistProperty", "HoistStylesheet", "HoistTitle", "Param", "URL", "WithContext"}},
+		{reflect.TypeOf((*collage.Redirect)(nil)), []string{"Validate"}},
 	} {
 		if got := exportedMethods(c.typ); !slices.Equal(got, c.want) {
 			t.Errorf("%v methods = %v, want %v", c.typ, got, c.want)

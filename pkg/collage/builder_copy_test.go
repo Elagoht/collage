@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -261,5 +262,21 @@ func TestWithPath_AtRootStillWritesRoot(t *testing.T) {
 	}
 	if d.Paths[""] != "/robots.txt" {
 		t.Errorf("AtRoot path = %q", d.Paths[""])
+	}
+}
+
+// AtRoot twice is the root locale's repeated WithPath: refused, first path kept.
+func TestAtRoot_Twice(t *testing.T) {
+	b := collage.NewDocument("robots", "text/plain").WithBody([]byte("x")).AtRoot("/robots.txt").AtRoot("/other.txt")
+	d := b.Build()
+	err := b.BuildErr()
+	if !errors.Is(err, collage.ErrDuplicateLocalePath) {
+		t.Fatalf("AtRoot twice: %v, want ErrDuplicateLocalePath", err)
+	}
+	if want := `AtRoot on document "robots"`; !strings.Contains(err.Error(), want) {
+		t.Errorf("AtRoot twice error = %q, want it to name %s", err, want)
+	}
+	if d.Paths[""] != "/robots.txt" {
+		t.Errorf("AtRoot twice replaced the first path: %q", d.Paths[""])
 	}
 }

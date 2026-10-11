@@ -144,18 +144,18 @@ func (rc *RenderContext) Hoist(area, key string, html template.HTML) {
 	rc.hoisted.Add(area, key, rc.depth, rc.order, html)
 }
 
-// Hoisted returns this render's collector. It is how the render engine reads what
+// HoistedOf returns rc's render's collector. It is how the render engine reads what
 // was declared; an application uses Hoist.
-func (rc *RenderContext) Hoisted() *Hoisted { return rc.hoisted }
+func HoistedOf(rc *RenderContext) *Hoisted { return rc.hoisted }
 
-// WithFragment returns a shallow copy of rc positioned at one fragment: depth is how
-// deep it sits in the tree and order is the number it was launched with. The render
-// engine calls it as it walks; an application has no reason to.
+// FragmentContext returns a shallow copy of rc positioned at one fragment: depth is
+// how deep it sits in the tree and order is the number it was launched with. The
+// render engine calls it as it walks; an application has no reason to.
 //
 // Everything a render shares — the render's values, the hoist collector, the Once table — is
 // reached through pointers the copy keeps, so a fragment's context sees the same
 // render as every other fragment's.
-func (rc *RenderContext) WithFragment(depth, order int) *RenderContext {
+func FragmentContext(rc *RenderContext, depth, order int) *RenderContext {
 	cp := *rc
 	cp.depth = depth
 	cp.order = order

@@ -17,8 +17,7 @@ type Redirect struct {
 	From string
 	// To is the destination path the request is redirected to.
 	To string
-	// Status is the HTTP status code to use: 301, 302, 307 or 308. Zero means 302;
-	// see EffectiveStatus.
+	// Status is the HTTP status code to use: 301, 302, 307 or 308. Zero means 302.
 	Status int
 }
 
@@ -35,9 +34,9 @@ func RedirectTextError(from, to string) error {
 	return nil
 }
 
-// EffectiveStatus returns r.Status when it is one of 301, 302, 307, or 308, and
+// RedirectStatus returns r.Status when it is one of 301, 302, 307, or 308, and
 // 302 otherwise.
-func (r *Redirect) EffectiveStatus() int {
+func RedirectStatus(r *Redirect) int {
 	switch r.Status {
 	case 301, 302, 307, 308:
 		return r.Status

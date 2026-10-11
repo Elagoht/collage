@@ -159,7 +159,7 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 	} else {
 		order = state.nextOrder()
 	}
-	rc = rc.WithFragment(depth, order)
+	rc = types.FragmentContext(rc, depth, order)
 
 	// The metadata slot is reserved on entry so parents appear before the children
 	// that render inside them, and filled in once the outcome is known.

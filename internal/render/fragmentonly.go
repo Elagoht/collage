@@ -115,7 +115,7 @@ func (e *SlotEngine) RenderFragmentResult(ctx context.Context, rc *types.RenderC
 	err := e.renderFragment(rc, f, state, nil, &buf)
 	markup := buf.Bytes()
 	placed := markedAreas(markup, state.hoistToken)
-	markup = resolveHoists(markup, state.hoistToken, rc.Hoisted())
+	markup = resolveHoists(markup, state.hoistToken, types.HoistedOf(rc))
 	total := time.Since(start)
 
 	e.metrics.RenderDuration(ctx, name, total, false)
@@ -128,7 +128,7 @@ func (e *SlotEngine) RenderFragmentResult(ctx context.Context, rc *types.RenderC
 	}
 
 	result := &FragmentResult{HTML: markup}
-	hoisted := rc.Hoisted()
+	hoisted := types.HoistedOf(rc)
 	areas := hoisted.Areas()
 	sort.Strings(areas)
 	for _, area := range areas {

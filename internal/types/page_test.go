@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func TestRedirect_EffectiveStatus(t *testing.T) {
+func TestRedirectStatus(t *testing.T) {
 	tests := []struct {
 		name   string
 		status int
@@ -22,8 +22,8 @@ func TestRedirect_EffectiveStatus(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &Redirect{Status: tt.status}
-			if got := r.EffectiveStatus(); got != tt.want {
-				t.Errorf("EffectiveStatus() = %d, want %d", got, tt.want)
+			if got := RedirectStatus(r); got != tt.want {
+				t.Errorf("RedirectStatus() = %d, want %d", got, tt.want)
 			}
 		})
 	}

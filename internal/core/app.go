@@ -1464,7 +1464,7 @@ func (a *App) renderResolved(
 		Values:         types.ValuesOf(rc),
 		Static:         true,
 	}
-	plugin.PrepareHoist(event, render.HoistEnds(result), rc.Hoisted())
+	plugin.PrepareHoist(event, render.HoistEnds(result), types.HoistedOf(rc))
 	if err := a.plugins.AfterRender(ctx, event); err != nil {
 		return nil, err
 	}

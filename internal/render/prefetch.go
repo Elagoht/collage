@@ -99,7 +99,7 @@ func (e *SlotEngine) startPrefetch(rc *types.RenderContext, f *types.Fragment, s
 	// The handler's context carries the fragment's own position, so a handler that
 	// hoists is placed where the fragment is rather than where the walk happens to
 	// be — there is no longer one place the walk "is".
-	handlerRC := rc.WithContext(ctx).WithFragment(p.depth, p.order)
+	handlerRC := types.FragmentContext(rc.WithContext(ctx), p.depth, p.order)
 
 	// Before the handler starts, for the reason attempt gives.
 	if f.Title != "" {

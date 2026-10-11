@@ -84,7 +84,7 @@ type MatchResult struct {
 	// Location header. It is empty when no redirect matched.
 	RedirectTo string
 	// RedirectStatus is the HTTP status code for RedirectTo, taken from the
-	// matched Redirect's EffectiveStatus. It is zero when no redirect matched.
+	// matched Redirect's RedirectStatus. It is zero when no redirect matched.
 	RedirectStatus int
 	// Canonical reports that RedirectTo is the router's own: the same route
 	// under the one spelling it answers — the locale prefix, the trailing slash —
@@ -553,7 +553,7 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	}
 	target.hasRedirect = true
 	target.redirectTo = redirect.To
-	target.redirectStatus = redirect.EffectiveStatus()
+	target.redirectStatus = types.RedirectStatus(redirect)
 	target.redirectCatchAll = catchAll
 	rt.redirectFroms[normalizedFrom] = redirect
 	// Locale is empty: the redirect tree is shared across locales, so this

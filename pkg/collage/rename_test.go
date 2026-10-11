@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
@@ -34,8 +36,23 @@ func TestRedirect_StatusDefaultsAndPermanent(t *testing.T) {
 	if r.Status != 0 {
 		t.Fatal("zero Status expected")
 	}
-	if got := r.EffectiveStatus(); got != http.StatusFound {
-		t.Errorf("EffectiveStatus of a zero Status = %d, want 302", got)
+	// A zero Status answers 302.
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/c.html": {Data: []byte(`<html><body>c</body></html>`)}}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	served := collage.NewPage("served").WithContent(collage.NewFragment("c", "c.html").Build()).
+		WithPath("en", "/b").WithRedirect(r.From, r.To, r.Status).Build()
+	if err := app.RegisterPage(served); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/a", nil))
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/b" {
+		t.Errorf("a zero-Status redirect answered %d to %q, want 302 to /b", rec.Code, rec.Header().Get("Location"))
 	}
 	// The page builder's permanent helper writes 301 into Status.
 	frag := collage.NewFragment("c", "c.html").Build()

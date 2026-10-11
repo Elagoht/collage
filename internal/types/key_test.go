@@ -94,13 +94,13 @@ func TestKey_SharedAcrossCopiesAndConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			child := rc.WithFragment(1, i).WithContext(context.Background())
+			child := FragmentContext(rc, 1, i).WithContext(context.Background())
 			NewKey[int]("n").With(string(rune('a'+i%26))).Set(child, i)
 			k.Get(child)
 		}()
 	}
 	wg.Wait()
-	k.Set(rc.WithFragment(1, 0), 1)
+	k.Set(FragmentContext(rc, 1, 0), 1)
 	if n, ok := k.Get(rc); !ok || n != 1 {
 		t.Errorf("a copy's Set is not visible to the original: %d, %v", n, ok)
 	}

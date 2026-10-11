@@ -760,12 +760,12 @@ func (b *Builder) collectRedirects(written []string) ([]plugin.BuiltRedirect, []
 			continue
 		}
 		for _, r := range p.Redirects {
-			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "page:" + p.Name})
+			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: types.RedirectStatus(r), Source: "page:" + p.Name})
 		}
 	}
 	for _, d := range b.app.Documents() {
 		for _, r := range d.Redirects {
-			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "document:" + d.Name})
+			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: types.RedirectStatus(r), Source: "document:" + d.Name})
 		}
 	}
 	if source, ok := b.app.(pluginRedirecter); ok {

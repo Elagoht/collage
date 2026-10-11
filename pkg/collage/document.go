@@ -24,7 +24,7 @@ type Document = types.Document
 // RenderDocumentPath's error before reading Body.
 //
 // It is Result's sibling for documents, and exists for the same reason Result
-// does: RenderDocumentPath is public surface reached through the App alias, so a
+// does: RenderDocumentPath is a method of App, so a
 // caller must be able to name what it returns — to declare a variable, a struct
 // field, or a helper's parameter — using nothing but this package.
 type DocumentResult = render.DocumentResult
@@ -56,7 +56,8 @@ func NewDocument(name, contentType string) *DocumentBuilder {
 	}
 }
 
-// WithPath registers the path pattern that reaches this document in locale.//
+// WithPath registers the path pattern that reaches this document in locale.
+//
 // locale is not a label: it names the locale tree the path is written into, and
 // a request reaches that tree only when the locale is Config.Locale.Default (at
 // the bare path) or listed in Locale.Supported (under its prefix, "/tr/…").
@@ -83,8 +84,14 @@ func (b *DocumentBuilder) WithPath(locale, pattern string) *DocumentBuilder {
 // rather than to a language, which clients look for at a fixed address:
 // /robots.txt, /llms.txt, /.well-known/security.txt.
 //
-// A link built by name reaches it from a page in any locale.
+// A link built by name reaches it from a page in any locale. Calling AtRoot a
+// second time records ErrDuplicateLocalePath and keeps the first path, retrievable
+// via BuildErr and refused at registration.
 func (b *DocumentBuilder) AtRoot(pattern string) *DocumentBuilder {
+	if _, taken := b.document.Paths[types.RootLocale]; taken {
+		b.errs = append(b.errs, fmt.Errorf("%w: AtRoot on document %q", ErrDuplicateLocalePath, b.document.Name))
+		return b
+	}
 	b.document.Paths[types.RootLocale] = pattern
 	return b
 }

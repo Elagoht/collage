@@ -461,7 +461,7 @@ func (h *Handler) writeActionPage(
 		Values:         types.ValuesOf(rc),
 		HTML:           rendered.HTML,
 	}
-	plugin.PrepareHoist(afterRender, render.HoistEnds(rendered), rc.Hoisted())
+	plugin.PrepareHoist(afterRender, render.HoistEnds(rendered), types.HoistedOf(rc))
 	if err := h.plugins.AfterRender(r.Context(), afterRender); err != nil {
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageAfterRender, err))
 	}

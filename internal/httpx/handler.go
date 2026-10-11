@@ -1040,7 +1040,7 @@ func (h *Handler) renderPage(
 		Values:         types.ValuesOf(rc),
 		HTML:           result.HTML,
 	}
-	plugin.PrepareHoist(afterRender, render.HoistEnds(result), rc.Hoisted())
+	plugin.PrepareHoist(afterRender, render.HoistEnds(result), types.HoistedOf(rc))
 	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {
 		// No fragment is named: the failure is the plugin's, and pointing the dev
 		// page at a fragment that merely happened to be degraded would send a
