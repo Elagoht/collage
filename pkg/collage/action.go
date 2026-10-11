@@ -52,7 +52,7 @@ func NewAction(name string) *ActionBuilder {
 // names is refused at registration with ErrLocaleUnreachable.
 //
 // A locale the action already has a path in records ErrDuplicateLocalePath and
-// keeps the first path; an empty locale records ErrEmptyLocale. Both are
+// keeps the first path; an empty locale records ErrInvalidLocale. Both are
 // retrievable via BuildErr and refused at registration.
 func (b *ActionBuilder) WithPath(locale, pattern string) *ActionBuilder {
 	if err := checkPathLocale(b.action.Paths, locale, "action", b.action.Name); err != nil {

@@ -65,7 +65,7 @@ func NewDocument(name, contentType string) *DocumentBuilder {
 // names is refused at registration with ErrLocaleUnreachable.
 //
 // A locale the document already has a path in records ErrDuplicateLocalePath and
-// keeps the first path; an empty locale records ErrEmptyLocale — a document
+// keeps the first path; an empty locale records ErrInvalidLocale — a document
 // outside every locale says AtRoot. Both are retrievable via BuildErr and refused
 // at registration.
 func (b *DocumentBuilder) WithPath(locale, pattern string) *DocumentBuilder {

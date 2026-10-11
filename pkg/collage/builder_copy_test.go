@@ -3,6 +3,7 @@ package collage_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -32,6 +33,65 @@ func TestBuild_ReturnsIndependentCopy(t *testing.T) {
 	}
 	if b.Build() == p {
 		t.Error("two Builds returned one value")
+	}
+}
+
+// Review Focus 2, through the builders: two Builds share no slice or map, for
+// every container field the built types have now or gain later. A container the
+// builder leaves empty fails, so a field added later must be filled here.
+func TestBuild_ReturnsIndependentCopy_NoSharedContainers(t *testing.T) {
+	layout := collage.NewInlineFragment("l", `{{slot "content"}}`).Build()
+	pb := collage.NewPage("p").WithLayouts(layout).WithContent(copyContent()).
+		WithPath("en", "/p").WithRedirect("/old", "/p", 302).WithCacheParams("q").
+		WithDependencyTags("t").WithAction("POST", copyActionHandler).
+		WithFragmentPath("en", "/p/f", copyContent())
+	assertBuildsShareNothing(t, "Page", reflect.ValueOf(pb.Build()), reflect.ValueOf(pb.Build()))
+
+	fb := collage.NewInlineFragment("f", `{{slot "s"}}`).WithSlotFragment("s", copyContent())
+	f1, f2 := fb.Build(), fb.Build()
+	assertBuildsShareNothing(t, "Fragment", reflect.ValueOf(f1), reflect.ValueOf(f2))
+	assertBuildsShareNothing(t, "Fragment.Slots[s]", reflect.ValueOf(f1.Slots["s"]), reflect.ValueOf(f2.Slots["s"]))
+
+	db := collage.NewDocument("d", "text/plain").WithBody([]byte("x")).WithPath("en", "/d").
+		WithCacheParams("q").WithDependencyTags("t").WithRedirect("/old.txt", "/d", 302)
+	assertBuildsShareNothing(t, "Document", reflect.ValueOf(db.Build()), reflect.ValueOf(db.Build()))
+
+	ab := collage.NewAction("a").WithHandler(copyActionHandler).WithPath("en", "/a").WithMethods("POST")
+	assertBuildsShareNothing(t, "Action", reflect.ValueOf(ab.Build()), reflect.ValueOf(ab.Build()))
+}
+
+// assertBuildsShareNothing takes a and b as pointers to two built values.
+func assertBuildsShareNothing(t *testing.T, name string, a, b reflect.Value) {
+	t.Helper()
+	if a.Pointer() == b.Pointer() {
+		t.Fatalf("%s: two Builds returned one value", name)
+	}
+	va, vb := a.Elem(), b.Elem()
+	for i := range va.NumField() {
+		fa, fb := va.Field(i), vb.Field(i)
+		field := name + "." + va.Type().Field(i).Name
+		// Equal, field by field — exported ones, which is what this package
+		// can read: reflect.DeepEqual calls two non-nil funcs unequal even when
+		// they are one func.
+		if fa.Kind() == reflect.Func {
+			if fa.IsNil() != fb.IsNil() {
+				t.Errorf("%s differs between two Builds", field)
+			}
+			continue
+		}
+		if fa.CanInterface() && !reflect.DeepEqual(fa.Interface(), fb.Interface()) {
+			t.Errorf("%s differs between two Builds", field)
+		}
+		if fa.Kind() != reflect.Slice && fa.Kind() != reflect.Map {
+			continue
+		}
+		if fa.Len() == 0 {
+			t.Errorf("%s is empty: fill it through the builder so the copy is checked", field)
+			continue
+		}
+		if fa.UnsafePointer() == fb.UnsafePointer() {
+			t.Errorf("%s is shared between two Builds", field)
+		}
 	}
 }
 
@@ -158,7 +218,7 @@ func TestActionBuilder_RecordedErrorRefusedAtRegistration(t *testing.T) {
 
 	attached := collage.NewAction("attached").WithHandler(copyActionHandler).WithMethods("POST").WithPath("", "/x")
 	page := collage.NewPage("p").WithContent(copyContent()).WithPath("en", "/p").WithActionFor(attached.Build())
-	if err := app.RegisterPage(page.Build()); !errors.Is(err, collage.ErrEmptyLocale) {
+	if err := app.RegisterPage(page.Build()); !errors.Is(err, collage.ErrInvalidLocale) {
 		t.Errorf("RegisterPage with an attached action built with errors: %v", err)
 	}
 }
@@ -169,7 +229,7 @@ func TestWithPath_RepeatAndEmptyLocale(t *testing.T) {
 	if !errors.Is(b.BuildErr(), collage.ErrDuplicateLocalePath) {
 		t.Errorf("repeat: %v", b.BuildErr())
 	}
-	if !errors.Is(b.BuildErr(), collage.ErrEmptyLocale) {
+	if !errors.Is(b.BuildErr(), collage.ErrInvalidLocale) {
 		t.Errorf("empty locale: %v", b.BuildErr())
 	}
 	if p.Paths["en"] != "/a" {
@@ -181,13 +241,13 @@ func TestWithPath_RepeatAndEmptyLocale(t *testing.T) {
 
 	d := collage.NewDocument("d", "text/plain").WithBody([]byte("x")).WithPath("en", "/a").WithPath("en", "/b").WithPath("", "/c")
 	d.Build()
-	if !errors.Is(d.BuildErr(), collage.ErrDuplicateLocalePath) || !errors.Is(d.BuildErr(), collage.ErrEmptyLocale) {
+	if !errors.Is(d.BuildErr(), collage.ErrDuplicateLocalePath) || !errors.Is(d.BuildErr(), collage.ErrInvalidLocale) {
 		t.Errorf("document: %v", d.BuildErr())
 	}
 
 	a := collage.NewAction("a").WithHandler(copyActionHandler).WithPath("en", "/a").WithPath("en", "/b").WithPath("", "/c")
 	a.Build()
-	if !errors.Is(a.BuildErr(), collage.ErrDuplicateLocalePath) || !errors.Is(a.BuildErr(), collage.ErrEmptyLocale) {
+	if !errors.Is(a.BuildErr(), collage.ErrDuplicateLocalePath) || !errors.Is(a.BuildErr(), collage.ErrInvalidLocale) {
 		t.Errorf("action: %v", a.BuildErr())
 	}
 }

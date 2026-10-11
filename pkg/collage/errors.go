@@ -216,9 +216,9 @@ var (
 	// ErrDuplicateLocalePath is recorded when WithPath names a locale the page,
 	// document or action already has a path in. The first path is kept.
 	ErrDuplicateLocalePath = errors.New("collage: locale already has a path")
-	// ErrEmptyLocale is recorded when WithPath is given an empty locale, and nothing
-	// is written. A document that belongs outside every locale says AtRoot.
-	ErrEmptyLocale = errors.New("collage: empty locale")
+	// ErrInvalidLocale is recorded when WithPath is given an empty locale, and
+	// nothing is written. A document that belongs outside every locale says AtRoot.
+	ErrInvalidLocale = errors.New("collage: invalid locale")
 )
 
 // Routing and URLs.

@@ -96,7 +96,7 @@ func (b *PageBuilder) WithContent(f *Fragment) *PageBuilder {
 // names is refused at registration with ErrLocaleUnreachable.
 //
 // A locale the page already has a path in records ErrDuplicateLocalePath and
-// keeps the first path; an empty locale records ErrEmptyLocale. Both are
+// keeps the first path; an empty locale records ErrInvalidLocale. Both are
 // retrievable via BuildErr and refused at registration.
 func (b *PageBuilder) WithPath(locale, pattern string) *PageBuilder {
 	if err := checkPathLocale(b.page.Paths, locale, "page", b.page.Name); err != nil {
@@ -111,7 +111,7 @@ func (b *PageBuilder) WithPath(locale, pattern string) *PageBuilder {
 // empty, or it already holds a path. kind and name say whose paths they are.
 func checkPathLocale(paths map[string]string, locale, kind, name string) error {
 	if locale == "" {
-		return fmt.Errorf("%w: WithPath on %s %q", ErrEmptyLocale, kind, name)
+		return fmt.Errorf("%w: WithPath on %s %q", ErrInvalidLocale, kind, name)
 	}
 	if _, taken := paths[locale]; taken {
 		return fmt.Errorf("%w: %q on %s %q", ErrDuplicateLocalePath, locale, kind, name)
