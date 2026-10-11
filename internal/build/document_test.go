@@ -400,6 +400,20 @@ func TestBuild_DocumentCollisionStopsBuild(t *testing.T) {
 				newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed.xml"}),
 			},
 		},
+		{
+			name:  "root page and /index.html document",
+			pages: []*types.Page{newTestPage("home", types.StrategyStatic, map[string]string{"en": "/"})},
+			documents: []*types.Document{
+				newTestDocument("idx", types.StrategyStatic, map[string]string{"en": "/index.html"}),
+			},
+		},
+		{
+			name:  "page and its index.html document",
+			pages: []*types.Page{newTestPage("blog", types.StrategyStatic, map[string]string{"en": "/blog"})},
+			documents: []*types.Document{
+				newTestDocument("blogidx", types.StrategyStatic, map[string]string{"en": "/blog/index.html"}),
+			},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -408,7 +422,11 @@ func TestBuild_DocumentCollisionStopsBuild(t *testing.T) {
 				pages:         c.pages,
 				documents:     c.documents,
 				defaultLocale: "en",
-				docBodies:     map[string][]byte{renderKey("/feed.xml", "en"): []byte("<rss/>")},
+				docBodies: map[string][]byte{
+					renderKey("/feed.xml", "en"):        []byte("<rss/>"),
+					renderKey("/index.html", "en"):      []byte("<x/>"),
+					renderKey("/blog/index.html", "en"): []byte("<x/>"),
+				},
 			}
 			b, err := New(app, Options{OutDir: out, Concurrency: 4})
 			if err != nil {

@@ -298,6 +298,9 @@ func TestActionResult_TwoBodiesReachTheErrorHook(t *testing.T) {
 	rr := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rr, req)
 
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rr.Code)
+	}
 	events := rec.at("/both")
 	if len(events) != 1 || !errors.Is(events[0].Err, collage.ErrAmbiguousActionResult) ||
 		!strings.Contains(events[0].Err.Error(), "Page") || !strings.Contains(events[0].Err.Error(), "Body") {

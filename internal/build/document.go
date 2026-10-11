@@ -122,7 +122,6 @@ func (b *Builder) documentURL(task documentTask) string {
 // The tasks come from enumerateDocuments, and Build has already checked them
 // against the pages' for a shared output file before anything rendered.
 func (b *Builder) buildDocuments(ctx context.Context, outDirResolved string, tasks []documentTask, skipped []SkipRecord, errs []error) ([]string, []SkipRecord, []WarningRecord, []error) {
-
 	written := make([]string, len(tasks))
 	taskErrs := make([]error, len(tasks))
 

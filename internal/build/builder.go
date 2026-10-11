@@ -976,8 +976,13 @@ func (b *Builder) checkNoOutputCollisions(tasks []buildTask, docs []documentTask
 
 	for _, task := range tasks {
 		key := path.Clean(b.pageOutputPath(task.locale, defaultLocale, task.path))
-		if err := claim(key, fmt.Sprintf("page %q locale %q", task.page.Name, task.locale)); err != nil {
-			return err
+		owner := fmt.Sprintf("page %q locale %q", task.page.Name, task.locale)
+		// The file it writes, and the directory that file sits in: a document
+		// whose file is that directory's name cannot be written beside it.
+		for _, k := range []string{path.Join(key, "index.html"), key} {
+			if err := claim(k, owner); err != nil {
+				return err
+			}
 		}
 	}
 	for _, task := range docs {
