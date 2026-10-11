@@ -449,7 +449,7 @@ func (h *Handler) writeActionPage(
 		Page:           result.Page,
 		Locale:         match.Locale,
 		Degraded:       rendered.Degraded(),
-		Fragments:      rendered.Metadata.Fragments,
+		Fragments:      render.FragmentReports(rendered),
 		DependencyTags: append([]string(nil), rendered.DependencyTags...),
 		Values:         types.ValuesOf(rc),
 		HTML:           rendered.HTML,

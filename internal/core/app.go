@@ -1487,7 +1487,7 @@ func (a *App) renderResolved(
 		Page:           page,
 		Locale:         locale,
 		Degraded:       result.Degraded(),
-		Fragments:      result.Metadata.Fragments,
+		Fragments:      render.FragmentReports(result),
 		DependencyTags: append([]string(nil), result.DependencyTags...),
 		HTML:           result.HTML,
 		Values:         types.ValuesOf(rc),

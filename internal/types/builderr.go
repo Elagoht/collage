@@ -55,8 +55,9 @@ func PageBuildErr(p *Page) error {
 		}
 		walk(f.Fallback)
 	}
-	// The chain, not the folded LayoutFragment: before registration folds the
-	// chain, LayoutFragment is nil or the outermost original, and after it the
+	// The chain, not the folded layout fragment (the page's unexported
+	// layoutFragment, read through LayoutFragment): before registration folds the
+	// chain, it is nil or the outermost original, and after it the
 	// chain originals carry the same builder errors the copies in the folded
 	// tree do.
 	for _, f := range p.LayoutChain {

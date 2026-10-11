@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -78,6 +79,16 @@ type Result struct {
 // HoistEnds returns where, in r's HTML, each hoist area's content ends, for adding
 // to an area after the render.
 func HoistEnds(r *Result) map[string]int { return r.hoistEnds }
+
+// FragmentReports returns a copy of how each fragment of r's render went, for
+// plugins: the caller owns it, so changing it leaves r's Metadata as it was. It is
+// nil for a nil r or one without Metadata.
+func FragmentReports(r *Result) []types.FragmentReport {
+	if r == nil || r.Metadata == nil {
+		return nil
+	}
+	return slices.Clone(r.Metadata.Fragments)
+}
 
 // Degraded reports whether any fragment in the render failed, whether or not a
 // fallback covered for it. A degraded result is complete enough to serve but must

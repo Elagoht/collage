@@ -1050,7 +1050,7 @@ func (h *Handler) renderPage(
 		Page:           page,
 		Locale:         match.Locale,
 		Degraded:       result.Degraded(),
-		Fragments:      result.Metadata.Fragments,
+		Fragments:      render.FragmentReports(result),
 		DependencyTags: append([]string(nil), result.DependencyTags...),
 		Values:         types.ValuesOf(rc),
 		HTML:           result.HTML,

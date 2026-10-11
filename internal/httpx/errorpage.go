@@ -303,7 +303,7 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 		Page:           page,
 		Locale:         f.locale,
 		Degraded:       result.Degraded(),
-		Fragments:      result.Metadata.Fragments,
+		Fragments:      render.FragmentReports(result),
 		DependencyTags: append([]string(nil), result.DependencyTags...),
 		Values:         types.ValuesOf(rc),
 		HTML:           result.HTML,

@@ -166,10 +166,10 @@ func (a *App) remember(p *types.Page) {
 	a.order = append(a.order, p.Name)
 }
 
-// bindContent folds p's layout chain into p.LayoutFragment: each layout gets
+// bindContent folds p's layout chain into the page's layout fragment: each layout gets
 // its own per-page copy of its slot table, the content fragment is bound into
 // the innermost copy's content slot, and each copy is bound into the next outer
-// copy's content slot. p.LayoutFragment ends as the outermost copy — the folded
+// copy's content slot. the layout fragment ends as the outermost copy — the folded
 // tree's root — and p.LayoutChain keeps pointing at the originals.
 //
 // The per-page copies are what make layouts shareable, and a layout is the most

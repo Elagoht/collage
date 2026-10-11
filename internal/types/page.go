@@ -82,16 +82,17 @@ func (r *Redirect) Validate() error {
 type Page struct {
 	// Name identifies the page, primarily for diagnostics and error messages.
 	Name string
-	// LayoutFragment is the fragment tree's root once registration has folded
+	// layoutFragment is the fragment tree's root once registration has folded
 	// LayoutChain: the page's own copy of the outermost layout, with the rest of
 	// the chain and the content fragment bound inside it. Before registration it
-	// is the chain's outermost original, as WithLayouts sets it. A page built by
-	// hand with only LayoutFragment is taken as the one-layout chain; one whose
-	// LayoutFragment is not LayoutChain[0] is refused. Page itself never mutates
-	// its fragments.
+	// is the chain's outermost original, as WithLayouts sets it. It is unexported;
+	// LayoutFragment and SetLayoutFragment read and write it. A page built by
+	// hand with only a layout fragment set is taken as the one-layout chain; one
+	// whose layout fragment is not LayoutChain[0] is refused. Page itself never
+	// mutates its fragments.
 	layoutFragment *Fragment
 	// LayoutChain holds the page's layouts outermost-first, as the builder
-	// declared them. Registration folds the chain into LayoutFragment — a
+	// declared them. Registration folds the chain into the layout fragment — a
 	// per-page copy of each layout, the content fragment bound into the
 	// innermost and each layout into the next outer one — and leaves this
 	// field pointing at the originals, which is where a guard or an inspection
