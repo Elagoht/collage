@@ -1,5 +1,31 @@
 # Changelog
 
+## v0.59.0
+
+### Added
+
+- **`collage plugin add` and `del` take several plugins.** Each is added or
+  removed in a step of its own: one that fails is put back, the others stay,
+  and the command exits 1. A name that cannot be read refuses the whole command
+  before anything changes. With several, a summary follows, and `add` prints the
+  setup notes together at the end. `del` removes a plugin another one on the
+  list requires after that one.
+- **Bundles, written `@name`.** `@prod` (health, secure, compress, minimizer,
+  accesslog, ratelimit), `@site` (robots, sitemap, meta, jsonld, favicon),
+  `@blog` (`@site` with markdown, feed, toc, highlight, ogimage), `@forms`
+  (session, flash, validate, honeypot), `@live` (live, websocket) and `@ops`
+  (prometheus, errortrack). `collage plugin add @prod`; `del @name` passes over
+  a bundle's plugins the project does not have.
+- **`collage new <name> --with @blog,@prod`.** It takes bundles and plugins,
+  comma-separated or in more than one `--with`, checks them before writing
+  anything, and adds them once the project is scaffolded.
+- **The scaffolded `main.go` reads `BASE_URL` into `Config.BaseURL`.**
+
+### Changed
+
+- **`collage plugin del x@v1` is a usage error (exit 2),** refused before any
+  plugin on the list is removed; it was exit 1.
+
 ## v0.58.0
 
 ### Added
