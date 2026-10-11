@@ -70,6 +70,10 @@ func (h *configHostView) OriginFor(ctx context.Context, host string) string {
 // among those registered so far, at Configure time.
 func (h *configHostView) Dynamic() bool { return h.app.plugins.HasOriginResolver() }
 
+// ApplicationPlugins is plugin.Lister: every plugin the application has, in
+// order. collage.FindPlugin reads it.
+func (h *hostView) ApplicationPlugins() []plugin.Plugin { return h.app.plugins.Plugins() }
+
 // DevMode reports whether the application is running in development mode.
 func (h *hostView) DevMode() bool {
 	return h.app.DevMode()
@@ -187,6 +191,10 @@ type configHostView struct {
 }
 
 var _ plugin.ConfigHost = (*configHostView)(nil)
+
+// ApplicationPlugins is plugin.Lister, as on hostView: a plugin looking for
+// another in Configure finds it whether it is listed before or after.
+func (h *configHostView) ApplicationPlugins() []plugin.Plugin { return h.app.plugins.Plugins() }
 
 // DevMode reports whether the application is running in development mode.
 func (h *configHostView) DevMode() bool { return h.app.cfg.DevMode || h.app.cfg.Template.DevMode }

@@ -45,3 +45,12 @@ func lower(c byte) byte {
 	}
 	return c
 }
+
+// UpperFirst returns s with its first byte uppercased when that byte is an
+// ASCII lowercase letter, and s as it is otherwise.
+func UpperFirst(s string) string {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		return s
+	}
+	return string(s[0]-'a'+'A') + s[1:]
+}

@@ -169,6 +169,13 @@ type Host interface {
 	ServeStatus(w http.ResponseWriter, r *http.Request, status int)
 }
 
+// Lister is implemented by the hosts collage hands plugins: the application's
+// plugins, in the order they are listed, whether or not each has been
+// configured or initialised yet. collage.FindPlugin reads it.
+type Lister interface {
+	ApplicationPlugins() []Plugin
+}
+
 // PageURL is one URL a page answers.
 type PageURL struct {
 	// Locale is the locale the URL is in.

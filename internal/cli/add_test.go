@@ -363,7 +363,7 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := sdyProject(t)
 			writeFiles(t, dir, tt.setup)
-			before := snapshot(t, dir)
+			before := treeSnapshot(t, dir)
 
 			code, _, stderr := add(t, dir, tt.args...)
 			if code == 0 {
@@ -372,15 +372,15 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 			if !strings.Contains(stderr, tt.want) {
 				t.Errorf("stderr = %q, want %q", stderr, tt.want)
 			}
-			if after := snapshot(t, dir); after != before {
+			if after := treeSnapshot(t, dir); after != before {
 				t.Errorf("a refused add changed the project:\nbefore %s\nafter  %s", before, after)
 			}
 		})
 	}
 }
 
-// snapshot returns every file under dir with its content, as one string.
-func snapshot(t *testing.T, dir string) string {
+// treeSnapshot returns every file under dir with its content, as one string.
+func treeSnapshot(t *testing.T, dir string) string {
 	t.Helper()
 	var b strings.Builder
 	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {

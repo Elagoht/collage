@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.58.0
+
+### Added
+
+- **`collage plugin add <owner/name>`.** It fetches `github.com/<owner>/collage-<name>`
+  with `go get`, checks that it is a collage plugin, adds it to `plugins.go`
+  (with its import, in the place its manifest's `order` asks for), and adds an
+  empty section `"<owner/name>": {}` to `plugins-config.json`. A full module
+  path (`gitlab.com/x/y`) is used as written, and `@version` pins a release.
+  Plugins it `requires` are added first. Any failure leaves `go.mod`, `go.sum`,
+  `plugins.go` and `plugins-config.json` as they were.
+- **`collage plugin del <owner/name>`.** It removes the plugin from `plugins.go`
+  and `plugins-config.json`, prints the settings its section held, and runs
+  `go mod tidy`. It refuses while another plugin requires it, and when it
+  cannot read another plugin's `collage.json` to tell.
+- **`collage plugin check [-release] [-run] [dir]`.** It checks a plugin
+  repository against the contract `add` enforces:
+  - a `collage.json` naming it `owner/name`;
+  - a `New` that can be called with nothing configured;
+  - with `-release`, a release tag;
+  - with `-run`, that `New`, called as `add` writes it, runs and returns a
+    plugin whose `Name()` is the manifest's name. It does not configure or
+    start the plugin.
+- **The manifest gains `requires`, `order` and `setup`.**
+- **`collage.FindPlugin[T](host)`.** It finds another of the application's
+  plugins by type, from `Configure` or `Init`.
+- **New projects get `plugins.go`,** and `main.go` passes `Plugins: plugins()`.
+  An existing project gets the file from its first `collage plugin add`. Pass
+  `plugins()` to `collage.New` once, as the command says.
+
 ## v0.57.0
 
 ### Added

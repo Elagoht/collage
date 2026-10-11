@@ -13,6 +13,9 @@ collage export [-out dir] [-clean]
 collage serve [-dir dir] [-host name] [-port n]
 collage inspect
 collage check [-json]
+collage plugin add <owner/name | module path>[@version] [-dir dir]
+collage plugin del <owner/name | module path> [-dir dir]
+collage plugin check [-release] [-run] [dir]
 collage version
 collage help [command]
 ```
@@ -484,7 +487,107 @@ if findings := app.Check(); len(findings) > 0 {
 }
 ```
 
+## `collage plugin`
+
+Adds a plugin to the project, takes one out, or checks a plugin repository:
+
+```
+collage plugin add elagoht/consent            # github.com/elagoht/collage-consent
+collage plugin add elagoht/sitemap@v0.3.1     # a version go get accepts
+collage plugin add gitlab.com/kisi/plugin     # a module path, used as written
+collage plugin del elagoht/consent
+collage plugin check -release -run            # in a plugin's own repository
+```
+
+`owner/name` means `github.com/<owner>/collage-<name>`; a path whose first
+segment has a dot is a module path and is used as written. `add` and `del` work
+on the project in the current directory, or the one `-dir` names: it must hold
+`go.mod` and a `package main`.
+
+**`add`** fetches the module with `go get`. Without `@version` it asks for
+`@upgrade`, which is the latest release for a module `go.mod` does not have yet
+and never moves one it has down. It then checks that the module is a plugin (the
+contract is at
+[plugin authors](https://collage.furkanbaytekin.dev/en/docs/plugin-authors/)):
+
+- a `collage.json` at the module root whose `name` is `owner/name`, the one you
+  typed when you gave a short name;
+- the plugin's package at the module root, not `package main`;
+- a `New` that can be called with nothing configured: no parameters, a variadic
+  one, or one whose zero value can be written, an exported struct of the
+  package's own as `pkg.Options{}`, or `nil` for a pointer, interface, slice,
+  map or func;
+- a release tag, not a pseudo-version.
+
+It adds the plugins the manifest `requires` first, then writes the import and
+the call into `plugins.go`, before the first entry whose manifest has a greater
+`order`, and an empty section to `plugins-config.json`. It ends with
+`go mod tidy`:
+
+```
+$ collage plugin add elagoht/consent
+added elagoht/consent v0.1.2
+  plugins.go           consent.New()
+  plugins-config.json  "elagoht/consent": {}
+```
+
+followed by the manifest's `setup` note, when it has one: what only Go can give
+the plugin. An empty section means the defaults. A setting the plugin requires
+is reported by the plugin when the application starts.
+
+- **The import is named after the package.** When that name is already an
+  import of `plugins.go`, or a name declared anywhere in the package, it becomes
+  `<owner><Name>`, and then gets a number.
+- **A plugin `plugins.go` already has is not added twice.** Only its version
+  moves, and the command says so.
+- **An existing section is kept.** The text of both files is edited in place,
+  so your arguments, comments, order and formatting stay.
+- **Nothing is left half-done.** Any failure, Ctrl-C included, puts
+  `go.mod`, `go.sum`, `plugins.go` and `plugins-config.json` back as they were.
+  A file that was absent is removed again.
+
+A project made before `plugins.go` existed gets the file from its first `add`,
+and the command prints the `Plugins: plugins(),` line to give `collage.New`.
+
+**`del`** finds the plugin among `plugins.go`'s entries, by the name in their
+manifests or by the module path, in any case. It removes its entries, its
+import and its section, prints the section when it held settings, and runs
+`go mod tidy`. It refuses:
+
+- while another plugin's manifest `requires` it;
+- when another entry's `collage.json` cannot be read (the module cannot be
+  fetched, or the file is malformed), since it cannot then tell whether that
+  plugin requires this one; the message names the module and the reason;
+- when it was given a module path and the plugin's own `collage.json` cannot be
+  read, since the name of its section is then unknown.
+
+Another entry's `collage.json` is read for its `name`, `requires` and `order`
+only, so a key from a newer manifest schema stops nothing. An entry wired by
+hand that is not a plugin module's root package (a package of your own module,
+or a subpackage of a dependency), or a module with no `collage.json` at all,
+requires nothing and stops nothing. A module the module cache lacks, as after a fresh clone, is
+fetched to read its manifest. Like `add`, `del` puts every file back when a
+step fails.
+
+**`check`** checks a plugin repository (`dir`, default `.`) against the
+contract `add` enforces. The check itself reads only the repository:
+
+- `-release` also wants a release tag at `HEAD`, which needs git;
+- `-run` builds a throwaway program in the repository with `go run`, which
+  fetches what the module cache lacks. It calls
+  `New` exactly as `add` would write it, as a `collage.Plugin`, and checks that
+  `Name()` is the manifest's `name`. It fails on a build error, a panic in
+  `New` or a different name. It does not configure or start the plugin, so a
+  setting an empty section lacks is not its concern. `go.mod`, `go.sum` and
+  `go.work.sum` are put back and the program is removed afterwards.
+
+These are commands of the `collage` binary. A plugin's own subcommands are
+another thing: see the next section.
+
 ## Plugin commands
+
+These are a plugin's own subcommands, run through your program; adding and
+removing plugins is [`collage plugin`](#collage-plugin).
 
 A plugin registers a subcommand from its `Init`, through `Host.RegisterCommand`.
 

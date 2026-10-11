@@ -1,0 +1,529 @@
+package cli
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/printer"
+	"go/token"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode"
+
+	"github.com/Elagoht/collage/internal/ascii"
+)
+
+// pluginsSkeleton is plugins.go before the first plugin is added: the
+// scaffold's plugins.go template, so a new project's file and the one add
+// writes for a project without one are the same text.
+var pluginsSkeleton = mustReadSkeleton()
+
+func mustReadSkeleton() string {
+	b, err := scaffoldFS.ReadFile(scaffoldRoot + "/common/plugins.go.tmpl")
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
+}
+
+var errPluginsShape = errors.New(`plugins.go: func plugins must end in "return []collage.Plugin{…}"; collage plugin edits only that list`)
+
+// pluginsFile is plugins.go, edited as text. Every edit splices bytes at
+// positions the parsed file gives, then parses the result again, so the
+// user's own text (comments, statements, layout, import order) is kept byte
+// for byte outside the entry and import that change.
+type pluginsFile struct {
+	src  []byte
+	fset *token.FileSet
+	file *ast.File
+	lit  *ast.CompositeLit
+	err  error // a splice that did not parse; format reports it
+}
+
+// pluginEntry is one element of the plugins list that belongs to an import.
+type pluginEntry struct {
+	Import string // import path
+	Ident  string // the name the call uses
+}
+
+func parsePluginsFile(src []byte) (*pluginsFile, error) {
+	if src == nil {
+		src = []byte(pluginsSkeleton)
+	}
+	f := &pluginsFile{}
+	if err := f.load(src); err != nil {
+		return nil, err
+	}
+	return f, nil
+}
+
+func (f *pluginsFile) load(src []byte) error {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "plugins.go", src, parser.ParseComments)
+	if err != nil {
+		return err
+	}
+	lit := pluginsList(file)
+	if lit == nil {
+		return errPluginsShape
+	}
+	f.src, f.fset, f.file, f.lit = src, fset, file, lit
+	return nil
+}
+
+// pluginsList is the composite literal func plugins returns, or nil.
+func pluginsList(file *ast.File) *ast.CompositeLit {
+	for _, d := range file.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || fn.Name.Name != "plugins" || fn.Body == nil {
+			continue
+		}
+		list := fn.Body.List
+		if len(list) == 0 {
+			return nil
+		}
+		ret, ok := list[len(list)-1].(*ast.ReturnStmt)
+		if !ok || len(ret.Results) != 1 {
+			return nil
+		}
+		lit, _ := ret.Results[0].(*ast.CompositeLit)
+		return lit
+	}
+	return nil
+}
+
+// importNames maps every name an import may bind to its path: the explicit
+// name, or, unnamed, both guesses at the package name (see specNames).
+func (f *pluginsFile) importNames() map[string]string {
+	names := map[string]string{}
+	for _, spec := range f.file.Imports {
+		p, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			continue
+		}
+		for _, n := range specNames(spec, p) {
+			names[n] = p
+		}
+	}
+	return names
+}
+
+// specNames are the names an import spec may bind. An unnamed import binds
+// its package's name, which the file does not state: it is taken to be the
+// last path element, or that element without a leading "collage-" and with
+// its dashes removed.
+func specNames(spec *ast.ImportSpec, path string) []string {
+	if spec.Name != nil {
+		return []string{spec.Name.Name}
+	}
+	last := path[strings.LastIndex(path, "/")+1:]
+	guess := strings.ReplaceAll(strings.TrimPrefix(last, "collage-"), "-", "")
+	if guess == last {
+		return []string{last}
+	}
+	return []string{last, guess}
+}
+
+// declaredNames are the names the file declares: at package level, and by
+// := or var inside its functions.
+func (f *pluginsFile) declaredNames() map[string]bool {
+	names := map[string]bool{}
+	ast.Inspect(f.file, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if n.Tok == token.DEFINE {
+				for _, e := range n.Lhs {
+					if id, ok := e.(*ast.Ident); ok {
+						names[id.Name] = true
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				names[id.Name] = true
+			}
+		case *ast.FuncDecl:
+			if n.Recv == nil {
+				names[n.Name.Name] = true
+			}
+		case *ast.TypeSpec:
+			names[n.Name.Name] = true
+		}
+		return true
+	})
+	return names
+}
+
+// usesName reports whether a selector in the file has one of names as its X.
+func (f *pluginsFile) usesName(names []string) bool {
+	used := false
+	ast.Inspect(f.file, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok {
+				for _, name := range names {
+					if id.Name == name {
+						used = true
+					}
+				}
+			}
+		}
+		return !used
+	})
+	return used
+}
+
+// attribute is the import path an element of the list belongs to, or "".
+func attribute(e ast.Expr, names map[string]string) (string, string) {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return "", ""
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return "", ""
+	}
+	id, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return "", ""
+	}
+	p, ok := names[id.Name]
+	if !ok {
+		return "", ""
+	}
+	return p, id.Name
+}
+
+// entries are the list's elements that belong to an import, in list order.
+func (f *pluginsFile) entries() []pluginEntry {
+	names := f.importNames()
+	var out []pluginEntry
+	for _, e := range f.lit.Elts {
+		if p, id := attribute(e, names); p != "" {
+			out = append(out, pluginEntry{Import: p, Ident: id})
+		}
+	}
+	return out
+}
+
+// entryElts are the indexes into lit.Elts of entries(), in the same order.
+func (f *pluginsFile) entryElts() []int {
+	names := f.importNames()
+	var out []int
+	for i, e := range f.lit.Elts {
+		if p, _ := attribute(e, names); p != "" {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+func (f *pluginsFile) has(importPath string) bool {
+	for _, spec := range f.file.Imports {
+		if p, err := strconv.Unquote(spec.Path.Value); err == nil && ascii.EqualFold(p, importPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// insertIndex is where an entry of the given order goes among entries whose
+// orders are given: before the first greater one, else at the end.
+func insertIndex(orders []int, order int) int {
+	for i, o := range orders {
+		if o > order {
+			return i
+		}
+	}
+	return len(orders)
+}
+
+// identFor is the name the new import gets: pkgName if free, else
+// owner+PkgName, else that with 2, 3, … appended. reserved holds further
+// names that are taken: those the package's other files declare, which an
+// import name would clash with.
+func (f *pluginsFile) identFor(importPath, pkgName string, reserved map[string]bool) string {
+	taken := f.importNames()
+	declared := f.declaredNames()
+	free := func(s string) bool {
+		_, used := taken[s]
+		return !used && !declared[s] && !reserved[s] && token.IsIdentifier(s) && s != "_"
+	}
+	if free(pkgName) {
+		return pkgName
+	}
+	owner := ""
+	if parts := strings.Split(importPath, "/"); len(parts) > 1 {
+		owner = identWords(ascii.LowerString(parts[1]))
+	}
+	base := owner + capitalise(pkgName)
+	if !token.IsIdentifier(base) {
+		base = "p" + capitalise(base)
+	}
+	if free(base) {
+		return base
+	}
+	for n := 2; ; n++ {
+		if s := base + strconv.Itoa(n); free(s) {
+			return s
+		}
+	}
+}
+
+// identWords joins the letter-and-digit runs of s in camel case.
+func identWords(s string) string {
+	words := strings.FieldsFunc(s, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) })
+	for i := 1; i < len(words); i++ {
+		words[i] = capitalise(words[i])
+	}
+	return strings.Join(words, "")
+}
+
+// capitalise uppercases an ASCII first letter; a package name or owner is ASCII.
+func capitalise(s string) string { return ascii.UpperFirst(s) }
+
+type splice struct {
+	at, end int // bytes [at, end) are replaced
+	text    string
+}
+
+// apply makes the splices, which must not overlap, and parses the result.
+func (f *pluginsFile) apply(edits []splice) {
+	if f.err != nil {
+		return
+	}
+	sort.Slice(edits, func(i, j int) bool { return edits[i].at > edits[j].at })
+	src := append([]byte(nil), f.src...)
+	for _, e := range edits {
+		src = append(src[:e.at], append([]byte(e.text), src[e.end:]...)...)
+	}
+	if err := f.load(src); err != nil {
+		f.err = fmt.Errorf("plugins.go: the edit does not parse: %w", err)
+	}
+}
+
+func (f *pluginsFile) off(p token.Pos) int  { return f.fset.Position(p).Offset }
+func (f *pluginsFile) line(p token.Pos) int { return f.fset.Position(p).Line }
+
+// lineStart is the offset of the start of the line holding offset o.
+func (f *pluginsFile) lineStart(o int) int {
+	return bytes.LastIndexByte(f.src[:o], '\n') + 1
+}
+
+// nextLine is the offset of the start of the line after the one holding o.
+func (f *pluginsFile) nextLine(o int) int {
+	if i := bytes.IndexByte(f.src[o:], '\n'); i >= 0 {
+		return o + i + 1
+	}
+	return len(f.src)
+}
+
+func blank(b []byte) bool { return len(bytes.TrimSpace(b)) == 0 }
+
+// insert adds the import, named explicitly, and an element call(ident) to the
+// list before entries()[at], or at the end. It returns the ident, which is
+// none of the names in reserved (see identFor).
+func (f *pluginsFile) insert(importPath, pkgName string, call func(ident string) string, at int, reserved map[string]bool) string {
+	if f.err != nil {
+		return ""
+	}
+	ident := f.identFor(importPath, pkgName, reserved)
+	elt := call(ident)
+	if _, err := parser.ParseExpr(elt); err != nil {
+		f.err = fmt.Errorf("plugins.go: the entry %q does not parse: %w", elt, err)
+		return ident
+	}
+	f.apply([]splice{f.importSplice(ident + " " + strconv.Quote(importPath)), f.eltSplice(elt, at)})
+	return ident
+}
+
+// importSplice adds an import spec to the first import declaration, at its
+// end. A single unparenthesised import becomes a block, with the new spec in
+// a group of its own.
+func (f *pluginsFile) importSplice(spec string) splice {
+	for _, d := range f.file.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.IMPORT {
+			continue
+		}
+		if !gd.Rparen.IsValid() {
+			s := gd.Specs[0].(*ast.ImportSpec)
+			start, end := f.off(s.Pos()), f.off(s.End())
+			return splice{start, end, "(\n\t" + string(f.src[start:end]) + "\n\n\t" + spec + "\n)"}
+		}
+		r := f.off(gd.Rparen)
+		if ls := f.lineStart(r); blank(f.src[ls:r]) {
+			return splice{ls, ls, "\t" + spec + "\n"}
+		}
+		return splice{r, r, "\n\t" + spec + "\n"}
+	}
+	o := f.off(f.file.Name.End())
+	return splice{o, o, "\n\nimport " + spec}
+}
+
+// eltSplice adds elt to the list before entries()[at], or at the end. On a
+// list laid out one element per line, it gets a line of its own.
+func (f *pluginsFile) eltSplice(elt string, at int) splice {
+	lit := f.lit
+	idx := f.entryElts()
+	if at < len(idx) {
+		i := idx[at]
+		e := lit.Elts[i]
+		prevEnd := lit.Lbrace
+		if i > 0 {
+			prevEnd = lit.Elts[i-1].End()
+		}
+		if f.line(prevEnd) == f.line(e.Pos()) {
+			o := f.off(e.Pos())
+			return splice{o, o, elt + ", "}
+		}
+		o := f.nextLine(f.off(prevEnd))
+		return splice{o, o, elt + ",\n"}
+	}
+	r := f.off(lit.Rbrace)
+	if len(lit.Elts) == 0 {
+		if f.line(lit.Lbrace) == f.line(lit.Rbrace) {
+			return splice{r, r, "\n" + elt + ",\n"}
+		}
+	} else if last := lit.Elts[len(lit.Elts)-1]; f.line(last.End()) == f.line(lit.Rbrace) {
+		o := f.off(last.End())
+		return splice{o, o, ", " + elt}
+	}
+	if ls := f.lineStart(r); blank(f.src[ls:r]) {
+		return splice{ls, ls, elt + ",\n"}
+	}
+	return splice{r, r, "\n" + elt + ",\n"}
+}
+
+// remove deletes every element of the list that belongs to the import, and
+// the import. It reports whether the import was there. When the import's
+// name is still used after the elements are gone (a wrapped call, a use
+// outside the list), the import stays and format reports an error, so
+// nothing is written.
+func (f *pluginsFile) remove(importPath string) bool {
+	if f.err != nil {
+		return false
+	}
+	var cuts []splice
+	names := f.importNames()
+	for i, e := range f.lit.Elts {
+		if p, _ := attribute(e, names); p != "" && ascii.EqualFold(p, importPath) {
+			cuts = append(cuts, f.eltCut(i))
+		}
+	}
+	f.apply(cuts)
+	if f.err != nil {
+		return false
+	}
+	var edits []splice
+	var bound []string
+	var path string
+	for _, d := range f.file.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.IMPORT {
+			continue
+		}
+		for _, s := range gd.Specs {
+			spec := s.(*ast.ImportSpec)
+			p, err := strconv.Unquote(spec.Path.Value)
+			if err != nil || !ascii.EqualFold(p, importPath) {
+				continue
+			}
+			path = p
+			bound = append(bound, specNames(spec, p)...)
+			if !gd.Rparen.IsValid() || len(gd.Specs) == 1 {
+				edits = append(edits, f.lineCut(gd.Pos(), gd.End(), gd.Doc))
+			} else {
+				edits = append(edits, f.lineCut(spec.Pos(), spec.End(), spec.Doc))
+			}
+		}
+	}
+	if len(edits) == 0 {
+		return len(cuts) > 0
+	}
+	if f.usesName(bound) {
+		f.err = fmt.Errorf("plugins.go: %s is still used outside the plugin list; edit plugins.go by hand", path)
+		return true
+	}
+	f.apply(edits)
+	return true
+}
+
+// eltCut removes element i of the list: its whole lines, with the comment
+// lines just above it, when it stands on lines of its own; else the element
+// and its comma.
+func (f *pluginsFile) eltCut(i int) splice {
+	lit := f.lit
+	e := lit.Elts[i]
+	start, end := f.off(e.Pos()), f.off(e.End())
+	ls := f.lineStart(start)
+	nl := f.nextLine(end)
+	rest := bytes.TrimSpace(f.src[end:nl])
+	rest = bytes.TrimSpace(bytes.TrimPrefix(rest, []byte(",")))
+	if blank(f.src[ls:start]) && (len(rest) == 0 || bytes.HasPrefix(rest, []byte("//"))) {
+		floor := f.off(lit.Lbrace)
+		if i > 0 {
+			floor = f.off(lit.Elts[i-1].End())
+		}
+		return splice{f.commentLinesAbove(ls, floor), nl, ""}
+	}
+	// Inline: the element, its comma and the spaces after it.
+	j := end
+	for j < len(f.src) && (f.src[j] == ' ' || f.src[j] == '\t') {
+		j++
+	}
+	if j < len(f.src) && f.src[j] == ',' {
+		j++
+		for j < len(f.src) && (f.src[j] == ' ' || f.src[j] == '\t') {
+			j++
+		}
+	}
+	return splice{start, j, ""}
+}
+
+// commentLinesAbove walks up from the line starting at ls over whole-line
+// comments, not past the line holding floor, and returns where they start.
+func (f *pluginsFile) commentLinesAbove(ls, floor int) int {
+	for ls > 0 {
+		prev := f.lineStart(ls - 1)
+		if prev <= floor {
+			break
+		}
+		if !bytes.HasPrefix(bytes.TrimSpace(f.src[prev:ls]), []byte("//")) {
+			break
+		}
+		ls = prev
+	}
+	return ls
+}
+
+// lineCut removes [pos, end) and its doc comment; whole lines when they hold
+// nothing else.
+func (f *pluginsFile) lineCut(pos, end token.Pos, doc *ast.CommentGroup) splice {
+	if doc != nil {
+		pos = doc.Pos()
+	}
+	start, stop := f.off(pos), f.off(end)
+	ls, nl := f.lineStart(start), f.nextLine(stop)
+	rest := bytes.TrimSpace(f.src[stop:nl])
+	if blank(f.src[ls:start]) && (len(rest) == 0 || bytes.HasPrefix(rest, []byte("//"))) {
+		return splice{ls, nl, ""}
+	}
+	return splice{start, stop, ""}
+}
+
+// format prints the file as gofmt lays it out, without sorting the imports:
+// their order is the user's.
+func (f *pluginsFile) format() ([]byte, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	var buf bytes.Buffer
+	cfg := printer.Config{Mode: printer.UseSpaces | printer.TabIndent, Tabwidth: 8}
+	if err := cfg.Fprint(&buf, f.fset, f.file); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
