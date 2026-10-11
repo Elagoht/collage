@@ -38,7 +38,7 @@ func renderHoist(t *testing.T, layoutTmpl, contentTmpl string, layoutData, conte
 	engine := New(tmpl, Options{})
 
 	child := &types.Fragment{Name: "content", TemplatePath: "content.html"}
-	child.SetDataSource(types.FetchedData(contentData, nil))
+	types.SetFragmentDataSource(child, types.FetchedData(contentData, nil))
 	root := &types.Fragment{
 		Name:         "layout",
 		TemplatePath: "layout.html",
@@ -46,8 +46,9 @@ func renderHoist(t *testing.T, layoutTmpl, contentTmpl string, layoutData, conte
 			types.DefaultContentSlot: {Name: types.DefaultContentSlot, Required: true, Fill: []*types.Fragment{child}},
 		},
 	}
-	root.SetDataSource(types.FetchedData(layoutData, nil))
-	page := &types.Page{Name: "page", LayoutFragment: root, ContentFragment: child}
+	types.SetFragmentDataSource(root, types.FetchedData(layoutData, nil))
+	page := &types.Page{Name: "page", ContentFragment: child}
+	types.SetLayoutFragment(page, root)
 	rc := types.NewRenderContext(context.Background(), nil, page, "en", nil)
 
 	result, renderErr := engine.Render(context.Background(), rc)
@@ -188,7 +189,7 @@ func TestHoist_DepthBeatsOrder(t *testing.T) {
 
 	// depth 3: root -> branch -> leaf
 	leaf := &types.Fragment{Name: "leaf", TemplatePath: "leaf.html"}
-	leaf.SetDataSource(types.FetchedData(hoistOf("head", "title", `<title>Deep</title>`), nil))
+	types.SetFragmentDataSource(leaf, types.FetchedData(hoistOf("head", "title", `<title>Deep</title>`), nil))
 	branch := &types.Fragment{
 		Name: "branch", TemplatePath: "branch.html",
 		Slots: map[string]*types.SlotDefinition{
@@ -197,7 +198,7 @@ func TestHoist_DepthBeatsOrder(t *testing.T) {
 	}
 	// depth 2: root -> shallow, rendered after the branch above
 	shallow := &types.Fragment{Name: "shallow", TemplatePath: "leaf.html"}
-	shallow.SetDataSource(types.FetchedData(hoistOf("head", "title", `<title>Shallow</title>`), nil))
+	types.SetFragmentDataSource(shallow, types.FetchedData(hoistOf("head", "title", `<title>Shallow</title>`), nil))
 
 	root := &types.Fragment{
 		Name: "root", TemplatePath: "root.html",

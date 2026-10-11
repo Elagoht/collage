@@ -34,7 +34,7 @@ func TestData_RecordsTheType(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			f := NewFragment("f", "f.html").WithData(test.d).Build()
-			got := f.DataSource()
+			got := types.FragmentDataSource(f)
 			if got.Kind != test.kind || got.Type != test.typ {
 				t.Errorf("source = kind %v type %v, want kind %v type %v", got.Kind, got.Type, test.kind, test.typ)
 			}

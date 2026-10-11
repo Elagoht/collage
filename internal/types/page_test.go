@@ -69,15 +69,15 @@ func TestPage_Root(t *testing.T) {
 	layout := &Fragment{Name: "layout", TemplatePath: "layout.html"}
 
 	t.Run("with layout", func(t *testing.T) {
-		p := &Page{ContentFragment: content, LayoutFragment: layout}
-		if got := p.Root(); got != layout {
+		p := &Page{ContentFragment: content, layoutFragment: layout}
+		if got := PageRoot(p); got != layout {
 			t.Fatalf("Root() = %v, want layout", got)
 		}
 	})
 
 	t.Run("without layout", func(t *testing.T) {
 		p := &Page{ContentFragment: content}
-		if got := p.Root(); got != content {
+		if got := PageRoot(p); got != content {
 			t.Fatalf("Root() = %v, want content", got)
 		}
 	})
@@ -107,7 +107,7 @@ func TestPage_LocalesAndPathFor(t *testing.T) {
 
 func TestPage_ContentSlotName(t *testing.T) {
 	p := &Page{}
-	if got := p.ContentSlotName(); got != DefaultContentSlot {
+	if got := PageContentSlotName(p); got != DefaultContentSlot {
 		t.Fatalf("ContentSlotName() = %q, want %q", got, DefaultContentSlot)
 	}
 }

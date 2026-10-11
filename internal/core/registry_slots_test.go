@@ -34,7 +34,7 @@ func TestRegisterPage_RejectsABindingTheTemplateNeverCalls(t *testing.T) {
 				page := newHomePage()
 				page.ContentFragment.TemplatePath = "pages/recipe.html"
 				child := &types.Fragment{Name: "note", TemplatePath: "pages/about.html"}
-				if err := page.ContentFragment.Bind(slot, child); err != nil {
+				if err := types.Bind(page.ContentFragment, slot, child); err != nil {
 					t.Fatalf("Bind: %v", err)
 				}
 				return app.RegisterPage(page)
@@ -65,7 +65,7 @@ func TestRegisterPage_AcceptsSlotsItCannotOrNeedNotReject(t *testing.T) {
 	page := newHomePage()
 	page.ContentFragment.TemplatePath = "pages/recipe.html"
 	child := &types.Fragment{Name: "note", TemplatePath: "pages/about.html"}
-	if err := page.ContentFragment.Bind("elsewhere", child); err != nil {
+	if err := types.Bind(page.ContentFragment, "elsewhere", child); err != nil {
 		t.Fatalf("Bind: %v", err)
 	}
 

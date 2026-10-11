@@ -343,7 +343,7 @@ func TestCaptureResponses_NeverSharesAReadersRender(t *testing.T) {
 			entered := make(chan bool, 8)
 			gate := make(chan struct{})
 			content := &types.Fragment{Name: "gated", TemplatePath: "pages/home.html"}
-			content.SetDataSource(types.FetchedData(func(ctx context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+			types.SetFragmentDataSource(content, types.FetchedData(func(ctx context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 				entered <- types.IsCapture(rc.Context())
 				<-gate
 				return homeData{Title: "Gated"}, nil, nil

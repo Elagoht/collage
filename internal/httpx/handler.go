@@ -734,7 +734,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// Guards before the cache and before PageResolved: a blocked reader
 	// reaches neither the page's cached render nor the plugins that watch a
 	// page being reached — the request never touched the page.
-	if status, allowed := h.checkGuards(w, r, route, match.Locale, page.Guards()); !allowed {
+	if status, allowed := h.checkGuards(w, r, route, match.Locale, types.PageGuards(page)); !allowed {
 		return status
 	}
 
@@ -1050,12 +1050,12 @@ func (h *Handler) renderPage(
 		Page:           page,
 		Locale:         match.Locale,
 		Degraded:       result.Degraded(),
-		Fragments:      result.FragmentReports(),
+		Fragments:      result.Metadata.Fragments,
 		DependencyTags: append([]string(nil), result.DependencyTags...),
 		Values:         types.ValuesOf(rc),
 		HTML:           result.HTML,
 	}
-	plugin.PrepareHoist(afterRender, result.HoistEnds, rc.Hoisted())
+	plugin.PrepareHoist(afterRender, render.HoistEnds(result), rc.Hoisted())
 	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {
 		// No fragment is named: the failure is the plugin's, and pointing the dev
 		// page at a fragment that merely happened to be degraded would send a

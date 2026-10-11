@@ -88,7 +88,7 @@ func blogFragment(name string) *types.Fragment {
 		TemplatePath: "blog.html",
 		Required:     true,
 	}
-	f.SetDataSource(types.FetchedData(notFoundDataHandler(), nil))
+	types.SetFragmentDataSource(f, types.FetchedData(notFoundDataHandler(), nil))
 	return f
 }
 

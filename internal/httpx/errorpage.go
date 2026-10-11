@@ -303,12 +303,12 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 		Page:           page,
 		Locale:         f.locale,
 		Degraded:       result.Degraded(),
-		Fragments:      result.FragmentReports(),
+		Fragments:      result.Metadata.Fragments,
 		DependencyTags: append([]string(nil), result.DependencyTags...),
 		Values:         types.ValuesOf(rc),
 		HTML:           result.HTML,
 	}
-	plugin.PrepareHoist(afterRender, result.HoistEnds, rc.Hoisted())
+	plugin.PrepareHoist(afterRender, render.HoistEnds(result), rc.Hoisted())
 	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {
 		return fail("collage: error page after-render hook failed", err)
 	}

@@ -149,7 +149,7 @@ func (f *fakeRenderer) RenderPath(_ context.Context, path, locale string, params
 		result.Metadata = &render.Metadata{
 			Page:   page(f, path, locale),
 			Locale: locale,
-			Fragments: []render.FragmentMetadata{
+			Fragments: []types.FragmentReport{
 				{Name: degradedFragment, Failed: true, Err: errFragmentFailed},
 			},
 		}

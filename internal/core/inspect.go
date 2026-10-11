@@ -178,7 +178,7 @@ func (a *App) Inspect() Inspection {
 	seen := make(map[*types.Fragment]bool)
 	var dataTypes []reflect.Type
 	addFragment := func(f *types.Fragment) error {
-		ds := f.DataSource()
+		ds := types.FragmentDataSource(f)
 		var dataType *string
 		switch {
 		case ds.Kind == types.DataNone || ds.Kind == types.DataEffect:
@@ -238,7 +238,7 @@ func (a *App) Inspect() Inspection {
 		// tree holds a distinct copy per page, and a layout shared by every page
 		// would be listed once per page. The originals are what the author wrote.
 		roots := append(append([]*types.Fragment(nil), p.LayoutChain...), p.ContentFragment)
-		for _, root := range append(roots, p.PathFragments()...) {
+		for _, root := range append(roots, types.PagePathFragments(p)...) {
 			_ = walkFragments(root, seen, addFragment)
 		}
 	}

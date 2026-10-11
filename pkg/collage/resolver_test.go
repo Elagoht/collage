@@ -10,6 +10,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Elagoht/collage/internal/types"
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
@@ -149,7 +150,7 @@ func TestSlotResolver_CannotBeMixedWithBoundFragments(t *testing.T) {
 	if err := undeclared.BuildErr(); err != nil {
 		t.Errorf("resolver for an undeclared slot: BuildErr() = %v, want it declared", err)
 	}
-	if slot, ok := undeclared.Build().Slot("s"); !ok || slot.Required || !slot.AllowMultiple || slot.Resolve == nil {
+	if slot, ok := types.FragmentSlot(undeclared.Build(), "s"); !ok || slot.Required || !slot.AllowMultiple || slot.Resolve == nil {
 		t.Errorf("slot = %+v, want an optional multi-fill slot holding the resolver", slot)
 	}
 }

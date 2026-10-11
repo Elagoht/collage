@@ -88,10 +88,10 @@ func (b *FragmentBuilder) setData(d types.DataSource) *FragmentBuilder {
 	if d.Kind == types.DataNone {
 		return b
 	}
-	if b.fragment.DataSource().Kind != types.DataNone {
+	if types.FragmentDataSource(b.fragment).Kind != types.DataNone {
 		b.errs = append(b.errs, fmt.Errorf("%w: fragment %q has its data set twice", ErrConflictingData, b.fragment.Name))
 	}
-	b.fragment.SetDataSource(d)
+	types.SetFragmentDataSource(b.fragment, d)
 	return b
 }
 
@@ -198,7 +198,7 @@ func (b *FragmentBuilder) WithSlot(name string, required, allowMultiple bool) *F
 // (ErrNilFragment, ErrSlotResolved, or ErrSlotOccupied) on the builder rather than
 // returning it.
 func (b *FragmentBuilder) WithSlotFragment(slotName string, child *Fragment) *FragmentBuilder {
-	if err := b.fragment.Bind(slotName, child); err != nil {
+	if err := types.Bind(b.fragment, slotName, child); err != nil {
 		b.errs = append(b.errs, err)
 	}
 	return b

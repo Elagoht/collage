@@ -67,13 +67,13 @@ func (e *SlotEngine) prefetchChildren(rc *types.RenderContext, f *types.Fragment
 	}
 
 	var started map[*types.Fragment][]*prefetch
-	for _, name := range f.SlotNames() {
-		slot, ok := f.Slot(name)
+	for _, name := range types.FragmentSlotNames(f) {
+		slot, ok := types.FragmentSlot(f, name)
 		if !ok || slot == nil {
 			continue
 		}
 		for _, child := range fills.of(slot) {
-			if child == nil || child.DataSource().Handler == nil {
+			if child == nil || types.FragmentDataSource(child).Handler == nil {
 				continue
 			}
 			if started == nil {
@@ -109,9 +109,9 @@ func (e *SlotEngine) startPrefetch(rc *types.RenderContext, f *types.Fragment, s
 	go func() {
 		defer close(p.done)
 		started := time.Now()
-		p.err = Execute(ctx, f.EffectiveTimeout(e.defaultTimeout), func(ctx context.Context) error {
+		p.err = Execute(ctx, types.EffectiveTimeout(f, e.defaultTimeout), func(ctx context.Context) error {
 			var handlerErr error
-			p.data, p.tags, handlerErr = f.DataSource().Handler(ctx, handlerRC.WithContext(ctx))
+			p.data, p.tags, handlerErr = types.FragmentDataSource(f).Handler(ctx, handlerRC.WithContext(ctx))
 			return handlerErr
 		})
 		p.elapsed = time.Since(started)

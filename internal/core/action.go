@@ -191,7 +191,7 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 // guarded layout, its content opened at a URL of its own for a script to
 // refresh — served that content to anyone who asked the second URL.
 func fragmentGuard(ctx context.Context, r *http.Request, page *types.Page, f *types.Fragment) (*types.GuardDecision, error) {
-	guards := page.Guards()
+	guards := types.PageGuards(page)
 	if f != page.ContentFragment && f.Guard != nil {
 		guards = append(guards, f.Guard)
 	}

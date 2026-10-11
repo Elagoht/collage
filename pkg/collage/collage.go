@@ -416,11 +416,6 @@ type Result = render.Result
 // went, and one entry per fragment that ran.
 type Metadata = render.Metadata
 
-// FragmentMetadata records one fragment's contribution to a render: its name, its
-// duration, whether it failed, whether its fallback stood in for it, and the error
-// it failed with.
-type FragmentMetadata = render.FragmentMetadata
-
 // Timing records where a render spent its time. It is Metadata.Timing's type, so
 // this alias is required to write a function that takes one.
 type Timing = observability.Timing

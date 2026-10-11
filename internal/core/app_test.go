@@ -69,7 +69,7 @@ type homeData struct {
 // homeContentFragment is the home page's content fragment, fetching homeDataHandler.
 func homeContentFragment() *types.Fragment {
 	f := &types.Fragment{Name: "home-content", TemplatePath: "pages/home.html"}
-	f.SetDataSource(types.FetchedData(homeDataHandler, nil))
+	types.SetFragmentDataSource(f, types.FetchedData(homeDataHandler, nil))
 	return f
 }
 

@@ -414,10 +414,10 @@ func TestFailedFragment(t *testing.T) {
 		{"nil result", nil, ""},
 		{"nil metadata", &render.Result{}, ""},
 		{"no failure", &render.Result{Metadata: &render.Metadata{
-			Fragments: []render.FragmentMetadata{{Name: "ok"}},
+			Fragments: []types.FragmentReport{{Name: "ok"}},
 		}}, ""},
 		{"first failure wins", &render.Result{Metadata: &render.Metadata{
-			Fragments: []render.FragmentMetadata{{Name: "ok"}, {Name: "bad", Failed: true}, {Name: "worse", Failed: true}},
+			Fragments: []types.FragmentReport{{Name: "ok"}, {Name: "bad", Failed: true}, {Name: "worse", Failed: true}},
 		}}, "bad"},
 	}
 

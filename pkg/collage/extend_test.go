@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // writeTemplates writes files (path relative to the root, content) into a fresh
@@ -607,7 +609,7 @@ func TestRenderPath_ResultIsNameable(t *testing.T) {
 // compile without the alias — and returns how many fragments it recorded.
 func describe(metadata *Metadata) int {
 	var timing Timing = metadata.Timing
-	var first FragmentMetadata = metadata.Fragments[0]
+	var first types.FragmentReport = metadata.Fragments[0]
 	if first.Failed || timing.Total < 0 {
 		return 0
 	}

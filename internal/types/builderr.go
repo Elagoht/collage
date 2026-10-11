@@ -63,7 +63,7 @@ func PageBuildErr(p *Page) error {
 		walk(f)
 	}
 	walk(p.ContentFragment)
-	for _, fragment := range p.PathFragments() {
+	for _, fragment := range PagePathFragments(p) {
 		walk(fragment)
 	}
 	return errors.Join(errs...)

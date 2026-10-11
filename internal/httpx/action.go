@@ -9,6 +9,7 @@ import (
 
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/plugin"
+	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -64,7 +65,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// reads the body, and a logged-out forged POST is better spent against the
 	// guard than the forgery check.
 	if page := match.Page; page != nil {
-		if status, allowed := h.checkGuards(w, r, route, match.Locale, page.Guards()); !allowed {
+		if status, allowed := h.checkGuards(w, r, route, match.Locale, types.PageGuards(page)); !allowed {
 			return status
 		}
 	}
@@ -448,12 +449,12 @@ func (h *Handler) writeActionPage(
 		Page:           result.Page,
 		Locale:         match.Locale,
 		Degraded:       rendered.Degraded(),
-		Fragments:      rendered.FragmentReports(),
+		Fragments:      rendered.Metadata.Fragments,
 		DependencyTags: append([]string(nil), rendered.DependencyTags...),
 		Values:         types.ValuesOf(rc),
 		HTML:           rendered.HTML,
 	}
-	plugin.PrepareHoist(afterRender, rendered.HoistEnds, rc.Hoisted())
+	plugin.PrepareHoist(afterRender, render.HoistEnds(rendered), rc.Hoisted())
 	if err := h.plugins.AfterRender(r.Context(), afterRender); err != nil {
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageAfterRender, err))
 	}

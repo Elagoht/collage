@@ -71,7 +71,7 @@ func (b *PageBuilder) WithLayouts(outermost ...*Fragment) *PageBuilder {
 		seen[f] = true
 	}
 	b.page.LayoutChain = append([]*Fragment(nil), outermost...)
-	b.page.LayoutFragment = b.page.LayoutChain[0]
+	types.SetLayoutFragment(b.page, b.page.LayoutChain[0])
 	return b
 }
 

@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // TestPageBuilder_MinimalApp builds the page of an application modelled on the
@@ -33,8 +35,8 @@ func TestPageBuilder_MinimalApp(t *testing.T) {
 	if homePage.Name != "home" {
 		t.Errorf("Name = %q, want %q", homePage.Name, "home")
 	}
-	if homePage.LayoutFragment != layout {
-		t.Errorf("LayoutFragment = %v, want %v", homePage.LayoutFragment, layout)
+	if types.LayoutFragment(homePage) != layout {
+		t.Errorf("LayoutFragment = %v, want %v", types.LayoutFragment(homePage), layout)
 	}
 	if homePage.ContentFragment != homeContent {
 		t.Errorf("ContentFragment = %v, want %v", homePage.ContentFragment, homeContent)
@@ -116,8 +118,8 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		WithContent(NewFragment("500", "errors/500.html").Build()).
 		Build()
 
-	if blogPostPage.LayoutFragment != layout {
-		t.Errorf("LayoutFragment = %v, want %v", blogPostPage.LayoutFragment, layout)
+	if types.LayoutFragment(blogPostPage) != layout {
+		t.Errorf("LayoutFragment = %v, want %v", types.LayoutFragment(blogPostPage), layout)
 	}
 	if blogPostPage.ContentFragment != blogPostContent {
 		t.Errorf("ContentFragment = %v, want %v", blogPostPage.ContentFragment, blogPostContent)
@@ -155,11 +157,11 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		t.Error("blogPostContent.Required = false, want true")
 	}
 
-	if blog404Page.LayoutFragment != layout || blog404Page.ContentFragment != blog404Content {
-		t.Errorf("blog404Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", blog404Page.LayoutFragment, blog404Page.ContentFragment, layout, blog404Content)
+	if types.LayoutFragment(blog404Page) != layout || blog404Page.ContentFragment != blog404Content {
+		t.Errorf("blog404Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", types.LayoutFragment(blog404Page), blog404Page.ContentFragment, layout, blog404Content)
 	}
-	if blog500Page.LayoutFragment != layout || blog500Page.ContentFragment != blog500Content {
-		t.Errorf("blog500Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", blog500Page.LayoutFragment, blog500Page.ContentFragment, layout, blog500Content)
+	if types.LayoutFragment(blog500Page) != layout || blog500Page.ContentFragment != blog500Content {
+		t.Errorf("blog500Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", types.LayoutFragment(blog500Page), blog500Page.ContentFragment, layout, blog500Content)
 	}
 	if globalNotFound.Name != "global-404" || globalNotFound.ContentFragment == nil {
 		t.Errorf("globalNotFound = %+v, want Name=global-404 and a non-nil ContentFragment", globalNotFound)
@@ -341,7 +343,7 @@ func TestPageGuardsOrder(t *testing.T) {
 	content := NewFragment("home", "pages/home.html").WithGuard(g("content")).Build()
 	middle := NewFragment("middle", "layouts/middle.html").Build() // no guard: skipped, not an error
 	p := NewPage("home").WithLayouts(outer, middle, inner).WithContent(content).Build()
-	guards := p.Guards()
+	guards := types.PageGuards(p)
 	if len(guards) != 3 {
 		t.Fatalf("Guards() has %d guards, want 3", len(guards))
 	}

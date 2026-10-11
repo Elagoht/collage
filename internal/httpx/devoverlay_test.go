@@ -18,7 +18,7 @@ type degradedEngine struct{}
 func (degradedEngine) Render(_ context.Context, rc *types.RenderContext) (*render.Result, error) {
 	return &render.Result{
 		HTML: []byte("<html><body><p>page</p></body></html>"),
-		Metadata: &render.Metadata{Page: rc.Page.Name, Fragments: []render.FragmentMetadata{{
+		Metadata: &render.Metadata{Page: rc.Page.Name, Fragments: []types.FragmentReport{{
 			Name: "sidebar", Failed: true, UsedFallback: true,
 			Err: errors.New(`template: sidebar.html:12:3: executing "sidebar.html" <.Missing>: can't evaluate field Missing`),
 		}}},
@@ -79,7 +79,7 @@ func TestFailedFragment_NamesWhereItStarted(t *testing.T) {
 	cause := errors.New("template: recipe.html:3: can't evaluate field Missing")
 	inContent := fmt.Errorf("fragment %q: %w", "recipe-content", cause)
 	inLayout := fmt.Errorf("fragment %q: %w", "layout", inContent)
-	result := &render.Result{Metadata: &render.Metadata{Fragments: []render.FragmentMetadata{
+	result := &render.Result{Metadata: &render.Metadata{Fragments: []types.FragmentReport{
 		{Name: "layout", Failed: true, Err: inLayout},
 		{Name: "header"},
 		{Name: "recipe-content", Failed: true, Err: inContent},

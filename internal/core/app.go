@@ -966,7 +966,7 @@ func (a *App) dataCacheFor() types.DataCache {
 // pageReady reports whether p can render: a page with a layout renders only once
 // registration has bound its content into it.
 func (a *App) pageReady(p *types.Page) bool {
-	if p == nil || p.LayoutFragment == nil {
+	if p == nil || types.LayoutFragment(p) == nil {
 		return true
 	}
 	a.mu.RLock()
@@ -1487,13 +1487,13 @@ func (a *App) renderResolved(
 		Page:           page,
 		Locale:         locale,
 		Degraded:       result.Degraded(),
-		Fragments:      result.FragmentReports(),
+		Fragments:      result.Metadata.Fragments,
 		DependencyTags: append([]string(nil), result.DependencyTags...),
 		HTML:           result.HTML,
 		Values:         types.ValuesOf(rc),
 		Static:         true,
 	}
-	plugin.PrepareHoist(event, result.HoistEnds, rc.Hoisted())
+	plugin.PrepareHoist(event, render.HoistEnds(result), rc.Hoisted())
 	if err := a.plugins.AfterRender(ctx, event); err != nil {
 		return nil, err
 	}

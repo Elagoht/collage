@@ -19,7 +19,7 @@ func TestRender_RequiredFragmentNotFoundSetsResult(t *testing.T) {
 	content := fragment("content", "leaf.html")
 	content.Required = true
 	notFoundErr := fmt.Errorf("blog: slug %q: %w", "no-such-slug", types.ErrNotFound)
-	content.SetDataSource(types.FetchedData(failingHandler(notFoundErr), nil))
+	types.SetFragmentDataSource(content, types.FetchedData(failingHandler(notFoundErr), nil))
 
 	result, err := renderPage(t, engine, pageWith(content))
 
@@ -50,7 +50,7 @@ func TestRender_NonRequiredFragmentNotFoundDoesNotSetResult(t *testing.T) {
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	sidebar := fragment("sidebar", "leaf.html")
 	notFoundErr := fmt.Errorf("sidebar: widget: %w", types.ErrNotFound)
-	sidebar.SetDataSource(types.FetchedData(failingHandler(notFoundErr), nil))
+	types.SetFragmentDataSource(sidebar, types.FetchedData(failingHandler(notFoundErr), nil))
 	bind(t, layout, "content", sidebar)
 
 	result, err := renderPage(t, engine, pageWith(layout))
@@ -66,10 +66,10 @@ func TestRender_NonRequiredFragmentNotFoundDoesNotSetResult(t *testing.T) {
 	}
 	meta := fragmentMetadata(t, result, "sidebar")
 	if !meta.Failed {
-		t.Error("FragmentMetadata.Failed = false, want true")
+		t.Error("types.FragmentReport.Failed = false, want true")
 	}
 	if !errors.Is(meta.Err, types.ErrNotFound) {
-		t.Errorf("FragmentMetadata.Err = %v, want it to wrap types.ErrNotFound", meta.Err)
+		t.Errorf("types.FragmentReport.Err = %v, want it to wrap types.ErrNotFound", meta.Err)
 	}
 }
 
@@ -89,7 +89,7 @@ func TestRender_OptionalAncestorFallbackCannotAbsorbNotFound(t *testing.T) {
 	child := fragment("child", "leaf.html")
 	child.Required = true
 	notFoundErr := fmt.Errorf("blog: slug %q: %w", "no-such-slug", types.ErrNotFound)
-	child.SetDataSource(types.FetchedData(failingHandler(notFoundErr), nil))
+	types.SetFragmentDataSource(child, types.FetchedData(failingHandler(notFoundErr), nil))
 	bind(t, ancestor, "content", child)
 
 	result, err := renderPage(t, engine, pageWith(ancestor))
@@ -108,7 +108,7 @@ func TestRender_OptionalAncestorFallbackCannotAbsorbNotFound(t *testing.T) {
 	}
 	meta := fragmentMetadata(t, result, "ancestor")
 	if meta.UsedFallback {
-		t.Error("FragmentMetadata.UsedFallback = true, want false: a fatal error must skip the fallback entirely")
+		t.Error("types.FragmentReport.UsedFallback = true, want false: a fatal error must skip the fallback entirely")
 	}
 }
 
@@ -122,7 +122,7 @@ func TestRender_OrdinaryErrorDoesNotSetResultNotFound(t *testing.T) {
 	content := fragment("content", "leaf.html")
 	content.Required = true
 	boom := errors.New("collage: data source down")
-	content.SetDataSource(types.FetchedData(failingHandler(boom), nil))
+	types.SetFragmentDataSource(content, types.FetchedData(failingHandler(boom), nil))
 
 	result, err := renderPage(t, engine, pageWith(content))
 

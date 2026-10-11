@@ -188,9 +188,9 @@ func HumanizeTemplateError(err error) error {
 	return humanizedError{err: err}
 }
 
-// Slot looks up the slot named name on f. It is nil-safe: a nil receiver or a
+// FragmentSlot looks up the slot named name on f. It is nil-safe: a nil receiver or a
 // fragment with no matching slot both report ok == false.
-func (f *Fragment) Slot(name string) (*SlotDefinition, bool) {
+func FragmentSlot(f *Fragment, name string) (*SlotDefinition, bool) {
 	if f == nil {
 		return nil, false
 	}
@@ -198,9 +198,9 @@ func (f *Fragment) Slot(name string) (*SlotDefinition, bool) {
 	return s, ok
 }
 
-// SlotNames returns the names of f's declared slots in sorted order, for
+// FragmentSlotNames returns the names of f's declared slots in sorted order, for
 // deterministic iteration and error messages. It is nil-safe.
-func (f *Fragment) SlotNames() []string {
+func FragmentSlotNames(f *Fragment) []string {
 	if f == nil {
 		return nil
 	}
@@ -218,7 +218,7 @@ func (f *Fragment) SlotNames() []string {
 // returns ErrNilFragment if child is nil, ErrInvalidSlotDefinition for an empty
 // slotName, ErrSlotResolved if a resolver fills the slot, and ErrSlotOccupied
 // wrapped with slotName if the slot already has a fill and does not allow multiple.
-func (f *Fragment) Bind(slotName string, child *Fragment) error {
+func Bind(f *Fragment, slotName string, child *Fragment) error {
 	if child == nil {
 		return ErrNilFragment
 	}
@@ -248,7 +248,7 @@ func (f *Fragment) Bind(slotName string, child *Fragment) error {
 
 // EffectiveTimeout returns f.Timeout when it is greater than zero, otherwise def. It
 // is nil-safe, returning def for a nil receiver.
-func (f *Fragment) EffectiveTimeout(def time.Duration) time.Duration {
+func EffectiveTimeout(f *Fragment, def time.Duration) time.Duration {
 	if f != nil && f.Timeout > 0 {
 		return f.Timeout
 	}
@@ -294,7 +294,7 @@ func (f *Fragment) validate(stack map[*Fragment]bool) error {
 		return fmt.Errorf("%w: fragment %q has negative timeout", ErrInvalidTimeout, f.Name)
 	}
 
-	for _, key := range f.SlotNames() {
+	for _, key := range FragmentSlotNames(f) {
 		slot := f.Slots[key]
 		if slot == nil || slot.Name == "" {
 			return fmt.Errorf("%w: slot key %q has no name", ErrInvalidSlotDefinition, key)

@@ -27,12 +27,12 @@ func TestDataSource_Constructors(t *testing.T) {
 	}
 
 	var f *Fragment
-	if got := f.DataSource(); got.Kind != DataNone {
+	if got := FragmentDataSource(f); got.Kind != DataNone {
 		t.Errorf("nil Fragment DataSource = %+v", got)
 	}
 	f = &Fragment{}
-	f.SetDataSource(FixedData("x", strType))
-	if f.DataSource().Value != "x" {
-		t.Errorf("SetDataSource did not stick: %+v", f.DataSource())
+	SetFragmentDataSource(f, FixedData("x", strType))
+	if FragmentDataSource(f).Value != "x" {
+		t.Errorf("SetDataSource did not stick: %+v", FragmentDataSource(f))
 	}
 }

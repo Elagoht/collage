@@ -1025,7 +1025,7 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 			})
 			continue
 		}
-		if page.Guarded() {
+		if types.PageGuarded(page) {
 			skipped = append(skipped, SkipRecord{
 				Name:   page.Name,
 				Reason: "page has a guard, and a file on a static host has no guard in front of it",

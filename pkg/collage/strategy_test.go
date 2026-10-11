@@ -252,7 +252,7 @@ func TestWithSlot_ConstrainsInEitherOrder(t *testing.T) {
 	if err := after.BuildErr(); err != nil {
 		t.Fatalf("WithSlot after a binding: BuildErr() = %v, want nil", err)
 	}
-	if slot, _ := after.Build().Slot("s"); !slot.Required || slot.AllowMultiple || len(slot.Fill) != 1 {
+	if slot, _ := types.FragmentSlot(after.Build(), "s"); !slot.Required || slot.AllowMultiple || len(slot.Fill) != 1 {
 		t.Errorf("slot = %+v, want required, single, and still holding its fill", slot)
 	}
 
@@ -359,7 +359,7 @@ func TestFragment_NilDataIsNoData(t *testing.T) {
 		if len(b.errs) != 0 {
 			t.Errorf("%s: recorded %v, want no conflict", name, b.errs)
 		}
-		if got := b.fragment.DataSource().Kind; got != wantKind[name] {
+		if got := types.FragmentDataSource(b.fragment).Kind; got != wantKind[name] {
 			t.Errorf("%s: kind = %v, want %v (existing source kept)", name, got, wantKind[name])
 		}
 	}
@@ -369,7 +369,7 @@ func TestFragment_NilDataIsNoData(t *testing.T) {
 func TestFragment_WithDataRecordsType(t *testing.T) {
 	type view struct{ N int }
 	f := NewFragment("v", "pages/data.html").WithData(Value(view{N: 1})).Build()
-	if got := f.DataSource().Type; got != reflect.TypeOf(view{}) {
+	if got := types.FragmentDataSource(f).Type; got != reflect.TypeOf(view{}) {
 		t.Errorf("Type = %v, want %v", got, reflect.TypeOf(view{}))
 	}
 }

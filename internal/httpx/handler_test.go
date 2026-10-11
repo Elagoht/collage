@@ -86,7 +86,7 @@ func (e *fakeEngine) Render(_ context.Context, rc *types.RenderContext) (*render
 
 	metadata := &render.Metadata{Page: rc.Page.Name, Locale: rc.Locale}
 	if out.degraded != "" {
-		metadata.Fragments = []render.FragmentMetadata{{Name: out.degraded, Failed: true, Err: out.err}}
+		metadata.Fragments = []types.FragmentReport{{Name: out.degraded, Failed: true, Err: out.err}}
 	}
 	result := &render.Result{DependencyTags: out.tags, Metadata: metadata, NotFound: out.notFound}
 	if out.err != nil {
