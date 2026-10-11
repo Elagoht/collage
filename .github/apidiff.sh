@@ -10,9 +10,19 @@ set -euo pipefail
 APIDIFF_VERSION=v0.0.0-20260908205506-85c1c2202aba
 
 : "${RUNNER_TEMP:?RUNNER_TEMP must be set (a scratch directory)}"
-module=$(go list -m)
-v1=$(git tag --list 'v1.*' --sort=-v:refname | head -n 1)
-base=${v1:-$(git tag --list 'v*' --sort=-v:refname | head -n 1)}
+
+# Final releases only (a pre-release such as v1.0.0-rc.1 sorts above v1.0.0 and
+# must neither be the base nor switch the gate on), and only tags that do not
+# contain HEAD: on the push of a tag, the tag itself is HEAD, and comparing a
+# release with itself would gate nothing.
+final='^v[0-9]+\.[0-9]+\.[0-9]+$'
+latest() { git tag --list "$1" --no-contains HEAD --sort=-v:refname | grep -E "$final" | head -n 1 || true; }
+v1=$(latest 'v1.*')
+base=${v1:-$(latest 'v*')}
+if [ -z "$base" ]; then
+  echo "no earlier release tag to compare with" >> "${GITHUB_STEP_SUMMARY:-/dev/stdout}"
+  exit 0
+fi
 summary=${GITHUB_STEP_SUMMARY:-/dev/stdout}
 echo "## API against ${base}" >> "$summary"
 
@@ -33,8 +43,10 @@ for pkg in pkg/collage pkg/collagetest; do
   fi
   # -w reads the module of the directory it runs in, so each side is exported
   # from its own checkout.
-  (cd "$worktree" && "$apidiff" -w "$RUNNER_TEMP/$tag.old" "$module/$pkg")
-  "$apidiff" -w "$RUNNER_TEMP/$tag.new" "$module/$pkg"
+  # The module path is read per checkout: a v2 module path is a different
+  # import path in the new tree than in the old.
+  (cd "$worktree" && "$apidiff" -w "$RUNNER_TEMP/$tag.old" "$(go list -m)/$pkg")
+  "$apidiff" -w "$RUNNER_TEMP/$tag.new" "$(go list -m)/$pkg"
   full=$("$apidiff" "$RUNNER_TEMP/$tag.old" "$RUNNER_TEMP/$tag.new")
   report=$("$apidiff" -incompatible "$RUNNER_TEMP/$tag.old" "$RUNNER_TEMP/$tag.new")
   { echo "### $pkg"; echo '```'; echo "${full:-no changes}"; echo '```'; } >> "$summary"
