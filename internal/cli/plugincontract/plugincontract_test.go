@@ -3,6 +3,7 @@ package plugincontract
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -37,6 +38,18 @@ func TestParseRef(t *testing.T) {
 		{in: "elagoht/con sent", bad: true},
 		{in: "elagoht/consent@", bad: true},
 		{in: "", bad: true},
+		{in: "-x.com/foo", bad: true},
+		{in: "--insecure.x/y", bad: true},
+		{in: "../x", bad: true},
+		{in: "./x/y", bad: true},
+		{in: "./..", bad: true},
+		{in: "github.com/../x", bad: true},
+		{in: "x.com:80/p", bad: true},
+		{in: "x.com/...", bad: true},
+		{in: "x.com/a@v1/../..", bad: true},
+		{in: "x.com/a@-v1", bad: true},
+		{in: "x.com/-a", bad: true},
+		{in: "GitHub.com/Kisi/Repo", path: "GitHub.com/Kisi/Repo"},
 	} {
 		r, err := ParseRef(tc.in)
 		if tc.bad {
@@ -95,7 +108,11 @@ func TestReadConstructor(t *testing.T) {
 		{decl: "func New(f func()) *Plugin { return nil }", call: "p.New(nil)"},
 		{decl: "func New(m map[string]int) *Plugin { return nil }", call: "p.New(nil)"},
 		{decl: "func New(xs []int) *Plugin { return nil }", call: "p.New(nil)"},
-		{decl: "func New(c context.Context) *Plugin { return nil }", call: "p.New(nil)"}, // an interface from another package
+		{decl: "func New(c context.Context) *Plugin { return nil }", bad: "another package"},
+		{decl: "func New(c *context.Context) *Plugin { return nil }", call: "p.New(nil)"},
+		{decl: "func New(e error) *Plugin { return nil }", call: "p.New(nil)"},
+		{decl: "func New[T comparable]() *Plugin { return nil }", bad: "generic"},
+		{decl: "type G[T comparable] struct{}\nfunc New(g G) *Plugin { return nil }", bad: "generic"},
 		{decl: "func New(a, b string) *Plugin { return nil }", bad: "two parameters"},
 		{decl: "func New(m Mode) *Plugin { return nil }", bad: "Mode"},
 		{decl: "func New(s string) *Plugin { return nil }", bad: "string"},
@@ -118,6 +135,58 @@ func TestReadConstructor(t *testing.T) {
 	}
 }
 
+func TestReadConstructorFiles(t *testing.T) {
+	src := func(pkg, decl string) string { return fmtSrc(pkg, decl) }
+	newDecl := "func New() *Plugin { return nil }"
+	t.Run("ignored generator", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{
+			"p.go":   src("p", newDecl),
+			"gen.go": "//go:build ignore\n\npackage main\n\nfunc main() {}\nfunc New(a, b int) {}\n",
+		})
+		c, err := ReadConstructor(dir)
+		if err != nil || c.Package != "p" || c.Call("p") != "p.New()" {
+			t.Fatalf("%+v, %v", c, err)
+		}
+	})
+	t.Run("two packages", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{"a.go": src("p", newDecl), "b.go": "package q\n"})
+		if _, err := ReadConstructor(dir); err == nil || !strings.Contains(err.Error(), "more than one package") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("two New", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{"a.go": src("p", newDecl), "b.go": "package p\n\nfunc New() int { return 0 }\n"})
+		if _, err := ReadConstructor(dir); err == nil || !strings.Contains(err.Error(), "more than one func New") {
+			t.Fatalf("err = %v", err)
+		}
+	})
+	t.Run("per-OS files", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{
+			"p.go":         src("p", ""),
+			"p_windows.go": "package p\n\nfunc New() *Plugin { return nil }\n",
+			"p_linux.go":   "package p\n\nfunc New() *Plugin { return nil }\n",
+			"p_darwin.go":  "package p\n\nfunc New() *Plugin { return nil }\n",
+		})
+		if c, err := ReadConstructor(dir); err != nil || c.Call("p") != "p.New()" {
+			t.Fatalf("%+v, %v", c, err)
+		}
+	})
+	t.Run("constraint excludes current OS", func(t *testing.T) {
+		dir := t.TempDir()
+		write(t, dir, map[string]string{
+			"p.go": src("p", newDecl),
+			"x.go": "//go:build !" + runtime.GOOS + "\n\npackage other\n",
+		})
+		if _, err := ReadConstructor(dir); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
 func fmtSrc(pkg, decl string) string {
 	return strings.Replace(strings.Replace(pluginSrc, "%s", pkg, 1), "%s", decl, 1)
 }
@@ -138,6 +207,8 @@ func TestReadManifest(t *testing.T) {
 		"bad require": `{"name":"a/b","requires":["nope"]}`,
 		"order type":  `{"name":"a/b","order":"last"}`,
 		"not json":    `{`,
+		"trailing":    `{"name":"a/b"} {"name":"c/d"}`,
+		"garbage":     `{"name":"a/b"} x`,
 	} {
 		d := t.TempDir()
 		write(t, d, map[string]string{"collage.json": body})

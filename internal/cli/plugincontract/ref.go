@@ -25,6 +25,14 @@ type Ref struct {
 	Version string
 }
 
+var (
+	// hostSegment is the first segment of a full ref, lowercased: a host name.
+	hostSegment = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]*\.[a-z0-9.-]+$`)
+	// pathSegment is every segment of a full ref: no ":", no spaces, no "\".
+	pathSegment  = regexp.MustCompile(`^[A-Za-z0-9._~-]+$`)
+	validVersion = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+)
+
 var segment = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // ParseRef reads s: "owner/name" (resolved by ConventionalPath) or a module
@@ -32,18 +40,18 @@ var segment = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // "@version".
 func ParseRef(s string) (Ref, error) {
 	path, version, hasAt := strings.Cut(s, "@")
-	if hasAt && version == "" {
-		return Ref{}, fmt.Errorf("%q: an empty version after @", s)
+	if hasAt && !validVersion.MatchString(version) {
+		return Ref{}, fmt.Errorf("%q: %q is not a version", s, version)
 	}
 	parts := strings.Split(path, "/")
-	if len(parts) > 0 && strings.Contains(parts[0], ".") {
+	if strings.Contains(parts[0], ".") {
+		if len(parts) < 2 || !hostSegment.MatchString(strings.ToLower(parts[0])) {
+			return Ref{}, fmt.Errorf("%q is not a module path", path)
+		}
 		for _, p := range parts {
-			if p == "" || strings.ContainsAny(p, " \t\\") {
+			if !pathSegment.MatchString(p) || p == "." || p == ".." || strings.HasPrefix(p, "-") || strings.Contains(p, "...") {
 				return Ref{}, fmt.Errorf("%q is not a module path", path)
 			}
-		}
-		if len(parts) < 2 {
-			return Ref{}, fmt.Errorf("%q is not a module path", path)
 		}
 		return Ref{Path: path, Version: version}, nil
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -54,6 +55,10 @@ func ReadManifest(dir string) (Manifest, error) {
 	var f manifestFile
 	if err := dec.Decode(&f); err != nil {
 		return Manifest{}, refuse(fmt.Sprintf("collage.json: %v", err))
+	}
+	var extra json.RawMessage
+	if err := dec.Decode(&extra); err != io.EOF {
+		return Manifest{}, refuse("collage.json: more than one JSON value, or text after it")
 	}
 	if !ValidName(f.Name) {
 		return Manifest{}, refuse(fmt.Sprintf("collage.json: name %q is not owner/name in lowercase letters, digits and dashes", f.Name))
