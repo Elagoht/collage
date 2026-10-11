@@ -717,3 +717,18 @@ func TestPluginDel_HandAddedEntry(t *testing.T) {
 	}
 	goBuild(t, dir)
 }
+
+// Final review M2: a setup note reaches the terminal without its control
+// characters, apart from newlines and tabs.
+func TestPrintAdded_SetupNoteSanitised(t *testing.T) {
+	c, out, _ := testCLI()
+	c.printAdded([]addedPlugin{{Name: "acme/greet", Version: "v0.1.0", Call: "greet.New()", ConfigAdded: true,
+		Setup: "\x1b[31mred\x1b[0m\rover\x07\u009b2J\nline two\n\tindented"}})
+	got := out.String()
+	if strings.ContainsAny(got, "\x1b\r\x07\u009b") {
+		t.Fatalf("control characters printed: %q", got)
+	}
+	if !strings.Contains(got, "[31mred[0mover2J\nline two\n\tindented") {
+		t.Fatalf("note = %q", got)
+	}
+}

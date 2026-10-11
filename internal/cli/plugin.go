@@ -20,6 +20,7 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"unicode"
 
 	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cli/plugincontract"
@@ -461,9 +462,20 @@ func (c *CLI) printAdded(added []addedPlugin) {
 		tw.Flush()
 		if a.Setup != "" {
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, strings.TrimSpace(a.Setup))
+			fmt.Fprintln(w, strings.TrimSpace(printable(a.Setup)))
 		}
 	}
+}
+
+// printable is s without its control characters other than newline and tab:
+// a module's text cannot move the cursor or recolour the terminal.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // readIfExists is the file's content, or nil when there is no such file.
