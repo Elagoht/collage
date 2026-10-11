@@ -80,18 +80,6 @@ var ErrPathEscapesOutDir = errors.New("collage: resolved path escapes the output
 // the concrete paths a static build must write.
 var ErrDynamicPathUnresolved = errors.New("collage: a path pattern with a {param} needs WithStaticParams to be built")
 
-// ErrDuplicateOutputPath is recorded, as SkipRecord.Err and in SkipRecord.Reason,
-// when two document build tasks resolve to the same output file — StaticParams
-// listing the same values twice, say. One pattern in two
-// locales is not that: each non-default locale's document is written under its
-// locale's prefix, "/sitemap.xml" and "/tr/sitemap.xml", exactly as they are
-// served. Only one of the colliding tasks is built; the rest are skipped by name
-// rather than racing to overwrite one file.
-//
-// It is a skip and not an error deliberately: the file that is written is the
-// one the URL serves, and the only thing missing is a second copy of it.
-var ErrDuplicateOutputPath = errors.New("collage: two build tasks write the same output path")
-
 // ErrBuildPanic is recorded in Report.Errors when rendering or writing one page
 // panicked. The build worker recovers it, records it against that page, and carries
 // on with the rest: a static build is often the last step of a deploy, and letting
@@ -267,7 +255,7 @@ type SkipRecord struct {
 	// Reason explains why the page or document, or its locale, was skipped.
 	Reason string
 	// Err is the sentinel for the reason — ErrNotStatic, ErrDynamicPathUnresolved,
-	// ErrUnresolvedToken, ErrDuplicateOutputPath — for a caller that acts on the
+	// ErrUnresolvedToken — for a caller that acts on the
 	// kind of skip rather than reading the sentence.
 	Err error
 }
@@ -393,9 +381,11 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	// the write: the writes run concurrently, and "did anyone else already claim
 	// this file" is exactly the question a concurrent writer cannot answer about
 	// itself.
-	if err := b.checkNoOutputCollisions(tasks); err != nil {
+	docTasks, docSkipped, docEnumerateErrs := b.enumerateDocuments(ctx)
+	if err := b.checkNoOutputCollisions(tasks, docTasks); err != nil {
 		enumerateErrs = append(enumerateErrs, err)
 		tasks = nil
+		docTasks = nil
 	}
 
 	written := make([]string, len(tasks))
@@ -485,7 +475,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		errs = append(errs, rootErr)
 	}
 
-	docWritten, docSkipped, docWarnings, docErrs := b.buildDocuments(ctx, outDirResolved)
+	docWritten, docSkipped, docWarnings, docErrs := b.buildDocuments(ctx, outDirResolved, docTasks, docSkipped, docEnumerateErrs)
 	report.Warnings = append(report.Warnings, docWarnings...)
 	report.Skipped = append(report.Skipped, docSkipped...)
 	report.Written = append(report.Written, docWritten...)
@@ -966,23 +956,35 @@ func urlPathOf(outDir, file string) string {
 // file. Two pages whose patterns differ only in a trailing slash, or StaticParams
 // listing the same values twice, both land here — and without the check the
 // second write silently replaced the first, dropping a page from the build with
-// nothing in the report to show for it.
+// nothing in the report to show for it. Documents claim from the same map: a
+// document and a page, or two documents, resolving to one file is the same loss.
 //
-// Locale is already folded in by localeOutputPath, so the same pattern in two
+// Locale is already folded in by pageOutputPath, so the same pattern in two
 // locales is not a collision: that is the ordinary multi-locale case and each
 // locale has its own directory.
-func (b *Builder) checkNoOutputCollisions(tasks []buildTask) error {
+func (b *Builder) checkNoOutputCollisions(tasks []buildTask, docs []documentTask) error {
 	defaultLocale := b.app.DefaultLocale()
-	claimed := make(map[string]buildTask, len(tasks))
+	claimed := make(map[string]string, len(tasks)+len(docs))
+
+	claim := func(key, owner string) error {
+		if previous, taken := claimed[key]; taken {
+			return fmt.Errorf("%w: %q, claimed by %s and %s", ErrOutputPathCollision, key, previous, owner)
+		}
+		claimed[key] = owner
+		return nil
+	}
 
 	for _, task := range tasks {
 		key := path.Clean(b.pageOutputPath(task.locale, defaultLocale, task.path))
-		if previous, taken := claimed[key]; taken {
-			return fmt.Errorf("%w: %q, claimed by page %q locale %q and page %q locale %q",
-				ErrOutputPathCollision, key,
-				previous.page.Name, previous.locale, task.page.Name, task.locale)
+		if err := claim(key, fmt.Sprintf("page %q locale %q", task.page.Name, task.locale)); err != nil {
+			return err
 		}
-		claimed[key] = task
+	}
+	for _, task := range docs {
+		key := path.Clean(b.documentURL(task))
+		if err := claim(key, fmt.Sprintf("document %q locale %q", task.doc.Name, task.locale)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

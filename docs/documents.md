@@ -255,9 +255,8 @@ cache key, so the two feeds are two entries.
 The static build writes each locale where it is served: the feed above becomes
 `<OutDir>/feed.xml` and `<OutDir>/tr/feed.xml`, so one pattern in two locales is
 two files. (Two tasks that still resolve to one file — `WithStaticParams` listing
-the same values twice — are detected, and the later one is recorded in
-`Report.Skipped` as `collage.ErrDuplicateOutputPath` rather than letting two
-goroutines race to write one file.)
+the same values twice — are detected, and so is a document and a page that resolve to one file. The build
+stops with `collage.ErrOutputPathCollision` before anything renders.)
 
 ## Registration
 

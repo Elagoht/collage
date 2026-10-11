@@ -772,3 +772,44 @@ func TestAction_MultipartFilesAreRemoved(t *testing.T) {
 		}
 	}
 }
+
+func TestActionResult_TwoBodiesRefused(t *testing.T) {
+	page := testPage("new", "/posts/new", types.StrategyDynamic)
+	both := action("both", "/posts/new", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+			return &types.ActionResult{Page: page, Body: []byte("raw-body")}, nil
+		})
+	env := actionEnv(t, []*types.Page{page}, []*types.Action{both})
+	res := env.do(post("/posts/new", ""))
+
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", res.Code)
+	}
+	if strings.Contains(res.Body.String(), "raw-body") {
+		t.Errorf("the body was written: %q", res.Body.String())
+	}
+	if env.engine.pageCalls("new") != 0 {
+		t.Errorf("the page was rendered %d times", env.engine.pageCalls("new"))
+	}
+}
+
+// A result with one body, or none, answers as before.
+func TestActionResult_SingleOrNoBodyUnchanged(t *testing.T) {
+	deny := action("deny", "/deny", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+			return &types.ActionResult{Status: http.StatusUnauthorized}, nil
+		})
+	header := action("header", "/header", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+			return &types.ActionResult{Header: http.Header{"X-A": {"1"}}}, nil
+		})
+	env := actionEnv(t, nil, []*types.Action{deny, header})
+
+	if res := env.do(post("/deny", "")); res.Code != http.StatusUnauthorized || res.Body.Len() != 0 {
+		t.Errorf("Status-only result = %d %q", res.Code, res.Body.String())
+	}
+	res := env.do(post("/header", ""))
+	if res.Code != http.StatusNoContent || res.Header().Get("X-A") != "1" {
+		t.Errorf("Header-only result = %d, X-A %q", res.Code, res.Header().Get("X-A"))
+	}
+}

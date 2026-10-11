@@ -77,7 +77,7 @@ type SkipRecord struct {
 	// Reason explains why it was skipped.
 	Reason string
 	// Err is the sentinel for the reason — ErrNotStatic, ErrGuarded,
-	// ErrDynamicPathUnresolved, ErrUnresolvedToken, ErrDuplicateOutputPath — for a
+	// ErrDynamicPathUnresolved, ErrUnresolvedToken — for a
 	// caller that acts on the kind of skip rather than reading the sentence.
 	Err error
 }

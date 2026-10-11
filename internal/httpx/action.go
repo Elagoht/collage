@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
@@ -318,6 +319,11 @@ func (h *Handler) writeActionResult(
 	result *types.ActionResult,
 	route *routeRef,
 ) int {
+	if err := checkUnambiguousResult(result); err != nil {
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender,
+			err))
+	}
+
 	header := w.Header()
 	for name, values := range result.Header {
 		for _, value := range values {
@@ -561,3 +567,25 @@ func statusOr(declared, fallback int) int {
 // an action asks for invalidation declaratively, through ActionResult.InvalidateTags,
 // rather than being handed the whole application to call a method on.
 type Invalidator func(ctx context.Context, tags []string) error
+
+// checkUnambiguousResult refuses a result that asks for two responses. The names
+// of the fields it sets follow the sentinel, so the log line says which pair.
+func checkUnambiguousResult(result *types.ActionResult) error {
+	var set []string
+	if result.Location != "" {
+		set = append(set, "Location")
+	}
+	if result.Fragment != nil {
+		set = append(set, "Fragment")
+	}
+	if result.Page != nil {
+		set = append(set, "Page")
+	}
+	if len(result.Body) > 0 {
+		set = append(set, "Body")
+	}
+	if len(set) < 2 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", types.ErrAmbiguousActionResult, strings.Join(set, ", "))
+}

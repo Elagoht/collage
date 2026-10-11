@@ -376,3 +376,54 @@ func TestBuild_DistinctPathsPerLocaleAreBothWritten(t *testing.T) {
 		t.Errorf("tr/akis.xml = %q, want the tr body", got)
 	}
 }
+
+// Two documents, or a document and a page, that resolve to one file stop the
+// build. They are no skip: a skip would leave one of them off the site with a
+// line in the report nobody is made to read.
+func TestBuild_DocumentCollisionStopsBuild(t *testing.T) {
+	cases := []struct {
+		name      string
+		pages     []*types.Page
+		documents []*types.Document
+	}{
+		{
+			name: "document and document",
+			documents: []*types.Document{
+				newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed.xml"}),
+				newTestDocument("feed-again", types.StrategyStatic, map[string]string{"en": "/feed.xml/"}),
+			},
+		},
+		{
+			name:  "document and page",
+			pages: []*types.Page{newTestPage("feed-page", types.StrategyStatic, map[string]string{"en": "/feed.xml"})},
+			documents: []*types.Document{
+				newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed.xml"}),
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := resolvedTempDir(t)
+			app := &fakeRenderer{
+				pages:         c.pages,
+				documents:     c.documents,
+				defaultLocale: "en",
+				docBodies:     map[string][]byte{renderKey("/feed.xml", "en"): []byte("<rss/>")},
+			}
+			b, err := New(app, Options{OutDir: out, Concurrency: 4})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			report, err := b.Build(context.Background())
+			if !errors.Is(err, ErrOutputPathCollision) {
+				t.Fatalf("Build error = %v, want ErrOutputPathCollision", err)
+			}
+			if len(report.Skipped) != 0 {
+				t.Errorf("Report.Skipped = %+v, want none", report.Skipped)
+			}
+			if len(report.Written) != 0 {
+				t.Errorf("Report.Written = %v, want nothing rendered", report.Written)
+			}
+		})
+	}
+}

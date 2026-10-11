@@ -411,11 +411,17 @@ var (
 	// ErrRedirectShadowsFile is in a build's errors when a redirect's From is the
 	// path of a file the build wrote ("/a" or "/a/" for a directory's index.html).
 	ErrRedirectShadowsFile = build.ErrRedirectShadowsFile
-	// ErrOutputPathCollision is returned by Build when two pages would be written to
-	// the same file — two patterns differing only in a trailing slash, or
-	// StaticParams listing one set of values twice. It is reported before anything renders, so
+	// ErrOutputPathCollision is returned by Build when two pages, two documents or a
+	// page and a document would be written to the same file — two patterns
+	// differing only in a trailing slash, or StaticParams listing one set of values
+	// twice. It is no skip: nothing is built. It is reported before anything renders, so
 	// a collision costs no work and leaves no half-built output directory.
 	ErrOutputPathCollision = build.ErrOutputPathCollision
+	// ErrAmbiguousActionResult is the error an action's response is refused with,
+	// answered as a 500 and reported to ErrorHook, when its ActionResult sets more
+	// than one of Location, Fragment, Page and Body. The message names the fields
+	// that were set.
+	ErrAmbiguousActionResult = types.ErrAmbiguousActionResult
 	// ErrEmptyOutDir is returned by Build when BuildOptions.OutDir is empty.
 	ErrEmptyOutDir = build.ErrInvalidOutDir
 	// ErrDangerousOutDir is returned by Build when BuildOptions.OutDir
@@ -431,13 +437,6 @@ var (
 	// SkipRecord.Reason, when a page's or document's path pattern for a locale
 	// contains a "{param}" segment and it was built without WithStaticParams.
 	ErrDynamicPathUnresolved = build.ErrDynamicPathUnresolved
-	// ErrDuplicateOutputPath is recorded, as SkipRecord.Err and in SkipRecord.Reason,
-	// when two document build tasks resolve to the same output file —
-	// StaticParams listing one set of values twice. One pattern in two locales is not
-	// a collision: a non-default locale's document is written under its prefix,
-	// "/tr/sitemap.xml". One task is built and the rest are skipped by name, rather
-	// than racing to overwrite one file.
-	ErrDuplicateOutputPath = build.ErrDuplicateOutputPath
 	// ErrDegradedRender is recorded in BuildReport.Errors, and no file is written,
 	// when a page renders with at least one failed fragment and
 	// BuildOptions.AllowDegraded is false.

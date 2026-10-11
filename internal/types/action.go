@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -117,3 +118,9 @@ func SafeMethod(method string) bool {
 	}
 	return false
 }
+
+// ErrAmbiguousActionResult reports an ActionResult that sets more than one of
+// Location, Fragment, Page and Body. Each asks for a different response, and
+// picking the first would answer with a body the handler did not mean to be
+// the one that counts.
+var ErrAmbiguousActionResult = errors.New("collage: action result sets more than one of Location, Fragment, Page, Body")
