@@ -1,0 +1,355 @@
+file	kind	name	detail	plugin_uses	plugin_repos	plugin_test_uses	docs_site_uses	scaffold_uses	collagetest_uses	using_plugins
+action.go	alias	Action	types.Action	0	0	1	8	2	0	
+action.go	type	ActionBuilder	struct, 0 exported fields	0	0	0	0	0	0	
+action.go	method	ActionBuilder.Build	() *Action	1	1	352	25	2	0	robots
+action.go	method	ActionBuilder.WithBodyTimeout	(d time.Duration) *ActionBuilder	0	0	0	2	0	0	
+action.go	method	ActionBuilder.WithHandler	(h ActionHandlerFunc) *ActionBuilder	1	1	5	0	0	0	robots
+action.go	method	ActionBuilder.WithMaxBodyBytes	(n int64) *ActionBuilder	0	0	5	0	0	0	
+action.go	method	ActionBuilder.WithMethods	(methods ...string) *ActionBuilder	0	0	17	2	0	0	
+action.go	method	ActionBuilder.WithPath	(locale, pattern string) *ActionBuilder	0	0	134	10	0	0	
+action.go	method	ActionBuilder.WithStreamingBody	() *ActionBuilder	0	0	3	2	0	0	
+action.go	method	ActionBuilder.WithoutCSRF	() *ActionBuilder	0	0	11	0	0	0	
+action.go	alias	ActionHandlerFunc	types.ActionHandlerFunc	0	0	0	0	2	0	
+action.go	alias	ActionResult	types.ActionResult	6	4	27	26	2	0	flash,honeypot,session,validate
+action.go	var	ErrUnregisteredPage	httpx.ErrUnregisteredPage	0	0	0	2	0	0	
+action.go	func	JSON	(status int, body []byte) *ActionResult	0	0	0	2	0	0	
+action.go	func	JSONOf	[T any](status int, v T) (*ActionResult, error)	0	0	3	6	1	0	
+action.go	func	NewAction	(name string) *ActionBuilder	0	0	19	16	2	0	
+action.go	func	NoContent	(status int) *ActionResult	0	0	2	6	0	0	
+action.go	func	RenderFragment	(f *Fragment) *ActionResult	0	0	0	8	0	0	
+action.go	func	RenderPage	(p *Page) *ActionResult	1	1	0	8	1	0	validate
+action.go	func	SeeOther	(location string) *ActionResult	4	4	7	18	0	0	flash,honeypot,session,validate
+build.go	alias	BuildOptions	build.Options	0	0	37	5	1	0	
+build.go	alias	BuildReport	build.Report	0	0	4	0	0	0	
+build.go	alias	Builder	build.Builder	0	0	0	0	0	0	
+build.go	var	ErrBuildFindings	build.ErrFindings	0	0	4	6	0	0	
+build.go	var	ErrBuildPanic	build.ErrBuildPanic	0	0	0	4	0	0	
+build.go	var	ErrDangerousOutDir	build.ErrDangerousOutDir	0	0	0	2	0	0	
+build.go	var	ErrDegradedRender	build.ErrDegradedRender	0	0	0	2	0	0	
+build.go	var	ErrDuplicateOutputPath	build.ErrDuplicateOutputPath	0	0	0	4	0	0	
+build.go	var	ErrDuplicateRedirect	build.ErrDuplicateRedirect	1	1	2	4	0	0	redirects
+build.go	var	ErrDynamicPathUnresolved	build.ErrDynamicPathUnresolved	0	0	0	6	0	0	
+build.go	var	ErrEmptyDocumentBody	types.ErrEmptyDocumentBody	0	0	0	6	0	0	
+build.go	var	ErrEmptyRender	build.ErrEmptyRender	0	0	0	2	0	0	
+build.go	var	ErrGuarded	build.ErrGuarded	0	0	0	2	0	0	
+build.go	var	ErrInvalidOutDir	build.ErrInvalidOutDir	0	0	0	0	0	0	
+build.go	var	ErrNilRenderer	build.ErrNilRenderer	0	0	0	0	0	0	
+build.go	var	ErrNotStatic	build.ErrNotStatic	0	0	0	0	0	0	
+build.go	var	ErrOutputPathCollision	build.ErrOutputPathCollision	0	0	0	2	0	0	
+build.go	var	ErrPathEscapesOutDir	build.ErrPathEscapesOutDir	0	0	0	2	0	0	
+build.go	var	ErrRedirectShadowsFile	build.ErrRedirectShadowsFile	0	0	1	4	0	0	
+build.go	var	ErrUnresolvedToken	build.ErrUnresolvedToken	0	0	0	2	0	0	
+build.go	func	NewBuilder	(app *App, opts BuildOptions) (*Builder, error)	0	0	37	9	1	0	
+build.go	alias	SkipRecord	build.SkipRecord	0	0	0	2	0	0	
+build.go	alias	WarningRecord	build.WarningRecord	0	0	0	0	0	0	
+collage.go	alias	AfterRenderEvent	plugin.AfterRenderEvent	9	9	3	4	0	0	devtoolbar,highlight,htmlcheck,i18n,minimizer,ogimage,opti-image,secure,toc
+collage.go	alias	AfterRenderHook	plugin.AfterRenderHook	3	3	0	2	0	0	devtoolbar,highlight,toc
+collage.go	alias	App	core.App	0	0	79	42	5	0	
+collage.go	alias	BeforeActionEvent	plugin.BeforeActionEvent	1	1	0	2	0	0	honeypot
+collage.go	alias	BeforeActionHook	plugin.BeforeActionHook	1	1	0	0	0	0	honeypot
+collage.go	alias	BeforeRenderEvent	plugin.BeforeRenderEvent	10	10	0	4	0	0	analytics,consent,favicon,feed,highlight,honeypot,i18n,jsonld,meta,ogimage
+collage.go	alias	BeforeRenderHook	plugin.BeforeRenderHook	6	6	0	2	0	0	analytics,consent,favicon,highlight,honeypot,meta
+collage.go	alias	BuildFinishedEvent	plugin.BuildFinishedEvent	25	9	41	0	0	0	basicauth,compress,deploy,htmlcheck,i18n,ogimage,redirects,search,tenant
+collage.go	alias	BuildFinishedHook	plugin.BuildFinishedHook	5	5	3	0	0	0	basicauth,compress,deploy,redirects,search
+collage.go	alias	BuiltFile	plugin.BuiltFile	7	4	58	2	0	0	basicauth,compress,deploy,htmlcheck
+collage.go	alias	BuiltRedirect	plugin.BuiltRedirect	7	2	33	4	0	0	deploy,redirects
+collage.go	alias	Cache	cache.Cache	0	0	0	4	0	0	
+collage.go	const	CacheCoalesced	observability.CacheCoalesced	0	0	0	0	0	0	
+collage.go	alias	CacheEvent	observability.CacheEvent	1	1	0	2	0	0	prometheus
+collage.go	const	CacheEvict	observability.CacheEvict	0	0	0	0	0	0	
+collage.go	const	CacheHit	observability.CacheHit	0	0	0	2	0	0	
+collage.go	const	CacheInvalidate	observability.CacheInvalidate	0	0	0	0	0	0	
+collage.go	alias	CacheInvalidateEvent	plugin.CacheInvalidateEvent	4	4	6	0	0	0	cdnpurge,indexnow,live,markdown
+collage.go	alias	CacheInvalidateHook	plugin.CacheInvalidateHook	3	3	2	0	0	0	cdnpurge,indexnow,markdown
+collage.go	const	CacheMiss	observability.CacheMiss	0	0	0	0	0	0	
+collage.go	const	CacheSet	observability.CacheSet	0	0	0	0	0	0	
+collage.go	alias	CacheWriteEvent	plugin.CacheWriteEvent	0	0	0	2	0	0	
+collage.go	alias	CacheWriteHook	plugin.CacheWriteHook	0	0	0	0	0	0	
+collage.go	func	ClientIP	(r *http.Request) netip.Addr	5	2	0	12	0	0	devtoolbar,fail2ban
+collage.go	alias	Command	plugin.Command	2	1	0	2	0	0	ogimage
+collage.go	alias	ConfigHost	plugin.ConfigHost	18	18	0	10	0	0	bundle,errortrack,fail2ban,flash,highlight,honeypot,i18n,live,minimizer,oauth,offline,ogimage,opti-image,search,secure,toc,validate,websocket
+collage.go	alias	ConfigReader	plugin.ConfigReader	0	0	0	2	0	0	
+collage.go	alias	Configurer	plugin.Configurer	7	7	0	2	0	0	bundle,highlight,honeypot,offline,search,toc,validate
+collage.go	alias	DocumentRenderedEvent	plugin.DocumentRenderedEvent	1	1	1	0	0	0	minimizer
+collage.go	alias	DocumentRenderedHook	plugin.DocumentRenderedHook	0	0	0	2	0	0	
+collage.go	alias	DrainHook	plugin.DrainHook	1	1	1	2	0	0	health
+collage.go	func	ETag	(content []byte) string	0	0	0	0	0	0	
+collage.go	var	ErrAmbiguousParameterName	router.ErrAmbiguousParameterName	0	0	0	0	0	0	
+collage.go	var	ErrAppStarted	core.ErrAppStarted	0	0	0	2	0	0	
+collage.go	var	ErrAssetFailed	httpx.ErrAssetFailed	0	0	0	2	0	0	
+collage.go	var	ErrConfigurerRegisteredLate	core.ErrConfigurerRegisteredLate	0	0	0	4	0	0	
+collage.go	var	ErrDuplicateCommand	core.ErrDuplicateCommand	0	0	0	0	0	0	
+collage.go	var	ErrDuplicatePage	core.ErrDuplicatePage	0	0	0	0	0	0	
+collage.go	var	ErrDuplicatePlugin	plugin.ErrDuplicatePlugin	0	0	0	0	0	0	
+collage.go	var	ErrDuplicateRoute	router.ErrDuplicateRoute	0	0	0	6	0	0	
+collage.go	var	ErrDuplicateTemplateFunc	plugin.ErrDuplicateTemplateFunc	0	0	0	0	0	0	
+collage.go	var	ErrEmptyCommandName	core.ErrEmptyCommandName	0	0	0	0	0	0	
+collage.go	var	ErrEmptyErrorPage	httpx.ErrEmptyErrorPage	0	0	0	0	0	0	
+collage.go	var	ErrEmptyPluginName	plugin.ErrEmptyPluginName	0	0	0	0	0	0	
+collage.go	var	ErrInvalidPattern	router.ErrInvalidPattern	0	0	0	0	0	0	
+collage.go	var	ErrMaxDepthExceeded	render.ErrMaxDepthExceeded	0	0	0	0	0	0	
+collage.go	var	ErrNilConfig	errors.New("collage: nil config")	0	0	0	0	0	0	
+collage.go	var	ErrNilPage	core.ErrNilPage	0	0	0	0	0	0	
+collage.go	var	ErrNilPlugin	plugin.ErrNilPlugin	0	0	0	0	0	0	
+collage.go	var	ErrNoRootFragment	render.ErrNoRootFragment	0	0	0	0	0	0	
+collage.go	var	ErrNoRoute	httpx.ErrNoRoute	0	0	0	2	0	0	
+collage.go	var	ErrOverlappingPattern	router.ErrOverlappingPattern	0	0	0	0	0	0	
+collage.go	var	ErrPageNotFound	core.ErrPageNotFound	0	0	0	0	0	0	
+collage.go	var	ErrPanic	httpx.ErrPanic	1	1	2	4	0	0	errortrack
+collage.go	var	ErrRedirectShadowsPage	router.ErrRedirectShadowsPage	0	0	0	0	0	0	
+collage.go	var	ErrRequiredSlotEmpty	render.ErrRequiredSlotEmpty	0	0	0	0	0	0	
+collage.go	var	ErrTemplateNotFound	core.ErrTemplateNotFound	0	0	0	0	0	0	
+collage.go	var	ErrTemplateRootMissing	template.ErrTemplateRootMissing	0	0	0	0	0	0	
+collage.go	var	ErrUnknownPluginConfig	plugin.ErrUnknownPluginConfig	0	0	1	2	0	0	
+collage.go	var	ErrUnregisteredErrorPage	core.ErrUnregisteredErrorPage	0	0	0	0	0	0	
+collage.go	var	ErrUnsafeRedirectTarget	router.ErrUnsafeRedirectTarget	0	0	0	0	0	0	
+collage.go	var	ErrUnsubstitutedPlaceholder	router.ErrUnsubstitutedPlaceholder	0	0	0	0	0	0	
+collage.go	var	ErrUnsupportedCache	core.ErrUnsupportedCache	0	0	0	0	0	0	
+collage.go	alias	ErrorEvent	plugin.ErrorEvent	1	1	1	2	0	0	errortrack
+collage.go	alias	ErrorHook	plugin.ErrorHook	1	1	0	2	0	0	errortrack
+collage.go	const	FetchHeader	httpx.FetchHeader	0	0	0	2	0	0	
+collage.go	alias	Finding	types.Finding	0	0	11	4	0	0	
+collage.go	const	FindingError	types.FindingError	1	1	18	2	0	0	devtoolbar
+collage.go	alias	FindingLevel	types.FindingLevel	0	0	3	0	0	0	
+collage.go	const	FindingWarning	types.FindingWarning	0	0	15	2	0	0	
+collage.go	alias	FragmentMetadata	render.FragmentMetadata	0	0	0	0	0	0	
+collage.go	alias	FragmentRender	plugin.FragmentRender	3	1	0	2	0	0	live
+collage.go	alias	FragmentReport	types.FragmentReport	2	1	0	4	0	0	devtoolbar
+collage.go	alias	FragmentRequest	plugin.FragmentRequest	2	1	1	2	0	0	live
+collage.go	alias	HoistItem	types.HoistItem	0	0	0	0	0	0	
+collage.go	alias	Host	plugin.Host	60	44	35	6	0	0	accesslog,analytics,basicauth,bundle,cdnpurge,compress,consent,deploy,devtoolbar,errortrack,fail2ban,favicon,feed,flash,health,highlight,honeypot,htmlcheck,i18n,indexnow,jobs,jsonld,live,markdown,meta,minimizer,oauth,offline,ogimage,opti-image,otel,prometheus,ratelimit,redirects,robots,search,secure,session,sitemap,tenant,toc,uploads,validate,websocket
+collage.go	alias	InvalidatedEntry	plugin.InvalidatedEntry	0	0	6	0	0	0	
+collage.go	const	LocationHeader	httpx.LocationHeader	0	0	0	2	0	0	
+collage.go	alias	Metadata	render.Metadata	0	0	0	0	0	0	
+collage.go	alias	Metrics	observability.Metrics	2	1	0	0	0	0	prometheus
+collage.go	func	New	(cfg *Config) (*App, error)	36	36	159	69	1	0	accesslog,analytics,basicauth,bundle,cdnpurge,compress,deploy,devtoolbar,favicon,feed,flash,highlight,honeypot,htmlcheck,i18n,indexnow,jsonld,live,markdown,meta,minimizer,offline,opti-image,otel,prometheus,ratelimit,redirects,robots,search,secure,session,sitemap,tenant,toc,validate,websocket
+collage.go	alias	OriginResolver	plugin.OriginResolver	8	7	1	0	0	0	cdnpurge,feed,indexnow,meta,ogimage,robots,sitemap
+collage.go	alias	Origins	plugin.Origins	11	8	0	4	0	0	cdnpurge,feed,indexnow,meta,oauth,ogimage,robots,sitemap
+collage.go	alias	PageResolvedEvent	plugin.PageResolvedEvent	0	0	0	0	0	0	
+collage.go	alias	PageResolvedHook	plugin.PageResolvedHook	0	0	0	0	0	0	
+collage.go	alias	PageURL	plugin.PageURL	2	1	1	4	0	0	sitemap
+collage.go	alias	PanicError	render.PanicError	4	1	5	10	0	0	errortrack
+collage.go	func	ParseOrigin	(raw string) (string, error)	2	1	0	4	0	0	tenant
+collage.go	func	PathTag	(path string) string	0	0	1	8	0	0	
+collage.go	alias	PersonaliseEvent	plugin.PersonaliseEvent	2	2	0	2	0	0	honeypot,secure
+collage.go	alias	PersonaliseHook	plugin.PersonaliseHook	2	2	0	0	0	0	honeypot,secure
+collage.go	alias	Plugin	plugin.Plugin	62	40	151	109	2	0	accesslog,analytics,basicauth,bundle,cdnpurge,compress,consent,deploy,devtoolbar,favicon,feed,flash,health,highlight,honeypot,htmlcheck,i18n,indexnow,jobs,jsonld,live,markdown,meta,minimizer,offline,opti-image,otel,prometheus,ratelimit,redirects,robots,search,secure,session,sitemap,tenant,toc,uploads,validate,websocket
+collage.go	func	PluginConfig	[T any](host ConfigReader, defaults T) (T, error)	43	42	0	12	0	0	accesslog,analytics,basicauth,bundle,cdnpurge,compress,consent,deploy,devtoolbar,errortrack,fail2ban,favicon,flash,health,highlight,honeypot,htmlcheck,i18n,indexnow,jobs,jsonld,live,markdown,meta,minimizer,oauth,offline,ogimage,opti-image,otel,prometheus,ratelimit,redirects,robots,search,secure,session,sitemap,tenant,toc,uploads,validate
+collage.go	alias	RedirectSource	plugin.RedirectSource	1	1	1	2	0	0	redirects
+collage.go	alias	RequestHook	plugin.RequestHook	2	2	0	0	0	0	fail2ban,otel
+collage.go	alias	Result	render.Result	0	0	0	0	0	0	
+collage.go	alias	Route	httpx.Route	1	1	13	0	0	0	errortrack
+collage.go	func	RouteInfo	(ctx context.Context) Route	3	2	0	4	0	0	errortrack,otel
+collage.go	func	RouteOf	(ctx context.Context) (kind, name string)	3	2	0	8	0	0	fail2ban,prometheus
+collage.go	alias	ServeHook	plugin.ServeHook	1	1	0	2	0	0	jobs
+collage.go	alias	Span	observability.Span	2	1	0	2	0	0	otel
+collage.go	alias	StreamCloser	plugin.StreamCloser	0	0	0	2	0	0	
+collage.go	alias	TaggedCache	cache.TaggedCache	0	0	0	8	0	0	
+collage.go	alias	Timing	observability.Timing	0	0	0	0	0	0	
+collage.go	alias	Tracer	observability.Tracer	1	1	0	0	0	0	otel
+command.go	const	CheckCommand	"collage-check"	0	0	0	0	0	0	
+command.go	func	DispatchCommands	(ctx context.Context, app *App, args []string) (int, error)	0	0	0	16	1	0	
+command.go	var	ErrNilApp	errors.New("collage: nil app")	0	0	0	0	0	0	
+command.go	var	ErrUnknownCommand	errors.New("collage: unknown command")	0	0	0	2	0	0	
+command.go	const	InspectCommand	"collage-inspect"	0	0	0	2	0	0	
+command.go	alias	InspectedAction	core.InspectedAction	0	0	0	0	0	0	
+command.go	alias	InspectedDocument	core.InspectedDocument	0	0	0	0	0	0	
+command.go	alias	InspectedFragment	core.InspectedFragment	0	0	0	0	0	0	
+command.go	alias	InspectedFragmentPath	core.InspectedFragmentPath	0	0	0	0	0	0	
+command.go	alias	InspectedMount	core.InspectedMount	0	0	0	0	0	0	
+command.go	alias	InspectedPage	core.InspectedPage	0	0	0	0	0	0	
+command.go	alias	InspectedPlugin	core.InspectedPlugin	0	0	0	0	0	0	
+command.go	alias	Inspection	core.Inspection	0	0	0	2	0	0	
+command.go	const	RuleNoPathInLocale	core.RuleNoPathInLocale	0	0	0	0	0	0	
+command.go	const	RuleRouteParams	core.RuleRouteParams	0	0	0	0	0	0	
+command.go	const	RuleUnknownRoute	core.RuleUnknownRoute	0	0	0	0	0	0	
+command.go	const	RuleUnreachableLocale	core.RuleUnreachableLocale	0	0	0	0	0	0	
+config.go	type	CacheConfig	struct, 9 exported fields	0	0	36	9	1	0	
+config.go	type	Config	struct, 13 exported fields	36	36	168	49	1	0	accesslog,analytics,basicauth,bundle,cdnpurge,compress,deploy,devtoolbar,favicon,feed,flash,highlight,honeypot,htmlcheck,i18n,indexnow,jsonld,live,markdown,meta,minimizer,offline,opti-image,otel,prometheus,ratelimit,redirects,robots,search,secure,session,sitemap,tenant,toc,validate,websocket
+config.go	method	Config.ApplyDefaults	()	0	0	0	4	0	0	
+config.go	method	Config.IsDevMode	() bool	0	0	0	2	0	0	
+config.go	method	Config.Validate	() error	0	0	0	10	0	0	
+config.go	var	ErrEmptyCacheDir	cache.ErrEmptyCacheDir	0	0	0	0	0	0	
+config.go	var	ErrEmptyCacheVersion	cache.ErrEmptyCacheVersion	0	0	0	0	0	0	
+config.go	var	ErrEmptyLocaleDefault	errors.New("collage: empty default locale")	0	0	0	0	0	0	
+config.go	var	ErrEmptyTemplateRoot	errors.New("collage: empty template root")	0	0	0	0	0	0	
+config.go	var	ErrInvalidBaseURL	plugin.ErrInvalidOrigin	0	0	0	2	0	0	
+config.go	var	ErrInvalidCacheType	errors.New("collage: invalid cache type")	0	0	0	0	0	0	
+config.go	var	ErrInvalidPort	errors.New("collage: invalid port")	0	0	0	2	0	0	
+config.go	var	ErrLocaleDefaultNotSupported	errors.New("collage: default locale not in supported locales")	0	0	0	2	0	0	
+config.go	var	ErrNegativeDuration	errors.New("collage: negative duration")	0	0	0	2	0	0	
+config.go	type	LocaleConfig	struct, 4 exported fields	1	1	22	5	0	0	i18n
+config.go	type	ObservabilityConfig	struct, 2 exported fields	2	2	4	4	0	0	otel,prometheus
+config.go	type	SecurityConfig	struct, 9 exported fields	0	0	6	7	1	0	
+config.go	type	ServerConfig	struct, 10 exported fields	0	0	131	15	1	0	
+config.go	type	TemplateConfig	struct, 6 exported fields	0	0	146	31	1	0	
+data.go	type	Data	interface, 1 methods	2	1	3	4	0	0	markdown
+data.go	func	DataHandler	[T any](fn func(context.Context, *RenderContext) (T, []string, error)) Data	3	2	11	52	1	0	jsonld,markdown
+data.go	func	Effect	(fn func(context.Context, *RenderContext) error) Data	0	0	5	28	0	0	
+data.go	func	Load	[T any](fn func(context.Context, *RenderContext) (T, error)) Data	0	0	23	26	2	0	
+data.go	func	Value	[T any](v T) Data	0	0	3	40	1	0	
+document.go	alias	Document	types.Document	0	0	0	13	1	0	
+document.go	type	DocumentBuilder	struct, 0 exported fields	0	0	0	0	0	0	
+document.go	method	DocumentBuilder.AtRoot	(pattern string) *DocumentBuilder	1	1	6	2	0	0	robots
+document.go	method	DocumentBuilder.Build	() *Document	1	1	352	25	2	0	robots
+document.go	method	DocumentBuilder.BuildErr	() error	0	0	0	2	0	0	
+document.go	method	DocumentBuilder.Dynamic	() *DocumentBuilder	14	7	6	4	0	0	cdnpurge,feed,indexnow,meta,ogimage,robots,sitemap
+document.go	method	DocumentBuilder.Incremental	(ttl time.Duration) *DocumentBuilder	0	0	6	2	0	0	
+document.go	method	DocumentBuilder.Static	() *DocumentBuilder	7	7	51	15	0	0	devtoolbar,honeypot,htmlcheck,ogimage,robots,secure,tenant
+document.go	method	DocumentBuilder.WithBody	(body []byte) *DocumentBuilder	1	1	7	2	0	0	robots
+document.go	method	DocumentBuilder.WithCacheParams	(names ...string) *DocumentBuilder	0	0	0	0	0	0	
+document.go	method	DocumentBuilder.WithDependency	(tags ...string) *DocumentBuilder	0	0	7	0	0	0	
+document.go	method	DocumentBuilder.WithHandler	(handler DocumentHandlerFunc) *DocumentBuilder	1	1	5	0	0	0	robots
+document.go	method	DocumentBuilder.WithPath	(locale, pattern string) *DocumentBuilder	0	0	134	10	0	0	
+document.go	method	DocumentBuilder.WithPermanentRedirect	(from, to string) *DocumentBuilder	0	0	3	0	0	0	
+document.go	method	DocumentBuilder.WithRedirect	(from, to string, status int) *DocumentBuilder	0	0	0	0	0	0	
+document.go	method	DocumentBuilder.WithStaticParams	(list StaticParamsFunc) *DocumentBuilder	1	1	2	4	0	0	markdown
+document.go	alias	DocumentHandlerFunc	types.DocumentHandlerFunc	0	0	0	0	0	0	
+document.go	alias	DocumentResult	render.DocumentResult	0	0	0	0	0	0	
+document.go	var	ErrDocumentNotFound	core.ErrDocumentNotFound	0	0	0	0	0	0	
+document.go	var	ErrDuplicateDocument	core.ErrDuplicateDocument	0	0	0	0	0	0	
+document.go	var	ErrEmptyContentType	types.ErrEmptyContentType	0	0	0	0	0	0	
+document.go	var	ErrNilDocument	types.ErrNilDocument	0	0	0	0	0	0	
+document.go	var	ErrNoDocumentHandler	types.ErrNoDocumentHandler	0	0	0	2	0	0	
+document.go	func	NewDocument	(name, contentType string) *DocumentBuilder	9	7	9	23	1	0	analytics,favicon,feed,indexnow,offline,robots,sitemap
+errors.go	var	ErrCSRFCrossOrigin	csrf.ErrCrossOrigin	0	0	0	2	0	0	
+errors.go	var	ErrCSRFDisabled	core.ErrCSRFDisabled	0	0	0	0	0	0	
+errors.go	var	ErrCSRFHeaderRequired	csrf.ErrHeaderRequired	0	0	0	2	0	0	
+errors.go	var	ErrCSRFInvalid	csrf.ErrInvalid	0	0	0	2	0	0	
+errors.go	var	ErrCSRFMismatch	csrf.ErrMismatch	0	0	0	2	0	0	
+errors.go	var	ErrCSRFMissing	csrf.ErrMissing	0	0	0	4	0	0	
+errors.go	var	ErrDictKeyNotString	template.ErrDictKeyNotString	0	0	0	0	0	0	
+errors.go	var	ErrDictOddArgs	template.ErrDictOddArgs	0	0	0	0	0	0	
+errors.go	var	ErrDuplicateAction	core.ErrDuplicateAction	0	0	0	0	0	0	
+errors.go	var	ErrEmptyActionName	core.ErrEmptyActionName	0	0	0	0	0	0	
+errors.go	var	ErrInvalidActionMethod	router.ErrInvalidActionMethod	0	0	0	2	0	0	
+errors.go	var	ErrMethodNotAllowed	httpx.ErrMethodNotAllowed	0	0	0	4	0	0	
+errors.go	var	ErrNegativeBodyTimeout	router.ErrNegativeBodyTimeout	0	0	0	2	0	0	
+errors.go	var	ErrNilAction	core.ErrNilAction	0	0	0	0	0	0	
+errors.go	var	ErrNilFragmentPath	core.ErrNilFragmentPath	0	0	0	0	0	0	
+errors.go	var	ErrNilRegistrable	core.ErrNilRegistrable	0	0	0	0	0	0	
+errors.go	var	ErrNoActionHandler	core.ErrNoActionHandler	0	0	0	0	0	0	
+errors.go	var	ErrNoActionPaths	core.ErrNoActionPaths	0	0	0	0	0	0	
+errors.go	var	ErrNoMethods	router.ErrNoMethods	0	0	0	0	0	0	
+errors.go	var	ErrNoMountForAsset	core.ErrNoMountForAsset	0	0	0	0	0	0	
+errors.go	var	ErrSourceConflict	template.ErrSourceConflict	0	0	0	0	0	0	
+errors.go	var	ErrStreamingBody	plugin.ErrStreamingBody	1	1	0	6	0	0	honeypot
+errors.go	var	ErrStreamingBodyMethod	router.ErrStreamingBodyMethod	0	0	0	2	0	0	
+errors.go	var	ErrTemplateEscapesRoot	template.ErrTemplateEscapesRoot	0	0	0	0	0	0	
+findplugin.go	func	FindPlugin	[T Plugin](host ConfigReader) (T, bool)	1	1	0	4	0	0	websocket
+fragment.go	var	ErrDuplicateSlot	errors.New("collage: slot already declared")	0	0	0	0	0	0	
+fragment.go	type	FragmentBuilder	struct, 0 exported fields	0	0	0	0	0	0	
+fragment.go	method	FragmentBuilder.Build	() *Fragment	1	1	352	25	2	0	robots
+fragment.go	method	FragmentBuilder.BuildErr	() error	0	0	0	2	0	0	
+fragment.go	method	FragmentBuilder.Required	() *FragmentBuilder	5	2	24	6	0	0	consent,validate
+fragment.go	method	FragmentBuilder.Shared	() *FragmentBuilder	1	1	0	4	0	0	live
+fragment.go	method	FragmentBuilder.Static	() *FragmentBuilder	7	7	51	15	0	0	devtoolbar,honeypot,htmlcheck,ogimage,robots,secure,tenant
+fragment.go	method	FragmentBuilder.WithData	(d Data) *FragmentBuilder	0	0	38	8	0	0	
+fragment.go	method	FragmentBuilder.WithFallback	(f *Fragment) *FragmentBuilder	0	0	1	2	0	0	
+fragment.go	method	FragmentBuilder.WithGuard	(g GuardFunc) *FragmentBuilder	0	0	3	2	0	0	
+fragment.go	method	FragmentBuilder.WithSlot	(name string, required, allowMultiple bool) *FragmentBuilder	0	0	7	2	0	0	
+fragment.go	method	FragmentBuilder.WithSlotFragment	(slotName string, child *Fragment) *FragmentBuilder	0	0	8	2	0	0	
+fragment.go	method	FragmentBuilder.WithSlotResolver	(slotName string, resolve SlotResolverFunc) *FragmentBuilder	0	0	0	0	0	0	
+fragment.go	method	FragmentBuilder.WithTimeout	(d time.Duration) *FragmentBuilder	15	10	23	3	1	0	cdnpurge,errortrack,health,jobs,live,oauth,ogimage,opti-image,uploads,websocket
+fragment.go	method	FragmentBuilder.WithTitle	(title string) *FragmentBuilder	0	0	0	8	0	0	
+fragment.go	method	FragmentBuilder.WithoutTypeCheck	() *FragmentBuilder	0	0	0	6	0	0	
+fragment.go	alias	InlineHTML	string	0	0	0	8	4	0	
+fragment.go	func	NewFragment	(name, templatePath string) *FragmentBuilder	3	3	160	84	3	0	jsonld,markdown,session
+fragment.go	func	NewInlineFragment	(name, html string) *FragmentBuilder	0	0	3	6	4	0	
+http.go	func	BaseURL	(rc *RenderContext) string	8	6	3	8	0	0	feed,meta,ogimage,robots,sitemap,tenant
+http.go	var	ErrHandlerFailed	httpx.ErrHandlerFailed	0	0	0	2	0	0	
+http.go	var	ErrInvalidHandlerPrefix	core.ErrInvalidHandlerPrefix	0	0	0	2	0	0	
+http.go	var	ErrNilHandler	core.ErrNilHandler	0	0	0	0	0	0	
+http.go	var	ErrVaryOutsideRequest	httpx.ErrVaryOutsideRequest	1	1	0	2	0	0	consent
+http.go	var	ErrVaryTooLate	httpx.ErrVaryTooLate	0	0	0	6	0	0	
+http.go	func	IsCapture	(ctx context.Context) bool	22	9	2	16	0	0	accesslog,basicauth,consent,errortrack,fail2ban,health,otel,prometheus,ratelimit
+http.go	func	SkipCache	(r *http.Request) error	2	2	0	12	0	0	flash,session
+http.go	func	Varied	(rc *RenderContext, header string) (string, bool)	2	2	0	12	0	0	consent,tenant
+http.go	func	VariedContext	(ctx context.Context, header string) (string, bool)	1	1	1	4	0	0	tenant
+http.go	func	Vary	(r *http.Request, header, value string) error	4	2	1	39	0	0	consent,tenant
+mount.go	var	ErrInvalidPrefix	asset.ErrInvalidPrefix	0	0	0	2	0	0	
+mount.go	var	ErrMountConflict	core.ErrMountConflict	0	0	0	4	0	0	
+mount.go	var	ErrMountShadowsRoute	core.ErrMountShadowsRoute	0	0	0	4	0	0	
+mount.go	var	ErrNilFS	asset.ErrNilFS	0	0	0	2	0	0	
+mount.go	alias	Mount	asset.Mount	0	0	0	0	0	0	
+mount.go	alias	MountOption	asset.Option	1	1	0	0	0	0	ogimage
+mount.go	var	WithCacheControl	asset.WithCacheControl	5	4	1	4	0	0	bundle,consent,ogimage,opti-image
+mount.go	var	WithoutBuildCopy	asset.WithoutBuildCopy	1	1	0	8	0	0	ogimage
+once.go	func	Cached	[T any](rc *RenderContext, key Key[T], ttl time.Duration, tags []string, fetch func(context.Context) (T, error)) (T, error)	1	1	0	52	1	0	tenant
+once.go	var	ErrCachedFetchPanicked	datacache.ErrFetchPanicked	0	0	0	2	0	0	
+once.go	func	Once	[T any](rc *RenderContext, key Key[T], fetch func(context.Context) (T, error)) (T, error)	2	1	0	17	0	0	uploads
+page.go	func	NewPage	(name string) *PageBuilder	1	1	142	55	4	0	markdown
+page.go	type	PageBuilder	struct, 0 exported fields	0	0	1	0	0	0	
+page.go	method	PageBuilder.Build	() *Page	1	1	352	25	2	0	robots
+page.go	method	PageBuilder.BuildErr	() error	0	0	0	2	0	0	
+page.go	method	PageBuilder.Dynamic	() *PageBuilder	14	7	6	4	0	0	cdnpurge,feed,indexnow,meta,ogimage,robots,sitemap
+page.go	method	PageBuilder.Incremental	(ttl time.Duration) *PageBuilder	0	0	6	2	0	0	
+page.go	method	PageBuilder.Static	() *PageBuilder	7	7	51	15	0	0	devtoolbar,honeypot,htmlcheck,ogimage,robots,secure,tenant
+page.go	method	PageBuilder.WithAction	(method string, h ActionHandlerFunc) *PageBuilder	0	0	0	2	0	0	
+page.go	method	PageBuilder.WithActionFor	(action *Action) *PageBuilder	0	0	0	2	0	0	
+page.go	method	PageBuilder.WithCacheParams	(names ...string) *PageBuilder	0	0	0	0	0	0	
+page.go	method	PageBuilder.WithContent	(f *Fragment) *PageBuilder	0	0	112	0	0	0	
+page.go	method	PageBuilder.WithDependency	(tags ...string) *PageBuilder	0	0	7	0	0	0	
+page.go	method	PageBuilder.WithErrorPage	(p *Page) *PageBuilder	0	0	0	0	0	0	
+page.go	method	PageBuilder.WithFragmentPath	(locale, pattern string, f *Fragment) *PageBuilder	0	0	0	4	0	0	
+page.go	method	PageBuilder.WithLayouts	(outermost ...*Fragment) *PageBuilder	0	0	15	4	0	0	
+page.go	method	PageBuilder.WithNotFoundPage	(p *Page) *PageBuilder	0	0	0	0	0	0	
+page.go	method	PageBuilder.WithPath	(locale, pattern string) *PageBuilder	0	0	134	10	0	0	
+page.go	method	PageBuilder.WithPermanentRedirect	(from, to string) *PageBuilder	0	0	3	0	0	0	
+page.go	method	PageBuilder.WithRedirect	(from, to string, status int) *PageBuilder	0	0	0	0	0	0	
+page.go	method	PageBuilder.WithStaticParams	(list StaticParamsFunc) *PageBuilder	1	1	2	4	0	0	markdown
+pluginconfig.go	func	LoadPluginConfig	(path string) (map[string]json.RawMessage, error)	0	0	0	9	1	0	
+redirect.go	func	SafeRedirect	(next, fallback string) string	3	1	0	14	0	0	oauth
+report.go	func	PrintBuildReport	(w io.Writer, report *BuildReport, buildErr error)	0	0	0	5	1	0	
+types.go	const	DefaultContentSlot	types.DefaultContentSlot	0	0	0	6	0	0	
+types.go	var	ErrConflictingData	types.ErrConflictingData	0	0	0	4	0	0	
+types.go	var	ErrConflictingLayout	types.ErrConflictingLayout	0	0	0	0	0	0	
+types.go	var	ErrConflictingTemplate	types.ErrConflictingTemplate	0	0	0	0	0	0	
+types.go	var	ErrEmptyName	types.ErrEmptyName	0	0	0	0	0	0	
+types.go	var	ErrEmptyTemplatePath	types.ErrEmptyTemplatePath	0	0	0	0	0	0	
+types.go	var	ErrFragmentCycle	types.ErrFragmentCycle	0	0	0	0	0	0	
+types.go	var	ErrGuardRefused	types.ErrGuardRefused	0	0	0	2	0	0	
+types.go	var	ErrInvalidGuardDecision	types.ErrInvalidGuardDecision	0	0	0	0	0	0	
+types.go	var	ErrInvalidPath	types.ErrInvalidPath	0	0	0	0	0	0	
+types.go	var	ErrInvalidRedirect	types.ErrInvalidRedirect	0	0	0	2	0	0	
+types.go	var	ErrInvalidRedirectStatus	types.ErrInvalidRedirectStatus	0	0	0	2	0	0	
+types.go	var	ErrInvalidSlotDefinition	types.ErrInvalidSlotDefinition	0	0	0	0	0	0	
+types.go	var	ErrInvalidTTL	types.ErrInvalidTTL	0	0	0	2	0	0	
+types.go	var	ErrInvalidTimeout	types.ErrInvalidTimeout	0	0	0	0	0	0	
+types.go	var	ErrMissingContent	types.ErrMissingContent	0	0	0	2	0	0	
+types.go	var	ErrMissingLayout	types.ErrMissingLayout	0	0	0	0	0	0	
+types.go	var	ErrMissingTTL	types.ErrMissingTTL	0	0	0	2	0	0	
+types.go	var	ErrNilFragment	types.ErrNilFragment	0	0	0	0	0	0	
+types.go	var	ErrNotFound	types.ErrNotFound	7	3	3	44	0	0	markdown,paginate,sitemap
+types.go	var	ErrRequiredSlotUnfilled	types.ErrRequiredSlotUnfilled	0	0	0	0	0	0	
+types.go	var	ErrSelfErrorPage	types.ErrSelfErrorPage	0	0	0	0	0	0	
+types.go	var	ErrSlotOccupied	types.ErrSlotOccupied	0	0	0	0	0	0	
+types.go	var	ErrSlotResolved	types.ErrSlotResolved	0	0	0	0	0	0	
+types.go	var	ErrTemplateType	types.ErrTemplateType	0	0	0	6	0	0	
+types.go	var	ErrUnknownSlot	types.ErrUnknownSlot	0	0	0	0	0	0	
+types.go	alias	Fragment	types.Fragment	0	0	5	33	8	0	
+types.go	alias	GuardDecision	types.GuardDecision	2	1	0	4	0	0	session
+types.go	alias	GuardFunc	types.GuardFunc	2	1	1	0	0	0	session
+types.go	alias	Key	types.Key[T]	1	1	0	20	0	0	validate
+types.go	func	NewKey	[T any](name string) Key[T]	10	8	0	22	1	0	highlight,honeypot,i18n,jsonld,meta,ogimage,uploads,validate
+types.go	alias	Page	types.Page	1	1	19	35	4	0	validate
+types.go	alias	Redirect	types.Redirect	0	0	0	0	0	0	
+types.go	alias	Registrable	types.Registrable	0	0	0	2	0	0	
+types.go	alias	RenderContext	types.RenderContext	54	19	97	94	6	0	consent,feed,flash,highlight,honeypot,i18n,jsonld,markdown,meta,oauth,ogimage,paginate,robots,search,session,sitemap,tenant,uploads,validate
+types.go	alias	RenderStrategy	types.RenderStrategy	0	0	0	0	0	0	
+types.go	alias	RenderValues	types.Values	0	0	0	2	0	0	
+types.go	alias	SlotDefinition	types.SlotDefinition	0	0	0	0	0	0	
+types.go	alias	SlotResolverFunc	types.SlotResolverFunc	0	0	0	0	0	0	
+types.go	alias	StaticParamsFunc	types.StaticParamsFunc	2	2	0	2	0	0	markdown,paginate
+types.go	const	StrategyAuto	types.StrategyAuto	0	0	0	2	0	0	
+types.go	const	StrategyDynamic	types.StrategyDynamic	0	0	0	0	0	0	
+types.go	const	StrategyIncremental	types.StrategyIncremental	0	0	0	0	0	0	
+types.go	const	StrategyStatic	types.StrategyStatic	0	0	0	0	0	0	
+types.go	alias	TemplateTypeError	types.TemplateTypeError	0	0	0	12	0	0	
+url.go	var	ErrAmbiguousFragmentPath	types.ErrAmbiguousFragmentPath	0	0	0	2	0	0	
+url.go	var	ErrLocaleUnreachable	core.ErrLocaleUnreachable	0	0	0	4	0	0	
+url.go	var	ErrNoPathInLocale	types.ErrNoPathInLocale	0	0	0	5	0	0	
+url.go	var	ErrRouteParams	types.ErrRouteParams	0	0	0	10	0	0	
+url.go	var	ErrUnknownAsset	types.ErrUnknownAsset	0	0	0	4	0	0	
+url.go	var	ErrUnknownFragmentPath	types.ErrUnknownFragmentPath	4	2	0	4	0	0	live,websocket
+url.go	var	ErrUnknownRoute	types.ErrUnknownRoute	0	0	0	7	0	0	
