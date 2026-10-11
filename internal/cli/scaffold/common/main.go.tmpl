@@ -124,7 +124,10 @@ func newApp(devMode bool, port int) (*collage.App, error) {
 		},
 		PluginConfig: pluginConfig,
 		// plugins.go is managed by "collage plugin add" and "del"; the
-		// plugins' settings are in plugins-config.json.
+		// plugins' settings are in plugins-config.json. The plugins are
+		// listed at https://collage.furkanbaytekin.dev/en/docs/plugins/. A
+		// plugin that contributes to the document head reaches it through
+		// {{hoist "head"}} in the layout.
 		Plugins: plugins(),
 		Security: collage.SecurityConfig{
 			// Signs the forgery tokens forms carry. Unset, one is generated
