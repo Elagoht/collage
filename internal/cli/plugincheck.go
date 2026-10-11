@@ -21,7 +21,7 @@ import (
 func (c *CLI) runPluginCheck(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("plugin check", flag.ContinueOnError)
 	flags.SetOutput(c.stderr())
-	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage) }
+	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage()) }
 	release := flags.Bool("release", false, "also want a release tag at HEAD")
 	run := flags.Bool("run", false, "also run New as add would call it and check Name() against collage.json")
 

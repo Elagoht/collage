@@ -13,12 +13,10 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 	"unicode"
 
@@ -27,17 +25,23 @@ import (
 )
 
 // pluginUsage is "collage help plugin"'s own usage text.
-const pluginUsage = `Usage:
-  collage plugin add <owner/name | module path>[@version] [-dir dir]
-  collage plugin del <owner/name | module path> [-dir dir]
+func pluginUsage() string {
+	return `Usage:
+  collage plugin add <plugin>... [-dir dir]
+  collage plugin del <plugin>... [-dir dir]
   collage plugin check [-release] [-run] [dir]
 
-add fetches a plugin with go get, checks that it is one, and adds it to
-plugins.go and an empty section for it to plugins-config.json. owner/name means
-github.com/<owner>/collage-<name>; a full module path is used as written.
+A plugin is owner/name, which means github.com/<owner>/collage-<name>, or a
+full module path, used as written; add takes either with @version. @name is a
+bundle: the plugins listed for it below.
 
-del removes the plugin from plugins.go and plugins-config.json, printing a
-section that held settings, and runs go mod tidy.
+add fetches a plugin with go get, checks that it is one, and adds it to
+plugins.go and an empty section for it to plugins-config.json. del removes the
+plugin from plugins.go and plugins-config.json, printing a section that held
+settings, and runs go mod tidy. Given several, each is added or removed on its
+own: one that fails is put back, and the others stay. del removes a plugin
+after the ones it was given that require it, and passes over a bundle's
+plugins that are not there.
 
 check checks a plugin repository against the contract add enforces; with
 -release it also wants a release tag at HEAD, and with -run it calls New as add
@@ -47,8 +51,11 @@ when the application starts.
 
   -dir   the directory of the project's package main (default ".")
 
+Bundles:
+` + bundleUsage() + `
 The contract: ` + plugincontract.AuthorsURL + `
 `
+}
 
 // pluginValueFlags names the plugin subcommands' flags that consume a
 // following argument, for splitPositional.
@@ -75,12 +82,12 @@ func (c *CLI) runPlugin(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(c.stderr(), "collage: plugin: want a subcommand: add, del, check")
 		fmt.Fprintln(c.stderr())
-		fmt.Fprint(c.stderr(), pluginUsage)
+		fmt.Fprint(c.stderr(), pluginUsage())
 		return 2
 	}
 	switch args[0] {
 	case "help", "-h", "-help", "--help":
-		fmt.Fprint(c.stdout(), pluginUsage)
+		fmt.Fprint(c.stdout(), pluginUsage())
 		return 0
 	case "add":
 		return c.runPluginAdd(ctx, args[1:])
@@ -90,16 +97,16 @@ func (c *CLI) runPlugin(ctx context.Context, args []string) int {
 		return c.runPluginCheck(ctx, args[1:])
 	}
 	fmt.Fprintf(c.stderr(), "collage: plugin: unknown subcommand %q\n\n", args[0])
-	fmt.Fprint(c.stderr(), pluginUsage)
+	fmt.Fprint(c.stderr(), pluginUsage())
 	return 2
 }
 
-// runPluginAdd implements "plugin add": every file it touches is put back as
-// it was when a step fails.
+// runPluginAdd implements "plugin add": each plugin is added on its own, and
+// every file it touches is put back as it was when a step of it fails.
 func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("plugin add", flag.ContinueOnError)
 	flags.SetOutput(c.stderr())
-	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage) }
+	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage()) }
 	dir := flags.String("dir", ".", "the directory of the project's package main")
 
 	positional, flagArgs := splitPositional(args, pluginValueFlags)
@@ -110,59 +117,19 @@ func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 		return 2
 	}
 	positional = append(positional, flags.Args()...)
-	if len(positional) != 1 {
-		fmt.Fprintln(c.stderr(), "collage: plugin add: want one plugin: owner/name, or a module path")
+	if len(positional) == 0 {
+		fmt.Fprintln(c.stderr(), "collage: plugin add: want a plugin: owner/name, a module path, or a @bundle")
 		fmt.Fprintln(c.stderr())
 		flags.Usage()
 		return 2
 	}
-	ref, err := plugincontract.ParseRef(positional[0])
+	refs, err := expandRefs(positional)
 	if err != nil {
 		fmt.Fprintf(c.stderr(), "collage: plugin add: %v\n", err)
 		return 2
 	}
-
-	fail := func(err error) int {
-		fmt.Fprintf(c.stderr(), "collage: plugin add: %v\n", err)
-		return 1
-	}
-	if err := checkPackageMain(*dir); err != nil {
-		return fail(err)
-	}
-	if _, err := os.Stat(filepath.Join(*dir, "go.mod")); err != nil {
-		return fail(fmt.Errorf("no go.mod in %s", *dir))
-	}
-	snap, err := snapshot(
-		filepath.Join(*dir, "go.mod"),
-		filepath.Join(*dir, "go.sum"),
-		filepath.Join(*dir, "plugins.go"),
-		filepath.Join(*dir, "plugins-config.json"),
-	)
-	if err != nil {
-		return fail(err)
-	}
-
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	guard, commit := c.restoreUnlessCommitted("plugin add", snap)
-	defer guard()
-
-	added, err := c.pluginAdd(ctx, *dir, ref, map[string]bool{})
-	if err == nil {
-		err = c.goTidy(ctx, *dir)
-	}
-	if err != nil {
-		return fail(err)
-	}
-	commit()
-
-	c.printAdded(added)
-	if !callsPlugins(*dir) {
-		fmt.Fprintln(c.stdout())
-		fmt.Fprintln(c.stdout(), "plugins.go is new: give it to collage.New once —")
-		fmt.Fprintln(c.stdout(), "\tPlugins: plugins(),")
-	}
-	return 0
+	code, _ := c.addPlugins(ctx, *dir, refs)
+	return code
 }
 
 // restoreUnlessCommitted returns a guard to defer and a commit to call once
@@ -655,12 +622,12 @@ func (e delEntry) label() string {
 	return e.Import
 }
 
-// runPluginDel implements "plugin del": every file it touches is put back as
-// it was when a step fails.
+// runPluginDel implements "plugin del": each plugin is removed on its own, and
+// every file it touches is put back as it was when a step of it fails.
 func (c *CLI) runPluginDel(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("plugin del", flag.ContinueOnError)
 	flags.SetOutput(c.stderr())
-	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage) }
+	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage()) }
 	dir := flags.String("dir", ".", "the directory of the project's package main")
 
 	positional, flagArgs := splitPositional(args, pluginValueFlags)
@@ -671,65 +638,24 @@ func (c *CLI) runPluginDel(ctx context.Context, args []string) int {
 		return 2
 	}
 	positional = append(positional, flags.Args()...)
-	if len(positional) != 1 {
-		fmt.Fprintln(c.stderr(), "collage: plugin del: want one plugin: owner/name, or a module path")
+	if len(positional) == 0 {
+		fmt.Fprintln(c.stderr(), "collage: plugin del: want a plugin: owner/name, a module path, or a @bundle")
 		fmt.Fprintln(c.stderr())
 		flags.Usage()
 		return 2
 	}
-	ref, err := plugincontract.ParseRef(positional[0])
+	refs, err := expandRefs(positional)
 	if err != nil {
 		fmt.Fprintf(c.stderr(), "collage: plugin del: %v\n", err)
 		return 2
 	}
-	fail := func(err error) int {
-		fmt.Fprintf(c.stderr(), "collage: plugin del: %v\n", err)
-		return 1
+	for _, r := range refs {
+		if r.ref.Version != "" {
+			fmt.Fprintf(c.stderr(), "collage: plugin del: %s@%s: del takes no version\n", r.label, r.ref.Version)
+			return 2
+		}
 	}
-	if ref.Version != "" {
-		return fail(fmt.Errorf("%s: del takes no version", positional[0]))
-	}
-	if err := checkPackageMain(*dir); err != nil {
-		return fail(err)
-	}
-	pluginsPath := filepath.Join(*dir, "plugins.go")
-	src, err := readIfExists(pluginsPath)
-	if err != nil {
-		return fail(err)
-	}
-	if src == nil {
-		return fail(fmt.Errorf("no plugins.go in %s; nothing to remove", *dir))
-	}
-	snap, err := snapshot(
-		filepath.Join(*dir, "go.mod"),
-		filepath.Join(*dir, "go.sum"),
-		pluginsPath,
-		filepath.Join(*dir, "plugins-config.json"),
-	)
-	if err != nil {
-		return fail(err)
-	}
-
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	guard, commit := c.restoreUnlessCommitted("plugin del", snap)
-	defer guard()
-
-	removed, settings, err := c.pluginDel(ctx, *dir, ref, src)
-	if err == nil {
-		err = c.goTidy(ctx, *dir)
-	}
-	if err != nil {
-		return fail(err)
-	}
-	commit()
-
-	fmt.Fprintf(c.stdout(), "removed %s\n", removed)
-	if settings != "" {
-		fmt.Fprintln(c.stdout(), "its settings were:")
-		fmt.Fprintln(c.stdout(), settings)
-	}
-	return 0
+	return c.delPlugins(ctx, *dir, refs)
 }
 
 // pluginDel removes the plugin ref names from plugins.go (src is its content)
@@ -773,7 +699,7 @@ func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref,
 		if len(have) > 0 {
 			shown = strings.Join(have, ", ")
 		}
-		return "", "", fmt.Errorf("%s is not in plugins.go; it has: %s", firstNonEmpty(ref.Short, ref.Path), shown)
+		return "", "", &notAddedError{name: firstNonEmpty(ref.Short, ref.Path), have: shown}
 	}
 	t := entries[target]
 	if ref.Short == "" && t.Err == nil {
@@ -803,7 +729,7 @@ func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref,
 		}
 		for _, r := range e.Requires {
 			if r == name {
-				return "", "", fmt.Errorf("%s requires %s; remove it first", e.label(), t.label())
+				return "", "", &requiredError{by: e.label(), target: t.label()}
 			}
 		}
 	}

@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
 
 // ErrMissingProjectName is returned by the "new" command when it is called
@@ -22,7 +25,7 @@ var ErrUnknownTemplate = errors.New("collage: unknown template")
 var ErrTargetNotEmpty = errors.New("collage: target directory is not empty")
 
 // newUsage is "collage help new"'s own usage text.
-const newUsage = `Usage: collage new <name> [--template minimal|demo] [--dir path] [--module path] [--force]
+const newUsage = `Usage: collage new <name> [--template minimal|demo] [--with plugins] [--dir path] [--module path] [--force]
 
 Scaffolds a new, runnable collage project named <name>.
 
@@ -34,6 +37,10 @@ Scaffolds a new, runnable collage project named <name>.
             .gitignore and a README
 
   --template name   the project to scaffold: minimal or demo (default: minimal)
+  --with plugins    plugins to add once it is scaffolded, as "collage plugin add"
+                    would: @bundles and plugins, separated by commas or given
+                    in more than one --with; "collage help plugin" lists the
+                    bundles
   --dir path        directory to scaffold into (default: ./<name>)
   --module path     the scaffolded go.mod's module path (default: <name>)
   --force           scaffold into a non-empty directory anyway
@@ -43,10 +50,47 @@ Flags take one dash or two: -template and --template are the same flag.
 
 // newValueFlags names the "new" command's flags that consume a following
 // argument, for splitPositional.
-var newValueFlags = map[string]bool{"dir": true, "module": true, "template": true}
+var newValueFlags = map[string]bool{"dir": true, "module": true, "template": true, "with": true}
+
+// withFlag is --with: every value given, each split at its commas.
+type withFlag []string
+
+func (w *withFlag) String() string { return strings.Join(*w, ",") }
+
+func (w *withFlag) Set(v string) error {
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			*w = append(*w, p)
+		}
+	}
+	return nil
+}
+
+// prepareWith readies a project new has just scaffolded for "plugin add":
+// it requires the collage this CLI is, so a plugin built against an older
+// one does not pull the project back to it. A variable so the tests can point
+// the project at this repository instead.
+var prepareWith = func(ctx context.Context, c *CLI, dir string) error {
+	if _, errOut, err := c.goOutput(ctx, dir, "get", "--", "github.com/Elagoht/collage@"+collageQuery(Version)); err != nil {
+		return goError(errOut, err)
+	}
+	return nil
+}
+
+// collageQuery is the version of collage to ask go get for, given this CLI's
+// version: the release it is, or latest for a build that is not one — a
+// checkout, a pseudo-version, or a tree with changes (+dirty) — which go get
+// could not fetch.
+func collageQuery(version string) string {
+	v := "v" + version
+	if version == "devel" || strings.Contains(version, "+") || plugincontract.IsPseudoVersion(v) {
+		return "latest"
+	}
+	return v
+}
 
 // runNew implements the "new" command.
-func (c *CLI) runNew(args []string) int {
+func (c *CLI) runNew(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	fs.SetOutput(c.stderr())
 	fs.Usage = func() { fmt.Fprint(c.stderr(), newUsage) }
@@ -54,6 +98,8 @@ func (c *CLI) runNew(args []string) int {
 	module := fs.String("module", "", "the scaffolded go.mod's module path")
 	force := fs.Bool("force", false, "scaffold into a non-empty directory anyway")
 	template := fs.String("template", variantMinimal, "the project to scaffold: minimal or demo")
+	var with withFlag
+	fs.Var(&with, "with", "plugins to add: @bundles and plugins, comma-separated")
 
 	// The stdlib flag package stops parsing at the first non-flag argument, so
 	// a flag placed after <name> — which is exactly how newUsage documents
@@ -81,6 +127,21 @@ func (c *CLI) runNew(args []string) int {
 		return 2
 	}
 
+	withGiven := false
+	fs.Visit(func(f *flag.Flag) { withGiven = withGiven || f.Name == "with" })
+	if withGiven && len(with) == 0 {
+		fmt.Fprintln(c.stderr(), "collage: new: --with: want a plugin or a @bundle")
+		return 2
+	}
+	var refs []namedRef
+	if len(with) > 0 {
+		var err error
+		if refs, err = expandRefs(with); err != nil {
+			fmt.Fprintf(c.stderr(), "collage: new: --with: %v\n", err)
+			return 2
+		}
+	}
+
 	targetDir := *dir
 	if targetDir == "" {
 		targetDir = filepath.Join(".", name)
@@ -101,14 +162,26 @@ func (c *CLI) runNew(args []string) int {
 
 	out := c.stdout()
 	fmt.Fprintf(out, "Scaffolded %q in %s\n\n", name, targetDir)
+	code, tidied := 0, false
+	if len(refs) > 0 {
+		if err := prepareWith(ctx, c, targetDir); err != nil {
+			fmt.Fprintf(c.stderr(), "collage: new: --with: %v\n", err)
+			code = 1
+		} else {
+			code, tidied = c.addPlugins(ctx, targetDir, refs)
+		}
+		fmt.Fprintln(out)
+	}
 	fmt.Fprintln(out, "Next steps:")
 	fmt.Fprintf(out, "  cd %s\n", targetDir)
-	fmt.Fprintln(out, "  go mod tidy")
+	if !tidied {
+		fmt.Fprintln(out, "  go mod tidy")
+	}
 	if variant == variantDemo {
 		fmt.Fprintln(out, "  cp .env.example .env.development")
 	}
 	fmt.Fprintln(out, "  collage dev")
-	return 0
+	return code
 }
 
 // splitPositional splits args into its non-flag arguments and its flags (plus
