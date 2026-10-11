@@ -296,7 +296,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	// still reaches it — which is the whole reason a marker is written rather than
 	// the content itself.
 	var hoistEnds map[string]int
-	html, hoistEnds = resolveHoistsAt(html, state.hoistToken, types.HoistedOf(rc))
+	html, hoistEnds = resolveHoistsAt(html, state.hoistToken, types.RenderHoisted(rc))
 	total := time.Since(start)
 
 	// Reported whether or not the render succeeded: a render that failed still

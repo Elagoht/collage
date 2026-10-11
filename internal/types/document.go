@@ -129,7 +129,7 @@ func (d *Document) Validate() error {
 		return fmt.Errorf("%w: document %q", ErrInvalidTTL, d.Name)
 	}
 	for _, redirect := range d.Redirects {
-		if err := redirect.Validate(); err != nil {
+		if err := ValidateRedirect(redirect); err != nil {
 			return fmt.Errorf("collage: document %q: %w", d.Name, err)
 		}
 	}

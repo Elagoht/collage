@@ -17,7 +17,6 @@ and `host.Use(...)` compiles as it was.
   `ErrInvalidOutDir` is `ErrEmptyOutDir`.
 - **`SkipRecord.Page` and `WarningRecord.Page` are `.Name`.**
 - **`ErrDuplicateOutputPath` is `ErrOutputPathCollision`.**
-- **`Redirect.EffectiveStatus` is removed.** A zero `Status` still answers 302.
 
 **The `App` and the `Host`**
 
@@ -58,6 +57,9 @@ and `host.Use(...)` compiles as it was.
 - **`VariedContext` is gone and `Varied` takes a context:** `Varied(ctx, h)`.
 - **`Redirect.StatusCode` is `Redirect.Status`,** and `0` means `302`.
   `Redirect.Permanent` is removed; `WithPermanentRedirect` writes `301`.
+- **`Redirect.EffectiveStatus` and `Redirect.Validate` are removed.** A zero
+  `Status` still answers 302; a page's or document's `Validate`, and registration,
+  check its redirects.
 - **`SlotResolverFunc` is `func(ctx, rc)`.** It receives the render's context.
 - **`WithSlot(name, required, allowMultiple bool)` is `WithSlot(name, rules ...SlotRule)`,**
   with `SlotRequired` and `SlotSingle`.

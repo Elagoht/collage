@@ -504,7 +504,7 @@ func TestRouter_RouteTable(t *testing.T) {
 }
 
 // TestRouter_Redirect_SubstitutedValueIsEscaped is the open-redirect regression:
-// Redirect.Validate only ever sees the To *template*, and Match decodes each path
+// ValidateRedirect only ever sees the To *template*, and Match decodes each path
 // segment on its own, so a captured value carrying "/", "\", "?", "#", or CR/LF used
 // to land in the destination — and therefore in the Location header — as structure
 // rather than as text. Every row here is a destination that must come out escaped.

@@ -29,7 +29,7 @@ func TestRedirectStatus(t *testing.T) {
 	}
 }
 
-func TestRedirect_Validate(t *testing.T) {
+func TestValidateRedirect(t *testing.T) {
 	tests := []struct {
 		name    string
 		r       *Redirect
@@ -47,7 +47,7 @@ func TestRedirect_Validate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.r.Validate()
+			err := ValidateRedirect(tt.r)
 			if tt.wantErr == nil {
 				if err != nil {
 					t.Fatalf("Validate() error = %v, want nil", err)

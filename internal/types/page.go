@@ -44,10 +44,10 @@ func RedirectStatus(r *Redirect) int {
 	return 302
 }
 
-// Validate reports whether r is well-formed: From and To are both non-empty and
-// start with "/" (ErrInvalidPath), and Status is 0 or one of 301, 302, 307, 308
+// ValidateRedirect reports whether r is well-formed: From and To are both non-empty
+// and start with "/" (ErrInvalidPath), and Status is 0 or one of 301, 302, 307, 308
 // (ErrInvalidRedirectStatus). A control character in either is ErrInvalidRedirect.
-func (r *Redirect) Validate() error {
+func ValidateRedirect(r *Redirect) error {
 	if err := RedirectTextError(r.From, r.To); err != nil {
 		return err
 	}
@@ -234,7 +234,7 @@ func (p *Page) Validate() error {
 		return fmt.Errorf("%w: page %q", ErrInvalidTTL, p.Name)
 	}
 	for _, redirect := range p.Redirects {
-		if err := redirect.Validate(); err != nil {
+		if err := ValidateRedirect(redirect); err != nil {
 			return err
 		}
 	}
