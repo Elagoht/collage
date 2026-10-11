@@ -561,16 +561,17 @@ import and its section, prints the section when it held settings, and runs
 - when it was given a module path and the plugin's own `collage.json` cannot be
   read, since the name of its section is then unknown.
 
-A module with no `collage.json` at all, wired by hand, requires nothing and
-stops nothing. A module the module cache lacks, as after a fresh clone, is
+A module with no `collage.json` at all, or a package of your own module, wired
+by hand, requires nothing and stops nothing. A module the module cache lacks, as after a fresh clone, is
 fetched to read its manifest. Like `add`, `del` puts every file back when a
 step fails.
 
 **`check`** checks a plugin repository (`dir`, default `.`) against the
-contract `add` enforces, without fetching anything:
+contract `add` enforces. The check itself reads only the repository:
 
 - `-release` also wants a release tag at `HEAD`, which needs git;
-- `-run` builds a throwaway program in the repository with `go run`. It calls
+- `-run` builds a throwaway program in the repository with `go run`, which
+  fetches what the module cache lacks. It calls
   `New` exactly as `add` would write it, as a `collage.Plugin`, and checks that
   `Name()` is the manifest's `name`. It fails on a build error, a panic in
   `New` or a different name. It does not configure or start the plugin, so a

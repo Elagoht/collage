@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
@@ -56,10 +57,14 @@ func (c *CLI) locateModule(ctx context.Context, dir, path string) (moduleInfo, e
 }
 
 // entryManifest is the manifest of the module importPath, as the project at
-// dir requires it. found is false when the module has no collage.json: an
-// entry wired by hand, which has no name and requires nothing. An error says
-// the manifest could not be read at all.
+// dir requires it. found is false when the module has no collage.json, or
+// when the import is a package of the project's own module: an entry wired by
+// hand, which has no name and requires nothing. An error says the manifest
+// could not be read at all.
 func (c *CLI) entryManifest(ctx context.Context, dir, importPath string) (m plugincontract.Manifest, found bool, err error) {
+	if own, err := readModulePath(dir); err == nil && (importPath == own || strings.HasPrefix(importPath, own+"/")) {
+		return plugincontract.Manifest{}, false, nil
+	}
 	info, err := c.locateModule(ctx, dir, importPath)
 	if err != nil {
 		return plugincontract.Manifest{}, false, err

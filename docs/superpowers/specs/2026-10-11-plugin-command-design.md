@@ -161,7 +161,8 @@ func plugins() []collage.Plugin {
 - An import always carries an explicit name, so the call and the import read
   alike.
 - The name is the package name declared in the plugin's source.
-- If that clashes with another import in the file, the name becomes
+- If that clashes with another import in the file, a name the file declares, or
+  a package-level name another file of the package declares, the name becomes
   `<owner><Name>`, for example `elagohtConsent`. A further clash appends a number.
 
 **Order.**
@@ -238,6 +239,13 @@ Nothing is written until the module has passed its checks.
    - No match is an error that lists the plugins `plugins.go` has.
 2. **Check dependents.** If another entry's manifest `requires` this plugin,
    refuse: `elagoht/websocket requires elagoht/live; remove it first`.
+   - A module the module cache lacks is downloaded to read its manifest.
+   - If another entry's `collage.json` cannot be read, refuse, naming the module
+     and the reason: nothing proves it does not require this plugin. A module
+     with no `collage.json`, or a package of the project's own module, requires
+     nothing.
+   - A full ref whose own `collage.json` cannot be read is refused too, since
+     the name of its config section is unknown.
 3. **Edit the files.**
    - Remove the module's entries and import from `plugins.go`.
    - Remove its section from `plugins-config.json`, also as a textual edit that

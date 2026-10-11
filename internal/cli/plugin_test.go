@@ -732,3 +732,46 @@ func TestPrintAdded_SetupNoteSanitised(t *testing.T) {
 		t.Fatalf("note = %q", got)
 	}
 }
+
+// A plugin the application declares itself, in a package of its own module,
+// has no manifest to read and stops no del.
+func TestPluginDel_AppLocalPlugin(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t, fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""))
+	if code, _, e := pluginCmd(t, dir, "add", "acme/greet"); code != 0 {
+		t.Fatal(e)
+	}
+	writeFiles(t, dir, map[string]string{"myplugin/plugin.go": `package myplugin
+
+import (
+	"context"
+
+	"github.com/Elagoht/collage/pkg/collage"
+)
+
+type Plugin struct{}
+
+func New() *Plugin { return &Plugin{} }
+
+func (*Plugin) Name() string                   { return "me/mine" }
+func (*Plugin) Version() string                { return "0" }
+func (*Plugin) Init(context.Context, collage.Host) error { return nil }
+func (*Plugin) Shutdown(context.Context) error { return nil }
+`})
+	f, err := parsePluginsFile([]byte(readFile(t, dir, "plugins.go")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.insert("pluginapp/myplugin", "myplugin", func(id string) string { return id + ".New()" }, 1, nil)
+	src, err := f.format()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, dir, map[string]string{"plugins.go": string(src)})
+	goBuild(t, dir)
+	t.Setenv("GOMODCACHE", t.TempDir())
+	if code, out, e := pluginCmd(t, dir, "del", "acme/greet"); code != 0 {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	goBuild(t, dir)
+}
