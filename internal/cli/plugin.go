@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -57,6 +58,11 @@ type addedPlugin struct {
 	// ConfigAdded is whether plugins-config.json gained a section for it;
 	// false when one was already there and was kept.
 	ConfigAdded bool
+	// Already is whether plugins.go had it before: only its version moved.
+	Already bool
+	// Moved is whether, for a plugin already there, go.mod's requirement
+	// of it changed.
+	Moved bool
 }
 
 // runPlugin implements the "plugin" command: it dispatches its subcommand.
@@ -164,18 +170,21 @@ func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 }
 
 // pluginAdd fetches ref into the project at dir, checks it against the
-// contract, and adds it to plugins.go and plugins-config.json. It changes
-// files; the caller snapshots them first and restores them on an error.
-// visiting holds the plugins being added further up a chain of requires.
+// contract, adds the plugins it requires, then adds it to plugins.go and
+// plugins-config.json; a plugin already in plugins.go keeps its entry, and
+// only its version moves. It changes files; the caller snapshots them first
+// and restores them on an error. visiting holds the manifest names of the
+// plugins being added further up a chain of requires.
 func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref, visiting map[string]bool) ([]addedPlugin, error) {
-	version := ref.Version
-	if version == "" {
-		version = "latest"
+	gomod, err := os.ReadFile(filepath.Join(dir, "go.mod"))
+	if err != nil {
+		return nil, err
 	}
-	if _, errOut, err := c.goOutput(ctx, dir, "get", "--", ref.Path+"@"+version); err != nil {
-		return nil, goError(errOut, err)
+	path, err := c.goGet(ctx, dir, ref)
+	if err != nil {
+		return nil, err
 	}
-	info, err := c.listModule(ctx, dir, ref.Path)
+	info, err := c.listModule(ctx, dir, path)
 	if err != nil {
 		return nil, err
 	}
@@ -191,6 +200,32 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 		return nil, fmt.Errorf("%s %s is not a release; tag one (git tag v0.1.0) and push it", info.Path, info.Version)
 	}
 
+	name := p.Manifest.Name
+	visiting[name] = true
+	defer delete(visiting, name)
+	var added []addedPlugin
+	for _, req := range p.Manifest.Requires {
+		present, err := c.attributable(ctx, dir, req)
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			continue
+		}
+		if visiting[req] {
+			return nil, &cycleError{chain: []string{name, req}, closing: req}
+		}
+		more, err := c.pluginAdd(ctx, dir, plugincontract.Ref{Path: plugincontract.ConventionalPath(req), Short: req}, visiting)
+		var cycle *cycleError
+		if errors.As(err, &cycle) && !cycle.closed() {
+			cycle.chain = append([]string{name}, cycle.chain...)
+		}
+		if err != nil {
+			return nil, err
+		}
+		added = append(added, more...)
+	}
+
 	pluginsPath := filepath.Join(dir, "plugins.go")
 	src, err := readIfExists(pluginsPath)
 	if err != nil {
@@ -199,6 +234,11 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 	f, err := parsePluginsFile(src)
 	if err != nil {
 		return nil, err
+	}
+	if f.has(info.Path) {
+		a := addedPlugin{Name: name, Version: info.Version, Already: true}
+		a.Moved = requiredVersion(gomod, info.Path) != info.Version
+		return append(added, a), nil
 	}
 	var orders []int
 	for _, e := range f.entries() {
@@ -218,7 +258,7 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 	if err != nil {
 		return nil, err
 	}
-	config, configAdded, err := addConfigSection(config, p.Manifest.Name)
+	config, configAdded, err := addConfigSection(config, name)
 	if err != nil {
 		return nil, err
 	}
@@ -228,13 +268,114 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 		}
 	}
 
-	return []addedPlugin{{
-		Name:        p.Manifest.Name,
+	return append(added, addedPlugin{
+		Name:        name,
 		Version:     info.Version,
 		Call:        p.Constructor.Call(ident),
 		Setup:       p.Manifest.Setup,
 		ConfigAdded: configAdded,
-	}}, nil
+	}), nil
+}
+
+// declaredPath is the go tool's complaint that a module's go.mod names it
+// differently from the path it was fetched by.
+var declaredPath = regexp.MustCompile(`module declares its path as: (\S+)`)
+
+// goGet runs go get for ref and returns the module path it is known by. A
+// module fetched by a path differing only in case from the one its go.mod
+// declares (owner/name is lowercased; a GitHub owner may not be) is fetched
+// again by the declared path, once.
+func (c *CLI) goGet(ctx context.Context, dir string, ref plugincontract.Ref) (string, error) {
+	version := ref.Version
+	if version == "" {
+		version = "latest"
+	}
+	_, errOut, err := c.goOutput(ctx, dir, "get", "--", ref.Path+"@"+version)
+	if err == nil {
+		return ref.Path, nil
+	}
+	m := declaredPath.FindSubmatch(errOut)
+	if m == nil || !strings.EqualFold(string(m[1]), ref.Path) {
+		return "", goError(errOut, err)
+	}
+	declared := string(m[1])
+	if _, errOut2, err2 := c.goOutput(ctx, dir, "get", "--", declared+"@"+version); err2 != nil {
+		return "", fmt.Errorf("%s declares its module path as %s, and fetching that failed: %w", ref.Path, declared, goError(errOut2, err2))
+	}
+	return declared, nil
+}
+
+// attributable reports whether plugins.go already has an entry for the plugin
+// named name: one importing its conventional path, in any case, or one whose
+// module's manifest gives that name.
+func (c *CLI) attributable(ctx context.Context, dir, name string) (bool, error) {
+	src, err := readIfExists(filepath.Join(dir, "plugins.go"))
+	if err != nil || src == nil {
+		return false, err
+	}
+	f, err := parsePluginsFile(src)
+	if err != nil {
+		return false, err
+	}
+	conventional := plugincontract.ConventionalPath(name)
+	entries := f.entries()
+	for _, e := range entries {
+		if strings.EqualFold(e.Import, conventional) {
+			return true, nil
+		}
+	}
+	for _, e := range entries {
+		info, err := c.listModule(ctx, dir, e.Import)
+		if err != nil {
+			continue
+		}
+		if m, err := plugincontract.ReadManifest(info.Dir); err == nil && m.Name == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// cycleError is a chain of requires that comes back to a plugin on it. chain
+// grows at the front as the error goes up the chain, until it starts with
+// closing.
+type cycleError struct {
+	chain   []string
+	closing string
+}
+
+func (e *cycleError) closed() bool { return len(e.chain) >= 2 && e.chain[0] == e.closing }
+
+func (e *cycleError) Error() string { return "cycle: " + strings.Join(e.chain, " requires ") }
+
+// requiredVersion is the version go.mod's text requires of module path, or "".
+func requiredVersion(gomod []byte, path string) string {
+	inBlock := false
+	for _, line := range strings.Split(string(gomod), "\n") {
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) == 0:
+			continue
+		case inBlock && fields[0] == ")":
+			inBlock = false
+			continue
+		case !inBlock && fields[0] == "require":
+			if len(fields) == 2 && fields[1] == "(" {
+				inBlock = true
+				continue
+			}
+			fields = fields[1:]
+		case !inBlock:
+			continue
+		}
+		if len(fields) == 2 && strings.EqualFold(strings.Trim(fields[0], `"`), path) {
+			return fields[1]
+		}
+	}
+	return ""
 }
 
 // pluginOrder is the manifest order of the module importPath in the project
@@ -274,6 +415,14 @@ func (c *CLI) printAdded(added []addedPlugin) {
 	for i, a := range added {
 		if i > 0 {
 			fmt.Fprintln(w)
+		}
+		if a.Already {
+			if a.Moved {
+				fmt.Fprintf(w, "%s is already added; now at %s\n", a.Name, a.Version)
+			} else {
+				fmt.Fprintf(w, "%s is already added\n", a.Name)
+			}
+			continue
 		}
 		fmt.Fprintf(w, "added %s %s\n", a.Name, a.Version)
 		config := strconv.Quote(a.Name) + ": {}"

@@ -124,7 +124,7 @@ func TestPluginAdd_PseudoVersionRefused(t *testing.T) {
 	if code != 1 || !strings.Contains(errOut, "collage: plugin add: github.com/acme/collage-greet "+pseudo+" is not a release; tag one (git tag v0.1.0) and push it") {
 		t.Fatalf("code %d\n%s", code, errOut)
 	}
-	if readFile(t, dir, "go.mod") != gomod {
+	if got := readFile(t, dir, "go.mod"); got != gomod || strings.Contains(got, "collage-greet") {
 		t.Error("go.mod changed")
 	}
 	if _, err := os.Stat(filepath.Join(dir, "plugins.go")); err == nil {
@@ -323,5 +323,146 @@ func TestPluginAdd_IgnoredMainIsNoMain(t *testing.T) {
 	code, _, errOut := pluginCmd(t, dir, "add", "acme/greet")
 	if code != 1 || !strings.Contains(errOut, "holds no package main") {
 		t.Fatalf("code %d\n%s", code, errOut)
+	}
+}
+
+func TestPluginAdd_Version(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""),
+		fixturePlugin("acme", "greet", "v0.2.0", "func New() *Plugin { return &Plugin{} }", ""),
+	)
+	if code, _, e := pluginCmd(t, dir, "add", "acme/greet@v0.1.0"); code != 0 {
+		t.Fatal(e)
+	}
+	code, out, e := pluginCmd(t, dir, "add", "acme/greet")
+	if code != 0 || !strings.Contains(out, "acme/greet is already added; now at v0.2.0") {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	if strings.Count(readFile(t, dir, "plugins.go"), "greet.New()") != 1 {
+		t.Fatal("a second entry")
+	}
+	if !strings.Contains(readFile(t, dir, "go.mod"), "github.com/acme/collage-greet v0.2.0") {
+		t.Fatal("go.mod not upgraded")
+	}
+	if code, out, _ := pluginCmd(t, dir, "add", "acme/greet"); code != 0 || !strings.Contains(out, "acme/greet is already added") || strings.Contains(out, "now at") {
+		t.Fatalf("no-op add: %d %s", code, out)
+	}
+	goBuild(t, dir)
+}
+
+func TestPluginAdd_Requires(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "base", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""),
+		fixturePlugin("acme", "ext", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"requires": ["acme/base"], "order": -1`),
+		fixturePlugin("acme", "loop-a", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"requires": ["acme/loop-b"]`),
+		fixturePlugin("acme", "loop-b", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"requires": ["acme/loop-a"]`),
+	)
+	code, out, e := pluginCmd(t, dir, "add", "acme/ext")
+	if code != 0 {
+		t.Fatal(e)
+	}
+	wantInOrder(t, out, "added acme/base", "added acme/ext")
+	wantInOrder(t, readFile(t, dir, "plugins.go"), "ext.New(),", "base.New(),") // ext's order -1 puts it first
+	goBuild(t, dir)
+	before := projectFiles(t, dir)
+	code, _, e = pluginCmd(t, dir, "add", "acme/loop-a")
+	if code != 1 || !strings.Contains(e, "collage: plugin add: cycle: acme/loop-a requires acme/loop-b requires acme/loop-a") {
+		t.Fatalf("cycle: %d %s", code, e)
+	}
+	wantSameFiles(t, dir, before)
+}
+
+// A required plugin already in plugins.go is not added again.
+func TestPluginAdd_RequiresAlreadyPresent(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "base", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""),
+		fixturePlugin("acme", "ext", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"requires": ["acme/base"]`),
+	)
+	if code, _, e := pluginCmd(t, dir, "add", "acme/base"); code != 0 {
+		t.Fatal(e)
+	}
+	code, out, e := pluginCmd(t, dir, "add", "acme/ext")
+	if code != 0 || strings.Contains(out, "base") {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	if strings.Count(readFile(t, dir, "plugins.go"), "base.New()") != 1 {
+		t.Fatal("base added twice")
+	}
+}
+
+// Review Focus 4: typed in mixed case, served lowercase, declared mixed.
+func TestPluginAdd_MixedCase(t *testing.T) {
+	needGo(t)
+	m := fixturePlugin("Acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", "")
+	m.Files["collage.json"] = `{"name": "acme/greet"}` + "\n"
+	m.Files["plugin.go"] = strings.Replace(m.Files["plugin.go"], `"Acme/greet"`, `"acme/greet"`, 1)
+	lower := m
+	lower.Served = "github.com/acme/collage-greet"
+	dir := pluginProject(t, m, lower)
+	code, out, e := pluginCmd(t, dir, "add", "Acme/Greet")
+	if code != 0 || !strings.Contains(readFile(t, dir, "go.mod"), "github.com/Acme/collage-greet v0.1.0") {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	if !strings.Contains(readFile(t, dir, "plugins.go"), `"github.com/Acme/collage-greet"`) {
+		t.Fatal("plugins.go does not import the declared path")
+	}
+	goBuild(t, dir)
+}
+
+// failureRecorder runs go for real and records each go subcommand that failed.
+type failureRecorder struct{ failed *[]string }
+
+func (r failureRecorder) Run(ctx context.Context, dir string, env []string, stdout, stderr io.Writer, name string, args ...string) error {
+	err := execRunner{}.Run(ctx, dir, env, stdout, stderr, name, args...)
+	if err != nil && len(args) > 0 {
+		*r.failed = append(*r.failed, strings.Join(args[:min(2, len(args))], " "))
+	}
+	return err
+}
+
+// Review Focus 3: go mod tidy fails after every file was written. The fixture
+// has a file behind a build tag importing a package that does not exist: go
+// get loads packages with the default tags and succeeds, tidy considers every
+// tag and fails.
+func TestPluginAdd_TidyFailureRestores(t *testing.T) {
+	needGo(t)
+	bad := fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", "")
+	bad.Files["extra.go"] = "//go:build collageextra\n\npackage greet\n\nimport _ \"github.com/Elagoht/collage/pkg/nosuchpackage\"\n"
+	dir := pluginProject(t, bad)
+	before := projectFiles(t, dir)
+	var failed []string
+	c, out, errOut := testCLI()
+	c.Runner = failureRecorder{failed: &failed}
+	if code := c.Run(context.Background(), []string{"plugin", "add", "acme/greet", "-dir", dir}); code != 1 {
+		t.Fatalf("add succeeded with a broken dependency: %s%s", out, errOut)
+	}
+	if len(failed) != 1 || failed[0] != "mod tidy" {
+		t.Fatalf("failed go commands = %q, want only mod tidy\n%s", failed, errOut)
+	}
+	wantSameFiles(t, dir, before)
+}
+
+func TestRequiredVersion(t *testing.T) {
+	gomod := []byte("module x\n\ngo 1.26\n\nrequire github.com/a/one v1.0.0\n\nrequire (\n\tgithub.com/a/two v0.2.0 // indirect\n\t\"github.com/a/three\" v0.3.0\n)\n\nreplace github.com/a/four => github.com/a/four v0.4.0\n")
+	for path, want := range map[string]string{
+		"github.com/a/one": "v1.0.0", "github.com/A/Two": "v0.2.0", "github.com/a/three": "v0.3.0",
+		"github.com/a/four": "", "x": "",
+	} {
+		if got := requiredVersion(gomod, path); got != want {
+			t.Errorf("%s = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestCycleError(t *testing.T) {
+	self := &cycleError{chain: []string{"a/a", "a/a"}, closing: "a/a"}
+	if !self.closed() || self.Error() != "cycle: a/a requires a/a" {
+		t.Errorf("%v %s", self.closed(), self)
+	}
+	if (&cycleError{chain: []string{"a/b", "a/a"}, closing: "a/a"}).closed() {
+		t.Error("an open chain reported closed")
 	}
 }

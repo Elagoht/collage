@@ -60,7 +60,9 @@ func fakeProxy(t *testing.T, mods ...fakeModule) {
 		var zbuf bytes.Buffer
 		zw := zip.NewWriter(&zbuf)
 		for name, body := range files {
-			w, err := zw.Create(m.Path + "@" + m.Version + "/" + name)
+			// A proxy's zip is named for the path it was asked for; the module's
+			// own path is the one its go.mod declares.
+			w, err := zw.Create(served + "@" + m.Version + "/" + name)
 			if err != nil {
 				t.Fatal(err)
 			}
