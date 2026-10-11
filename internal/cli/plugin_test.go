@@ -178,3 +178,21 @@ func TestPlugin_Usage(t *testing.T) {
 		t.Errorf("plugin help = %d\n%s", code, out)
 	}
 }
+
+// An existing entry's order is read from its manifest: a plugin of a lower
+// order goes before it.
+func TestPluginAdd_Order(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"order": 10`),
+		fixturePlugin("acme", "early", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"order": 5`),
+		fixturePlugin("acme", "late", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"order": 20`),
+	)
+	for _, ref := range []string{"acme/greet", "acme/late", "acme/early"} {
+		if code, out, errOut := pluginCmd(t, dir, "add", ref); code != 0 {
+			t.Fatalf("add %s = %d\n%s%s", ref, code, out, errOut)
+		}
+	}
+	wantInOrder(t, readFile(t, dir, "plugins.go"), "early.New(),", "greet.New(),", "late.New(),")
+	goBuild(t, dir)
+}

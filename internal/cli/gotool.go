@@ -26,7 +26,7 @@ type moduleInfo struct {
 // listModule is "go list -m -json path" in dir: where the module's source sits
 // in the module cache, and at which version.
 func (c *CLI) listModule(ctx context.Context, dir, path string) (moduleInfo, error) {
-	out, errOut, err := c.goOutput(ctx, dir, "list", "-m", "-json", path)
+	out, errOut, err := c.goOutput(ctx, dir, "list", "-m", "-json", "--", path)
 	if err != nil {
 		return moduleInfo{}, errors.New(string(bytes.TrimSpace(errOut)))
 	}
