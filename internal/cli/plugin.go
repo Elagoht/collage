@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -68,7 +69,7 @@ type addedPlugin struct {
 // runPlugin implements the "plugin" command: it dispatches its subcommand.
 func (c *CLI) runPlugin(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(c.stderr(), "collage: plugin: want a subcommand: add")
+		fmt.Fprintln(c.stderr(), "collage: plugin: want a subcommand: add, del")
 		fmt.Fprintln(c.stderr())
 		fmt.Fprint(c.stderr(), pluginUsage)
 		return 2
@@ -79,6 +80,8 @@ func (c *CLI) runPlugin(ctx context.Context, args []string) int {
 		return 0
 	case "add":
 		return c.runPluginAdd(ctx, args[1:])
+	case "del":
+		return c.runPluginDel(ctx, args[1:])
 	}
 	fmt.Fprintf(c.stderr(), "collage: plugin: unknown subcommand %q\n\n", args[0])
 	fmt.Fprint(c.stderr(), pluginUsage)
@@ -133,23 +136,10 @@ func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 		return fail(err)
 	}
 
-	// Ctrl-C stops the go child rather than this process, so the files are
-	// still put back; a panic in a step puts them back too, then goes on.
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	done := false
-	defer func() {
-		if done {
-			return
-		}
-		r := recover()
-		if rerr := snap.restore(); rerr != nil {
-			fmt.Fprintf(c.stderr(), "collage: plugin add: putting the files back: %v\n", rerr)
-		}
-		if r != nil {
-			panic(r)
-		}
-	}()
+	guard, commit := c.restoreUnlessCommitted("plugin add", snap)
+	defer guard()
 
 	added, err := c.pluginAdd(ctx, *dir, ref, map[string]bool{})
 	if err == nil {
@@ -158,7 +148,7 @@ func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	done = true
+	commit()
 
 	c.printAdded(added)
 	if !callsPlugins(*dir) {
@@ -167,6 +157,27 @@ func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 		fmt.Fprintln(c.stdout(), "\tPlugins: plugins(),")
 	}
 	return 0
+}
+
+// restoreUnlessCommitted returns a guard to defer and a commit to call once
+// the command has succeeded. Unless it was, the guard puts the snapshot back;
+// Ctrl-C stops the go child rather than this process, so that happens too,
+// and a panic in a step puts the files back, then goes on.
+func (c *CLI) restoreUnlessCommitted(cmd string, snap fileSnapshot) (guard, commit func()) {
+	done := false
+	guard = func() {
+		if done {
+			return
+		}
+		r := recover()
+		if rerr := snap.restore(); rerr != nil {
+			fmt.Fprintf(c.stderr(), "collage: %s: putting the files back: %v\n", cmd, rerr)
+		}
+		if r != nil {
+			panic(r)
+		}
+	}
+	return guard, func() { done = true }
 }
 
 // pluginAdd fetches ref into the project at dir, checks it against the
@@ -535,4 +546,194 @@ func callsPlugins(dir string) bool {
 		}
 	}
 	return false
+}
+
+// delEntry is one plugin in plugins.go, as far as it could be identified.
+type delEntry struct {
+	Import   string
+	Name     string // the manifest's name, or ""
+	Requires []string
+}
+
+// label is how the entry is named to the user.
+func (e delEntry) label() string {
+	if e.Name != "" {
+		return e.Name
+	}
+	return e.Import
+}
+
+// runPluginDel implements "plugin del": every file it touches is put back as
+// it was when a step fails.
+func (c *CLI) runPluginDel(ctx context.Context, args []string) int {
+	flags := flag.NewFlagSet("plugin del", flag.ContinueOnError)
+	flags.SetOutput(c.stderr())
+	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage) }
+	dir := flags.String("dir", ".", "the directory of the project's package main")
+
+	positional, flagArgs := splitPositional(args, pluginValueFlags)
+	if err := flags.Parse(flagArgs); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		return 2
+	}
+	positional = append(positional, flags.Args()...)
+	if len(positional) != 1 {
+		fmt.Fprintln(c.stderr(), "collage: plugin del: want one plugin: owner/name, or a module path")
+		fmt.Fprintln(c.stderr())
+		flags.Usage()
+		return 2
+	}
+	ref, err := plugincontract.ParseRef(positional[0])
+	if err != nil {
+		fmt.Fprintf(c.stderr(), "collage: plugin del: %v\n", err)
+		return 2
+	}
+	fail := func(err error) int {
+		fmt.Fprintf(c.stderr(), "collage: plugin del: %v\n", err)
+		return 1
+	}
+	if ref.Version != "" {
+		return fail(fmt.Errorf("%s: del takes no version", positional[0]))
+	}
+	if err := checkPackageMain(*dir); err != nil {
+		return fail(err)
+	}
+	pluginsPath := filepath.Join(*dir, "plugins.go")
+	src, err := readIfExists(pluginsPath)
+	if err != nil {
+		return fail(err)
+	}
+	if src == nil {
+		return fail(fmt.Errorf("no plugins.go in %s; nothing to remove", *dir))
+	}
+	snap, err := snapshot(
+		filepath.Join(*dir, "go.mod"),
+		filepath.Join(*dir, "go.sum"),
+		pluginsPath,
+		filepath.Join(*dir, "plugins-config.json"),
+	)
+	if err != nil {
+		return fail(err)
+	}
+
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	guard, commit := c.restoreUnlessCommitted("plugin del", snap)
+	defer guard()
+
+	removed, settings, err := c.pluginDel(ctx, *dir, ref, src)
+	if err == nil {
+		err = c.goTidy(ctx, *dir)
+	}
+	if err != nil {
+		return fail(err)
+	}
+	commit()
+
+	fmt.Fprintf(c.stdout(), "removed %s\n", removed)
+	if settings != "" {
+		fmt.Fprintln(c.stdout(), "its settings were:")
+		fmt.Fprintln(c.stdout(), settings)
+	}
+	return 0
+}
+
+// pluginDel removes the plugin ref names from plugins.go (src is its content)
+// and its section from plugins-config.json. It returns the plugin's name and,
+// when its section held settings, the section's raw value. It changes files;
+// the caller snapshots them first and restores them on an error.
+func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref, src []byte) (string, string, error) {
+	f, err := parsePluginsFile(src)
+	if err != nil {
+		return "", "", err
+	}
+	var entries []delEntry
+	for _, e := range f.entries() {
+		d := delEntry{Import: e.Import}
+		if info, err := c.listModule(ctx, dir, e.Import); err == nil {
+			if m, err := plugincontract.ReadManifest(info.Dir); err == nil {
+				d.Name, d.Requires = m.Name, m.Requires
+			}
+		}
+		entries = append(entries, d)
+	}
+	target := -1
+	for i, e := range entries {
+		if ref.Short == "" && strings.EqualFold(e.Import, ref.Path) ||
+			ref.Short != "" && (e.Name == ref.Short || strings.EqualFold(e.Import, ref.Path)) {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		var have []string
+		for _, e := range entries {
+			have = append(have, e.label())
+		}
+		shown := "nothing"
+		if len(have) > 0 {
+			shown = strings.Join(have, ", ")
+		}
+		return "", "", fmt.Errorf("%s is not in plugins.go; it has: %s", firstNonEmpty(ref.Short, ref.Path), shown)
+	}
+	t := entries[target]
+	name := t.Name
+	if name == "" {
+		name = ref.Short // the section's key, when the manifest cannot say
+	}
+	for i, e := range entries {
+		if i == target || name == "" {
+			continue
+		}
+		for _, r := range e.Requires {
+			if r == name {
+				return "", "", fmt.Errorf("%s requires %s; remove it first", e.label(), t.label())
+			}
+		}
+	}
+
+	if !f.remove(t.Import) {
+		return "", "", fmt.Errorf("plugins.go: could not remove %s", t.Import)
+	}
+	out, err := f.format()
+	if err != nil {
+		return "", "", err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "plugins.go"), out, 0o644); err != nil {
+		return "", "", err
+	}
+
+	settings := ""
+	if name != "" {
+		configPath := filepath.Join(dir, "plugins-config.json")
+		config, err := readIfExists(configPath)
+		if err != nil {
+			return "", "", err
+		}
+		if config != nil {
+			config, removed, err := removeConfigSection(config, name)
+			if err != nil {
+				return "", "", err
+			}
+			if removed != nil {
+				if err := os.WriteFile(configPath, config, 0o644); err != nil {
+					return "", "", err
+				}
+				var compact bytes.Buffer
+				if json.Compact(&compact, removed) != nil || compact.String() != "{}" {
+					settings = string(removed)
+				}
+			}
+		}
+	}
+	return t.label(), settings, nil
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

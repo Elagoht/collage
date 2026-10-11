@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -509,4 +510,69 @@ func TestPluginAdd_RequiresDiamond(t *testing.T) {
 		}
 	}
 	goBuild(t, dir)
+}
+
+func TestPluginDel(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t,
+		fixturePlugin("acme", "base", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""),
+		fixturePlugin("acme", "ext", "v0.1.0", "func New() *Plugin { return &Plugin{} }", `"requires": ["acme/base"]`),
+		fixturePlugin("acme", "greet", "v0.1.0", "func New(o Options) *Plugin { return &Plugin{opts: o} }", ""),
+	)
+	for _, ref := range []string{"acme/ext", "acme/greet"} {
+		if code, _, e := pluginCmd(t, dir, "add", ref); code != 0 {
+			t.Fatal(e)
+		}
+	}
+	// Settings typed into the section are printed when it goes.
+	cfg := strings.Replace(readFile(t, dir, "plugins-config.json"), `"acme/greet": {}`, `"acme/greet": {"greeting": "selam"}`, 1)
+	writeFiles(t, dir, map[string]string{"plugins-config.json": cfg})
+
+	if code, _, e := pluginCmd(t, dir, "del", "acme/base"); code != 1 || !strings.Contains(e, "acme/ext requires acme/base; remove it first") {
+		t.Fatalf("dependent: %d %s", code, e)
+	}
+	code, out, e := pluginCmd(t, dir, "del", "ACME/Greet")
+	if code != 0 || !strings.Contains(out, `{"greeting": "selam"}`) {
+		t.Fatalf("%d %s %s", code, out, e)
+	}
+	for _, f := range []string{"plugins.go", "plugins-config.json", "go.mod"} {
+		if strings.Contains(strings.ToLower(readFile(t, dir, f)), "greet") {
+			t.Errorf("%s still names greet", f)
+		}
+	}
+	if code, _, e := pluginCmd(t, dir, "del", "github.com/acme/collage-ext"); code != 0 {
+		t.Fatal(e)
+	}
+	if code, _, e := pluginCmd(t, dir, "del", "acme/nope"); code != 1 || !strings.Contains(e, "acme/base") {
+		t.Fatalf("unknown: %d %s (the error lists what plugins.go has)", code, e)
+	}
+	goBuild(t, dir)
+}
+
+// failingTidy runs go for real, except "go mod tidy", which fails with a
+// message.
+type failingTidy struct{}
+
+func (failingTidy) Run(ctx context.Context, dir string, env []string, stdout, stderr io.Writer, name string, args ...string) error {
+	if name == "go" && len(args) >= 2 && args[0] == "mod" && args[1] == "tidy" {
+		io.WriteString(stderr, "tidy broke")
+		return errors.New("exit status 1")
+	}
+	return execRunner{}.Run(ctx, dir, env, stdout, stderr, name, args...)
+}
+
+func TestPluginDel_TidyFailureRestores(t *testing.T) {
+	needGo(t)
+	dir := pluginProject(t, fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""))
+	if code, _, e := pluginCmd(t, dir, "add", "acme/greet"); code != 0 {
+		t.Fatal(e)
+	}
+	before := projectFiles(t, dir)
+	c, out, errOut := testCLI()
+	c.Runner = failingTidy{}
+	code := c.Run(context.Background(), []string{"plugin", "del", "acme/greet", "-dir", dir})
+	if code != 1 || !strings.Contains(errOut.String(), "collage: plugin del: tidy broke") {
+		t.Fatalf("del = %d\n%s%s", code, out, errOut)
+	}
+	wantSameFiles(t, dir, before)
 }
