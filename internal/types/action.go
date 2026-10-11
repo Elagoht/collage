@@ -103,6 +103,9 @@ type Action struct {
 	// protection entirely, so it is named for what it does rather than for when it
 	// is convenient.
 	SkipCSRF bool
+	// buildErr is what the builder that made this value recorded; see
+	// RecordBuildErr. Registration refuses a value that carries one.
+	buildErr error
 }
 
 // SafeMethod reports whether method is one that must not change anything, and

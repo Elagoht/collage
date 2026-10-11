@@ -2,7 +2,7 @@ package types
 
 import "errors"
 
-// RecordBuildErr keeps on a built fragment, page or document the mistakes its
+// RecordBuildErr keeps on a built fragment, page, document or action the mistakes its
 // builder recorded, so registration can refuse it even when nobody called
 // BuildErr. The builders in pkg/collage call it from Build.
 func RecordBuildErr(target interface{ setBuildErr(error) }, err error) {
@@ -12,6 +12,7 @@ func RecordBuildErr(target interface{ setBuildErr(error) }, err error) {
 func (f *Fragment) setBuildErr(err error) { f.buildErr = err }
 func (p *Page) setBuildErr(err error)     { p.buildErr = err }
 func (d *Document) setBuildErr(err error) { d.buildErr = err }
+func (a *Action) setBuildErr(err error)   { a.buildErr = err }
 
 // FragmentBuildErr returns what f's builder recorded, for f alone.
 func FragmentBuildErr(f *Fragment) error {
@@ -29,9 +30,18 @@ func DocumentBuildErr(d *Document) error {
 	return d.buildErr
 }
 
+// ActionBuildErr returns what a's builder recorded.
+func ActionBuildErr(a *Action) error {
+	if a == nil {
+		return nil
+	}
+	return a.buildErr
+}
+
 // PageBuildErr returns what p's builder recorded, together with what the builders
 // of every fragment reachable from it recorded — through its layout and content,
-// their slots and their fallbacks.
+// their slots and their fallbacks — and of every action attached to it, so a
+// page is refused before any of it is routed.
 func PageBuildErr(p *Page) error {
 	if p == nil {
 		return nil
@@ -66,6 +76,9 @@ func PageBuildErr(p *Page) error {
 	walk(p.ContentFragment)
 	for _, fragment := range PagePathFragments(p) {
 		walk(fragment)
+	}
+	for _, action := range p.Actions {
+		errs = append(errs, ActionBuildErr(action))
 	}
 	return errors.Join(errs...)
 }

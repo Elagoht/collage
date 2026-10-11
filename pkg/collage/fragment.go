@@ -332,9 +332,14 @@ func (b *FragmentBuilder) WithTimeout(d time.Duration) *FragmentBuilder {
 // Build returns the Fragment constructed so far. It never panics and never returns
 // nil for a non-nil builder, even if WithX calls recorded errors along the way; call
 // BuildErr to check whether any were recorded.
+//
+// The fragment returned is a copy, its slots included: a WithX call after Build
+// changes the builder and what a later Build returns, never a fragment already
+// built.
 func (b *FragmentBuilder) Build() *Fragment {
-	types.RecordBuildErr(b.fragment, b.BuildErr())
-	return b.fragment
+	f := types.CloneFragment(b.fragment)
+	types.RecordBuildErr(f, b.BuildErr())
+	return f
 }
 
 // BuildErr returns the errors accumulated by prior WithX calls, joined with

@@ -8,9 +8,9 @@
 //
 // # Builder error handling
 //
-// FragmentBuilder and PageBuilder accumulate errors instead of returning (*T, error)
-// from every WithX call, because they are meant to be used in a single fluent chain,
-// as in:
+// FragmentBuilder, PageBuilder, DocumentBuilder and ActionBuilder accumulate errors
+// instead of returning (*T, error) from every WithX call, because they are meant to
+// be used in a single fluent chain, as in:
 //
 //	f := collage.NewFragment("home", "pages/home.html").WithData(collage.Load(loadHome)).Build()
 //
@@ -18,10 +18,14 @@
 // the builder unchanged in every other respect; call BuildErr to retrieve whatever was
 // accumulated. Ignoring BuildErr does not lose a builder mistake silently: Build keeps
 // what was recorded on the value it returns, and RegisterPage refuses a page whose
-// builder, or the builder of any fragment reachable from it, recorded an error — as
-// RegisterDocument does for a document — before Page.Validate even runs. A builder
-// mistake therefore surfaces loudly at startup rather than on the first request. Prefer checking BuildErr when a builder's inputs are not known to
-// be well-formed ahead of time.
+// builder, or the builder of any fragment reachable from it or action attached to
+// it, recorded an error — as RegisterDocument and RegisterAction do for a document
+// and an action — before Page.Validate even runs. A builder mistake therefore
+// surfaces loudly at startup rather than on the first request. Prefer checking
+// BuildErr when a builder's inputs are not known to be well-formed ahead of time.
+//
+// Build returns a copy: a WithX call after Build changes the builder and what a
+// later Build returns, never a value already built or registered.
 package collage
 
 import "github.com/Elagoht/collage/internal/types"

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/Elagoht/collage/internal/render"
@@ -40,6 +41,8 @@ type DocumentHandlerFunc = types.DocumentHandlerFunc
 type DocumentBuilder struct {
 	document *Document
 	errs     []error
+	// buildTime is what the last Build found missing; see PageBuilder.
+	buildTime error
 }
 
 // NewDocument starts building a document named name and served at contentType.
@@ -60,7 +63,16 @@ func NewDocument(name, contentType string) *DocumentBuilder {
 // Default is "en" when left unset, so a Turkish-only site writes
 // WithPath("tr", …) and sets Locale.Default to "tr". A path in a locale neither
 // names is refused at registration with ErrLocaleUnreachable.
+//
+// A locale the document already has a path in records ErrDuplicateLocalePath and
+// keeps the first path; an empty locale records ErrEmptyLocale — a document
+// outside every locale says AtRoot. Both are retrievable via BuildErr and refused
+// at registration.
 func (b *DocumentBuilder) WithPath(locale, pattern string) *DocumentBuilder {
+	if err := checkPathLocale(b.document.Paths, locale, "document", b.document.Name); err != nil {
+		b.errs = append(b.errs, err)
+		return b
+	}
 	b.document.Paths[locale] = pattern
 	return b
 }
@@ -172,16 +184,21 @@ func (b *DocumentBuilder) WithDependencyTags(tags ...string) *DocumentBuilder {
 // nil for a non-nil builder, even if WithX calls recorded errors along the way, or
 // if neither a handler nor a body was ever set (which records ErrNoDocumentHandler);
 // call BuildErr to check whether any errors were recorded.
+//
+// The document returned is a copy: a WithX call after Build changes the builder
+// and what a later Build returns, never a document already built.
 func (b *DocumentBuilder) Build() *Document {
+	b.buildTime = nil
 	if b.document.Handler == nil && len(b.document.Body) == 0 {
-		b.errs = append(b.errs, ErrNoDocumentHandler)
+		b.buildTime = ErrNoDocumentHandler
 	}
-	types.RecordBuildErr(b.document, b.BuildErr())
-	return b.document
+	d := types.CloneDocument(b.document)
+	types.RecordBuildErr(d, b.BuildErr())
+	return d
 }
 
-// BuildErr returns the errors accumulated by prior WithX calls and by Build, joined
-// with errors.Join, or nil if none were recorded. Call it after Build.
+// BuildErr returns the errors accumulated by prior WithX calls and by the last
+// Build, joined with errors.Join, or nil if none were recorded. Call it after Build.
 func (b *DocumentBuilder) BuildErr() error {
-	return errors.Join(b.errs...)
+	return errors.Join(append(slices.Clone(b.errs), b.buildTime)...)
 }

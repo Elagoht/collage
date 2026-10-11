@@ -2,8 +2,10 @@ package collage
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -25,9 +27,15 @@ type ActionHandlerFunc = types.ActionHandlerFunc
 // Page and Body decides the body, checked in that order.
 type ActionResult = types.ActionResult
 
-// ActionBuilder builds an Action.
+// ActionBuilder builds an Action through a fluent chain of WithX calls. See the
+// package doc comment for how builder errors are accumulated and why it is safe
+// to ignore them until registration. An action built without WithHandler records
+// ErrNoActionHandler at Build time.
 type ActionBuilder struct {
 	action *Action
+	errs   []error
+	// buildTime is what the last Build found missing; see PageBuilder.
+	buildTime error
 }
 
 // NewAction starts an action named name.
@@ -42,7 +50,15 @@ func NewAction(name string) *ActionBuilder {
 // Default is "en" when left unset, so a Turkish-only site writes
 // WithPath("tr", …) and sets Locale.Default to "tr". A path in a locale neither
 // names is refused at registration with ErrLocaleUnreachable.
+//
+// A locale the action already has a path in records ErrDuplicateLocalePath and
+// keeps the first path; an empty locale records ErrEmptyLocale. Both are
+// retrievable via BuildErr and refused at registration.
 func (b *ActionBuilder) WithPath(locale, pattern string) *ActionBuilder {
+	if err := checkPathLocale(b.action.Paths, locale, "action", b.action.Name); err != nil {
+		b.errs = append(b.errs, err)
+		return b
+	}
 	b.action.Paths[locale] = pattern
 	return b
 }
@@ -89,12 +105,16 @@ func (b *ActionBuilder) WithStreamingBody() *ActionBuilder {
 // page's guards have let the request through, before anything reads the body;
 // the write deadline covers the whole upload too, since net/http starts it when
 // the headers arrive. Zero, the default, keeps the server's deadlines; a negative
-// d is refused at registration with ErrNegativeBodyTimeout.
+// d records ErrNegativeBodyTimeout, retrievable via BuildErr and refused at
+// registration.
 //
 // It needs a ResponseWriter that can take a deadline. One wrapped by a
 // middleware that does not implement Unwrap cannot, and the request then runs
 // under the server's deadlines, with a warning logged once.
 func (b *ActionBuilder) WithBodyTimeout(d time.Duration) *ActionBuilder {
+	if d < 0 {
+		b.errs = append(b.errs, fmt.Errorf("%w: action %q declares %v", ErrNegativeBodyTimeout, b.action.Name, d))
+	}
 	b.action.BodyTimeout = d
 	return b
 }
@@ -109,8 +129,28 @@ func (b *ActionBuilder) WithoutCSRF() *ActionBuilder {
 	return b
 }
 
-// Build returns the action.
-func (b *ActionBuilder) Build() *Action { return b.action }
+// Build returns the Action constructed so far. It never panics and never returns
+// nil for a non-nil builder, even if WithX calls recorded errors along the way, or
+// if no handler was ever set (which records ErrNoActionHandler); call BuildErr to
+// check whether any errors were recorded.
+//
+// The action returned is a copy: a WithX call after Build changes the builder and
+// what a later Build returns, never an action already built.
+func (b *ActionBuilder) Build() *Action {
+	b.buildTime = nil
+	if b.action.Handler == nil {
+		b.buildTime = fmt.Errorf("%w: %q", ErrNoActionHandler, b.action.Name)
+	}
+	a := types.CloneAction(b.action)
+	types.RecordBuildErr(a, b.BuildErr())
+	return a
+}
+
+// BuildErr returns the errors accumulated by prior WithX calls and by the last
+// Build, joined with errors.Join, or nil if none were recorded. Call it after Build.
+func (b *ActionBuilder) BuildErr() error {
+	return errors.Join(append(slices.Clone(b.errs), b.buildTime)...)
+}
 
 // SeeOther is the answer to a successful form post: a 303 to location.
 //

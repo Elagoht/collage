@@ -43,6 +43,12 @@ func (a *App) RegisterAction(action *types.Action) error {
 	if action.Name == "" {
 		return ErrEmptyActionName
 	}
+	// What the builder recorded is refused whether or not anyone asked the
+	// builder, as a page's is: an action that recorded an empty locale reports
+	// that, not that it has no paths.
+	if err := types.ActionBuildErr(action); err != nil {
+		return fmt.Errorf("collage: action %q was built with errors: %w", action.Name, err)
+	}
 	if len(action.Paths) == 0 {
 		return fmt.Errorf("%w: %q", ErrNoActionPaths, action.Name)
 	}
