@@ -13,6 +13,9 @@ collage export [-out dir] [-clean]
 collage serve [-dir dir] [-host name] [-port n]
 collage inspect
 collage check [-json]
+collage plugin add <owner/name>
+collage plugin del <owner/name>
+collage plugin check [-release] [-run] [dir]
 collage version
 collage help [command]
 ```

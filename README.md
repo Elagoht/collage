@@ -347,6 +347,9 @@ collage dev                 # run it, rebuilding and restarting on every Go chan
 collage build               # compile the binary you deploy
 collage export              # render the statically-buildable pages to dist/
 collage check               # find links to pages, actions and locales that do not exist
+collage plugin add owner/name  # fetch a plugin, add it to plugins.go and its settings
+collage plugin del owner/name  # take a plugin out again, and its settings with it
+collage plugin check        # check a plugin repository against what add enforces
 collage serve               # serve dist/ the way a static host would
 ```
 
