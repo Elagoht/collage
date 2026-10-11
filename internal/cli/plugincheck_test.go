@@ -66,14 +66,19 @@ func TestPluginCheck_Run(t *testing.T) {
 		name, decl, want string
 		code             int
 		manifest, req    string
+		vendor           bool
 	}{
 		{name: "works", decl: "func New() *Plugin { return &Plugin{} }", want: "acme/greet: builds and starts"},
 		{name: "options", decl: "func New(o Options) *Plugin { return &Plugin{opts: o} }", want: "acme/greet: builds and starts"},
-		{name: "init fails", decl: "func New() *Plugin { return &Plugin{} }\nfunc init() { failInit = true }\nvar failInit bool", want: "refuses an empty config", code: 1},
+		{name: "init fails", decl: "func New() *Plugin { return &Plugin{} }\nfunc init() { failInit = true }\nvar failInit bool", want: "init", code: 1},
 		{name: "requires, absent", decl: "func New() *Plugin { return &Plugin{} }", manifest: `"requires": ["acme/other"]`,
 			want: "acme/greet: acme/other is not among its requirements; checked without it\nacme/greet: builds and starts"},
 		{name: "requires, present", decl: "func New() *Plugin { return &Plugin{} }", manifest: `"requires": ["acme/other"]`,
 			req: "require github.com/acme/collage-other v0.1.0\n\n", want: "acme/greet: builds and starts"},
+		// go list cannot compute "all" from a vendor directory, and acme/other
+		// is not vendored: the plugin's code does not import it.
+		{name: "vendored, requires present", decl: "func New() *Plugin { return &Plugin{} }", manifest: `"requires": ["acme/other"]`,
+			req: "require github.com/acme/collage-other v0.1.0\n\n", want: "acme/greet: builds and starts", vendor: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := fixturePlugin("acme", "greet", "v0.1.0", tc.decl, tc.manifest)
@@ -85,10 +90,27 @@ func TestPluginCheck_Run(t *testing.T) {
 			dir := t.TempDir()
 			writeFiles(t, dir, m.Files)
 			writeFiles(t, dir, map[string]string{"go.mod": "module github.com/acme/collage-greet\n\ngo 1.26\n\nrequire github.com/Elagoht/collage v0.57.0\n\n" + tc.req + "replace github.com/Elagoht/collage => " + repoRootForTest(t) + "\n"})
+			if tc.vendor {
+				// Without the fake proxy's -mod=mod, so the go tool reads the
+				// vendor directory as it would in a real repository.
+				t.Setenv("GOFLAGS", "-modcacherw")
+				// A repository's go.sum is complete; go mod vendor alone
+				// leaves out the module nothing imports.
+				for _, args := range [][]string{{"mod", "download", "github.com/acme/collage-other"}, {"mod", "vendor"}} {
+					cmd := exec.Command("go", args...)
+					cmd.Dir = dir
+					if b, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("go %v: %v\n%s", args, err, b)
+					}
+				}
+			}
 			c, out, errOut := testCLI()
 			code := c.Run(t.Context(), []string{"plugin", "check", "-run", dir})
 			if code != tc.code || !strings.Contains(out.String()+errOut.String(), tc.want) {
 				t.Fatalf("%d\n%s\n%s", code, out, errOut)
+			}
+			if tc.code != 0 && !strings.Contains(errOut.String(), "refuses an empty config") {
+				t.Fatalf("the plugin's own error is not shown:\n%s", errOut)
 			}
 			if tc.req != "" && strings.Contains(out.String(), "not among") {
 				t.Fatalf("the required plugin was left out:\n%s", out)

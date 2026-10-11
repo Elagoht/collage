@@ -207,7 +207,7 @@ func (c *CLI) runPluginProgram(ctx context.Context, dir string, p plugincontract
 		return err
 	}
 	var errOut bytes.Buffer
-	if err := c.runner().Run(ctx, dir, nil, c.stdout(), &errOut, "go", "run", "./"+filepath.Base(tmp)); err != nil {
+	if err := c.runner().Run(ctx, dir, nil, c.stdout(), &errOut, "go", append(append([]string{"run"}, modFlag(dir)...), "./"+filepath.Base(tmp))...); err != nil {
 		return goError(errOut.Bytes(), err)
 	}
 	return nil
@@ -310,10 +310,21 @@ func (c *CLI) downloadModule(ctx context.Context, dir string, m moduleInfo) (mod
 	return got, nil
 }
 
+// modFlag is the go flag -run's go commands take in dir: -mod=readonly when the
+// plugin vendors its dependencies. The go tool cannot list "all" from a vendor
+// directory, and a required plugin the plugin's own code does not import is
+// not vendored, so the module cache is used instead, without changing go.mod.
+func modFlag(dir string) []string {
+	if _, err := os.Stat(filepath.Join(dir, "vendor", "modules.txt")); err == nil {
+		return []string{"-mod=readonly"}
+	}
+	return nil
+}
+
 // listAllModules is "go list -m -json all" in dir: the module and every
 // module it requires.
 func (c *CLI) listAllModules(ctx context.Context, dir string) ([]moduleInfo, error) {
-	out, errOut, err := c.goOutput(ctx, dir, "list", "-m", "-json", "all")
+	out, errOut, err := c.goOutput(ctx, dir, append(append([]string{"list"}, modFlag(dir)...), "-m", "-json", "all")...)
 	if err != nil {
 		return nil, goError(errOut, err)
 	}
