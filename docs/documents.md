@@ -204,7 +204,7 @@ if err := app.InvalidateTags(ctx, "blog:posts"); err != nil {
 }
 ```
 
-## Plugins see three hooks, not six
+## Plugins see three hooks, not five
 
 A document dispatches `OnDocumentRendered`, `OnCacheInvalidate` and `OnError`. It
 does **not** dispatch `OnBeforeRender` or `OnAfterRender`.
@@ -330,7 +330,7 @@ Stated so you do not go looking for them:
 
 - **No templating, no fragments, no slots.** By design — see "Why not a page".
 - **No page render hooks.** `OnDocumentRendered` is the one a document gets; see
-  "Plugins see three hooks, not six".
+  "Plugins see three hooks, not five".
 - **No `Range` requests.** A document's body is produced in full, in memory, and
   served in full. Files that want seeking — audio, video, large downloads — are
   [assets](assets.md), which are served with `http.ServeContent` and do support

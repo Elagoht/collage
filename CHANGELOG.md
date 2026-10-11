@@ -17,6 +17,7 @@ and `host.Use(...)` compiles as it was.
   `ErrInvalidOutDir` is `ErrEmptyOutDir`.
 - **`SkipRecord.Page` and `WarningRecord.Page` are `.Name`.**
 - **`ErrDuplicateOutputPath` is `ErrOutputPathCollision`.**
+- **`Redirect.EffectiveStatus` is removed.** A zero `Status` still answers 302.
 
 **The `App` and the `Host`**
 
@@ -44,7 +45,10 @@ and `host.Use(...)` compiles as it was.
 - **Engine-only methods are no longer public:** `Page.Root`, `Guards`, `Guarded`,
   `PathFragments`, `ContentSlotName`, `LayoutFragment`; `Fragment.Bind`,
   `SetDataSource`, `DataSource`, `EffectiveTimeout`, `Slot`, `SlotNames`;
-  `Result.HoistEnds`, `Result.FragmentReports`; `FragmentMetadata`.
+  `Result.HoistEnds`, `Result.FragmentReports`; `RenderContext.Hoisted` and
+  `RenderContext.WithFragment` (an application hoists with `Hoist`).
+- **`FragmentMetadata` is `FragmentReport`,** with the same fields;
+  `Metadata.Fragments` is a `[]FragmentReport`.
 - **`JSONOf(status, v)` is `JSON(status, v)`.** The old `JSON(status, []byte)` is
   `JSONBytes(status, body)`.
 - **`NoContent(status)` is `Status(status)`.**
@@ -67,7 +71,7 @@ and `host.Use(...)` compiles as it was.
   a tag too, and a negative `MaxEntries` keeps that cap at 10000.
 - **`Security.NoSniff *bool` is `Security.DisableNoSniff bool`.**
 - **`Cache.Type` is a `CacheType`.** An untyped literal (`Type: "disk"`) still
-  compiles.
+  compiles; a string variable needs converting: `Type: collage.CacheType(v)`.
 - **`Config.Validate`, `ApplyDefaults` and `IsDevMode` are no longer public.**
   `WithCacheControl` and `WithoutBuildCopy` are functions now; call sites do not
   change.
@@ -85,14 +89,23 @@ is `ErrNoActionMethods`.
 
 - **`Build()` returns an independent copy.** Calling it twice gives two values, and
   `WithPath` on the builder afterwards no longer reaches the one already built or
-  registered.
+  registered. Two values are two pages to the application, so code that called
+  `Build()` again where it meant the same page now fails:
+  `app.RegisterNotFoundPage(nb.Build())` with `WithNotFoundPage(nb.Build())`
+  fails `Start` with `ErrUnregisteredErrorPage`, and
+  `return collage.RenderPage(pb.Build()), nil` in an action handler answers 500 with
+  `ErrUnregisteredPage`. Build once and keep the `*Page`.
 - **`WithPath` refuses a repeated or an empty locale,** recording
-  `ErrDuplicateLocalePath` or `ErrInvalidLocale`. The first path is kept.
+  `ErrDuplicateLocalePath` or `ErrInvalidLocale`. The first path is kept. A
+  document's `WithPath("", p)` used to mean `AtRoot(p)` and is now refused; write
+  `AtRoot(p)`. `AtRoot` called twice records `ErrDuplicateLocalePath` the same way.
 - **An `ActionResult` with two or more of `Location`, `Fragment`, `Page` and `Body`
   is a 500** with `ErrAmbiguousActionResult`. A result with only `Status` or only
   `Header` answers as before.
 - **A document whose output file collides with another document's or a page's stops
-  the build** with `ErrOutputPathCollision`, `index.html` of a page included.
+  the build** with `ErrOutputPathCollision`, `index.html` of a page included. The
+  build stops before `OutDir` is touched: nothing is cleaned or written, no 404
+  page or mounted file is copied, and `BuildFinishedHook` is not called.
 - **Documents' `StaticParams` run before pages render** in a static build.
 - **An action built with errors is refused at registration.**
 

@@ -333,5 +333,5 @@ Stated plainly, because each one is a real constraint rather than an oversight:
   What genuinely does not fire for a mount is the render hooks,
   `OnBeforeRender` and `OnAfterRender`: an asset is not a
   render, so there is nothing for those two to observe. See
-  `docs/plugins.md`'s "Documents dispatch three hooks, not six" section, which
+  `docs/plugins.md`'s "Documents dispatch three hooks, not five" section, which
   covers the asset case alongside the document one.

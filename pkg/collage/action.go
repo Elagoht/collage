@@ -23,8 +23,9 @@ type Action = types.Action
 // ActionHandlerFunc handles one request to an action and says what to answer with.
 type ActionHandlerFunc = types.ActionHandlerFunc
 
-// ActionResult is what an action answers with. Exactly one of Location, Fragment,
-// Page and Body decides the body, checked in that order.
+// ActionResult is what an action answers with. At most one of Location, Fragment,
+// Page and Body decides the body; a result that sets more than one is refused
+// with ErrAmbiguousActionResult.
 type ActionResult = types.ActionResult
 
 // ActionBuilder builds an Action through a fluent chain of WithX calls. See the
@@ -43,7 +44,8 @@ func NewAction(name string) *ActionBuilder {
 	return &ActionBuilder{action: &Action{Name: name, Paths: map[string]string{}}}
 }
 
-// WithPath declares the URL pattern that reaches this action in locale.//
+// WithPath declares the URL pattern that reaches this action in locale.
+//
 // locale is not a label: it names the locale tree the path is written into, and
 // a request reaches that tree only when the locale is Config.Locale.Default (at
 // the bare path) or listed in Locale.Supported (under its prefix, "/tr/…").

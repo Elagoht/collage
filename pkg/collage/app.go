@@ -85,8 +85,9 @@ func (a *App) RegisterPlugin(p Plugin) error { return a.c.RegisterPlugin(p) }
 func (a *App) RegisterCommand(cmd Command) error { return a.c.RegisterCommand(cmd) }
 
 // Commands returns the registered CLI subcommands in registration order, as a copy.
-// It is empty until the application has started, since plugins register theirs
-// from Init.
+// A command registered with RegisterCommand is listed at once, before Start;
+// plugins register theirs from Init, so those appear once the application has
+// started.
 func (a *App) Commands() []Command { return a.c.Commands() }
 
 // Pages returns every registered page in registration order, each a copy, so

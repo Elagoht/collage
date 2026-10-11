@@ -20,8 +20,9 @@ type ActionHandlerFunc func(ctx context.Context, rc *RenderContext) (*ActionResu
 
 // ActionResult is what an action answers with.
 //
-// Exactly one of Location, Fragment, Page and Body decides the response body; they are
-// checked in that order, and a result that sets none of them is a bare status. The
+// At most one of Location, Fragment, Page and Body decides the response body: a
+// result that sets more than one is refused with ErrAmbiguousActionResult, and a
+// result that sets none of them is a bare status. The
 // zero Status means "whatever the body implies": 303 for a Location, 200 otherwise,
 // and 204 for a result with no body at all.
 type ActionResult struct {

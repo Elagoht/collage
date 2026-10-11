@@ -105,14 +105,14 @@ var (
 	// in Config.Locale.Supported.
 	ErrLocaleDefaultNotSupported = errors.New("collage: default locale not in supported locales")
 	// ErrNegativeDuration is returned when a Config duration field is negative. It is
-	// shared deliberately across all eight duration fields Validate checks
+	// shared deliberately across all eight duration fields New checks
 	// (Server.ReadTimeout, Server.ReadHeaderTimeout, Server.WriteTimeout,
 	// Server.IdleTimeout, Server.ShutdownTimeout, Server.DrainDelay, Template.Timeout,
 	// Cache.DefaultTTL): unlike
 	// ErrInvalidTimeout and ErrInvalidTTL, which mean genuinely different
 	// things to a caller (a fragment's data-fetch deadline versus a page's cache
 	// lifetime), a negative value in any of these eight fields is the same failure mode —
-	// "you passed a negative duration" — differing only in which field tripped. Validate
+	// "you passed a negative duration" — differing only in which field tripped. New
 	// names the offending field in the wrapped message (%w: %s); callers that need to
 	// distinguish which field failed should inspect that message rather than expect a
 	// per-field sentinel.

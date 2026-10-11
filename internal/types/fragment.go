@@ -21,8 +21,10 @@ type SlotDefinition struct {
 	Name string
 	// Required reports whether rendering fails when no fragment is bound.
 	Required bool
-	// AllowMultiple reports whether more than one fragment may be bound. When false,
-	// binding a second fragment is a validation error.
+	// AllowMultiple reports whether more than one fragment may be bound. When false
+	// — the zero value — the slot holds one fragment, and binding a second is a
+	// validation error. Slots are declared with the fragment builder's WithSlot,
+	// where a slot given no rule takes any number of fragments.
 	AllowMultiple bool
 	// Fill holds the fragments bound to this slot, rendered in binding order.
 	Fill []*Fragment
@@ -106,7 +108,8 @@ type Fragment struct {
 	// render fails.
 	Fallback *Fragment
 	// Timeout bounds how long this fragment's data handler may run. Zero means no
-	// fragment-specific timeout; see EffectiveTimeout.
+	// fragment-specific timeout: the handler gets TemplateConfig.Timeout, the
+	// application's default. WithTimeout sets it.
 	Timeout time.Duration
 	// buildErr is what the builder that made this value recorded; see
 	// RecordBuildErr. Registration refuses a value that carries one.

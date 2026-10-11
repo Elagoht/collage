@@ -475,7 +475,7 @@ is written. `ev.Files` lists each file with its kind (`page`, `document`, `asset
 the URL path it answers and its place on disk; `ev.Warn(path, rule, message)` and
 `ev.Error` report against a page.
 
-### Documents dispatch three hooks, not six
+### Documents dispatch three hooks, not five
 
 A document (`collage.NewDocument`) dispatches `OnDocumentRendered`,
 `OnCacheInvalidate`, and `OnError`. It does **not** dispatch `OnBeforeRender` or

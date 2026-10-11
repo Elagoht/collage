@@ -15,11 +15,9 @@ import (
 
 // Config is the framework's top-level configuration.
 //
-// It is mirrored field for field by the framework's internal configuration. New
-// applies the defaults and the validation here, then converts into that mirror,
-// which is how the internal packages stay free of any dependency on this package.
-// A field added here must be added there, and to toCoreConfig, or it will simply
-// be ignored.
+// New fills each zero-valued field of the Config it is given with its documented
+// default, writing them into the caller's value, and refuses a configuration that
+// does not validate.
 type Config struct {
 	// DevMode enables development-mode behaviour across the framework: templates
 	// reload from disk on every request, and a mount re-reads its files' hashes.
@@ -52,7 +50,7 @@ type Config struct {
 	// choice is honoured: noticing a terminal is not a reason to override a
 	// decision somebody made on purpose. Pass a Logger to be certain.
 	//
-	// applyDefaults deliberately leaves it nil rather than filling in
+	// New deliberately leaves it nil rather than filling in
 	// slog.Default(): nil is already unambiguous, and resolving it at construction
 	// keeps a Config comparable and free of a pointer the caller never supplied.
 	Logger *slog.Logger
