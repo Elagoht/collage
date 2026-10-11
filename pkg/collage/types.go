@@ -1,10 +1,10 @@
 // Package collage is the public API of the collage framework: a Go framework for
 // server-side component-based rendering built from composable fragments and pages.
 //
-// This is the only package users import. It re-exports internal/types' domain types
-// as Go type aliases (for example, "type Page = types.Page"), so a value built
-// through this package's fluent builders and a value an internal package consumes are
-// literally the same type — no conversion step, no interface{} boundary between them.
+// This is the only package users import. Its domain types are Go type aliases of
+// the framework's own, so a value built through this package's fluent builders and
+// the value the framework consumes are literally the same type — no conversion
+// step and no untyped boundary between them.
 //
 // # Builder error handling
 //

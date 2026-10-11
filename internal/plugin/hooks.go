@@ -443,6 +443,9 @@ type AfterRenderEvent struct {
 	Page *types.Page
 	// Locale is the locale the page was rendered for. This event's own copy.
 	Locale string
+	// Path is the request path that was rendered — the same value
+	// BeforeRenderEvent.Path carried. This event's own copy.
+	Path string
 	// Degraded reports whether any fragment in the render failed, whether or not
 	// a fallback covered for it. This event's own copy.
 	Degraded bool

@@ -351,7 +351,7 @@ type BeforeActionEvent = plugin.BeforeActionEvent
 type AfterRenderEvent = plugin.AfterRenderEvent
 
 // PersonaliseHook is implemented by a plugin that rewrites each HTML response for
-// the reader it goes to, after the cache. See plugin.PersonaliseHook.
+// the reader it goes to, after the cache.
 type PersonaliseHook = plugin.PersonaliseHook
 
 // PersonaliseEvent is one HTML response on its way to one reader.
@@ -448,7 +448,7 @@ func ETag(content []byte) string {
 	return cache.ETag(content)
 }
 
-// toCoreConfig converts the public Config into internal/core's mirror of it. The
+// toCoreConfig converts the public Config into the framework's internal mirror of it. The
 // conversion is written out field by field on purpose: the compiler cannot tell us
 // that the two structs have drifted apart, so this function is the one place where
 // adding a field to one and forgetting the other becomes visible.

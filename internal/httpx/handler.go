@@ -1033,6 +1033,7 @@ func (h *Handler) renderPage(
 	afterRender := &plugin.AfterRenderEvent{
 		Page:           page,
 		Locale:         match.Locale,
+		Path:           r.URL.Path,
 		Degraded:       result.Degraded(),
 		Fragments:      render.FragmentReports(result),
 		DependencyTags: append([]string(nil), result.DependencyTags...),

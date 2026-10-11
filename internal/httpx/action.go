@@ -454,6 +454,7 @@ func (h *Handler) writeActionPage(
 	afterRender := &plugin.AfterRenderEvent{
 		Page:           result.Page,
 		Locale:         match.Locale,
+		Path:           r.URL.Path,
 		Degraded:       rendered.Degraded(),
 		Fragments:      render.FragmentReports(rendered),
 		DependencyTags: append([]string(nil), rendered.DependencyTags...),

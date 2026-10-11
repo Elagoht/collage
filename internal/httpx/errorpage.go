@@ -302,6 +302,7 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 	afterRender := &plugin.AfterRenderEvent{
 		Page:           page,
 		Locale:         f.locale,
+		Path:           r.URL.Path,
 		Degraded:       result.Degraded(),
 		Fragments:      render.FragmentReports(result),
 		DependencyTags: append([]string(nil), result.DependencyTags...),

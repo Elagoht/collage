@@ -391,10 +391,9 @@ var (
 	ErrDocumentNotFound = core.ErrDocumentNotFound
 	// ErrEmptyDocumentBody is recorded in BuildReport.Errors, and no file is written,
 	// when a document renders successfully but produces no body — the same condition
-	// internal/httpx serves as a 500 for a live request, reused here (from
-	// internal/types, where it lives alongside ErrNotFound as a property of a
-	// document's handler contract rather than of HTTP serving or of static building)
-	// rather than a second sentinel for the same failure mode. See
+	// the server answers with a 500 for a live request, reused here rather than a
+	// second sentinel for the same failure mode; it belongs to a document's handler
+	// contract rather than to HTTP serving or to static building. See
 	// DocumentHandlerFunc: a handler that genuinely wants to serve an empty document
 	// can return a single newline.
 	ErrEmptyDocumentBody = types.ErrEmptyDocumentBody

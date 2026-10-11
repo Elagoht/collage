@@ -1456,6 +1456,7 @@ func (a *App) renderResolved(
 	event := &plugin.AfterRenderEvent{
 		Page:           page,
 		Locale:         locale,
+		Path:           path,
 		Degraded:       result.Degraded(),
 		Fragments:      render.FragmentReports(result),
 		DependencyTags: append([]string(nil), result.DependencyTags...),

@@ -15,10 +15,11 @@ import (
 
 // Config is the framework's top-level configuration.
 //
-// It is mirrored field for field by internal/core.Config. New applies the defaults
-// and the validation here, then converts into that mirror and hands it to core.New,
-// which is how internal/core stays free of any dependency on this package. A field
-// added here must be added there, and to toCoreConfig, or it will simply be ignored.
+// It is mirrored field for field by the framework's internal configuration. New
+// applies the defaults and the validation here, then converts into that mirror,
+// which is how the internal packages stay free of any dependency on this package.
+// A field added here must be added there, and to toCoreConfig, or it will simply
+// be ignored.
 type Config struct {
 	// DevMode enables development-mode behaviour across the framework: templates
 	// reload from disk on every request, and a mount re-reads its files' hashes.
@@ -390,9 +391,8 @@ type LocaleConfig struct {
 }
 
 // ObservabilityConfig configures metrics and tracing. Both fields are optional: a
-// nil Metrics or Tracer is valid and means "use the no-op implementation" — see
-// observability.MetricsOrNoop and observability.TracerOrNoop, which consumers use
-// so they never have to nil-check these fields themselves.
+// nil Metrics or Tracer is valid and means "use the no-op implementation"; the
+// framework substitutes it, so a consumer never has to nil-check these fields.
 type ObservabilityConfig struct {
 	// Metrics receives framework counters and timings. nil means no-op.
 	Metrics Metrics

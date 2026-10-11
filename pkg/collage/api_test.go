@@ -160,3 +160,27 @@ func TestNoExportedFuncVars(t *testing.T) {
 		}
 	}
 }
+
+// Public doc comments name no internal package or identifier.
+func TestDocComments_NoInternalNames(t *testing.T) {
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := regexp.MustCompile(`internal/|\b(types|core|plugin|render|httpx|build|router|cache|asset|observability)\.[A-Z]`)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, e.Name(), nil, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, cg := range f.Comments {
+			for _, m := range bad.FindAllString(cg.Text(), -1) {
+				t.Errorf("%s: comment names %q", fset.Position(cg.Pos()), m)
+			}
+		}
+	}
+}
