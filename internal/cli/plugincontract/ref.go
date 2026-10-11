@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/Elagoht/collage/internal/ascii"
 )
 
 // AuthorsURL is the page that states the contract; every refusal points at it.
@@ -45,7 +47,7 @@ func ParseRef(s string) (Ref, error) {
 	}
 	parts := strings.Split(path, "/")
 	if strings.Contains(parts[0], ".") {
-		if len(parts) < 2 || !hostSegment.MatchString(strings.ToLower(parts[0])) {
+		if len(parts) < 2 || !hostSegment.MatchString(ascii.LowerString(parts[0])) {
 			return Ref{}, fmt.Errorf("%q is not a module path", path)
 		}
 		for _, p := range parts {
@@ -58,7 +60,7 @@ func ParseRef(s string) (Ref, error) {
 	if len(parts) != 2 {
 		return Ref{}, fmt.Errorf("%q: want owner/name, or a module path such as github.com/owner/repo", s)
 	}
-	short := strings.ToLower(path)
+	short := ascii.LowerString(path)
 	owner, name, _ := strings.Cut(short, "/")
 	if !segment.MatchString(owner) || !segment.MatchString(name) {
 		return Ref{}, fmt.Errorf("%q: owner and name are letters, digits and dashes", s)

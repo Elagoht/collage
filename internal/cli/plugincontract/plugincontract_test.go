@@ -50,6 +50,8 @@ func TestParseRef(t *testing.T) {
 		{in: "x.com/a@-v1", bad: true},
 		{in: "x.com/-a", bad: true},
 		{in: "GitHub.com/Kisi/Repo", path: "GitHub.com/Kisi/Repo"},
+		{in: "acme/\u212Aelvin", bad: true}, // the Kelvin sign is not k
+		{in: "\u212Acme/x", bad: true},
 	} {
 		r, err := ParseRef(tc.in)
 		if tc.bad {

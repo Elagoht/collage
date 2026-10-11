@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"text/tabwriter"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
 
@@ -326,7 +327,7 @@ func (c *CLI) goGet(ctx context.Context, dir string, ref plugincontract.Ref) (st
 		return ref.Path, nil
 	}
 	m := declaredPath.FindSubmatch(errOut)
-	if m == nil || !strings.EqualFold(string(m[1]), ref.Path) {
+	if m == nil || !ascii.EqualFold(string(m[1]), ref.Path) {
 		return "", goError(errOut, err)
 	}
 	declared := string(m[1])
@@ -351,7 +352,7 @@ func (c *CLI) attributable(ctx context.Context, dir, name string) (bool, error) 
 	conventional := plugincontract.ConventionalPath(name)
 	entries := f.entries()
 	for _, e := range entries {
-		if strings.EqualFold(e.Import, conventional) {
+		if ascii.EqualFold(e.Import, conventional) {
 			return true, nil
 		}
 	}
@@ -402,7 +403,7 @@ func requiredVersion(gomod []byte, path string) string {
 		case !inBlock:
 			continue
 		}
-		if len(fields) == 2 && strings.EqualFold(strings.Trim(fields[0], `"`), path) {
+		if len(fields) == 2 && ascii.EqualFold(strings.Trim(fields[0], `"`), path) {
 			return fields[1]
 		}
 	}
@@ -663,8 +664,8 @@ func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref,
 	}
 	target := -1
 	for i, e := range entries {
-		if ref.Short == "" && strings.EqualFold(e.Import, ref.Path) ||
-			ref.Short != "" && (e.Name == ref.Short || strings.EqualFold(e.Import, ref.Path)) {
+		if ref.Short == "" && ascii.EqualFold(e.Import, ref.Path) ||
+			ref.Short != "" && (e.Name == ref.Short || ascii.EqualFold(e.Import, ref.Path)) {
 			target = i
 			break
 		}

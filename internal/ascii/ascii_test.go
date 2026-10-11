@@ -39,6 +39,21 @@ func TestEqualFold_FoldsOnlyASCII(t *testing.T) {
 	}
 }
 
+func TestUpperFirst_UppersOnlyAnASCIIFirstLetter(t *testing.T) {
+	for in, want := range map[string]string{
+		"greet":  "Greet",
+		"Greet":  "Greet",
+		"9lives": "9lives",
+		"":       "",
+		"ſx":     "ſx", // long s: Unicode would make it S
+		"éa":     "éa",
+	} {
+		if got := UpperFirst(in); got != want {
+			t.Errorf("UpperFirst(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // Unicode case folding stays out of the framework's code, where what is folded
 // is usually what a request carried: this package is what folds it. The few
 // places folding Unicode is the point are named here, with why.

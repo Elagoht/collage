@@ -338,6 +338,9 @@ func TestRun_New_Minimal(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(target, "main.go")); !strings.Contains(string(b), "Plugins: plugins(),") {
 		t.Errorf("main.go does not pass plugins() to collage.New:\n%s", b)
 	}
+	if b, _ := os.ReadFile(filepath.Join(target, "README.md")); !strings.Contains(string(b), "collage plugin add") || strings.Contains(string(b), "in `main.go`") {
+		t.Errorf("README.md does not point at collage plugin add:\n%s", b)
+	}
 	home, _ := os.ReadFile(filepath.Join(target, "templates", "pages", "home.html"))
 	if strings.TrimSpace(string(home)) != "<h1>Hello from {{.Name}}</h1>" {
 		t.Errorf("home.html = %q", home)

@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
 
 func TestPluginCheck_Static(t *testing.T) {
@@ -51,10 +55,93 @@ func TestPluginCheck_Release(t *testing.T) {
 	if code := c.Run(t.Context(), []string{"plugin", "check", "-release", dir}); code != 1 || !strings.Contains(errOut.String(), "no release tag at HEAD") {
 		t.Fatalf("untagged: %d %s", code, errOut)
 	}
-	git("tag", "v0.1.0")
+	// A pseudo-version tag is not a release, even when it sorts highest.
+	git("tag", "v0.1.1-0.20261001000000-abcdefabcdef")
 	c, _, errOut = testCLI()
-	if code := c.Run(t.Context(), []string{"plugin", "check", "-release", dir}); code != 0 {
-		t.Fatalf("tagged: %s", errOut)
+	if code := c.Run(t.Context(), []string{"plugin", "check", "-release", dir}); code != 1 || !strings.Contains(errOut.String(), "no release tag at HEAD") {
+		t.Fatalf("pseudo only: %d %s", code, errOut)
+	}
+	git("tag", "v0.1.0")
+	c, out, errOut := testCLI()
+	if code := c.Run(t.Context(), []string{"plugin", "check", "-release", dir}); code != 0 || !strings.Contains(out.String(), "v0.1.0 at HEAD is a release") {
+		t.Fatalf("tagged: %s %s", out, errOut)
+	}
+}
+
+func TestCompareSemver(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want int // its sign
+	}{
+		{"v1.0.0", "v1.0.0", 0},
+		{"v1.0.0", "v1.0.0-rc.1", 1},
+		{"v1.0.0-rc.1", "v1.0.0", -1},
+		{"v1.10.0", "v1.9.0", 1},
+		{"v2.0.0", "v10.0.0", -1},
+		{"v1.0.0-alpha.2", "v1.0.0-alpha.10", -1},   // numeric identifiers compare as numbers
+		{"v1.0.0-alpha.1", "v1.0.0-alpha.beta", -1}, // numeric before alphanumeric
+		{"v1.0.0-beta", "v1.0.0-alpha", 1},
+		{"v1.0.0-alpha", "v1.0.0-alpha.1", -1},  // fewer identifiers first
+		{"v1.0.0+build.2", "v1.0.0+build.1", 0}, // build metadata is ignored
+	} {
+		got := compareSemver(tc.a, tc.b)
+		if sign(got) != tc.want {
+			t.Errorf("compareSemver(%q, %q) = %d, want sign %d", tc.a, tc.b, got, tc.want)
+		}
+	}
+}
+
+func sign(n int) int {
+	switch {
+	case n > 0:
+		return 1
+	case n < 0:
+		return -1
+	}
+	return 0
+}
+
+func TestHighestReleaseTag(t *testing.T) {
+	for _, tc := range []struct {
+		tags, want string
+	}{
+		{"v0.1.0 v0.2.0 v0.1.5", "v0.2.0"},
+		{"vfoo v0.1.0 latest", "v0.1.0"},
+		{"v1.0.0-rc.1 v0.9.0", "v1.0.0-rc.1"},
+		{"v0.1.1-0.20261001000000-abcdefabcdef v0.1.0", "v0.1.0"},
+		{"v0.1.1-0.20261001000000-abcdefabcdef vfoo", ""},
+		{"", ""},
+	} {
+		if got := highestReleaseTag(strings.Fields(tc.tags)); got != tc.want {
+			t.Errorf("highestReleaseTag(%q) = %q, want %q", tc.tags, got, tc.want)
+		}
+	}
+}
+
+func TestModFlag(t *testing.T) {
+	dir := t.TempDir()
+	if got := modFlag(dir, true); len(got) != 0 {
+		t.Errorf("not vendored: %v", got)
+	}
+	writeFiles(t, dir, map[string]string{"vendor/modules.txt": "# x\n"})
+	if got := modFlag(dir, false); len(got) != 0 {
+		t.Errorf("vendored, no requires: %v; want it built from vendor", got)
+	}
+	if got := modFlag(dir, true); len(got) != 1 || got[0] != "-mod=readonly" {
+		t.Errorf("vendored, requires: %v", got)
+	}
+}
+
+func TestCheckProgram_RequiredPluginsGetAConfigSection(t *testing.T) {
+	src := checkProgram("acme/greet", "github.com/acme/collage-greet", plugincontract.Constructor{Package: "greet"},
+		[]requiredPlugin{{Name: "acme/other", Path: "github.com/acme/collage-other", Constructor: plugincontract.Constructor{Package: "other", Arg: "nil"}}})
+	for _, want := range []string{`"acme/other": json.RawMessage("{}")`, `"acme/greet": json.RawMessage("{}")`, "req0.New(nil), p}"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("program lacks %s:\n%s", want, src)
+		}
+	}
+	if _, err := parser.ParseFile(token.NewFileSet(), "main.go", src, 0); err != nil {
+		t.Errorf("program does not parse: %v\n%s", err, src)
 	}
 }
 
@@ -104,8 +191,22 @@ func TestPluginCheck_Run(t *testing.T) {
 					}
 				}
 			}
+			before, err := snapshot(filepath.Join(dir, "go.mod"), filepath.Join(dir, "go.sum"), filepath.Join(dir, "go.work.sum"))
+			if err != nil {
+				t.Fatal(err)
+			}
 			c, out, errOut := testCLI()
 			code := c.Run(t.Context(), []string{"plugin", "check", "-run", dir})
+			// A check leaves the repository as it found it: go mod download
+			// and -mod=mod would otherwise write go.sum.
+			for path, b := range before {
+				got, err := os.ReadFile(path)
+				if b == nil && err == nil {
+					t.Errorf("%s was created:\n%s", filepath.Base(path), got)
+				} else if b != nil && string(got) != string(b) {
+					t.Errorf("%s changed:\n%s", filepath.Base(path), got)
+				}
+			}
 			if code != tc.code || !strings.Contains(out.String()+errOut.String(), tc.want) {
 				t.Fatalf("%d\n%s\n%s", code, out, errOut)
 			}

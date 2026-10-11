@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/Elagoht/collage/internal/ascii"
 )
 
 // pluginsSkeleton is plugins.go before the first plugin is added: the
@@ -220,7 +222,7 @@ func (f *pluginsFile) entryElts() []int {
 
 func (f *pluginsFile) has(importPath string) bool {
 	for _, spec := range f.file.Imports {
-		if p, err := strconv.Unquote(spec.Path.Value); err == nil && strings.EqualFold(p, importPath) {
+		if p, err := strconv.Unquote(spec.Path.Value); err == nil && ascii.EqualFold(p, importPath) {
 			return true
 		}
 	}
@@ -252,7 +254,7 @@ func (f *pluginsFile) identFor(importPath, pkgName string) string {
 	}
 	owner := ""
 	if parts := strings.Split(importPath, "/"); len(parts) > 1 {
-		owner = identWords(strings.ToLower(parts[1]))
+		owner = identWords(ascii.LowerString(parts[1]))
 	}
 	base := owner + capitalise(pkgName)
 	if !token.IsIdentifier(base) {
@@ -277,14 +279,8 @@ func identWords(s string) string {
 	return strings.Join(words, "")
 }
 
-func capitalise(s string) string {
-	if s == "" {
-		return s
-	}
-	r := []rune(s)
-	r[0] = unicode.ToUpper(r[0])
-	return string(r)
-}
+// capitalise uppercases an ASCII first letter; a package name or owner is ASCII.
+func capitalise(s string) string { return ascii.UpperFirst(s) }
 
 type splice struct {
 	at, end int // bytes [at, end) are replaced
@@ -410,7 +406,7 @@ func (f *pluginsFile) remove(importPath string) bool {
 	var cuts []splice
 	names := f.importNames()
 	for i, e := range f.lit.Elts {
-		if p, _ := attribute(e, names); p != "" && strings.EqualFold(p, importPath) {
+		if p, _ := attribute(e, names); p != "" && ascii.EqualFold(p, importPath) {
 			cuts = append(cuts, f.eltCut(i))
 		}
 	}
@@ -429,7 +425,7 @@ func (f *pluginsFile) remove(importPath string) bool {
 		for _, s := range gd.Specs {
 			spec := s.(*ast.ImportSpec)
 			p, err := strconv.Unquote(spec.Path.Value)
-			if err != nil || !strings.EqualFold(p, importPath) {
+			if err != nil || !ascii.EqualFold(p, importPath) {
 				continue
 			}
 			path = p
