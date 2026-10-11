@@ -97,8 +97,8 @@ func pluginsList(file *ast.File) *ast.CompositeLit {
 	return nil
 }
 
-// importNames maps each import's name in the file to its path: the explicit
-// name, or the last path element when unnamed.
+// importNames maps every name an import may bind to its path: the explicit
+// name, or, unnamed, both guesses at the package name (see specNames).
 func (f *pluginsFile) importNames() map[string]string {
 	names := map[string]string{}
 	for _, spec := range f.file.Imports {
@@ -106,13 +106,75 @@ func (f *pluginsFile) importNames() map[string]string {
 		if err != nil {
 			continue
 		}
-		name := p[strings.LastIndex(p, "/")+1:]
-		if spec.Name != nil {
-			name = spec.Name.Name
+		for _, n := range specNames(spec, p) {
+			names[n] = p
 		}
-		names[name] = p
 	}
 	return names
+}
+
+// specNames are the names an import spec may bind. An unnamed import binds
+// its package's name, which the file does not state: it is taken to be the
+// last path element, or that element without a leading "collage-" and with
+// its dashes removed.
+func specNames(spec *ast.ImportSpec, path string) []string {
+	if spec.Name != nil {
+		return []string{spec.Name.Name}
+	}
+	last := path[strings.LastIndex(path, "/")+1:]
+	guess := strings.ReplaceAll(strings.TrimPrefix(last, "collage-"), "-", "")
+	if guess == last {
+		return []string{last}
+	}
+	return []string{last, guess}
+}
+
+// declaredNames are the names the file declares: at package level, and by
+// := or var inside its functions.
+func (f *pluginsFile) declaredNames() map[string]bool {
+	names := map[string]bool{}
+	ast.Inspect(f.file, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if n.Tok == token.DEFINE {
+				for _, e := range n.Lhs {
+					if id, ok := e.(*ast.Ident); ok {
+						names[id.Name] = true
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				names[id.Name] = true
+			}
+		case *ast.FuncDecl:
+			if n.Recv == nil {
+				names[n.Name.Name] = true
+			}
+		case *ast.TypeSpec:
+			names[n.Name.Name] = true
+		}
+		return true
+	})
+	return names
+}
+
+// usesName reports whether a selector in the file has one of names as its X.
+func (f *pluginsFile) usesName(names []string) bool {
+	used := false
+	ast.Inspect(f.file, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok {
+			if id, ok := sel.X.(*ast.Ident); ok {
+				for _, name := range names {
+					if id.Name == name {
+						used = true
+					}
+				}
+			}
+		}
+		return !used
+	})
+	return used
 }
 
 // attribute is the import path an element of the list belongs to, or "".
@@ -184,9 +246,10 @@ func insertIndex(orders []int, order int) int {
 // owner+PkgName, else that with 2, 3, … appended.
 func (f *pluginsFile) identFor(importPath, pkgName string) string {
 	taken := f.importNames()
+	declared := f.declaredNames()
 	free := func(s string) bool {
 		_, used := taken[s]
-		return !used && token.IsIdentifier(s) && s != "_"
+		return !used && !declared[s] && token.IsIdentifier(s) && s != "_"
 	}
 	if free(pkgName) {
 		return pkgName
@@ -340,19 +403,28 @@ func (f *pluginsFile) eltSplice(elt string, at int) splice {
 }
 
 // remove deletes every element of the list that belongs to the import, and
-// the import. It reports whether the import was there.
+// the import. It reports whether the import was there. When the import's
+// name is still used after the elements are gone (a wrapped call, a use
+// outside the list), the import stays and format reports an error, so
+// nothing is written.
 func (f *pluginsFile) remove(importPath string) bool {
 	if f.err != nil {
 		return false
 	}
-	var edits []splice
-	var found bool
+	var cuts []splice
 	names := f.importNames()
 	for i, e := range f.lit.Elts {
 		if p, _ := attribute(e, names); p != "" && strings.EqualFold(p, importPath) {
-			edits = append(edits, f.eltCut(i))
+			cuts = append(cuts, f.eltCut(i))
 		}
 	}
+	f.apply(cuts)
+	if f.err != nil {
+		return false
+	}
+	var edits []splice
+	var bound []string
+	var path string
 	for _, d := range f.file.Decls {
 		gd, ok := d.(*ast.GenDecl)
 		if !ok || gd.Tok != token.IMPORT {
@@ -364,7 +436,8 @@ func (f *pluginsFile) remove(importPath string) bool {
 			if err != nil || !strings.EqualFold(p, importPath) {
 				continue
 			}
-			found = true
+			path = p
+			bound = append(bound, specNames(spec, p)...)
 			if !gd.Rparen.IsValid() || len(gd.Specs) == 1 {
 				edits = append(edits, f.lineCut(gd.Pos(), gd.End(), gd.Doc))
 			} else {
@@ -372,8 +445,12 @@ func (f *pluginsFile) remove(importPath string) bool {
 			}
 		}
 	}
-	if !found && len(edits) == 0 {
-		return false
+	if len(edits) == 0 {
+		return len(cuts) > 0
+	}
+	if f.usesName(bound) {
+		f.err = fmt.Errorf("plugins.go: %s is still used outside the plugin list; edit plugins.go by hand", path)
+		return true
 	}
 	f.apply(edits)
 	return true

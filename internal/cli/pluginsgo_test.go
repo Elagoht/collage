@@ -119,3 +119,140 @@ func TestPluginsFile_Refuses(t *testing.T) {
 		}
 	}
 }
+
+const pluginsHead = "package main\n\nimport (\n\t\"github.com/Elagoht/collage/pkg/collage\"\n\n\ta \"x.com/o/a\"\n\tb \"x.com/o/b\"\n)\n\n"
+
+func newCall(id string) string { return id + ".New()" }
+
+// roundTrip inserts x.com/o/c at at, checks the result holds parts in order,
+// removes it again and wants src back.
+func roundTrip(t *testing.T, src string, at int, parts ...string) {
+	t.Helper()
+	f, err := parsePluginsFile([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.insert("x.com/o/c", "c", newCall, at)
+	out, err := f.format()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantInOrder(t, string(out), parts...)
+	g, err := parsePluginsFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.remove("x.com/o/c") {
+		t.Fatal("remove found nothing")
+	}
+	back, err := g.format()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(back) != src {
+		t.Fatalf("add then remove changed the file:\n%s", back)
+	}
+}
+
+func TestPluginsFile_OneLineLiteral(t *testing.T) {
+	src := pluginsHead + "func plugins() []collage.Plugin { return []collage.Plugin{a.New(), b.New()} }\n"
+	roundTrip(t, src, 0, "{c.New(), a.New(), b.New()}")
+	roundTrip(t, src, 2, "{a.New(), b.New(), c.New()}")
+}
+
+func TestPluginsFile_TrailingCommentOnNeighbour(t *testing.T) {
+	src := pluginsHead + "func plugins() []collage.Plugin {\n\treturn []collage.Plugin{\n\t\ta.New(), // first\n\t\tb.New(), // second\n\t}\n}\n"
+	roundTrip(t, src, 1, "a.New(), // first\n\t\tc.New(),\n\t\tb.New(), // second\n")
+	roundTrip(t, src, 2, "b.New(), // second\n\t\tc.New(),\n\t}")
+	f, _ := parsePluginsFile([]byte(src))
+	f.remove("x.com/o/a")
+	out, _ := f.format()
+	if strings.Contains(string(out), "first") || !strings.Contains(string(out), "b.New(), // second") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestPluginsFile_MultiLineElement(t *testing.T) {
+	src := pluginsHead + "func plugins() []collage.Plugin {\n\treturn []collage.Plugin{\n\t\ta.New(a.Options{\n\t\t\tX: 1,\n\t\t}),\n\t\tb.New(),\n\t}\n}\n"
+	roundTrip(t, src, 1, "\t\t}),\n\t\tc.New(),\n\t\tb.New(),")
+	f, _ := parsePluginsFile([]byte(src))
+	f.remove("x.com/o/a")
+	out, _ := f.format()
+	want := "package main\n\nimport (\n\t\"github.com/Elagoht/collage/pkg/collage\"\n\n\tb \"x.com/o/b\"\n)\n\nfunc plugins() []collage.Plugin {\n\treturn []collage.Plugin{\n\t\tb.New(),\n\t}\n}\n"
+	if string(out) != want {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestPluginsFile_ImportBecomesBlock(t *testing.T) {
+	f, _ := parsePluginsFile(nil)
+	f.insert("x.com/o/c", "c", newCall, 0)
+	out, _ := f.format()
+	if !strings.Contains(string(out), "import (\n\t\"github.com/Elagoht/collage/pkg/collage\"\n\n\tc \"x.com/o/c\"\n)\n") {
+		t.Fatalf("%s", out)
+	}
+}
+
+func TestPluginsFile_RemoveOnlySpecOfBlock(t *testing.T) {
+	src := "package main\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nimport (\n\tc \"x.com/o/c\"\n)\n\nfunc plugins() []collage.Plugin {\n\treturn []collage.Plugin{\n\t\tc.New(),\n\t}\n}\n"
+	f, _ := parsePluginsFile([]byte(src))
+	if !f.remove("x.com/o/c") {
+		t.Fatal("remove found nothing")
+	}
+	out, err := f.format()
+	want := "package main\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nfunc plugins() []collage.Plugin {\n\treturn []collage.Plugin{}\n}\n"
+	if err != nil || string(out) != want {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// remove keeps an import something else still uses, and format refuses.
+func TestPluginsFile_RemoveStillUsed(t *testing.T) {
+	for name, tc := range map[string]struct{ path, body string }{
+		"wrapped":      {"x.com/o/b", "func plugins() []collage.Plugin {\n\treturn []collage.Plugin{\n\t\twrap(b.New()),\n\t}\n}\n"},
+		"outside list": {"x.com/o/b", "var opt = b.Options{}\n\nfunc plugins() []collage.Plugin {\n\treturn []collage.Plugin{\n\t\tb.New(opt),\n\t}\n}\n"},
+	} {
+		f, err := parsePluginsFile([]byte(pluginsHead + tc.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.remove(tc.path)
+		if _, err := f.format(); err == nil || !strings.Contains(err.Error(), "x.com/o/b is still used outside the plugin list") {
+			t.Errorf("%s: err %v", name, err)
+		}
+	}
+}
+
+// An unnamed import binds a name the file does not state: both guesses count.
+func TestPluginsFile_UnnamedImport(t *testing.T) {
+	src := "package main\n\nimport (\n\t\"github.com/Elagoht/collage/pkg/collage\"\n\n\t\"x.com/o/collage-sitemap\"\n)\n\nfunc plugins() []collage.Plugin {\n\treturn []collage.Plugin{\n\t\tsitemap.New(),\n\t}\n}\n"
+	f, _ := parsePluginsFile([]byte(src))
+	if got := f.entries(); len(got) != 1 || got[0].Ident != "sitemap" || got[0].Import != "x.com/o/collage-sitemap" {
+		t.Fatalf("entries %+v", got)
+	}
+	if id := f.insert("y.com/p/collage-sitemap", "sitemap", newCall, 1); id != "pSitemap" {
+		t.Fatalf("ident %q, want pSitemap", id)
+	}
+	g, _ := parsePluginsFile([]byte(src))
+	if !g.remove("x.com/o/collage-sitemap") {
+		t.Fatal("remove found nothing")
+	}
+	out, err := g.format()
+	if err != nil || strings.Contains(string(out), "sitemap") {
+		t.Fatalf("%v\n%s", err, out)
+	}
+}
+
+// Names the file declares are taken too.
+func TestPluginsFile_DeclaredNamesTaken(t *testing.T) {
+	src := pluginsHead + "var c = 1\n\ntype d struct{}\n\nfunc e() {}\n\nfunc plugins() []collage.Plugin {\n\tf := 2\n\t_ = f\n\treturn []collage.Plugin{}\n}\n"
+	p, _ := parsePluginsFile([]byte(src))
+	for _, n := range []string{"c", "d", "e", "f"} {
+		if id := p.insert("x.com/o/collage-"+n, n, newCall, 0); id != "o"+strings.ToUpper(n) {
+			t.Errorf("%s: ident %q", n, id)
+		}
+	}
+	if _, err := p.format(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -49,3 +49,14 @@ func TestRemoveConfigSection(t *testing.T) {
 		t.Errorf("absent section: %q %q %v", out, removed, err)
 	}
 }
+
+func TestConfigSection_DuplicateKey(t *testing.T) {
+	src := []byte("{\n  \"x/y\": {},\n  \"x/y\": {}\n}\n")
+	want := `plugins-config.json: "x/y" appears twice`
+	if _, _, err := addConfigSection(src, "a/b"); err == nil || err.Error() != want {
+		t.Errorf("add: %v", err)
+	}
+	if _, _, err := removeConfigSection(src, "x/y"); err == nil || err.Error() != want {
+		t.Errorf("remove: %v", err)
+	}
+}

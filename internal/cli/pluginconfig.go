@@ -34,6 +34,7 @@ func parseConfigObject(src []byte) (configObject, error) {
 		return obj, errConfigNotObject
 	}
 	obj.open = int(dec.InputOffset()) - 1
+	seen := map[string]bool{}
 	for dec.More() {
 		at := skipJSON(src, int(dec.InputOffset()), ", \t\r\n")
 		tok, err := dec.Token()
@@ -41,6 +42,10 @@ func parseConfigObject(src []byte) (configObject, error) {
 			return obj, fmt.Errorf("plugins-config.json: %w", err)
 		}
 		name, _ := tok.(string)
+		if seen[name] {
+			return obj, fmt.Errorf("plugins-config.json: %q appears twice", name)
+		}
+		seen[name] = true
 		vs := skipJSON(src, int(dec.InputOffset()), ": \t\r\n")
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
