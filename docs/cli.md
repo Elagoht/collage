@@ -561,8 +561,11 @@ import and its section, prints the section when it held settings, and runs
 - when it was given a module path and the plugin's own `collage.json` cannot be
   read, since the name of its section is then unknown.
 
-A module with no `collage.json` at all, or a package of your own module, wired
-by hand, requires nothing and stops nothing. A module the module cache lacks, as after a fresh clone, is
+Another entry's `collage.json` is read for its `name`, `requires` and `order`
+only, so a key from a newer manifest schema stops nothing. An entry wired by
+hand that is not a plugin module's root package (a package of your own module,
+or a subpackage of a dependency), or a module with no `collage.json` at all,
+requires nothing and stops nothing. A module the module cache lacks, as after a fresh clone, is
 fetched to read its manifest. Like `add`, `del` puts every file back when a
 step fails.
 

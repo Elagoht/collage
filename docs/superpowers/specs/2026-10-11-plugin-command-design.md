@@ -240,10 +240,16 @@ Nothing is written until the module has passed its checks.
 2. **Check dependents.** If another entry's manifest `requires` this plugin,
    refuse: `elagoht/websocket requires elagoht/live; remove it first`.
    - A module the module cache lacks is downloaded to read its manifest.
-   - If another entry's `collage.json` cannot be read, refuse, naming the module
-     and the reason: nothing proves it does not require this plugin. A module
-     with no `collage.json`, or a package of the project's own module, requires
-     nothing.
+   - Other entries' manifests are read leniently: only `name`, `requires` and
+     `order`, with unknown keys ignored, so a newer schema blocks nothing.
+   - If another entry's `collage.json` cannot be read (the module cannot be
+     fetched, malformed JSON, an invalid name), refuse, naming the module and
+     the reason: nothing proves it does not require this plugin.
+   - An entry's module is the longest `go.mod` requirement covering its import.
+     An import that is not that module's root (a subpackage of a dependency),
+     or that no requirement covers (the project's own module), is not a
+     contract plugin (rule 3) and requires nothing. Neither does a module with
+     no `collage.json`.
    - A full ref whose own `collage.json` cannot be read is refused too, since
      the name of its config section is unknown.
 3. **Edit the files.**
