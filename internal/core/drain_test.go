@@ -241,13 +241,16 @@ func TestDrain_DevModeSkipsTheWait(t *testing.T) {
 	}
 }
 
-// Shutdown before anything serves: OnDrain runs, no wait.
+// Shutdown of a started app before anything serves: OnDrain runs, no wait.
 func TestDrain_BeforeServingDoesNotWait(t *testing.T) {
 	spy := &drainSpy{}
 	app := newTestApp(t, func(c *Config) {
 		c.Server.DrainDelay = time.Hour
 		c.Plugins = append(c.Plugins, spy)
 	})
+	if err := app.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
 	start := time.Now()
 	_ = app.Shutdown(context.Background())
 	if time.Since(start) > time.Second || spy.drained.Load() != 1 {
@@ -277,5 +280,15 @@ func TestDrain_WarnsWithoutShutdownTimeout(t *testing.T) {
 	})
 	if strings.Contains(logs.String(), "DrainDelay") {
 		t.Fatalf("warned although ShutdownTimeout is set:\n%s", logs.String())
+	}
+}
+
+// Shutdown before Start: no plugin was ever running, so none hears of a drain.
+func TestDrain_BeforeStartTellsNoPlugin(t *testing.T) {
+	spy := &drainSpy{}
+	app := newTestApp(t, func(c *Config) { c.Plugins = append(c.Plugins, spy) })
+	_ = app.Shutdown(context.Background())
+	if n := spy.drained.Load(); n != 0 {
+		t.Fatalf("OnDrain called %d times before Start, want 0", n)
 	}
 }

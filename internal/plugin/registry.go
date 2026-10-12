@@ -271,22 +271,23 @@ func (r *Registry) Origin(ctx context.Context, host string, invalid func(plugin,
 	return "", false
 }
 
-// CloseStreams asks every plugin implementing StreamCloser to end its open
+// CloseStreams asks every running plugin implementing StreamCloser to end its open
 // streams, in registration order. A panic in one is contained, so the others
 // still close theirs. A nil Registry does nothing.
 func (r *Registry) CloseStreams() {
-	for _, p := range r.snapshot() {
+	for _, p := range r.running() {
 		if closer, ok := p.(StreamCloser); ok {
 			_ = safeCall(func() error { closer.CloseStreams(); return nil })
 		}
 	}
 }
 
-// Drain tells every plugin implementing DrainHook that the drain has started, in
+// Drain tells every running plugin implementing DrainHook — one whose Init
+// succeeded and whose Shutdown has not run — that the drain has started, in
 // registration order. A panic in one is contained, so the others still hear of
 // it, and is logged at Warn naming the plugin. A nil Registry does nothing.
 func (r *Registry) Drain() {
-	for _, p := range r.snapshot() {
+	for _, p := range r.running() {
 		if hook, ok := p.(DrainHook); ok {
 			if err := safeCall(func() error { hook.OnDrain(); return nil }); err != nil {
 				r.logOrDefault().Warn("collage: drain hook panicked", "plugin", p.Name(), "err", err)
@@ -468,6 +469,17 @@ func (r *Registry) Error(ctx context.Context, ev *ErrorEvent) error {
 // snapshot returns a defensive copy of r's registered plugins, in registration
 // order, safe to range over and call into without holding r.mu. A nil r returns
 // nil.
+// running returns a copy of the plugins whose Init succeeded and whose Shutdown
+// has not run, in registration order. A nil Registry returns nil.
+func (r *Registry) running() []Plugin {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return append([]Plugin(nil), r.initialized...)
+}
+
 func (r *Registry) snapshot() []Plugin {
 	if r == nil {
 		return nil
