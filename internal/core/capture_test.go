@@ -193,7 +193,8 @@ func TestCaptureResponses_KeepsTheHeadersSentWithTheStatus(t *testing.T) {
 }
 
 // TestCaptureResponses_LeavesTheCacheAlone: a capture writes no cache entry, for a
-// page or a document; a reader's request after it does, which is what shows the check can fail.
+// page or a document; a reader's request after it does, which is what shows the
+// check can fail.
 func TestCaptureResponses_LeavesTheCacheAlone(t *testing.T) {
 	app := newCaptureApp(t)
 	if _, err := app.CaptureResponses(context.Background(), []string{"/a", "/feed.xml"}); err != nil {

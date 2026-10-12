@@ -124,7 +124,8 @@ var ErrGuarded = errors.New("collage: a guarded page cannot be built statically"
 // so a Static() page with one is skipped at that point and recorded in
 // Report.Skipped with the reason — the same treatment a Dynamic() page gets before
 // it renders, because it is the same situation: a page that belongs to the served
-// site. It is a failure only for the not-found page, which a static host needs as a file.
+// site. It is a failure only for the not-found page, which a static host needs as
+// a file.
 var ErrUnresolvedToken = errors.New("collage: refusing to write a page whose forgery token was never resolved")
 
 // unresolvedTokenReason is the SkipRecord.Reason of a page skipped for carrying a
@@ -138,22 +139,21 @@ const unresolvedTokenReason = "page carries {{csrfToken}}; a form needs a server
 	"so it is served rather than exported"
 
 // Renderer is the narrow surface Builder needs from an application: what it
-// contains — pages, documents, and mounted asset file systems — and a way to
-// render a page or document by path outside the HTTP request path. It is
-// declared here, rather than imported from internal/core, so this package can be
-// tested against a fake and so the dependency between the two packages points from
-// core to build.
+// contains — pages, documents, and mounted asset file systems — and a way to render
+// a page or document by path outside the HTTP request path. It is declared here,
+// rather than imported from internal/core, so this package can be tested against a
+// fake and so the dependency between the two packages points from core to build.
 //
 // Pages, Documents, and Mounts are grouped on one interface, rather than Mounts
-// living on Options instead, because all three answer the same question — what
-// does this application contain — and a caller must not be able to hand New one
-// application's Renderer alongside a different application's mounts: putting
-// Mounts on Options would let exactly that happen, silently.
+// living on Options instead, because all three answer the same question — what does
+// this application contain — and a caller must not be able to hand New one
+// application's Renderer alongside a different application's mounts: putting Mounts
+// on Options would let exactly that happen, silently.
 //
 // Renderer is internal-only — it is not re-exported through pkg/collage — so
-// widening it to cover documents and
-// mounts here breaks no external implementation of it; only *core.App itself has
-// to satisfy the wider surface, and it already does.
+// widening it to cover documents and mounts here breaks no external implementation
+// of it; only *core.App itself has to satisfy the wider surface, and it already
+// does.
 //
 // *core.App satisfies Renderer.
 type Renderer interface {
@@ -318,21 +318,21 @@ type buildTask struct {
 	params map[string]string
 }
 
-// Build renders every static-eligible page and document of the application to
-// files under Options.OutDir, copies every mount the application reports through
+// Build renders every static-eligible page and document of the application to files
+// under Options.OutDir, copies every mount the application reports through
 // Renderer.Mounts whose BuildCopy is true into it, and returns a Report describing
 // what happened.
 //
 // A page or document using a non-cacheable render strategy is skipped, recorded in
 // the report, rather than built. A path pattern for a locale that contains a
-// "{param}" segment is expanded through the route's StaticParams when it has
-// them, or skipped with ErrDynamicPathUnresolved otherwise. A page that renders with a failed fragment is
-// refused with ErrDegradedRender unless Options.AllowDegraded is set, and a page
-// that renders no markup at all is always refused with ErrEmptyRender: a static
-// file has no TTL to recover through, so writing either one pins it until the next
-// build. A failure resolving paths, rendering, writing, or copying one page,
-// document, or asset file does not stop the rest of the build: every such failure
-// is recorded in Report.Errors, and the error Build returns is
+// "{param}" segment is expanded through the route's StaticParams when it has them,
+// or skipped with ErrDynamicPathUnresolved otherwise. A page that renders with a
+// failed fragment is refused with ErrDegradedRender unless Options.AllowDegraded is
+// set, and a page that renders no markup at all is always refused with
+// ErrEmptyRender: a static file has no TTL to recover through, so writing either
+// one pins it until the next build. A failure resolving paths, rendering, writing,
+// or copying one page, document, or asset file does not stop the rest of the build:
+// every such failure is recorded in Report.Errors, and the error Build returns is
 // errors.Join(report.Errors...) — nil when there were none. A panic in a data
 // handler is caught per page or document and recorded the same way; see the build
 // worker in Build itself and its document-build sibling in buildDocuments.
@@ -340,14 +340,14 @@ type buildTask struct {
 // Build writes each rendered page to "<OutDir>/<path>/index.html", creating
 // directories as needed; the root path "/" writes "<OutDir>/index.html". A
 // document, unlike a page, writes to its own literal path — "/sitemap.xml" becomes
-// "<OutDir>/sitemap.xml", not "<OutDir>/sitemap.xml/index.html" — because a
-// crawler asking for it must not receive a directory; see documentTarget. A mounted
-// asset file is written to "<OutDir>/<mount prefix><file name>", the same
-// literal-path shape. Every resolved output path is verified to stay within OutDir
-// both lexically and on disk — see ErrPathEscapesOutDir — since StaticParams
-// and a mount's fs.FS are user code, and a path or file
-// name built from unsanitised input, or a symlink planted anywhere under OutDir,
-// must not be able to redirect a write outside the output directory.
+// "<OutDir>/sitemap.xml", not "<OutDir>/sitemap.xml/index.html" — because a crawler
+// asking for it must not receive a directory; see documentTarget. A mounted asset
+// file is written to "<OutDir>/<mount prefix><file name>", the same literal-path
+// shape. Every resolved output path is verified to stay within OutDir both
+// lexically and on disk — see ErrPathEscapesOutDir — since StaticParams and a
+// mount's fs.FS are user code, and a path or file name built from unsanitised
+// input, or a symlink planted anywhere under OutDir, must not be able to redirect a
+// write outside the output directory.
 //
 // Options.Concurrency bounds how many pages, and separately how many documents,
 // render and write at once, but Report.Written, Report.Skipped, and Report.Errors

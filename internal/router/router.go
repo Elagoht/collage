@@ -84,7 +84,8 @@ type MatchResult struct {
 	// Location header. It is empty when no redirect matched.
 	RedirectTo string
 	// RedirectStatus is the HTTP status code for RedirectTo, taken from the
-	// matched Redirect's RedirectStatus. It is zero when no redirect matched.
+	// matched redirect's status (types.RedirectStatus). It is zero when no
+	// redirect matched.
 	RedirectStatus int
 	// Canonical reports that RedirectTo is the router's own: the same route
 	// under the one spelling it answers — the locale prefix, the trailing slash —

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compares pkg/collage and pkg/collagetest with a released tag and writes the
 # report to the job summary. Before any v1 tag it only reports; after one it
-# fails on an incompatible change against the latest v1 tag.
+# fails on an incompatible change against the latest earlier final v1 release.
 set -euo pipefail
 
 # Pinned, so a new apidiff cannot turn a commit red without anything here

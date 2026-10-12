@@ -6,9 +6,9 @@ import (
 	"time"
 )
 
-// DataCache is what Cached stores values in across renders. internal/datacache is
-// the implementation; the interface is here so a RenderContext can carry one
-// without this package depending on it.
+// DataCache is what Cached stores values in across renders. The framework
+// supplies the store; the interface is declared beside RenderContext so a
+// render can carry one without depending on how it is kept.
 type DataCache interface {
 	Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (any, error)) (any, error) // any: the store holds every caller's type
 }

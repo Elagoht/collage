@@ -344,9 +344,10 @@ type App struct {
 	// routed holds the names of the pages registered as routes, with
 	// RegisterPage; the rest of pages are only the not-found or error page.
 	routed map[string]bool
-	// bound holds the pages whose LayoutFragment this App has already replaced with
-	// a copy of their own. It is what makes the layout binding happen exactly once
-	// per page; see bindContent for why the slot's contents cannot answer that.
+	// bound holds the pages whose layout fragment (types.LayoutFragment) this App
+	// has already replaced with a copy of their own. It is what makes the layout
+	// binding happen exactly once per page; see bindContent for why the slot's
+	// contents cannot answer that.
 	bound map[*types.Page]bool
 	// documents holds every registered document by name. A document has no layout
 	// to bind and no template to check, so unlike bound there is no analogous
@@ -458,10 +459,9 @@ type App struct {
 // defaulted and validated already — pkg/collage.New does both before converting —
 // so New applies only the fallbacks it needs to construct working subsystems: an
 // empty Template.Extension becomes ".html" and an empty Locale.Default becomes
-// "en". It returns ErrEmptyTemplateRoot
-// for an empty Template.Root, ErrInvalidCacheType for an enabled cache of an
-// unknown type, and a wrapped template error when the template root cannot be
-// loaded.
+// "en". It returns ErrEmptyTemplateRoot for an empty Template.Root,
+// ErrInvalidCacheType for an enabled cache of an unknown type, and a wrapped
+// template error when the template root cannot be loaded.
 //
 // Everything is constructed here, once: New never starts a goroutine and never
 // touches the network, so building an App is safe in a test.
@@ -1230,26 +1230,26 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 // count is reported to Metrics.Invalidation. An empty tags invalidates nothing and
 // is not an error.
 //
-// When the store also implements cache.TaggedCache, Cache.Invalidate is called with
+// When the store also implements cache.TaggedCache, its Invalidate is called with
 // the tags as well. That is not redundant with the tracker walk, and it is the only
 // thing that makes a shared store invalidatable at all. The tracker is per process
 // and in memory: it knows the keys this instance wrote and nothing else, so with a
 // store shared between instances — a Redis, say — instance A's tracker cannot name
 // the keys instance B wrote, and a restart leaves every key written before it
-// permanently unreachable by tag. A store that indexes tags itself, which is exactly
-// what TaggedCache declares, can resolve them for the keys the tracker never saw.
-// SetTagged already hands it those tags on every write; this is the call that
-// finally reads them back.
+// permanently unreachable by tag. A store that indexes tags itself, which is
+// exactly what TaggedCache declares, can resolve them for the keys the tracker
+// never saw. SetTagged already hands it those tags on every write; this is the call
+// that finally reads them back.
 //
 // The count is the number of keys the tracker resolved from tags and the cache
 // accepted an invalidation for — not a count of entries that were live at the time,
-// and not a count of what the store's own tag index dropped, since Cache.Invalidate
-// reports no count and inventing one would make the number mean different things for
-// different caches. Cache.InvalidateKey is documented to succeed on a key that holds
-// no entry, and reports no distinction either way, so a key whose entry had already
-// expired is counted like any other. The count is therefore exactly what the tag
-// reached according to the authority on that question, and an upper bound on live
-// entries removed.
+// and not a count of what the store's own tag index dropped, since
+// TaggedCache.Invalidate reports no count and inventing one would make the number
+// mean different things for different caches. Cache.InvalidateKey is documented to
+// succeed on a key that holds no entry, and reports no distinction either way, so a
+// key whose entry had already expired is counted like any other. The count is
+// therefore exactly what the tag reached according to the authority on that
+// question, and an upper bound on live entries removed.
 //
 // A key that the cache fails to drop is not counted and does not stop the rest:
 // every other key is still invalidated and the failures are joined into the

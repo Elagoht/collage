@@ -233,10 +233,11 @@ func (a *App) Inspect() Inspection {
 			}
 		}
 		out.Pages = append(out.Pages, ip)
-		// The chain originals, not the folded LayoutFragment: registration gives
-		// each page its own copy of every layout's slot table, so the folded
-		// tree holds a distinct copy per page, and a layout shared by every page
-		// would be listed once per page. The originals are what the author wrote.
+		// The chain originals, not the folded layout fragment
+		// (types.LayoutFragment): registration gives each page its own copy of
+		// every layout's slot table, so the folded tree holds a distinct copy per
+		// page, and a layout shared by every page would be listed once per page.
+		// The originals are what the author wrote.
 		roots := append(append([]*types.Fragment(nil), p.LayoutChain...), p.ContentFragment)
 		for _, root := range append(roots, types.PagePathFragments(p)...) {
 			_ = walkFragments(root, seen, addFragment)

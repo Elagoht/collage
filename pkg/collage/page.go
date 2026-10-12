@@ -108,18 +108,6 @@ func (b *PageBuilder) WithPath(locale, pattern string) *PageBuilder {
 	return b
 }
 
-// checkPathLocale reports why WithPath must not write locale into paths: it is
-// empty, or it already holds a path. kind and name say whose paths they are.
-func checkPathLocale(paths map[string]string, locale, kind, name string) error {
-	if locale == "" {
-		return fmt.Errorf("%w: WithPath on %s %q", ErrInvalidLocale, kind, name)
-	}
-	if _, taken := paths[locale]; taken {
-		return fmt.Errorf("%w: %q on %s %q", ErrDuplicateLocalePath, locale, kind, name)
-	}
-	return nil
-}
-
 // WithRedirect adds a redirect from the path pattern from to the path to, using
 // status as the redirect's HTTP status code.
 func (b *PageBuilder) WithRedirect(from, to string, status int) *PageBuilder {

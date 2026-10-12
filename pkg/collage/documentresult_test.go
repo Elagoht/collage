@@ -29,13 +29,13 @@ func mountTemplateRoot(t *testing.T) string {
 
 // TestDocumentResult_IsNameableFromOutsideThePackage is the reachability test for
 // App.RenderDocumentPath's return type, and it lives in the external test package
-// because the import list is the proof. render.DocumentResult lives in internal/render,
-// unreachable from outside this module, so without the collage.DocumentResult
-// alias none of the declarations below would compile.
+// because the import list is the proof. render.DocumentResult lives in
+// internal/render, unreachable from outside this module, so without the
+// collage.DocumentResult alias none of the declarations below would compile.
 //
-// This was the sixth instance of one defect. App was then a bare alias of
-// core.App, so its methods were public surface that never appeared in package
-// collage's own source, and a return type reached only that way was easy to miss: a caller can
+// This was the sixth instance of one defect. App was then a bare alias of core.App,
+// so its methods were public surface that never appeared in package collage's own
+// source, and a return type reached only that way was easy to miss: a caller can
 // always write `result := app.RenderDocumentPath(...)`, and the gap only shows up
 // when it tries to store the value in a field, pass it to a helper, or declare a
 // variable of that type. RenderPath's Result alias exists to avoid exactly this;

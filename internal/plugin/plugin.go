@@ -77,28 +77,26 @@ type Plugin = interface {
 // explicitly handed through Pages or Page — that is the structural half of
 // "plugins cannot mutate core state."
 //
-// It does NOT make what it hands out immutable. Pages and Page return
-// *types.Page, a plain struct of exported fields, so a plugin holding one can
-// write through it. To keep that from corrupting the framework's own registered
-// pages, implementations of Pages and Page MUST return a defensive copy: the
-// Page struct itself copied, along with its Paths, Redirects, and
-// DependencyTags containers (so mutating those on the returned value cannot
-// reach the original). The copy's LayoutFragment, ContentFragment, NotFoundPage,
-// and ErrorPage pointers are left shared with the original, not deep-copied —
-// fragment mutation is a separate concern this interface does not attempt to
-// guard against either, and these two calls are startup/CLI-path, so the
-// shallow-copy cost is irrelevant. internal/core's hostView implements Host and is
-// held to this.
+// It does NOT make what it hands out immutable. Pages and Page return *Page, a
+// plain struct of exported fields, so a plugin holding one can write through it.
+// To keep that from corrupting the framework's own registered pages, Pages and
+// Page return a defensive copy: the Page struct itself copied, along with its
+// Paths, Redirects, and DependencyTags containers (so mutating those on the
+// returned value cannot reach the original). The copy's layout and content
+// fragments, NotFoundPage and ErrorPage are left shared with the original, not
+// deep-copied — fragment mutation is a separate concern this interface does not
+// attempt to guard against either, and these two calls are startup/CLI-path, so
+// the shallow-copy cost is irrelevant. The framework's own Host is held to this.
 //
 // A copied container is copied one level deep, which is as far as this can go
 // without reflection: replacing a Page.Paths entry on the copy is safe, but writing
 // through a value that entry holds, were it a map, a slice, or a pointer, would
 // reach the original.
 //
-// The per-request event types in hooks.go are a deliberate exception: they carry
-// the framework's live *types.Page rather than a copy, to avoid that allocation
-// on every render. A plugin that mutates a Page reached that way is on its own;
-// see the package doc comment.
+// The per-request hook events are a deliberate exception: they carry the
+// framework's live *Page rather than a copy, to avoid that allocation on every
+// render. A plugin that mutates a Page reached that way is on its own; see
+// BeforeRenderEvent.Page.
 //
 // Host embeds ConfigReader, whose one method is unexported, so no type outside
 // collage implements it: a method added later breaks nobody.

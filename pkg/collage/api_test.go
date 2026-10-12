@@ -185,3 +185,85 @@ func TestDocComments_NoInternalNames(t *testing.T) {
 		}
 	}
 }
+
+// The internal packages pkg/collage aliases show their own doc comments on
+// hover: an exported type's, its exported fields' and its exported methods'
+// name no internal package or identifier either. Comments on unexported things,
+// and on package-level functions pkg/collage wraps with its own doc, are the
+// engine's own business and out of scope.
+func TestDocComments_AliasedInternalsNoInternalNames(t *testing.T) {
+	bad := regexp.MustCompile(`internal/|\b(types|core|plugin|render|httpx|build|router|cache|asset|observability)\.[A-Z]`)
+	for _, dir := range []string{"../../internal/plugin", "../../internal/types"} {
+		fset := token.NewFileSet()
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			f, err := parser.ParseFile(fset, dir+"/"+e.Name(), nil, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := func(what string, groups ...*ast.CommentGroup) {
+				for _, cg := range groups {
+					if cg == nil {
+						continue
+					}
+					for _, m := range bad.FindAllString(cg.Text(), -1) {
+						t.Errorf("%s: %s's comment names %q", fset.Position(cg.Pos()), what, m)
+					}
+				}
+			}
+			for _, decl := range f.Decls {
+				switch decl := decl.(type) {
+				case *ast.GenDecl:
+					if decl.Tok != token.TYPE {
+						continue
+					}
+					for _, spec := range decl.Specs {
+						ts := spec.(*ast.TypeSpec)
+						if !ts.Name.IsExported() {
+							continue
+						}
+						doc := ts.Doc
+						if doc == nil && len(decl.Specs) == 1 {
+							doc = decl.Doc
+						}
+						check(ts.Name.Name, doc, ts.Comment)
+						var fields *ast.FieldList
+						switch typ := ts.Type.(type) {
+						case *ast.StructType:
+							fields = typ.Fields
+						case *ast.InterfaceType:
+							fields = typ.Methods
+						}
+						if fields == nil {
+							continue
+						}
+						for _, field := range fields.List {
+							for _, name := range field.Names {
+								if name.IsExported() {
+									check(ts.Name.Name+"."+name.Name, field.Doc, field.Comment)
+								}
+							}
+						}
+					}
+				case *ast.FuncDecl:
+					if decl.Recv == nil || !decl.Name.IsExported() {
+						continue
+					}
+					recv := decl.Recv.List[0].Type
+					if star, ok := recv.(*ast.StarExpr); ok {
+						recv = star.X
+					}
+					if id, ok := recv.(*ast.Ident); ok && id.IsExported() {
+						check(id.Name+"."+decl.Name.Name, decl.Doc)
+					}
+				}
+			}
+		}
+	}
+}
