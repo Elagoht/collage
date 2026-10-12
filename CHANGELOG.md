@@ -33,8 +33,8 @@ not know is now an error (see Changed).
 - **`collage.Duration` reads a duration from configuration as a string.** A
   `type Duration time.Duration` whose JSON is `"10s"`, `"1h30m"`: a bare number,
   which `time.Duration` reads as nanoseconds (`"banTime": 3600` is 3.6µs), is
-  refused with an error naming it; `null` leaves the default. Plugins use it for a
-  duration in their options.
+  refused with an error naming it, and so is a negative duration; `null` leaves
+  the default. Plugins use it for a duration in their options.
 - **`collage.IsHTTPS(r)` says whether a request arrived over TLS.** TLS on the
   connection, or `X-Forwarded-Proto: https` — believed only from
   `Server.TrustedProxies` when any are listed, from anyone when none are. It is
@@ -48,11 +48,20 @@ not know is now an error (see Changed).
   misspelt or renamed key — at any depth, or one named after a `json:"-"` field —
   stops the application at `Configure` or `Init` with
   `collage: elagoht/robots: unknown key "dissallow" in plugins-config.json`, where
-  it used to be ignored and the option left at its default. **Migration:** remove
-  the key the error names, or rename it to the one the plugin documents.
+  it used to be ignored and the option left at its default. Keys still match
+  case-insensitively. **Migration:** remove the key the error names, or rename it
+  to the one the plugin documents.
+- **A plugin configuration value that fails to decode is named by its key.**
+  `collage: elagoht/fail2ban: "banTime": write a duration as a string such as
+  "10s", not 3600`, where the message used to name the Go field.
 
 ### Fixed
 
+- **A start that fails after plugin `Init` shuts the plugins down.** A mount that
+  swallows a page, or an error page never registered, used to fail `Start` with
+  every plugin left initialised; they are now shut down, once, as a failing `Init`
+  rolls back the ones before it. `App.Shutdown` shuts down only plugins whose
+  `Init` succeeded and that are not shut down already.
 - **`collage.ParseOrigin` refuses an origin with no host.** `https://:8080` was
   accepted; it is now `ErrInvalidOrigin`, from `ParseOrigin` and from
   `Config.BaseURL` validation, which shares it.

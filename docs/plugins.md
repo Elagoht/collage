@@ -804,8 +804,9 @@ type of the defaults. An absent, empty or `null` section returns the defaults
 unchanged, and a section is decoded over a copy of them, so what it leaves out keeps
 its default: "not configured" and "configured to the zero value" are different
 statements, and only this can tell them apart. A malformed section is an error naming
-the plugin — `collage: plugin "you/greeting" configuration: …` — returned with the
-defaults. A section that is not JSON at all leaves them untouched. A value of the
+the plugin and, when one member's value is what fails, its key —
+`collage: you/greeting: "limit": json: cannot unmarshal string …` — returned with
+the defaults. A section that is not JSON at all leaves them untouched. A value of the
 wrong type (`"limit": "three"`) fails while the section is being decoded, and the
 rest of it is still decoded: the plain fields come back as the defaults had them,
 but a map inside the defaults may hold entries from the section and a slice's
@@ -818,6 +819,11 @@ and so is one named after a field tagged `json:"-"`: `collage: elagoht/robots:
 unknown key "dissallow" in plugins-config.json; remove it, or rename it to a key
 the plugin documents`. It stops the application at `Configure` or `Init`, where a
 misspelt or renamed key used to be ignored and the option left at its default.
+The error names the key, not its path, so a nested one is found by its name.
+Keys match fields case-insensitively, as `encoding/json` matches them:
+`"Disallow"` is `disallow`, not an unknown key. Decode the full `Options` type in
+one `PluginConfig` call — the check is made against the type it decodes into, and
+a type with its own `UnmarshalJSON` checks its own keys, or none.
 
 **A duration in options is a `collage.Duration`**, not a `time.Duration`:
 
@@ -830,9 +836,12 @@ ban := time.Duration(p.opts.BanTime)
 ```
 
 It reads a string `time.ParseDuration` understands and writes one back. A bare
-number is refused with an error naming it — `time.Duration` would have read
-`"banTime": 3600` as 3600 nanoseconds, 3.6µs, without a word — and `null` leaves
-the default as it was.
+number is refused with an error naming it — `collage: elagoht/fail2ban:
+"banTime": write a duration as a string such as "10s", not 3600`, where
+`time.Duration` would have read 3600 nanoseconds, 3.6µs, without a word — and so
+is a negative duration. `null` leaves a `Duration` field at its default; a
+`*collage.Duration` field set to `null` becomes nil, as `encoding/json` makes any
+pointer.
 
 **A key matching no registered plugin is a startup error** (`ErrUnknownPluginConfig`).
 Ignoring `"elagoht/minimzer"` would leave the plugin running on defaults and the
@@ -902,7 +911,7 @@ import (
 
 func TestRobots(t *testing.T) {
 	site := collagetest.NewSite(t,
-		collagetest.WithPlugins(robots.New()),
+		collagetest.WithPlugins(robots.New(robots.Options{})),
 		collagetest.WithPluginConfig("elagoht/robots", `{"disallow":["/admin"]}`),
 	)
 

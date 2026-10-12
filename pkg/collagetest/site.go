@@ -24,7 +24,7 @@ import (
 //
 //	func TestRobots(t *testing.T) {
 //		site := collagetest.NewSite(t,
-//			collagetest.WithPlugins(robots.New()),
+//			collagetest.WithPlugins(robots.New(robots.Options{})),
 //			collagetest.WithPluginConfig("elagoht/robots", `{"disallow":["/admin"]}`),
 //		)
 //		res := site.Get("/robots.txt").WantStatus(http.StatusOK)

@@ -218,7 +218,8 @@ type Route = httpx.Route
 
 // RouteInfo reports what the request carrying ctx resolved to, pattern and locale
 // included — a bounded label for a span or a metric, for pages, documents and
-// actions alike. Kind is "page", "document", "action", "mount" or "handler"; Name
+// actions alike. Kind is RouteKindPage, RouteKindDocument, RouteKindAction,
+// RouteKindMount or RouteKindHandler, a set that may grow; Name
 // is the registered name, or the prefix of a mount or handler. The zero Route
 // means it resolved to nothing, or has not yet.
 func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
