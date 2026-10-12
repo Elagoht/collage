@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.61.0
+
+Three additions, all compatible with v0.60.x: no exported name changed or went.
+
+### Added
+
+- **`collagetest.NewSite` builds a real application for a plugin's tests.** It
+  starts a collage application with the least configuration a test needs — a
+  layout with a head hoist and a content slot, a `home` page at `/`, a debug-level
+  text logger — and hands back the started `App`, a `Client` on its handler and
+  the captured `Logs`. `WithPlugins`, `WithPluginConfig`, `WithTemplates`,
+  `WithRegister`, `WithoutHome` and `WithConfig` add what a test needs; plugins'
+  `Configure` and `Init` errors fail the test at once, and the application shuts
+  down when the test ends. `TrySite` returns the error for a test that expects
+  starting to fail. `Logs.Has(level, parts...)` is safe while the site serves
+  concurrently. See [plugins](docs/plugins.md#testing-a-plugin).
+- **Named route kinds, built file kinds and pipeline stages.** `RouteKindPage`,
+  `RouteKindDocument`, `RouteKindAction`, `RouteKindMount`, `RouteKindHandler`
+  for `Route.Kind`; `BuiltPage`, `BuiltDocument`, `BuiltAsset` for
+  `BuiltFile.Kind`; `StageRoute` … `StagePanic` for `ErrorEvent.Stage`. They are
+  untyped string constants equal to the strings the engine already sends, so a
+  comparison against the literal keeps compiling; the fields stay `string`, and
+  each set may grow.
+- **`DocumentBuilder.WithTimeout` gives a document its own handler timeout.**
+  `Document.Timeout`, when set, replaces `TemplateConfig.Timeout` for that
+  document, on live requests and in static builds alike, so a slow sitemap no
+  longer raises the budget of every fragment and feed. A negative timeout is
+  `ErrInvalidTimeout`, from the builder and from `Document.Validate`.
+
 ## v0.60.1
 
 ### Fixed

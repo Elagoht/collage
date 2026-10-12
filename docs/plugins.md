@@ -423,7 +423,9 @@ span are not called for it. The development reload stream is the one request no
 hook sees.
 
 `collage.RouteInfo(ctx)` reports what the request resolved to — a `Route` whose
-`Kind` is `"page"`, `"document"`, `"action"`, `"mount"` or `"handler"` and whose
+`Kind` is `collage.RouteKindPage`, `RouteKindDocument`, `RouteKindAction`,
+`RouteKindMount` or `RouteKindHandler` (`"page"`, `"document"`, `"action"`,
+`"mount"`, `"handler"`; the set may grow) and whose
 `Name` is the registered name or prefix — from that context, which
 `Metrics.HTTPResponse` also receives: a metric or a span can be labelled with the
 route rather than the raw path. It carries the pattern the route was registered
@@ -471,7 +473,8 @@ on where the page was rendered:
 
 What no single render can tell — two pages with one title, a link to a page the
 build did not write — is checked in `OnBuildFinished`, which runs once every file
-is written. `ev.Files` lists each file with its kind (`page`, `document`, `asset`),
+is written. `ev.Files` lists each file with its kind (`collage.BuiltPage`,
+`collage.BuiltDocument`, `collage.BuiltAsset` — `"page"`, `"document"`, `"asset"`),
 the URL path it answers and its place on disk; `ev.Warn(path, rule, message)` and
 `ev.Error` report against a page.
 
@@ -503,10 +506,13 @@ one sentinel for every such status), `collage.ErrMaxDepthExceeded`,
 
 `ErrorEvent.Stage` names where in the pipeline the failure happened (`"route"`,
 `"not_found"`, `"guard"` (a guard that failed or answered with a decision it
-cannot write), `"page_resolved"`, `"before_action"`, `"before_render"`, `"render"`,
-`"after_render"`, `"cache_write"`, `"error_page"`, `"panic"`, `"asset"`, and
-`"handler"` for a handler mounted with `app.Handle` answering 5xx). It is
-caller-defined rather than an enum. `"error_page"` is the one worth alerting on:
+cannot write), `"before_action"`, `"before_render"`, `"render"`,
+`"after_render"`, `"cache_write"`, `"error_page"`, `"panic"`, `"asset"`,
+`"plugin"`, and `"handler"` for a handler mounted with `app.Handle` answering
+5xx). Each has a constant — `collage.StageRoute`, `collage.StageNotFound`,
+`collage.StageGuard`, … `collage.StageHandler` — that an error hook compares
+against instead of the literal. The set may grow, so a hook names the stages it
+handles rather than assuming it has seen them all. `"error_page"` is the one worth alerting on:
 it means the page that reports failures failed, which nobody finds out about
 otherwise, because the client still receives a plausible-looking error page.
 
@@ -841,6 +847,64 @@ The editor learns which of those functions the application actually has, and eve
 page, fragment, slot and mounted file by name, from `collage inspect` (see the CLI
 guide) — which is `go run . collage-inspect`, answered by `DispatchCommands` with
 the application's description as JSON.
+
+## Testing a plugin
+
+A plugin's tests need an application to run it in, and nothing about that
+application in particular. `collagetest.NewSite` builds one — a real collage
+application, not a stand-in for the `Host` — with the plugin in it, starts it so
+`Configure` and `Init` run at once (their errors fail the test), and shuts it down
+when the test ends:
+
+```go
+import (
+	"log/slog"
+	"net/http"
+	"strings"
+	"testing"
+
+	"github.com/Elagoht/collage/pkg/collagetest"
+)
+
+func TestRobots(t *testing.T) {
+	site := collagetest.NewSite(t,
+		collagetest.WithPlugins(robots.New()),
+		collagetest.WithPluginConfig("elagoht/robots", `{"disallow":["/admin"]}`),
+	)
+
+	res := site.Get("/robots.txt").WantStatus(http.StatusOK)
+	if !strings.Contains(res.Body, "Disallow: /admin") {
+		t.Errorf("robots.txt = %q", res.Body)
+	}
+	if site.Logs.Has(slog.LevelError) {
+		t.Errorf("the plugin logged an error:\n%s", site.Logs)
+	}
+}
+```
+
+A `Site` is the started `App`, a `collagetest.Client` on its handler — so `Get`,
+`Submit`, `Follow` and every other `Client` method work on it — and `Logs`, every
+record the application wrote at debug level and above. `Logs.Has(level, parts...)`
+reports whether a record at that level or above contains every part, and it is
+safe to call while the application serves requests from other goroutines.
+
+With no options, the site is as plain as an application gets: a layout with
+`{{hoist "head"}}` and `{{slot "content"}}`, a `home` page at `/`, no cache, no
+development mode, no `BaseURL` and only the default locale. A test adds what its
+plugin needs:
+
+| Option | Effect |
+| --- | --- |
+| `WithPlugins(plugins...)` | Adds plugins, in order |
+| `WithPluginConfig(name, json)` | Sets one plugin's section of the plugin configuration, as `plugins-config.json` would. Invalid JSON fails the test |
+| `WithTemplates(files)` | Adds or replaces templates by name under the root: `"layout.html"`, `"home.html"`, or one a registered page renders |
+| `WithRegister(items...)` | Registers pages, documents and actions after the home page |
+| `WithoutHome()` | Leaves the home page out, so `/` is the test's |
+| `WithConfig(func(*collage.Config))` | Edits the configuration before the application is built: locales, a cache, `BaseURL`, development mode, anything |
+
+`collagetest.TrySite` is `NewSite` for a test that expects building or starting
+to fail — a plugin refusing a bad configuration in `Init` — and returns the error
+instead of failing the test.
 
 ## Third-party plugins need no mechanism
 

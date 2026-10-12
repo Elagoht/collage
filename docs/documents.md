@@ -74,6 +74,7 @@ func buildSitemap(posts []Post) ([]byte, error) {
 | `WithCacheParams(names...)` | The query parameters that take part in the cache key, as for a page |
 | `WithStaticParams(fn)` | The placeholder values a static build writes a `{param}` pattern for |
 | `WithDependencyTags(tags...)` | Tags every response from this document carries |
+| `WithTimeout(d)` | Bounds the handler; zero, the default, means `Config.Template.Timeout` |
 | `WithRedirect(from, to, status)` | A source pattern that redirects here |
 | `WithPermanentRedirect(from, to)` | The same, as a 301 |
 | `Build()` / `BuildErr()` | The document, and whatever errors the chain accumulated |
@@ -161,14 +162,26 @@ func jwksHandler(store *KeyStore) collage.DocumentHandlerFunc {
 a panic in a data handler is: it becomes an ordinary error carrying the recovered
 value and the stack, so the request fails rather than the process.
 
-A document handler has no per-document `Timeout` field — `Fragment` has one,
-`Document` does not — so it runs under **`Config.Template.Timeout`** (5s by
-default), the same knob that sets the default fragment data-handler timeout. For
-a fragment that field is a default something can override; for a document it is
-the entire budget, so raising it for one slow fragment raises it for every
-sitemap and feed too. As everywhere else in the framework, it bounds the
-*context* the handler is given, not the handler itself: a handler that never
-consults `ctx.Done()` can still run past its deadline.
+A document handler runs under its own timeout when it sets one with
+**`WithTimeout(d)`**, and under **`Config.Template.Timeout`** (5s by default) —
+the same knob that sets the default fragment data-handler timeout — when it does
+not. A sitemap that walks a large catalogue raises its own budget rather than
+every fragment's and every feed's:
+
+```go
+collage.NewDocument("sitemap", "application/xml").
+	AtRoot("/sitemap.xml").
+	WithHandler(sitemap).
+	WithTimeout(30 * time.Second).
+	Build()
+```
+
+The timeout applies on a live request and in a static build alike. Zero means
+the default; a negative timeout records `collage.ErrInvalidTimeout`, and a
+`Document` written as a literal with one is refused at registration. As
+everywhere else in the framework, it bounds the *context* the handler is given,
+not the handler itself: a handler that never consults `ctx.Done()` can still run
+past its deadline.
 
 ## Errors are plain text, never HTML
 
