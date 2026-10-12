@@ -16,28 +16,36 @@ import (
 //
 // A bare number is refused rather than read as nanoseconds, the unit
 // time.Duration's own decoding would give it: "banTime": 3600 meant an hour
-// and would have been 3.6µs, silently. null leaves the value unchanged, so a
-// default survives a section that says nothing. Convert with
-// time.Duration(d) where a time.Duration is wanted.
+// and would have been 3.6µs, silently. A negative duration is refused too. null
+// leaves a Duration field as it was, so a default survives a section that says
+// nothing; a *Duration field set to null becomes nil, as encoding/json makes
+// any pointer. Convert with time.Duration(d) where a time.Duration is wanted.
+//
+// Its errors carry no prefix of their own: PluginConfig puts the plugin and the
+// key in front of them.
 type Duration time.Duration
 
 // UnmarshalJSON reads a JSON string with time.ParseDuration; null leaves d as
-// it was, and anything else — a number above all — is an error.
+// it was, and anything else — a number above all, or a negative duration — is
+// an error.
 func (d *Duration) UnmarshalJSON(data []byte) error {
 	data = bytes.TrimSpace(data)
 	if string(data) == "null" {
 		return nil
 	}
 	if len(data) == 0 || data[0] != '"' {
-		return fmt.Errorf("collage: duration %s: write it as a string such as \"10s\" or \"1h30m\"; a bare number has no unit", data)
+		return fmt.Errorf("write a duration as a string such as \"10s\", not %s", data)
 	}
 	var s string
 	if err := json.Unmarshal(data, &s); err != nil {
-		return fmt.Errorf("collage: duration %s: %w", data, err)
+		return fmt.Errorf("duration %s: %w", data, err)
 	}
 	parsed, err := time.ParseDuration(s)
 	if err != nil {
-		return fmt.Errorf("collage: duration %q: %w", s, err)
+		return fmt.Errorf("%q is not a duration such as \"10s\": %w", s, err)
+	}
+	if parsed < 0 {
+		return fmt.Errorf("duration %q is negative", s)
 	}
 	*d = Duration(parsed)
 	return nil

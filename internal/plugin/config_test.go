@@ -32,9 +32,11 @@ func TestPluginConfig(t *testing.T) {
 		{"null section", "null", defaults, ""},
 		{"empty object", "{}", defaults, ""},
 		{"partial overlay", `{"limit": 3}`, limits{Limit: 3, Window: "1m"}, ""},
-		{"malformed", `{"limit": "three"}`, defaults, `collage: plugin "test/p" configuration`},
+		{"malformed", `{"window": "2m", "limit": "three"}`, defaults, `collage: test/p: "limit": json: cannot unmarshal`},
+		{"not an object", `[1]`, defaults, `collage: plugin "test/p" configuration`},
 		{"trailing data", `{"limit": 3} {"limit": 4}`, defaults, `collage: plugin "test/p" configuration`},
 		{"unknown key", `{"limt": 3}`, defaults, `collage: test/p: unknown key "limt" in plugins-config.json`},
+		{"unknown key with an escape", `{"li\u006et\"x": 3}`, defaults, `collage: test/p: unknown key "lint\"x" in plugins-config.json`},
 		{"unknown nested key", `{"extra": {"a": "b"}, "window": "2m", "nope": 1}`, defaults, `unknown key "nope"`},
 	}
 	for _, test := range tests {

@@ -99,3 +99,36 @@ func TestPluginConfig_EmptySectionsKeepDefaults(t *testing.T) {
 		}
 	}
 }
+
+type banOpts struct {
+	BanTime collage.Duration `json:"banTime"`
+}
+
+type banPlugin struct{}
+
+func (banPlugin) Name() string                   { return "elagoht/fail2ban" }
+func (banPlugin) Version() string                { return "0" }
+func (banPlugin) Shutdown(context.Context) error { return nil }
+func (banPlugin) Init(_ context.Context, host collage.Host) error {
+	_, err := collage.PluginConfig(host, banOpts{})
+	return err
+}
+
+// A value that does not decode is named by its key, and the message carries
+// collage's prefix once.
+func TestPluginConfig_BadValueNamesTheKey(t *testing.T) {
+	_, err := collagetest.TrySite(t,
+		collagetest.WithPlugins(banPlugin{}),
+		collagetest.WithPluginConfig("elagoht/fail2ban", `{"banTime": 3600}`),
+	)
+	want := `elagoht/fail2ban: "banTime": write a duration as a string such as "10s", not 3600`
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("start error = %v, want it to contain %s", err, want)
+	}
+	if strings.Count(err.Error(), "collage:") > 2 {
+		t.Errorf("start error repeats its prefix: %v", err)
+	}
+	if strings.Contains(err.Error(), "collage: collage:") || strings.Contains(err.Error(), `"banTime": collage:`) {
+		t.Errorf("start error doubles collage's prefix: %v", err)
+	}
+}

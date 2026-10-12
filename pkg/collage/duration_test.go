@@ -49,7 +49,7 @@ func TestDuration_UnmarshalNumberRefused(t *testing.T) {
 	if err == nil {
 		t.Fatalf("a number was accepted as %v", time.Duration(cfg.BanTime))
 	}
-	for _, want := range []string{"3600", `"10s"`} {
+	for _, want := range []string{`write a duration as a string such as "10s", not 3600`} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %s", err, want)
 		}
@@ -58,7 +58,7 @@ func TestDuration_UnmarshalNumberRefused(t *testing.T) {
 
 // A string that is not a duration, and a value of another kind, are refused.
 func TestDuration_UnmarshalInvalid(t *testing.T) {
-	for _, in := range []string{`"10 parsecs"`, `""`, `true`, `["10s"]`, `{}`} {
+	for _, in := range []string{`"10 parsecs"`, `""`, `true`, `["10s"]`, `{}`, `"-5s"`, `"-1ns"`} {
 		var d collage.Duration
 		if err := json.Unmarshal([]byte(in), &d); err == nil {
 			t.Errorf("Unmarshal(%s) accepted %v", in, time.Duration(d))
@@ -82,5 +82,26 @@ func TestDuration_Marshal(t *testing.T) {
 	}
 	if err := json.Unmarshal(out, &back); err != nil || time.Duration(back.D) != 90*time.Minute {
 		t.Errorf("round trip = %v, %v", time.Duration(back.D), err)
+	}
+}
+
+// A negative duration is refused, naming it; plugins' rule is that a negative
+// duration is an error, and the editor schema refuses one too.
+func TestDuration_NegativeRefused(t *testing.T) {
+	var d collage.Duration
+	err := json.Unmarshal([]byte(`"-5s"`), &d)
+	if err == nil || !strings.Contains(err.Error(), "-5s") || !strings.Contains(err.Error(), "negative") {
+		t.Errorf("Unmarshal(-5s) = %v, want a negative-duration error naming it", err)
+	}
+}
+
+// A *Duration set to null becomes nil, as encoding/json does for any pointer.
+func TestDuration_PointerNull(t *testing.T) {
+	d := collage.Duration(time.Second)
+	cfg := struct {
+		D *collage.Duration `json:"d"`
+	}{&d}
+	if err := json.Unmarshal([]byte(`{"d":null}`), &cfg); err != nil || cfg.D != nil {
+		t.Errorf("pointer after null = %v, %v; want nil", cfg.D, err)
 	}
 }
