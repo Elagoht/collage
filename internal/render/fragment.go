@@ -30,7 +30,7 @@ type renderState struct {
 	// tags is the set of dependency tags collected so far.
 	tags map[string]struct{}
 	// fragments holds the per-fragment metadata, indexed in entry order.
-	fragments []FragmentMetadata
+	fragments []types.FragmentReport
 	// dataTime is the total time spent in data handlers, summed. Sibling handlers
 	// now overlap, so this can exceed the render's wall-clock time: it is how much
 	// handler work the page cost, not how long the page waited for it.
@@ -159,19 +159,19 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 	} else {
 		order = state.nextOrder()
 	}
-	rc = rc.WithFragment(depth, order)
+	rc = types.RenderWithFragment(rc, depth, order)
 
 	// The metadata slot is reserved on entry so parents appear before the children
 	// that render inside them, and filled in once the outcome is known.
 	index := len(state.fragments)
-	state.fragments = append(state.fragments, FragmentMetadata{Name: f.Name})
+	state.fragments = append(state.fragments, types.FragmentReport{Name: f.Name})
 
 	start := time.Now()
 	childTotalBefore := state.childTotal
 
 	mark := dst.Len()
 	err := e.attempt(rc, f, state, pre, dst)
-	meta := FragmentMetadata{Name: f.Name}
+	meta := types.FragmentReport{Name: f.Name}
 	propagate := false
 
 	if err != nil {
@@ -258,7 +258,7 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	if f.Title != "" && pre == nil {
 		rc.HoistTitle(f.Title)
 	}
-	ds := f.DataSource()
+	ds := types.FragmentDataSource(f)
 	switch {
 	case pre != nil:
 		// Already running, started by this fragment's parent. Waiting for it is
@@ -276,7 +276,7 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 	case ds.Handler != nil:
 		var tags []string
 		started := time.Now()
-		err := Execute(rc.Context(), f.EffectiveTimeout(e.defaultTimeout), func(ctx context.Context) error {
+		err := Execute(rc.Context(), types.EffectiveTimeout(f, e.defaultTimeout), func(ctx context.Context) error {
 			var handlerErr error
 			data, tags, handlerErr = ds.Handler(ctx, rc.WithContext(ctx))
 			return handlerErr
@@ -415,7 +415,7 @@ func (e *SlotEngine) renderSlot(
 	taken map[*types.Fragment]int,
 	fills slotFills,
 ) (htmltemplate.HTML, error) {
-	slot, ok := f.Slot(name)
+	slot, ok := types.FragmentSlot(f, name)
 	if !ok {
 		return "", nil
 	}
@@ -482,15 +482,15 @@ func (fills slotFills) of(slot *types.SlotDefinition) []*types.Fragment {
 // fails its fragment rather than the process.
 func resolveSlots(rc *types.RenderContext, f *types.Fragment) (slotFills, error) {
 	var fills slotFills
-	for _, name := range f.SlotNames() {
+	for _, name := range types.FragmentSlotNames(f) {
 		slot := f.Slots[name]
 		if slot == nil || slot.Resolve == nil {
 			continue
 		}
 		var resolved []*types.Fragment
-		err := Execute(rc.Context(), 0, func(context.Context) error {
+		err := Execute(rc.Context(), 0, func(ctx context.Context) error {
 			var resolveErr error
-			resolved, resolveErr = slot.Resolve(rc)
+			resolved, resolveErr = slot.Resolve(ctx, rc)
 			return resolveErr
 		})
 		if err != nil {
@@ -537,7 +537,7 @@ func take(started map[*types.Fragment][]*prefetch, taken map[*types.Fragment]int
 // it, and it walks the slots in sorted order so the same tree always names the same
 // slot.
 func requiredSlotsFilled(f *types.Fragment, fills slotFills) error {
-	for _, name := range f.SlotNames() {
+	for _, name := range types.FragmentSlotNames(f) {
 		slot := f.Slots[name]
 		if slot != nil && slot.Required && len(fills.of(slot)) == 0 {
 			return fmt.Errorf("%w: fragment %q slot %q", ErrRequiredSlotEmpty, f.Name, name)

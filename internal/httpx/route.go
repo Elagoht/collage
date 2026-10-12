@@ -76,7 +76,7 @@ type routeRef struct {
 	// name identifies the resolved route for a dev-mode error body: a document's
 	// Name, a mount's Prefix. It is empty while the request is unresolved.
 	name string
-	// label is the resolved route as RouteOf reports it — a page's name too,
+	// label is the resolved route as RouteInfo reports it — a page's name too,
 	// which name leaves empty — for a metric or a trace that must not be labelled
 	// with raw paths.
 	label string
@@ -105,7 +105,7 @@ func (ref *routeRef) resolvedPage(name string) {
 	ref.label = name
 }
 
-// String names the kind as RouteOf reports it.
+// String names the kind as RouteInfo reports it.
 func (k routeKind) String() string {
 	switch k {
 	case routeKindDocument:
@@ -148,20 +148,6 @@ func RouteInfo(ctx context.Context) Route {
 }
 
 type routeCtxKey struct{}
-
-// RouteOf reports what the request carrying ctx resolved to: its kind — "page",
-// "document", "action", "mount", "handler" — and its name — the page's, the
-// document's or the action's registered name, the mount's or the handler's
-// prefix. Both are empty while the request is unresolved, and for one that
-// resolved to nothing. The context is the one collage serves the request under,
-// which is what Metrics.HTTPResponse and a request's hooks receive.
-func RouteOf(ctx context.Context) (kind, name string) {
-	ref, ok := ctx.Value(routeCtxKey{}).(*routeRef)
-	if !ok || ref.label == "" {
-		return "", ""
-	}
-	return ref.kind.String(), ref.label
-}
 
 // failure returns a failure for this route carrying its kind and name, so the
 // response serveFailure writes follows the resolved route rather than whatever

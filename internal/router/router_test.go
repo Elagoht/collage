@@ -193,7 +193,7 @@ func TestRouter_Register_DuplicateRoute_TrailingSlashNormalized(t *testing.T) {
 func TestRouter_Redirect_MatchWithParamSubstitution(t *testing.T) {
 	r := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
 	page := newTestPageWithRedirects("blog", map[string]string{"en": "/blog/{slug}"}, []*types.Redirect{
-		{From: "/old-blog/{slug}", To: "/blog/{slug}", Permanent: true},
+		{From: "/old-blog/{slug}", To: "/blog/{slug}", Status: http.StatusMovedPermanently},
 	})
 	mustRegister(t, r, page)
 
@@ -414,7 +414,7 @@ func TestRouter_RouteTable(t *testing.T) {
 		newTestPage("files", map[string]string{"en": "/files/{path...}"}),
 		newTestPage("shop-item", map[string]string{"en": "/shop/items/{itemID}"}),
 		newTestPageWithRedirects("archive", map[string]string{"en": "/archive"}, []*types.Redirect{
-			{From: "/old-archive", To: "/archive", Permanent: true},
+			{From: "/old-archive", To: "/archive", Status: http.StatusMovedPermanently},
 			{From: "/legacy/{year}", To: "/archive?year={year}"},
 		}),
 	}
@@ -504,7 +504,7 @@ func TestRouter_RouteTable(t *testing.T) {
 }
 
 // TestRouter_Redirect_SubstitutedValueIsEscaped is the open-redirect regression:
-// Redirect.Validate only ever sees the To *template*, and Match decodes each path
+// ValidateRedirect only ever sees the To *template*, and Match decodes each path
 // segment on its own, so a captured value carrying "/", "\", "?", "#", or CR/LF used
 // to land in the destination — and therefore in the Location header — as structure
 // rather than as text. Every row here is a destination that must come out escaped.
@@ -754,25 +754,5 @@ func TestClaimedPathsReportsEveryRegistry(t *testing.T) {
 	// "/tr/" fail for a page that does not live there.
 	if owner, ok := byPattern["/tr/about"]; ok {
 		t.Errorf("ClaimedPaths() reports %q (owner %q); the tr tree holds /hakkinda, not /about", "/tr/about", owner)
-	}
-}
-
-// TestClaimedPathsOmitsLocalePrefixesWhenPathLocaleIsDisabled proves the prefixed
-// forms are reported because they are reachable, not unconditionally: with path
-// locale resolution off, PrefixDefault is ignored and "/en/about" reaches nothing,
-// so it must not be claimed. (A path in "tr" there is refused outright: see
-// TestRegister_PathInUnreachableLocale_Rejected.)
-func TestClaimedPathsOmitsLocalePrefixesWhenPathLocaleIsDisabled(t *testing.T) {
-	rt := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr"}, DisablePathLocale: true, PrefixDefault: true})
-
-	page := &types.Page{Name: "about", Paths: map[string]string{"en": "/about"}}
-	if err := rt.Register(page); err != nil {
-		t.Fatalf("Register() = %v, want nil", err)
-	}
-
-	for _, claimed := range rt.ClaimedPaths() {
-		if claimed.Pattern != "/about" {
-			t.Errorf("ClaimedPaths() reports %q with path-locale resolution disabled; only %q is reachable", claimed.Pattern, "/about")
-		}
 	}
 }

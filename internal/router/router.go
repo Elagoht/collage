@@ -84,7 +84,7 @@ type MatchResult struct {
 	// Location header. It is empty when no redirect matched.
 	RedirectTo string
 	// RedirectStatus is the HTTP status code for RedirectTo, taken from the
-	// matched Redirect's EffectiveStatus. It is zero when no redirect matched.
+	// matched Redirect's RedirectStatus. It is zero when no redirect matched.
 	RedirectStatus int
 	// Canonical reports that RedirectTo is the router's own: the same route
 	// under the one spelling it answers — the locale prefix, the trailing slash —
@@ -289,7 +289,7 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 	// bare is a request for the default locale without its prefix, on a router
 	// whose default locale has one: right for a document at the root, a redirect
 	// for anything else.
-	prefixDefault := rt.localeOptions.PrefixDefault && !rt.localeOptions.DisablePathLocale
+	prefixDefault := rt.localeOptions.PrefixDefault
 	bare := prefixDefault && remaining == path
 
 	segments, ok := decodeSegments(splitPath(remaining))
@@ -553,7 +553,7 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	}
 	target.hasRedirect = true
 	target.redirectTo = redirect.To
-	target.redirectStatus = redirect.EffectiveStatus()
+	target.redirectStatus = types.RedirectStatus(redirect)
 	target.redirectCatchAll = catchAll
 	rt.redirectFroms[normalizedFrom] = redirect
 	// Locale is empty: the redirect tree is shared across locales, so this
@@ -596,12 +596,8 @@ func (rt *router) ClaimedPaths() []ClaimedPath {
 	return claimed
 }
 
-// pathLocales returns the locales that appear as a URL path prefix, or nil when
-// path-locale resolution is disabled and none of them do.
+// pathLocales returns the locales that appear as a URL path prefix.
 func (rt *router) pathLocales() []string {
-	if rt.localeOptions.DisablePathLocale {
-		return nil
-	}
 	return rt.localeOptions.supportedLocales()
 }
 

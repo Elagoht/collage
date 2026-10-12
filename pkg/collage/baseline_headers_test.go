@@ -35,14 +35,13 @@ func TestBaselineSecurityHeadersDefault(t *testing.T) {
 	}
 }
 
-// TestBaselineSecurityHeadersOmitted: "-" for FrameOptions and a false NoSniff
+// TestBaselineSecurityHeadersOmitted: "-" for FrameOptions and DisableNoSniff
 // send neither header, for an application that has its own policy and does not
 // want the framework's.
 func TestBaselineSecurityHeadersOmitted(t *testing.T) {
-	off := false
 	resp := getPage(t, func(cfg *collage.Config) {
 		cfg.Security.FrameOptions = "-"
-		cfg.Security.NoSniff = &off
+		cfg.Security.DisableNoSniff = true
 	})
 	if got := resp.Header.Get("X-Frame-Options"); got != "" {
 		t.Errorf("X-Frame-Options = %q, want it unset", got)

@@ -13,6 +13,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -67,24 +68,26 @@ type Result struct {
 	// the error before consulting this field. A non-required fragment's
 	// ErrNotFound follows the ordinary optional-failure policy and never sets it.
 	NotFound bool
-	// HoistEnds is where, in HTML, each hoist area's content ends — at the first
+	// hoistEnds is where, in HTML, each hoist area's content ends — at the first
 	// {{hoist}} marker for it — for adding to an area after the render.
-	HoistEnds map[string]int
+	hoistEnds map[string]int
 	// Findings are what plugins checking the output reported about this render,
 	// filled in by the caller that ran the AfterRender hooks.
 	Findings []types.Finding
 }
 
-// FragmentReports lists how each fragment of the render went, for plugins.
-func (r *Result) FragmentReports() []types.FragmentReport {
+// HoistEnds returns where, in r's HTML, each hoist area's content ends, for adding
+// to an area after the render.
+func HoistEnds(r *Result) map[string]int { return r.hoistEnds }
+
+// FragmentReports returns a copy of how each fragment of r's render went, for
+// plugins: the caller owns it, so changing it leaves r's Metadata as it was. It is
+// nil for a nil r or one without Metadata.
+func FragmentReports(r *Result) []types.FragmentReport {
 	if r == nil || r.Metadata == nil {
 		return nil
 	}
-	out := make([]types.FragmentReport, 0, len(r.Metadata.Fragments))
-	for _, f := range r.Metadata.Fragments {
-		out = append(out, types.FragmentReport{Name: f.Name, Duration: f.Duration, Failed: f.Failed, UsedFallback: f.UsedFallback, Err: f.Err})
-	}
-	return out
+	return slices.Clone(r.Metadata.Fragments)
 }
 
 // Degraded reports whether any fragment in the render failed, whether or not a
@@ -118,23 +121,7 @@ type Metadata struct {
 	// about a fragment that never executed; the error names it instead. A fallback
 	// has no entry of its own either: it is reported on the fragment it stood in
 	// for, through UsedFallback. Fragments bound into a fallback's slots do get one.
-	Fragments []FragmentMetadata
-}
-
-// FragmentMetadata records one fragment's contribution to a render.
-type FragmentMetadata struct {
-	// Name is the fragment's name.
-	Name string
-	// Duration is the fragment's wall-clock time, including the time taken by every
-	// fragment bound into its slots, since those render inside its template.
-	Duration time.Duration
-	// Failed reports whether the fragment's own render failed, including when a
-	// fallback then produced output in its place.
-	Failed bool
-	// UsedFallback reports whether the fragment's output came from its fallback.
-	UsedFallback bool
-	// Err is the error the fragment failed with, or nil.
-	Err error
+	Fragments []types.FragmentReport
 }
 
 // Options configures a SlotEngine.
@@ -279,7 +266,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 
 	metadata := &Metadata{Page: rc.Page.Name, Locale: rc.Locale}
 
-	root := rc.Page.Root()
+	root := types.PageRoot(rc.Page)
 	if root == nil {
 		// The page's own tags are known even though no fragment ran, and every
 		// other failure path reports what it collected; this one does too.
@@ -309,7 +296,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	// still reaches it — which is the whole reason a marker is written rather than
 	// the content itself.
 	var hoistEnds map[string]int
-	html, hoistEnds = resolveHoistsAt(html, state.hoistToken, rc.Hoisted())
+	html, hoistEnds = resolveHoistsAt(html, state.hoistToken, types.RenderHoisted(rc))
 	total := time.Since(start)
 
 	// Reported whether or not the render succeeded: a render that failed still
@@ -331,7 +318,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 	state.addTags(types.DeclaredTags(rc))
 	result := &Result{
 		HTML:           html,
-		HoistEnds:      hoistEnds,
+		hoistEnds:      hoistEnds,
 		DependencyTags: state.sortedTags(rc.Page.DependencyTags),
 		Metadata:       metadata,
 		NotFound:       state.notFound,

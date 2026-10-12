@@ -65,11 +65,7 @@ func staticBlog(t *testing.T, posts map[string][]string) (*App, *Page) {
 func buildInto(t *testing.T, app *App) (string, *BuildReport, error) {
 	t.Helper()
 	out := t.TempDir()
-	builder, err := NewBuilder(app, BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	report, err := builder.Build(context.Background())
+	report, err := Build(context.Background(), app, BuildOptions{OutDir: out})
 	return out, report, err
 }
 

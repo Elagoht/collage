@@ -8,7 +8,7 @@ import (
 )
 
 // Data is what a fragment renders with: a handler run for every render, a value
-// fixed when the program starts, or an effect. Only Load, DataHandler, Value and
+// fixed when the program starts, or an effect. Only Load, LoadTagged, Value and
 // Effect make one, so the Go type a fragment's template sees is always known —
 // which is what lets registration check the template against it.
 //
@@ -42,7 +42,7 @@ func templateType[T any]() reflect.Type {
 //		Build()
 //
 // A handler whose page is cached and whose data changes — a post, a count —
-// should report that data's tags, which is DataHandler's shape. On an error the
+// should report that data's tags, which is LoadTagged's shape. On an error the
 // data is dropped. A nil fn is a nil Data.
 func Load[T any](fn func(context.Context, *RenderContext) (T, error)) Data {
 	if fn == nil {
@@ -57,17 +57,16 @@ func Load[T any](fn func(context.Context, *RenderContext) (T, error)) Data {
 	}, templateType[T]())}
 }
 
-// DataHandler fetches a fragment's data on every render and reports the
-// dependency tags it was derived from, so a cached page built from it is
-// invalidated with it:
+// LoadTagged is Load for a handler that also returns the cache tags its data
+// depends on, so a cached page built from it is invalidated with it:
 //
-//	collage.NewFragment("post", "post.html").WithData(collage.DataHandler(loadPost))
+//	collage.NewFragment("post", "post.html").WithData(collage.LoadTagged(loadPost))
 //
 // where loadPost returns (Post, []string, error). On an error the data is
 // dropped rather than boxed — a nil *view returned with an error would
 // otherwise become a typed nil that reads as present — and the tags are kept. A
 // nil fn is a nil Data.
-func DataHandler[T any](fn func(context.Context, *RenderContext) (T, []string, error)) Data {
+func LoadTagged[T any](fn func(context.Context, *RenderContext) (T, []string, error)) Data {
 	if fn == nil {
 		return nil
 	}
@@ -115,8 +114,8 @@ func Value[T any](v T) Data {
 //
 // It reports no dependency tags: a handler whose declarations come from data
 // that changes — a post's title — and whose page is cached should report that
-// data's tags, which is DataHandler's shape, or the page should declare them
-// with WithDependency. A nil fn is a nil Data.
+// data's tags, which is LoadTagged's shape, or the page should declare them
+// with WithDependencyTags. A nil fn is a nil Data.
 func Effect(fn func(context.Context, *RenderContext) error) Data {
 	if fn == nil {
 		return nil

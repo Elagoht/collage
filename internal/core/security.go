@@ -50,9 +50,9 @@ type SecurityConfig struct {
 	// Empty means the default "SAMEORIGIN"; "-" sends none; anything else is sent
 	// verbatim. See baselineHeaders.
 	FrameOptions string
-	// NoSniff, unless it points at false, sends X-Content-Type-Options: nosniff on
-	// every response. See baselineHeaders.
-	NoSniff *bool
+	// DisableNoSniff stops X-Content-Type-Options: nosniff, which is otherwise sent
+	// on every response. See baselineHeaders.
+	DisableNoSniff bool
 }
 
 // baselineHeaders resolves the security headers sent on every response from the
@@ -68,7 +68,7 @@ func baselineHeaders(cfg SecurityConfig) (frameOptions string, noSniff bool) {
 	default:
 		frameOptions = cfg.FrameOptions
 	}
-	noSniff = cfg.NoSniff == nil || *cfg.NoSniff
+	noSniff = !cfg.DisableNoSniff
 	return frameOptions, noSniff
 }
 

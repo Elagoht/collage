@@ -109,7 +109,7 @@ func main() {
 	layout := collage.NewFragment("layout", "layouts/default.html").Build()
 
 	homeContent := collage.NewFragment("home-content", "pages/home.html").
-		WithData(collage.DataHandler(func(_ context.Context, _ *collage.RenderContext) (homeData, []string, error) {
+		WithData(collage.LoadTagged(func(_ context.Context, _ *collage.RenderContext) (homeData, []string, error) {
 			return homeData{Title: "Welcome home"}, []string{"homepage"}, nil
 		})).
 		Build()
@@ -119,7 +119,7 @@ func main() {
 		WithContent(homeContent).
 		WithPath("en", "/").
 		Incremental(5 * time.Minute).
-		WithDependency("homepage").
+		WithDependencyTags("homepage").
 		Build()
 
 	if err := app.RegisterPage(homePage); err != nil {
@@ -276,7 +276,7 @@ sitemap := collage.NewDocument("sitemap", "application/xml").
 		return body, []string{"blog:posts"}, err
 	}).
 	Incremental(time.Hour).
-	WithDependency("blog:posts").
+	WithDependencyTags("blog:posts").
 	Build()
 
 err := app.RegisterDocument(sitemap)
@@ -327,7 +327,7 @@ Details in [docs/caching.md](docs/caching.md),
 | --- | --- |
 | [docs/architecture.md](docs/architecture.md) | Package layout, the request lifecycle, why data is fetched concurrently but markup written in order, why plugins get a `Host` |
 | [docs/fragments.md](docs/fragments.md) | Fragments, slots, layouts, data handlers, timeouts, the failure policy, template functions |
-| [docs/documents.md](docs/documents.md) | `Document`: non-HTML responses, the handler contract, plain-text errors, the four hooks, static builds |
+| [docs/documents.md](docs/documents.md) | `Document`: non-HTML responses, the handler contract, plain-text errors, the three hooks, static builds |
 | [docs/assets.md](docs/assets.md) | `App.Mount`: `fs.FS` assets, `Range` and ETags, why `os.OpenRoot` rather than `os.DirFS`, and the limitations |
 | [docs/caching.md](docs/caching.md) | Render strategies, the cache key, ETags, `Vary`, dependency tags, invalidation, custom caches |
 | [docs/plugins.md](docs/plugins.md) | The `Plugin` contract, the `Host`, every hook, dispatch and error semantics, lifecycle |

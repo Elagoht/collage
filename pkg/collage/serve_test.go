@@ -28,11 +28,7 @@ func TestServe_NotCalledInBuild(t *testing.T) {
 	if err := app.RegisterPlugin(spy); err != nil {
 		t.Fatalf("RegisterPlugin: %v", err)
 	}
-	builder, err := NewBuilder(app, BuildOptions{OutDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	if _, err := builder.Build(context.Background()); err != nil {
+	if _, err := Build(context.Background(), app, BuildOptions{OutDir: t.TempDir()}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	if spy.inits.Load() == 0 {

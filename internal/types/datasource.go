@@ -53,13 +53,13 @@ func EffectData(h DataHandlerFunc) DataSource {
 	return DataSource{Kind: DataEffect, Handler: h}
 }
 
-// DataSource returns what f renders with. It is nil-safe.
-func (f *Fragment) DataSource() DataSource {
+// FragmentDataSource returns what f renders with. It is nil-safe.
+func FragmentDataSource(f *Fragment) DataSource {
 	if f == nil {
 		return DataSource{}
 	}
 	return f.data
 }
 
-// SetDataSource sets what f renders with.
-func (f *Fragment) SetDataSource(d DataSource) { f.data = d }
+// SetFragmentDataSource sets what f renders with.
+func SetFragmentDataSource(f *Fragment, d DataSource) { f.data = d }

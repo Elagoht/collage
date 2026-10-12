@@ -170,7 +170,7 @@ func TestInlineFragment_FromAResolver(t *testing.T) {
 	app := inlineApp(t, false)
 	item := collage.NewInlineFragment("item", `<li>i</li>`).Build()
 	list := collage.NewInlineFragment("list", `<ul>{{slot "items"}}</ul>`).
-		WithSlotResolver("items", func(*collage.RenderContext) ([]*collage.Fragment, error) {
+		WithSlotResolver("items", func(context.Context, *collage.RenderContext) ([]*collage.Fragment, error) {
 			return []*collage.Fragment{item}, nil
 		}).Build()
 	if err := app.RegisterPage(collage.NewPage("l").WithContent(list).WithPath("en", "/l").Dynamic().Build()); err != nil {
@@ -207,34 +207,13 @@ func TestInlineFragment_StaticBuildAndFragmentPath(t *testing.T) {
 		t.Fatalf("fragment path body = %q", got)
 	}
 	out := t.TempDir()
-	builder, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	if _, err := builder.Build(context.Background()); err != nil {
+	if _, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	written, err := os.ReadFile(filepath.Join(out, "search", "index.html"))
 	if err != nil || !strings.Contains(string(written), "<form></form>") {
 		t.Fatalf("built page = %q, %v", written, err)
 	}
-}
-
-func TestInspect_InlineFragment(t *testing.T) {
-	app := inlineApp(t, false)
-	if err := app.RegisterPage(collage.NewPage("p").WithContent(collage.NewInlineFragment("card", `<p/>`).Build()).
-		WithPath("en", "/p").Build()); err != nil {
-		t.Fatalf("RegisterPage: %v", err)
-	}
-	for _, f := range app.Inspect().Fragments {
-		if f.Name == "card" {
-			if !f.Inline || f.Template != "" {
-				t.Fatalf("inspected = %+v, want inline and no template path", f)
-			}
-			return
-		}
-	}
-	t.Fatal("inline fragment not inspected")
 }
 
 const inlineRow collage.InlineHTML = `<p>{{template "partials/name.html" .}}</p>`

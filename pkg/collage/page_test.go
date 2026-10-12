@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // TestPageBuilder_MinimalApp builds the page of an application modelled on the
@@ -14,10 +16,10 @@ import (
 // incremental caching.
 func TestPageBuilder_MinimalApp(t *testing.T) {
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
+		WithSlot("content", SlotRequired, SlotSingle).
 		Build()
 
-	homeContent := NewFragment("home-content", "pages/home.html").WithData(DataHandler(
+	homeContent := NewFragment("home-content", "pages/home.html").WithData(LoadTagged(
 		func(ctx context.Context, rc *RenderContext) (map[string]string, []string, error) {
 			return map[string]string{"Title": "Welcome Home"}, []string{"homepage"}, nil
 		})).
@@ -33,8 +35,8 @@ func TestPageBuilder_MinimalApp(t *testing.T) {
 	if homePage.Name != "home" {
 		t.Errorf("Name = %q, want %q", homePage.Name, "home")
 	}
-	if homePage.LayoutFragment != layout {
-		t.Errorf("LayoutFragment = %v, want %v", homePage.LayoutFragment, layout)
+	if types.LayoutFragment(homePage) != layout {
+		t.Errorf("LayoutFragment = %v, want %v", types.LayoutFragment(homePage), layout)
 	}
 	if homePage.ContentFragment != homeContent {
 		t.Errorf("ContentFragment = %v, want %v", homePage.ContentFragment, homeContent)
@@ -57,7 +59,7 @@ func TestPageBuilder_MinimalApp(t *testing.T) {
 // plus the two global error pages the example builds alongside it.
 func TestPageBuilder_BlogExample(t *testing.T) {
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
+		WithSlot("content", SlotRequired, SlotSingle).
 		Build()
 
 	blog404Content := NewFragment("blog-404", "errors/blog-404.html").
@@ -83,7 +85,7 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		return &fetchedPost{Slug: slug}, nil
 	}
 
-	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").WithData(DataHandler(
+	blogPostContent := NewFragment("blog-post", "pages/blog-post.html").WithData(LoadTagged(
 		func(ctx context.Context, rc *RenderContext) (*fetchedPost, []string, error) {
 			slug := rc.PathParams["slug"]
 			post, err := fetchPost(slug)
@@ -105,7 +107,7 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		WithNotFoundPage(blog404Page).
 		WithErrorPage(blog500Page).
 		Incremental(10 * time.Minute).
-		WithDependency("blog:posts").
+		WithDependencyTags("blog:posts").
 		Build()
 
 	globalNotFound := NewPage("global-404").
@@ -116,8 +118,8 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		WithContent(NewFragment("500", "errors/500.html").Build()).
 		Build()
 
-	if blogPostPage.LayoutFragment != layout {
-		t.Errorf("LayoutFragment = %v, want %v", blogPostPage.LayoutFragment, layout)
+	if types.LayoutFragment(blogPostPage) != layout {
+		t.Errorf("LayoutFragment = %v, want %v", types.LayoutFragment(blogPostPage), layout)
 	}
 	if blogPostPage.ContentFragment != blogPostContent {
 		t.Errorf("ContentFragment = %v, want %v", blogPostPage.ContentFragment, blogPostContent)
@@ -129,11 +131,11 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 	if len(blogPostPage.Redirects) != 2 {
 		t.Fatalf("len(Redirects) = %d, want 2", len(blogPostPage.Redirects))
 	}
-	if blogPostPage.Redirects[0].From != "/old-blog/{slug}" || blogPostPage.Redirects[0].To != "/blog/{slug}" || blogPostPage.Redirects[0].StatusCode != 301 {
-		t.Errorf("Redirects[0] = %+v, want {From:/old-blog/{slug} To:/blog/{slug} StatusCode:301}", blogPostPage.Redirects[0])
+	if blogPostPage.Redirects[0].From != "/old-blog/{slug}" || blogPostPage.Redirects[0].To != "/blog/{slug}" || blogPostPage.Redirects[0].Status != 301 {
+		t.Errorf("Redirects[0] = %+v, want {From:/old-blog/{slug} To:/blog/{slug} Status:301}", blogPostPage.Redirects[0])
 	}
-	if blogPostPage.Redirects[1].From != "/temp-blog/{slug}" || blogPostPage.Redirects[1].To != "/blog/{slug}" || blogPostPage.Redirects[1].StatusCode != 302 {
-		t.Errorf("Redirects[1] = %+v, want {From:/temp-blog/{slug} To:/blog/{slug} StatusCode:302}", blogPostPage.Redirects[1])
+	if blogPostPage.Redirects[1].From != "/temp-blog/{slug}" || blogPostPage.Redirects[1].To != "/blog/{slug}" || blogPostPage.Redirects[1].Status != 302 {
+		t.Errorf("Redirects[1] = %+v, want {From:/temp-blog/{slug} To:/blog/{slug} Status:302}", blogPostPage.Redirects[1])
 	}
 	if blogPostPage.NotFoundPage != blog404Page {
 		t.Errorf("NotFoundPage = %v, want %v", blogPostPage.NotFoundPage, blog404Page)
@@ -155,11 +157,11 @@ func TestPageBuilder_BlogExample(t *testing.T) {
 		t.Error("blogPostContent.Required = false, want true")
 	}
 
-	if blog404Page.LayoutFragment != layout || blog404Page.ContentFragment != blog404Content {
-		t.Errorf("blog404Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", blog404Page.LayoutFragment, blog404Page.ContentFragment, layout, blog404Content)
+	if types.LayoutFragment(blog404Page) != layout || blog404Page.ContentFragment != blog404Content {
+		t.Errorf("blog404Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", types.LayoutFragment(blog404Page), blog404Page.ContentFragment, layout, blog404Content)
 	}
-	if blog500Page.LayoutFragment != layout || blog500Page.ContentFragment != blog500Content {
-		t.Errorf("blog500Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", blog500Page.LayoutFragment, blog500Page.ContentFragment, layout, blog500Content)
+	if types.LayoutFragment(blog500Page) != layout || blog500Page.ContentFragment != blog500Content {
+		t.Errorf("blog500Page = {Layout:%v Content:%v}, want {Layout:%v Content:%v}", types.LayoutFragment(blog500Page), blog500Page.ContentFragment, layout, blog500Content)
 	}
 	if globalNotFound.Name != "global-404" || globalNotFound.ContentFragment == nil {
 		t.Errorf("globalNotFound = %+v, want Name=global-404 and a non-nil ContentFragment", globalNotFound)
@@ -341,7 +343,7 @@ func TestPageGuardsOrder(t *testing.T) {
 	content := NewFragment("home", "pages/home.html").WithGuard(g("content")).Build()
 	middle := NewFragment("middle", "layouts/middle.html").Build() // no guard: skipped, not an error
 	p := NewPage("home").WithLayouts(outer, middle, inner).WithContent(content).Build()
-	guards := p.Guards()
+	guards := types.PageGuards(p)
 	if len(guards) != 3 {
 		t.Fatalf("Guards() has %d guards, want 3", len(guards))
 	}

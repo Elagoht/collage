@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/plugin"
+	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -64,7 +66,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// reads the body, and a logged-out forged POST is better spent against the
 	// guard than the forgery check.
 	if page := match.Page; page != nil {
-		if status, allowed := h.checkGuards(w, r, route, match.Locale, page.Guards()); !allowed {
+		if status, allowed := h.checkGuards(w, r, route, match.Locale, types.PageGuards(page)); !allowed {
 			return status
 		}
 	}
@@ -317,6 +319,11 @@ func (h *Handler) writeActionResult(
 	result *types.ActionResult,
 	route *routeRef,
 ) int {
+	if err := checkUnambiguousResult(result); err != nil {
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender,
+			err))
+	}
+
 	header := w.Header()
 	for name, values := range result.Header {
 		for _, value := range values {
@@ -447,13 +454,14 @@ func (h *Handler) writeActionPage(
 	afterRender := &plugin.AfterRenderEvent{
 		Page:           result.Page,
 		Locale:         match.Locale,
+		Path:           r.URL.Path,
 		Degraded:       rendered.Degraded(),
-		Fragments:      rendered.FragmentReports(),
+		Fragments:      render.FragmentReports(rendered),
 		DependencyTags: append([]string(nil), rendered.DependencyTags...),
 		Values:         types.ValuesOf(rc),
 		HTML:           rendered.HTML,
 	}
-	plugin.PrepareHoist(afterRender, rendered.HoistEnds, rc.Hoisted())
+	plugin.PrepareHoist(afterRender, render.HoistEnds(rendered), types.RenderHoisted(rc))
 	if err := h.plugins.AfterRender(r.Context(), afterRender); err != nil {
 		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageAfterRender, err))
 	}
@@ -560,3 +568,25 @@ func statusOr(declared, fallback int) int {
 // an action asks for invalidation declaratively, through ActionResult.InvalidateTags,
 // rather than being handed the whole application to call a method on.
 type Invalidator func(ctx context.Context, tags []string) error
+
+// checkUnambiguousResult refuses a result that asks for two responses. The names
+// of the fields it sets follow the sentinel, so the log line says which pair.
+func checkUnambiguousResult(result *types.ActionResult) error {
+	var set []string
+	if result.Location != "" {
+		set = append(set, "Location")
+	}
+	if result.Fragment != nil {
+		set = append(set, "Fragment")
+	}
+	if result.Page != nil {
+		set = append(set, "Page")
+	}
+	if len(result.Body) > 0 {
+		set = append(set, "Body")
+	}
+	if len(set) < 2 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", types.ErrAmbiguousActionResult, strings.Join(set, ", "))
+}

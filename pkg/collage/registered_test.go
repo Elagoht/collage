@@ -34,7 +34,7 @@ func TestAction_AnUnregisteredPageIsNamed(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 
-	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
 	build := func() *collage.Page {
 		return collage.NewPage("form").WithLayouts(layout).
 			WithContent(collage.NewFragment("form-content", "form.html").Build()).Dynamic().Build()
@@ -110,8 +110,8 @@ func TestRegister_RefusesWhatABuilderRecorded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	inner := collage.NewFragment("inner", "x.html").WithSlot("s", false, false).WithSlot("s", false, false).Build()
-	outer := collage.NewFragment("outer", "x.html").WithSlot("child", false, false).WithSlotFragment("child", inner).Build()
+	inner := collage.NewFragment("inner", "x.html").WithSlot("s", collage.SlotSingle).WithSlot("s", collage.SlotSingle).Build()
+	outer := collage.NewFragment("outer", "x.html").WithSlot("child", collage.SlotSingle).WithSlotFragment("child", inner).Build()
 	page := collage.NewPage("p").WithContent(outer).WithPath("en", "/").Dynamic().Build()
 	if err := app.RegisterPage(page); !errors.Is(err, collage.ErrDuplicateSlot) {
 		t.Errorf("RegisterPage = %v, want ErrDuplicateSlot from the inner fragment's builder", err)
@@ -137,7 +137,7 @@ func TestDev500_NamesTheBrokenFragment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
 	// A nil Chef fits the template's type, so registration passes, and the
 	// template fails only when it renders.
 	type chef struct{ Name string }
@@ -145,7 +145,7 @@ func TestDev500_NamesTheBrokenFragment(t *testing.T) {
 		Name string
 		Chef *chef
 	}
-	content := collage.NewFragment("recipe-content", "recipe.html").WithData(collage.DataHandler(
+	content := collage.NewFragment("recipe-content", "recipe.html").WithData(collage.LoadTagged(
 		func(context.Context, *collage.RenderContext) (recipe, []string, error) {
 			return recipe{Name: "soup"}, nil, nil
 		})).
@@ -190,9 +190,11 @@ func TestSlotResolver_AResolvedFragmentsBuilderMistakeFailsTheRender(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	broken := collage.NewFragment("broken", "x.html").WithSlot("s", false, false).WithSlot("s", false, false).Build()
-	host := collage.NewFragment("host", "x.html").WithSlot("s", false, true).
-		WithSlotResolver("s", func(*collage.RenderContext) ([]*collage.Fragment, error) { return []*collage.Fragment{broken}, nil }).
+	broken := collage.NewFragment("broken", "x.html").WithSlot("s", collage.SlotSingle).WithSlot("s", collage.SlotSingle).Build()
+	host := collage.NewFragment("host", "x.html").WithSlot("s").
+		WithSlotResolver("s", func(context.Context, *collage.RenderContext) ([]*collage.Fragment, error) {
+			return []*collage.Fragment{broken}, nil
+		}).
 		Build()
 	if err := app.RegisterPage(collage.NewPage("p").WithContent(host).WithPath("en", "/").Dynamic().Build()); err != nil {
 		t.Fatal(err)

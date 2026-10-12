@@ -202,8 +202,7 @@ func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, do
 	return http.StatusOK
 }
 
-// writeDocumentCache stores result.Body under key for doc, after giving
-// CacheWriteHook the chance to adjust the TTL and tags or to suppress the write, and
+// writeDocumentCache stores result.Body under key for doc, and
 // records the key's tags with the tracker. It mirrors the page path's writeCache,
 // including writing through both the tagged and untagged paths so the tracker is
 // always updated. A failure here never fails the request: the document has already
@@ -217,11 +216,6 @@ func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, do
 // document is already on its way out, so they go through reportError rather than
 // serveFailure. They are still built through route, so the log record names the
 // document exactly as a served failure's would.
-//
-// CacheWriteEvent.Page is deliberately left nil here: a document was never
-// rendered from a *types.Page and there is none to carry. That nil is documented
-// on the field itself, because a plugin that dereferences it unguarded panics on
-// every document request and loses the cache write with it.
 func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Document, result *render.DocumentResult, route *routeRef) string {
 	ctx := r.Context()
 	// Not for a static build's header capture; see writeCache.
@@ -229,25 +223,14 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 		return ""
 	}
 
-	event := &plugin.CacheWriteEvent{
-		Key:  key,
-		TTL:  h.ttlFor(doc.Strategy, doc.CacheTTL),
-		Tags: result.Tags,
-	}
-	if err := h.plugins.CacheWrite(ctx, event); err != nil {
-		h.reportError(r, route.failure(0, stageCacheWrite, err))
-		return ""
-	}
-	if event.Skip {
-		return ""
-	}
+	ttl := h.ttlFor(doc.Strategy, doc.CacheTTL)
 
 	var etag string
 	var err error
 	if tagged, ok := h.cache.(cache.TaggedCache); ok {
-		etag, err = tagged.SetTagged(ctx, key, result.Body, event.TTL, event.Tags)
+		etag, err = tagged.SetTagged(ctx, key, result.Body, ttl, result.Tags)
 	} else {
-		etag, err = h.cache.Set(ctx, key, result.Body, event.TTL)
+		etag, err = h.cache.Set(ctx, key, result.Body, ttl)
 	}
 	if err != nil {
 		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: cache write: %w", err)))
@@ -255,7 +238,7 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
 
-	if err := h.tracker.Track(ctx, key, withRouteTags(event.Tags, r.Host, r.URL.Path)); err != nil {
+	if err := h.tracker.Track(ctx, key, withRouteTags(result.Tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: track %q: %w", key, err)))
 	}
 	return etag

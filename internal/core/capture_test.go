@@ -8,12 +8,10 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
-	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -194,38 +192,21 @@ func TestCaptureResponses_KeepsTheHeadersSentWithTheStatus(t *testing.T) {
 	}
 }
 
-// cacheWriteCounter counts CacheWriteHook calls.
-type cacheWriteCounter struct{ n atomic.Int32 }
-
-func (*cacheWriteCounter) Name() string                            { return "test/cachewrites" }
-func (*cacheWriteCounter) Version() string                         { return "0" }
-func (*cacheWriteCounter) Init(context.Context, plugin.Host) error { return nil }
-func (*cacheWriteCounter) Shutdown(context.Context) error          { return nil }
-func (c *cacheWriteCounter) OnCacheWrite(context.Context, *plugin.CacheWriteEvent) error {
-	c.n.Add(1)
-	return nil
-}
-
-// TestCaptureResponses_LeavesTheCacheAlone: a capture writes no cache entry and
-// calls no CacheWriteHook, for a page or a document; a reader's request after it
-// does both, which is what shows the check can fail.
+// TestCaptureResponses_LeavesTheCacheAlone: a capture writes no cache entry, for a
+// page or a document; a reader's request after it does, which is what shows the check can fail.
 func TestCaptureResponses_LeavesTheCacheAlone(t *testing.T) {
 	app := newCaptureApp(t)
-	counter := &cacheWriteCounter{}
-	if err := app.RegisterPlugin(counter); err != nil {
-		t.Fatalf("RegisterPlugin: %v", err)
-	}
 	if _, err := app.CaptureResponses(context.Background(), []string{"/a", "/feed.xml"}); err != nil {
 		t.Fatal(err)
 	}
 	store := app.store.(*cache.MemoryCache)
-	if n := store.Stats().Entries; n != 0 || counter.n.Load() != 0 {
-		t.Fatalf("after capture: %d entries, %d CacheWrite calls; want none", n, counter.n.Load())
+	if n := store.Stats().Entries; n != 0 {
+		t.Fatalf("after capture: %d entries; want none", n)
 	}
 	get(app.Handler(), "/a")
 	get(app.Handler(), "/feed.xml")
-	if n := store.Stats().Entries; n != 2 || counter.n.Load() != 2 {
-		t.Fatalf("after two reads: %d entries, %d CacheWrite calls; want 2 and 2", n, counter.n.Load())
+	if n := store.Stats().Entries; n != 2 {
+		t.Fatalf("after two reads: %d entries; want 2", n)
 	}
 }
 
@@ -343,7 +324,7 @@ func TestCaptureResponses_NeverSharesAReadersRender(t *testing.T) {
 			entered := make(chan bool, 8)
 			gate := make(chan struct{})
 			content := &types.Fragment{Name: "gated", TemplatePath: "pages/home.html"}
-			content.SetDataSource(types.FetchedData(func(ctx context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
+			types.SetFragmentDataSource(content, types.FetchedData(func(ctx context.Context, rc *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc
 				entered <- types.IsCapture(rc.Context())
 				<-gate
 				return homeData{Title: "Gated"}, nil, nil
@@ -356,10 +337,6 @@ func TestCaptureResponses_NeverSharesAReadersRender(t *testing.T) {
 			page.Paths = map[string]string{"en": "/a"}
 			if err := app.RegisterPage(page); err != nil {
 				t.Fatalf("RegisterPage: %v", err)
-			}
-			counter := &cacheWriteCounter{}
-			if err := app.RegisterPlugin(counter); err != nil {
-				t.Fatalf("RegisterPlugin: %v", err)
 			}
 			handler := app.Handler()
 
@@ -408,8 +385,8 @@ func TestCaptureResponses_NeverSharesAReadersRender(t *testing.T) {
 			if captureErr != nil || captured["/a"].Status != http.StatusOK || readerCode != http.StatusOK {
 				t.Fatalf("capture %+v %v, reader %d", captured["/a"], captureErr, readerCode)
 			}
-			if n := app.store.(*cache.MemoryCache).Stats().Entries; n != 1 || counter.n.Load() != 1 {
-				t.Errorf("%d entries, %d CacheWrite calls; want the reader's one and one", n, counter.n.Load())
+			if n := app.store.(*cache.MemoryCache).Stats().Entries; n != 1 {
+				t.Errorf("%d entries; want the reader's one", n)
 			}
 		})
 	}
@@ -431,10 +408,6 @@ func TestCaptureResponses_NeverSharesAReadersDocument(t *testing.T) {
 	}
 	if err := app.RegisterDocument(doc); err != nil {
 		t.Fatalf("RegisterDocument: %v", err)
-	}
-	counter := &cacheWriteCounter{}
-	if err := app.RegisterPlugin(counter); err != nil {
-		t.Fatalf("RegisterPlugin: %v", err)
 	}
 	handler := app.Handler()
 	wait := func(what string) bool {
@@ -462,8 +435,8 @@ func TestCaptureResponses_NeverSharesAReadersDocument(t *testing.T) {
 	}
 	close(gate)
 	wg.Wait()
-	if n := app.store.(*cache.MemoryCache).Stats().Entries; n != 1 || counter.n.Load() != 1 {
-		t.Errorf("%d entries, %d CacheWrite calls; want the reader's one and one", n, counter.n.Load())
+	if n := app.store.(*cache.MemoryCache).Stats().Entries; n != 1 {
+		t.Errorf("%d entries; want the reader's one", n)
 	}
 }
 

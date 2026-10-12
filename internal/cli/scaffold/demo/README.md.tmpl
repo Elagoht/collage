@@ -134,7 +134,7 @@ https://collage.furkanbaytekin.dev/en/docs/plugins/.
   `PORT` it sets for it — so `main.go` must listen there — and shows the
   program's output in place of the page when it exits.
 - **`collage export`** runs `go run . -collage-build -out <dir>`. `main.go`
-  parses those flags and renders through `collage.NewBuilder`, collage's own
+  parses those flags and renders through `collage.Build`, collage's own
   builder.
 
 If you rewrite `main.go`, keep both halves working, or `collage dev` and

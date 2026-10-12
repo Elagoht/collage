@@ -211,7 +211,7 @@ func TestMount_RejectsAPrefixShadowingARedirect(t *testing.T) {
 	app := newTestApp(t, nil)
 
 	page := newHomePage()
-	page.Redirects = []*types.Redirect{{From: "/static/old.css", To: "/assets/app.css", Permanent: true}}
+	page.Redirects = []*types.Redirect{{From: "/static/old.css", To: "/assets/app.css", Status: http.StatusMovedPermanently}}
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestMount_RejectsARedirectShadowedByAnEarlierMount(t *testing.T) {
 	}
 
 	page := newHomePage()
-	page.Redirects = []*types.Redirect{{From: "/static/old.css", To: "/assets/app.css", Permanent: true}}
+	page.Redirects = []*types.Redirect{{From: "/static/old.css", To: "/assets/app.css", Status: http.StatusMovedPermanently}}
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}

@@ -23,8 +23,6 @@ type Cache interface {
 	// tags: an implementation that can associate tags with an entry exposes that
 	// through TaggedCache instead.
 	Set(ctx context.Context, key string, content []byte, ttl time.Duration) (etag string, err error)
-	// Invalidate removes every entry associated with any of tags.
-	Invalidate(ctx context.Context, tags []string) error
 	// InvalidateKey removes the entry stored under key, if any. Invalidating a
 	// key that has no entry is not an error.
 	InvalidateKey(ctx context.Context, key string) error
@@ -41,6 +39,8 @@ type TaggedCache interface {
 	// content's ETag. A ttl of zero or less uses the cache's configured default
 	// TTL. Passing tags associates key with each of them for a later Invalidate.
 	SetTagged(ctx context.Context, key string, content []byte, ttl time.Duration, tags []string) (etag string, err error)
+	// Invalidate removes every entry associated with any of tags.
+	Invalidate(ctx context.Context, tags []string) error
 }
 
 // Entry is one stored cache record: rendered content, its ETag, expiry, the tags it

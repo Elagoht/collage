@@ -54,8 +54,8 @@ func argsApp(t *testing.T, tmpl string, logs *bytes.Buffer) (http.Handler, *coll
 		return storyView{ID: 42, Rank: 7, Code: 3, Score: 1.5}, nil
 	})).
 		Build()
-	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).
-		WithSlot("aside", false, false).WithSlotFragment("aside", home).Build()
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).
+		WithSlot("aside", collage.SlotSingle).WithSlotFragment("aside", home).Build()
 	noop := func(context.Context, *collage.RenderContext) (*collage.ActionResult, error) { return nil, nil }
 	for _, p := range []*collage.Page{
 		collage.NewPage("home").WithLayouts(layout).WithContent(collage.NewFragment("wrap", "aside.html").Build()).

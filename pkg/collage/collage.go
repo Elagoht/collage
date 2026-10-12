@@ -2,7 +2,8 @@ package collage
 
 import (
 	"context"
-	"errors"
+	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/netip"
 
@@ -12,33 +13,31 @@ import (
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
-	"github.com/Elagoht/collage/internal/router"
-	"github.com/Elagoht/collage/internal/template"
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// ErrNilConfig is returned by New when passed a nil *Config. A nil config is a
-// programming mistake rather than a request for the defaults: Config carries the
-// template root, and silently inventing one would put the application's templates
-// somewhere the author never chose.
-var ErrNilConfig = errors.New("collage: nil config")
+// Plugin is the minimum contract every plugin implements. A plugin opts into the
+// framework's hooks by additionally implementing whichever hook interfaces it
+// needs.
+type Plugin = interface {
+	// Name identifies the plugin. It must be non-empty and unique among the
+	// application's plugins.
+	Name() string
+	// Version reports the plugin's own version string, for diagnostics.
+	Version() string
+	// Init prepares the plugin to run, using host to read startup state and
+	// contribute routes and commands. Init runs once, in registration order,
+	// before the first request is served. A returned error aborts startup, and the
+	// plugins already initialised are shut down.
+	Init(ctx context.Context, host Host) error
+	// Shutdown releases whatever the plugin acquired in Init. It runs once, in
+	// reverse registration order, either at normal shutdown or to roll back a
+	// failed startup.
+	Shutdown(ctx context.Context) error
+}
 
-// App owns every subsystem and the server lifecycle. It is an alias for
-// internal/core's App, not a wrapper, so the methods documented there — RegisterPage,
-// RegisterNotFoundPage, RegisterErrorPage, RegisterPlugin, RegisterCommand,
-// Commands, Pages, Page, DevMode, Logger, InvalidateTags, InvalidateTagsN,
-// RenderPath, Handler, ListenAndServe, and Shutdown — are called directly on the
-// value New returns, with no forwarding layer in between.
-type App = core.App
-
-// Plugin is the minimum contract every plugin implements: Name, Version, Init, and
-// Shutdown. A plugin opts into the framework's hooks by additionally implementing
-// whichever hook interfaces it needs.
-type Plugin = plugin.Plugin
-
-// Host is the capability surface a plugin receives in Init: DevMode, Pages, Page,
-// InvalidateTags, Logger, RegisterCommand, RegisterPage, RegisterDocument,
-// and Mount, and nothing else — plus the ConfigReader PluginConfig reads through.
+// Host is the capability surface a plugin receives in Init, plus the ConfigReader
+// PluginConfig reads through.
 //
 // The value handed to Init is deliberately not the *App. *App has most of these
 // methods, but it also has Shutdown, ListenAndServe, Handler, and RenderPath, and a
@@ -46,7 +45,101 @@ type Plugin = plugin.Plugin
 // could assert its Host parameter to an interface naming those and recover them
 // without ever referring to *App by name. What Init receives is a narrow forwarding
 // value instead, so the assertion has nothing to find.
-type Host = plugin.Host
+//
+// No type outside collage implements Host: its ConfigReader's one method is
+// unexported. A plugin's test that needs a Host embeds a real one.
+type Host = interface {
+	// --- The environment ---
+	//
+	// DevMode reports whether the application is running in development mode.
+	DevMode() bool
+	// BaseURL returns the site's public origin without a trailing slash — the
+	// scheme and host an absolute URL is built on, from Config.BaseURL — or "" when
+	// the application set none, in which case a plugin that needs one takes its own.
+	BaseURL() string
+	// OriginFor is host's public origin: an OriginResolver's, else Config.BaseURL,
+	// which may be "". host is lower-cased, without its port. It is how a plugin
+	// that writes absolute URLs outside a render — an invalidation, a command —
+	// learns a host's origin.
+	OriginFor(ctx context.Context, host string) string
+	// MultiOrigin reports whether a plugin implementing OriginResolver is
+	// registered — whether origins vary by host — so an empty Config.BaseURL is
+	// not, by itself, a misconfiguration.
+	MultiOrigin() bool
+	// Locales returns the default locale and every supported one, the default
+	// included, in the order they were configured.
+	Locales() (defaultLocale string, supported []string)
+	// BuildID names the build of the program serving — Config.Cache.Version, or
+	// a fingerprint of the executable — for a plugin versioning what a browser
+	// keeps across deploys: a service worker's caches, an asset's query string.
+	BuildID() string
+	// Logger returns the application's structured logger.
+	Logger() *slog.Logger
+
+	// --- Contributing routes ---
+	//
+	// RegisterCommand registers cmd as one of the application's CLI subcommands.
+	RegisterCommand(cmd Command) error
+	// RegisterDocument registers a document the plugin contributes, on the same
+	// terms as App.RegisterDocument.
+	RegisterDocument(doc *Document) error
+	// Mount serves fsys under prefix, on the same terms as App.Mount. A plugin
+	// that rewrites URLs into its own namespace — an image optimiser, say — uses
+	// this to serve what it rewrote to.
+	Mount(prefix string, fsys fs.FS, opts ...MountOption) error
+	// Handle serves handler for every request under prefix, on the same terms as
+	// App.Handle: a prefix ending in "/", refused when it shadows a registered
+	// route. It is for what a file system cannot answer — an event stream, a
+	// WebSocket.
+	Handle(prefix string, handler http.Handler) error
+
+	// --- Wrapping requests ---
+	//
+	// Use adds middleware around the handling of every request, as App.Use does,
+	// after the application's: a plugin's headers, limits and cookies wrap what
+	// the application's middleware produced.
+	Use(middleware func(http.Handler) http.Handler) error
+
+	// --- Reading the site map ---
+	//
+	// Pages returns every page registered with the application, each a defensive
+	// copy: the Page and its Paths, Redirects and DependencyTags are copied, so
+	// mutating them does not affect the framework's own. The copy goes one level
+	// deep — writing through a value a copied container holds reaches the
+	// original — and the fragment pointers are shared.
+	Pages() []*Page
+	// Page returns the page registered under name, and whether one was found.
+	// The returned Page is a defensive copy, on the same terms as Pages.
+	Page(name string) (*Page, bool)
+	// PageURLs returns every URL the page registered as name answers — one per
+	// locale for a fixed path, one per locale and parameter set for a pattern its
+	// WithStaticParams lists; a pattern without it has none a plugin could know.
+	// It is what a sitemap is made of.
+	PageURLs(ctx context.Context, name string) ([]PageURL, error)
+	// URL returns the path of the page or document registered as name, in
+	// locale, with params filling its pattern — App.URL, with its strictness.
+	URL(name, locale string, params map[string]string) (string, error)
+
+	// --- Acting at request time ---
+	//
+	// RenderFragment renders one fragment a page opened at its own URL with
+	// WithFragmentPath, for r, as a request to that URL would — and hands back the
+	// parts rather than a response, so it can travel over a stream the plugin
+	// owns. A fragment the page did not open is ErrUnknownFragmentPath: nothing is
+	// reachable here that is not reachable over HTTP. The fragment's guard runs
+	// for r as it would for a request to that URL, and a refusal is
+	// ErrGuardRefused: send that reader nothing.
+	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
+	// ServeStatus answers r with status and the page the application shows for
+	// it — its not-found page for 404 and 410, its error page otherwise — for a
+	// plugin answering a request itself that should look like the site.
+	ServeStatus(w http.ResponseWriter, r *http.Request, status int)
+	// InvalidateTags invalidates every cache entry associated with any of tags.
+	InvalidateTags(ctx context.Context, tags ...string) error
+
+	// ConfigReader lets PluginConfig read this plugin's configuration.
+	ConfigReader
+}
 
 // FetchHeader marks a request a script made with fetch. An action redirecting it
 // answers 204 with the destination in LocationHeader, so the script navigates once
@@ -119,19 +212,15 @@ type Command = plugin.Command
 // of collage's own.
 type RequestHook = plugin.RequestHook
 
-// RouteOf reports what the request carrying ctx resolved to: its kind — "page",
-// "document", "action", "mount", "handler" — and its name, the registered name or
-// the prefix. For a metric or a trace that must not be labelled with raw paths;
-// Metrics.HTTPResponse and a RequestHook's context carry it.
-func RouteOf(ctx context.Context) (kind, name string) { return httpx.RouteOf(ctx) }
-
 // Route is what a request resolved to: its kind, its registered name, the path
 // pattern it was registered with ("/blog/{slug}", no locale prefix) and the locale.
 type Route = httpx.Route
 
 // RouteInfo reports what the request carrying ctx resolved to, pattern and locale
 // included — a bounded label for a span or a metric, for pages, documents and
-// actions alike. The zero Route means it resolved to nothing.
+// actions alike. Kind is "page", "document", "action", "mount" or "handler"; Name
+// is the registered name, or the prefix of a mount or handler. The zero Route
+// means it resolved to nothing, or has not yet.
 func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
 
 // ClientIP is the address of the client r comes from. It is RemoteAddr's host,
@@ -165,23 +254,14 @@ type DrainHook = plugin.DrainHook
 // cancelled when the drain starts. It must not block: start goroutines.
 type ServeHook = plugin.ServeHook
 
-// PageResolvedHook is implemented by a plugin that wants to observe a request
-// having been resolved to a page, before rendering begins.
-type PageResolvedHook = plugin.PageResolvedHook
-
 // BeforeRenderHook is implemented by a plugin that wants to observe a render about
-// to start. Unlike PageResolvedHook it does not fire when a cached render is served
+// to start. It does not fire when a cached render is served
 // instead of a fresh one.
 type BeforeRenderHook = plugin.BeforeRenderHook
 
 // AfterRenderHook is implemented by a plugin that wants to observe, or post-process,
 // a render that just completed. It may replace the event's HTML.
 type AfterRenderHook = plugin.AfterRenderHook
-
-// CacheWriteHook is implemented by a plugin that wants to observe, or adjust, a
-// render result about to be written to the cache. It may suppress the write or
-// change its TTL and tags.
-type CacheWriteHook = plugin.CacheWriteHook
 
 // CacheInvalidateHook is implemented by a plugin that wants to observe a cache
 // invalidation.
@@ -197,8 +277,41 @@ type ErrorHook = plugin.ErrorHook
 // RegisterPlugin refuses it, because Configure has already run by then.
 type Configurer = plugin.Configurer
 
-// ConfigHost is the narrower capability surface Configure receives.
-type ConfigHost = plugin.ConfigHost
+// ConfigHost is the narrower capability surface Configure receives. At that point
+// the application has registered nothing, so there are no pages to read and
+// nothing to invalidate.
+type ConfigHost = interface {
+	// DevMode reports whether the application is running in development mode.
+	DevMode() bool
+	// BaseURL returns the site's public origin without a trailing slash, from
+	// Config.BaseURL, or "" when the application set none.
+	BaseURL() string
+	// OriginFor is host's public origin: an OriginResolver's, else Config.BaseURL,
+	// which may be "". host is lower-cased, without its port.
+	OriginFor(ctx context.Context, host string) string
+	// MultiOrigin reports whether a plugin implementing OriginResolver is
+	// registered — among those registered so far, at Configure time.
+	MultiOrigin() bool
+	// Logger returns the application's structured logger.
+	Logger() *slog.Logger
+	// AddTemplateFunc registers fn as a template function under name. It returns
+	// ErrDuplicateTemplateFunc when another plugin already registered that name.
+	// It must be called from Configure: templates are parsed when construction
+	// finishes, and a function added after that is one no template can call.
+	AddTemplateFunc(name string, fn any) error // any: restates html/template.FuncMap's own value type
+	// WrapMount registers a transformation applied to every mounted filesystem, in
+	// the order the wrappers were registered. A minifier returns an fs.FS whose
+	// files are already minified; Range requests keep working on it.
+	WrapMount(wrap func(fs.FS) fs.FS)
+	// AddRenderFunc registers a template function made anew for each render:
+	// factory is called with the render's context and returns the function the
+	// templates call, which can then read what that render holds — a nonce set in
+	// BeforeRender, the render's locale. Like AddTemplateFunc it must be called
+	// from Configure, and a name already registered is ErrDuplicateTemplateFunc.
+	AddRenderFunc(name string, factory func(rc *RenderContext) any) error // any: html/template.FuncMap's own value type
+	// ConfigReader lets PluginConfig read this plugin's configuration.
+	ConfigReader
+}
 
 // ConfigReader is a host PluginConfig reads a plugin's configuration through:
 // the Host given to Init and the ConfigHost given to Configure.
@@ -222,9 +335,6 @@ type DocumentRenderedHook = plugin.DocumentRenderedHook
 // DocumentRenderedEvent describes a document that has just produced its body.
 type DocumentRenderedEvent = plugin.DocumentRenderedEvent
 
-// PageResolvedEvent describes a request having been resolved to a page.
-type PageResolvedEvent = plugin.PageResolvedEvent
-
 // BeforeRenderEvent describes a render about to start.
 type BeforeRenderEvent = plugin.BeforeRenderEvent
 
@@ -241,17 +351,11 @@ type BeforeActionEvent = plugin.BeforeActionEvent
 type AfterRenderEvent = plugin.AfterRenderEvent
 
 // PersonaliseHook is implemented by a plugin that rewrites each HTML response for
-// the reader it goes to, after the cache. See plugin.PersonaliseHook.
+// the reader it goes to, after the cache.
 type PersonaliseHook = plugin.PersonaliseHook
 
 // PersonaliseEvent is one HTML response on its way to one reader.
 type PersonaliseEvent = plugin.PersonaliseEvent
-
-// CacheWriteEvent describes a render result about to be written to the cache, for
-// a page or a document alike. A plugin may set its Skip field or adjust its TTL
-// and Tags. Its Page field is nil for a document, so a hook that reads it must
-// check it first.
-type CacheWriteEvent = plugin.CacheWriteEvent
 
 // CacheInvalidateEvent describes a cache invalidation that has just happened.
 type CacheInvalidateEvent = plugin.CacheInvalidateEvent
@@ -264,12 +368,8 @@ type InvalidatedEntry = plugin.InvalidatedEntry
 // host the site is served on. See collage.BaseURL.
 type OriginResolver = plugin.OriginResolver
 
-// Origins is a capability of Host and ConfigHost: host.(collage.Origins) gives a
-// plugin a host's origin outside a render, and whether origins vary by host.
-type Origins = plugin.Origins
-
 // ParseOrigin checks that raw is a bare origin, scheme://host[:port], and returns
-// it without a trailing slash; anything else is ErrInvalidBaseURL.
+// it without a trailing slash; anything else is ErrInvalidOrigin.
 func ParseOrigin(raw string) (string, error) { return plugin.ParseOrigin(raw) }
 
 // ErrorEvent describes a failure encountered while serving a request.
@@ -284,11 +384,6 @@ type Result = render.Result
 // Metadata describes how a render performed: the page, the locale, where the time
 // went, and one entry per fragment that ran.
 type Metadata = render.Metadata
-
-// FragmentMetadata records one fragment's contribution to a render: its name, its
-// duration, whether it failed, whether its fallback stood in for it, and the error
-// it failed with.
-type FragmentMetadata = render.FragmentMetadata
 
 // Timing records where a render spent its time. It is Metadata.Timing's type, so
 // this alias is required to write a function that takes one.
@@ -353,184 +448,7 @@ func ETag(content []byte) string {
 	return cache.ETag(content)
 }
 
-// ErrAppStarted is returned by the registration methods once the application has
-// started.
-var ErrAppStarted = core.ErrAppStarted
-
-// ErrNilPage is returned by the page registration methods when passed a nil page.
-var ErrNilPage = core.ErrNilPage
-
-// ErrDuplicatePage is returned when a page is registered under a name another page
-// already holds.
-var ErrDuplicatePage = core.ErrDuplicatePage
-
-// ErrTemplateNotFound is returned when a page's fragment names a template the engine
-// has not loaded — at registration, and again at render time if one is somehow
-// reached.
-var ErrTemplateNotFound = core.ErrTemplateNotFound
-
-// ErrUnregisteredErrorPage is returned when the application starts and a registered
-// page references a NotFoundPage or ErrorPage that was never registered itself. An
-// unregistered error page never has its content bound into its layout, so it would
-// silently render empty at the moment it was needed.
-var ErrUnregisteredErrorPage = core.ErrUnregisteredErrorPage
-
-// ErrPageNotFound is returned by App.RenderPath when a path resolves to no page.
-var ErrPageNotFound = core.ErrPageNotFound
-
-// ErrEmptyCommandName is returned by App.RegisterCommand for a command with no name.
-var ErrEmptyCommandName = core.ErrEmptyCommandName
-
-// ErrDuplicateCommand is returned by App.RegisterCommand for a name another command
-// already holds.
-var ErrDuplicateCommand = core.ErrDuplicateCommand
-
-// ErrUnsupportedCache is returned by New when Cache.Enabled is set, no Cache.Store
-// was supplied, and Cache.Type names an implementation the framework cannot build.
-var ErrUnsupportedCache = core.ErrUnsupportedCache
-
-// ErrInvalidPattern is returned when a page path or redirect source is malformed:
-// it does not start with "/", contains an empty segment, contains a placeholder
-// with an empty name, holds two placeholders in one segment ("{name}.{ext}"),
-// places a catch-all ("{name...}") anywhere but last, or puts text around one.
-var ErrInvalidPattern = router.ErrInvalidPattern
-
-// ErrDuplicateRoute is returned when a page path, or a redirect source, is already
-// registered for the same locale.
-var ErrDuplicateRoute = router.ErrDuplicateRoute
-
-// ErrAmbiguousParameterName is returned when two patterns use different parameter
-// names at the same position, such as "/blog/{slug}" and "/blog/{id}/edit": a route
-// node carries one dynamic edge, so the two names cannot both be right.
-var ErrAmbiguousParameterName = router.ErrAmbiguousParameterName
-
-// ErrOverlappingPattern is returned when two placeholders with text around them
-// at the same position cross: some segment matches both and neither is more
-// specific, such as "/a{x}" and "/{x}b", which "/aXb" matches both of. Disjoint
-// ones ("{slug}.md" and "{slug}.json") and nested ones ("{slug}.min.md" within
-// "{slug}.md", every one within "{slug}") are fine: the more specific wins,
-// whatever the order of registration.
-var ErrOverlappingPattern = router.ErrOverlappingPattern
-
-// ErrRedirectShadowsPage is returned when a redirect's source path is also a
-// registered page path, in either registration order: one of the two would be
-// unreachable.
-var ErrRedirectShadowsPage = router.ErrRedirectShadowsPage
-
-// ErrUnsubstitutedPlaceholder is returned when a redirect's destination contains a
-// "{name}" its source pattern does not capture, so it could never be substituted at
-// match time.
-var ErrUnsubstitutedPlaceholder = router.ErrUnsubstitutedPlaceholder
-
-// ErrUnsafeRedirectTarget is the failure a plugin's ErrorHook receives, under the
-// stage "route", when a redirect's destination is not a single-slash-prefixed
-// relative path once its placeholders are substituted — a protocol-relative
-// "//host" or "/\host", or one carrying a control character. The framework
-// percent-escapes every substituted value, so this reports a redirect whose own To
-// is unsafe. The request is answered with a 500 rather than a Location header
-// nobody should follow.
-var ErrUnsafeRedirectTarget = router.ErrUnsafeRedirectTarget
-
-// ErrTemplateRootMissing is returned, wrapped, by New when Config.Template.Root
-// does not exist or is not a directory. It is the most common startup failure there
-// is, and it is worth telling apart from a template that exists but does not parse.
-var ErrTemplateRootMissing = template.ErrTemplateRootMissing
-
-// ErrNilPlugin is returned by App.RegisterPlugin when passed a nil Plugin.
-var ErrNilPlugin = plugin.ErrNilPlugin
-
-// ErrEmptyPluginName is returned by App.RegisterPlugin when the plugin's Name
-// method returns the empty string.
-var ErrEmptyPluginName = plugin.ErrEmptyPluginName
-
-// ErrDuplicatePlugin is returned by App.RegisterPlugin when a plugin with the same
-// Name is already registered.
-var ErrDuplicatePlugin = plugin.ErrDuplicatePlugin
-
-// ErrDuplicateTemplateFunc is returned by ConfigHost.AddTemplateFunc when another
-// plugin already registered that name.
-var ErrDuplicateTemplateFunc = plugin.ErrDuplicateTemplateFunc
-
-// ErrUnknownPluginConfig is returned when the application starts — by Start,
-// Handler, ListenAndServe or a render, not by New, because a plugin can still be
-// registered in between — if Config.PluginConfig holds a key
-// matching no registered plugin — the typo case, which would otherwise leave a
-// plugin running on defaults and an operator certain it was configured.
-var ErrUnknownPluginConfig = plugin.ErrUnknownPluginConfig
-
-// ErrConfigurerRegisteredLate is returned by RegisterPlugin for a plugin
-// implementing Configurer, which must be supplied in Config.Plugins instead.
-var ErrConfigurerRegisteredLate = core.ErrConfigurerRegisteredLate
-
-// ErrMaxDepthExceeded is the render failure reported when a fragment tree nests
-// deeper than the engine allows, which almost always means a fragment was bound,
-// directly or indirectly, into one of its own slots.
-var ErrMaxDepthExceeded = render.ErrMaxDepthExceeded
-
-// ErrNoRootFragment is the render failure reported for a page with neither a layout
-// fragment nor a content fragment.
-var ErrNoRootFragment = render.ErrNoRootFragment
-
-// ErrRequiredSlotEmpty is the render failure reported when a fragment declares a
-// slot Required and nothing is bound to it. It is distinct from
-// ErrRequiredSlotUnfilled, which reports the same condition at validation time: this
-// one is a per-render failure subject to the fragment failure policy.
-var ErrRequiredSlotEmpty = render.ErrRequiredSlotEmpty
-
-// ErrNoRoute is the error a plugin's ErrorHook receives when no route matched the
-// request. It is deliberately not ErrNotFound: both produce a 404, and a plugin
-// asking why needs to tell an unmatched URL (a routing or link problem) from a
-// missing record (a content one).
-var ErrNoRoute = httpx.ErrNoRoute
-
-// ErrEmptyErrorPage is the error a plugin's ErrorHook receives, under the stage
-// "error_page", when a registered error page rendered successfully but produced no
-// markup. It is the failure nobody finds out about otherwise, because the client
-// still receives a plausible-looking built-in page.
-var ErrEmptyErrorPage = httpx.ErrEmptyErrorPage
-
-// ErrPanic is the error a plugin's ErrorHook receives, under the stage "panic", when
-// something panicked while serving a request and the framework recovered it into a
-// 500. It covers a panic anywhere the request touches code the framework did not
-// write — a Router, Cache, Metrics, or Tracer implementation, or a plugin hook — but
-// not one inside a data handler or a template function, which the render engine
-// recovers itself as a PanicError.
-//
-// The error wraps a *PanicError as well, so errors.As reaches the panic value and
-// the stack it was raised on, and errors.Is reaches the value when it was an error.
-var ErrPanic = httpx.ErrPanic
-
-// ErrAssetFailed is the error a plugin's ErrorHook receives, under the stage
-// "asset", when a mounted asset request completes with a status of 400 or above.
-// It is one sentinel for every such status — a 404 for a missing file and a 405
-// for a disallowed method both report it — rather than one per code, since a
-// plugin reacting to "this asset request failed" needs no finer distinction than
-// that. A panic recovered while serving a mount is reported as ErrPanic instead.
-var ErrAssetFailed = httpx.ErrAssetFailed
-
-// New builds an App from cfg: it applies the framework's defaults to every field
-// left at its zero value, validates the result, converts it into the internal
-// configuration, and constructs the application.
-//
-// cfg is mutated in place by the defaulting step, so the caller can read back
-// exactly what the application was built with. Passing nil returns ErrNilConfig.
-//
-// Every failure mode is reported here rather than at the first request: an invalid
-// configuration (see Config.Validate), a template root that does not exist, or a
-// template that does not parse.
-func New(cfg *Config) (*App, error) {
-	if cfg == nil {
-		return nil, ErrNilConfig
-	}
-
-	cfg.ApplyDefaults()
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-	return core.New(toCoreConfig(cfg))
-}
-
-// toCoreConfig converts the public Config into internal/core's mirror of it. The
+// toCoreConfig converts the public Config into the framework's internal mirror of it. The
 // conversion is written out field by field on purpose: the compiler cannot tell us
 // that the two structs have drifted apart, so this function is the one place where
 // adding a field to one and forgetting the other becomes visible.
@@ -567,7 +485,7 @@ func toCoreConfig(cfg *Config) core.Config {
 			DisableCSRF:        cfg.Security.DisableCSRF,
 			CSRFTokenTTL:       cfg.Security.CSRFTokenTTL,
 			FrameOptions:       cfg.Security.FrameOptions,
-			NoSniff:            cfg.Security.NoSniff,
+			DisableNoSniff:     cfg.Security.DisableNoSniff,
 		},
 		Plugins:      cfg.Plugins,
 		PluginConfig: cfg.PluginConfig,
@@ -575,26 +493,23 @@ func toCoreConfig(cfg *Config) core.Config {
 			FS:        cfg.Template.FS,
 			Root:      cfg.Template.Root,
 			Extension: cfg.Template.Extension,
-			DevMode:   cfg.Template.DevMode,
 			Timeout:   cfg.Template.Timeout,
 			Funcs:     cfg.Template.Funcs,
 		},
 		Cache: core.CacheConfig{
-			Enabled:       cfg.Cache.Enabled,
-			Store:         cfg.Cache.Store,
-			Type:          cfg.Cache.Type,
-			DefaultTTL:    cfg.Cache.DefaultTTL,
-			MaxEntries:    cfg.Cache.MaxEntries,
-			MaxBytes:      cfg.Cache.MaxBytes,
-			Dir:           cfg.Cache.Dir,
-			Version:       cfg.Cache.Version,
-			MaxKeysPerTag: cfg.Cache.MaxKeysPerTag,
+			Enabled:    cfg.Cache.Enabled,
+			Store:      cfg.Cache.Store,
+			Type:       string(cfg.Cache.Type),
+			DefaultTTL: cfg.Cache.DefaultTTL,
+			MaxEntries: cfg.Cache.MaxEntries,
+			MaxBytes:   cfg.Cache.MaxBytes,
+			Dir:        cfg.Cache.Dir,
+			Version:    cfg.Cache.Version,
 		},
 		Locale: core.LocaleConfig{
-			Default:           cfg.Locale.Default,
-			Supported:         cfg.Locale.Supported,
-			DisablePathLocale: cfg.Locale.DisablePathLocale,
-			PrefixDefault:     cfg.Locale.PrefixDefault,
+			Default:       cfg.Locale.Default,
+			Supported:     cfg.Locale.Supported,
+			PrefixDefault: cfg.Locale.PrefixDefault,
 		},
 		TrailingSlash: cfg.TrailingSlash,
 		Observability: core.ObservabilityConfig{

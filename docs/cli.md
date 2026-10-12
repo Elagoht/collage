@@ -388,7 +388,7 @@ Prints what the current directory's project is made of, as JSON — every page w
 its patterns and parameters, every fragment with its template and slots, documents,
 actions, the template functions, the plugins, the locales, and the files the mounts
 serve. It runs `go run . collage-inspect`, which `DispatchCommands` answers itself
-with `App.Inspect`, so a scaffolded project needs nothing more. It is what an
+with the application's description as JSON, so a scaffolded project needs nothing more. It is what an
 editor's completion reads: the Collage Snippets & Highlighter extension for VS Code
 offers page names in `{{pageURL "…"}}`, slots in `{{slot "…"}}` and files in
 `{{asset "…"}}` from it.
@@ -649,12 +649,12 @@ yourself, as above, so that every plugin's `Shutdown` runs. A scaffolded
 `main.go` does, from collage v0.55.0.
 
 Within the application, a command with an empty name or a name another command
-already holds is rejected at `RegisterCommand` (`collage.ErrEmptyCommandName`,
-`collage.ErrDuplicateCommand`). See [plugins](plugins.md).
+already holds is rejected at `RegisterCommand` (`collage.ErrDuplicateCommand` for
+a repeated name). See [plugins](plugins.md).
 
 ## The static builder
 
-The `-collage-build` half of the contract is `collage.NewBuilder` — the same
+The `-collage-build` half of the contract is `collage.Build` — the same
 builder the CLI documentation refers to, reached through the public API. It
 renders pages through `App.RenderPath` and documents through
 `App.RenderDocumentPath`: the same render engine the HTTP server uses, the same
@@ -666,12 +666,10 @@ through `App.Handler()`, but `RenderPath` and `RenderDocumentPath` start the
 application first — memoised, exactly as `Handler` does — so plugin `Init` has run
 before the first page renders. Every page gets `OnBeforeRender` and
 `OnAfterRender`, and every document `OnDocumentRendered`, so a minifier that
-shapes the served site shapes the built one too. `OnCacheWrite` does not fire,
-because a build writes files, not cache entries. `OnPageResolved` does not fire
-for those renders, which are not requests — but once the files are written, the
+shapes the served site shapes the built one too. Once the files are written, the
 header capture — when a plugin implementing `BuildFinishedHook` is registered —
 asks `App.Handler()` for each one's path, and those requests go
-through middleware and every request hook, `OnPageResolved` included, and render
+through middleware and every request hook, and render
 again with `OnBeforeRender` and `OnAfterRender`; see
 [static hosts](#static-hosts). See [plugins](plugins.md#static-builds).
 
@@ -686,22 +684,17 @@ an exit status of zero. A panic while building one page is recovered as
 
 ```go
 func staticBuild(app *collage.App, outDir string, clean bool) error {
-	builder, err := collage.NewBuilder(app, collage.BuildOptions{
+	// report is populated even when err is not nil: every individual failure is
+	// recorded in report.Errors and joined into the returned error.
+	report, err := collage.Build(context.Background(), app, collage.BuildOptions{
 		OutDir: outDir,
 		Clean:  clean,
 	})
-	if err != nil {
-		return err
-	}
-
-	// report is populated even when err is not nil: every individual failure is
-	// recorded in report.Errors and joined into the returned error.
-	report, err := builder.Build(context.Background())
 	for _, path := range report.Written {
 		fmt.Println("wrote", path)
 	}
 	for _, skip := range report.Skipped {
-		fmt.Printf("skip %s (%s): %s\n", skip.Page, skip.Locale, skip.Reason)
+		fmt.Printf("skip %s (%s): %s\n", skip.Name, skip.Locale, skip.Reason)
 	}
 	return err
 }
@@ -748,7 +741,7 @@ back into enumeration order.
   at: `/static/app.css` becomes `<OutDir>/static/app.css`. Copying is the default;
   `collage.WithoutBuildCopy()` on a mount turns it off, for a mount served from a
   CDN in production or one too large to duplicate. Which mounts are copied comes
-  from the application's own `Mounts()` — there is no `BuildOptions` field for it,
+  from the application itself — there is no `BuildOptions` field for it,
   so a caller cannot pair one application's pages with another's assets.
 - **A locale other than the default is written under its prefix**, the URL the
   router serves it at: a page with `WithPath("en", "/about")` and

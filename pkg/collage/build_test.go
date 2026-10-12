@@ -6,8 +6,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
+
+	"github.com/Elagoht/collage/internal/build"
 )
 
 // buildTestApp registers the framework's minimal example page — a layout, a
@@ -24,7 +28,7 @@ func buildTestApp(t *testing.T) *App {
 	}
 
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
+		WithSlot("content", SlotRequired, SlotSingle).
 		Build()
 	content := NewFragment("home-content", "pages/home.html").Build()
 	page := NewPage("home").
@@ -40,22 +44,16 @@ func buildTestApp(t *testing.T) *App {
 	return app
 }
 
-// TestNewBuilder_ReachesTheRealBuilder proves NewBuilder is not a second,
-// weaker implementation: it renders through the exact same App.RenderPath the
-// HTTP handler uses, and its safety refusals (ErrNilRenderer,
-// ErrInvalidOutDir here; the symlink-escape and dangerous-output-directory
-// checks are internal/build's own and covered there) are reachable through
-// the public alias.
-func TestNewBuilder_ReachesTheRealBuilder(t *testing.T) {
+// TestBuild_ReachesTheRealBuilder proves Build is not a second, weaker
+// implementation: it renders through the exact same App.RenderPath the HTTP
+// handler uses, and its safety refusals (ErrNilApp, ErrEmptyOutDir here; the
+// symlink-escape and dangerous-output-directory checks are internal/build's own
+// and covered there) are reachable through pkg/collage.
+func TestBuild_ReachesTheRealBuilder(t *testing.T) {
 	app := buildTestApp(t)
 	outDir := t.TempDir()
 
-	builder, err := NewBuilder(app, BuildOptions{OutDir: outDir})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-
-	report, err := builder.Build(context.Background())
+	report, err := Build(context.Background(), app, BuildOptions{OutDir: outDir})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -72,68 +70,71 @@ func TestNewBuilder_ReachesTheRealBuilder(t *testing.T) {
 	}
 }
 
-func TestNewBuilder_NilApp(t *testing.T) {
-	if _, err := NewBuilder(nil, BuildOptions{OutDir: "dist"}); !errors.Is(err, ErrNilRenderer) {
-		t.Fatalf("NewBuilder(nil, ...) error = %v, want ErrNilRenderer", err)
+func TestBuild_NilApp(t *testing.T) {
+	if _, err := Build(context.Background(), nil, BuildOptions{OutDir: "dist"}); !errors.Is(err, ErrNilApp) {
+		t.Fatalf("Build(nil app) error = %v, want ErrNilApp", err)
+	}
+	// An App New did not return has no application inside: the same refusal,
+	// not a panic deep in the build.
+	if _, err := Build(context.Background(), &App{}, BuildOptions{OutDir: "dist"}); !errors.Is(err, ErrNilApp) {
+		t.Fatalf("Build(&App{}) error = %v, want ErrNilApp", err)
 	}
 }
 
-func TestNewBuilder_EmptyOutDir(t *testing.T) {
+func TestBuild_EmptyOutDir(t *testing.T) {
 	app := buildTestApp(t)
-	if _, err := NewBuilder(app, BuildOptions{}); !errors.Is(err, ErrInvalidOutDir) {
-		t.Fatalf("NewBuilder(..., {}) error = %v, want ErrInvalidOutDir", err)
+	if _, err := Build(context.Background(), app, BuildOptions{}); !errors.Is(err, ErrEmptyOutDir) {
+		t.Fatalf("Build(..., {}) error = %v, want ErrEmptyOutDir", err)
 	}
 }
 
-// TestNewBuilder_CleanRefusesRepositoryRoot exercises one of internal/build's
-// own safety refusals through the public alias, so a regression there would
-// also be visible to a caller who only ever imports pkg/collage.
-func TestNewBuilder_CleanRefusesRepositoryRoot(t *testing.T) {
+// TestBuild_CleanRefusesRepositoryRoot exercises one of internal/build's own
+// safety refusals through pkg/collage, so a regression there would also be
+// visible to a caller who only ever imports pkg/collage.
+func TestBuild_CleanRefusesRepositoryRoot(t *testing.T) {
 	app := buildTestApp(t)
 	repo := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module x\n"), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
 
-	builder, err := NewBuilder(app, BuildOptions{OutDir: repo, Clean: true})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-
-	_, err = builder.Build(context.Background())
+	_, err := Build(context.Background(), app, BuildOptions{OutDir: repo, Clean: true})
 	if !errors.Is(err, ErrDangerousOutDir) {
 		t.Fatalf("Build() error = %v, want ErrDangerousOutDir", err)
 	}
 }
 
-// TestBuildOptions_FieldsAlignWithInternalBuild is a compile-time check more
-// than a runtime one: it exercises every BuildOptions field through the
-// public alias so a field renamed or removed in internal/build.Options fails
-// this package's own build, not just internal/build's.
+// TestBuildOptions_FieldsAlignWithInternalBuild checks that every BuildOptions
+// field reaches the build engine: BuildOptions.internal copies them one by one,
+// and a field it forgot would read back as the zero value here. That no field
+// exists on one side only is TestBuildTypes_MirrorTheEngine's job.
 func TestBuildOptions_FieldsAlignWithInternalBuild(t *testing.T) {
 	opts := BuildOptions{
-		OutDir:      t.TempDir(),
-		Locales:     []string{"en"},
-		Clean:       false,
-		Concurrency: 2,
+		OutDir:        t.TempDir(),
+		Locales:       []string{"en"},
+		Clean:         true,
+		Concurrency:   2,
+		AllowDegraded: true,
+	}
+	got := opts.internal()
+	if got.OutDir != opts.OutDir || !slices.Equal(got.Locales, opts.Locales) || got.Clean != opts.Clean ||
+		got.Concurrency != opts.Concurrency || got.AllowDegraded != opts.AllowDegraded {
+		t.Fatalf("internal() = %+v, want the fields of %+v", got, opts)
+	}
+	if n := reflect.TypeFor[BuildOptions]().NumField(); n != 5 {
+		t.Fatalf("BuildOptions has %d fields; copy the new one in BuildOptions.internal and here", n)
 	}
 	app := buildTestApp(t)
-	if _, err := NewBuilder(app, opts); err != nil {
-		t.Fatalf("NewBuilder: %v", err)
+	if _, err := Build(context.Background(), app, opts); err != nil {
+		t.Fatalf("Build: %v", err)
 	}
 }
 
-// TestBuildReport_FieldsAlignWithInternalBuild is the Report-side counterpart
-// of TestBuildOptions_FieldsAlignWithInternalBuild: it reads every BuildReport
-// field through the public alias so a field renamed or removed in
-// internal/build.Report fails this package's own build.
+// TestBuildReport_FieldsAlignWithInternalBuild reads every BuildReport field
+// back from a real build, typed as this package declares it.
 func TestBuildReport_FieldsAlignWithInternalBuild(t *testing.T) {
 	app := buildTestApp(t)
-	builder, err := NewBuilder(app, BuildOptions{OutDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	report, err := builder.Build(context.Background())
+	report, err := Build(context.Background(), app, BuildOptions{OutDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -180,11 +181,7 @@ func TestBuild_SkipsGuardedPages(t *testing.T) {
 		t.Fatalf("RegisterPage: %v", err)
 	}
 	outDir := t.TempDir()
-	builder, err := NewBuilder(app, BuildOptions{OutDir: outDir})
-	if err != nil {
-		t.Fatalf("NewBuilder: %v", err)
-	}
-	report, err := builder.Build(context.Background())
+	report, err := Build(context.Background(), app, BuildOptions{OutDir: outDir})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
 	}
@@ -193,11 +190,39 @@ func TestBuild_SkipsGuardedPages(t *testing.T) {
 	}
 	found := false
 	for _, skip := range report.Skipped {
-		if skip.Page == "dashboard" && errors.Is(skip.Err, ErrGuarded) {
+		if skip.Name == "dashboard" && errors.Is(skip.Err, ErrGuarded) {
 			found = true
 		}
 	}
 	if !found {
 		t.Fatalf("Skipped = %+v, want dashboard with ErrGuarded", report.Skipped)
 	}
+}
+
+// TestBuildTypes_MirrorTheEngine pins the public build types to the engine's,
+// field name by field name and in order. They are defined types copied by
+// BuildOptions.internal and reportFrom, so a field added to either side and not
+// to the other would otherwise be dropped without a word.
+func TestBuildTypes_MirrorTheEngine(t *testing.T) {
+	for _, pair := range []struct{ public, engine reflect.Type }{
+		{reflect.TypeFor[BuildOptions](), reflect.TypeFor[build.Options]()},
+		{reflect.TypeFor[BuildReport](), reflect.TypeFor[build.Report]()},
+		{reflect.TypeFor[SkipRecord](), reflect.TypeFor[build.SkipRecord]()},
+		{reflect.TypeFor[WarningRecord](), reflect.TypeFor[build.WarningRecord]()},
+	} {
+		if got, want := exportedFields(pair.public), exportedFields(pair.engine); !slices.Equal(got, want) {
+			t.Errorf("%s fields = %v, engine's %s has %v; copy the field in both converters",
+				pair.public.Name(), got, pair.engine.Name(), want)
+		}
+	}
+}
+
+func exportedFields(typ reflect.Type) []string {
+	var names []string
+	for f := range typ.Fields() {
+		if f.IsExported() {
+			names = append(names, f.Name)
+		}
+	}
+	return names
 }

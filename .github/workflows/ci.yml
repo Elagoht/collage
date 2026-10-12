@@ -79,6 +79,28 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
+  # What changed in the public API against the last release. Before v1.0 it
+  # only reports; from v1.0 on, an incompatible change fails here, and the way
+  # to make one is a v2 module path.
+  api:
+    name: api
+    runs-on: ubuntu-latest
+    steps:
+      # All tags, because the script compares with the latest one.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          # The newest 1.26 release, not whatever the runner image cached: a
+          # standard-library security fix is a patch release, and govulncheck
+          # fails on the one the image still carries.
+          check-latest: true
+          cache: true
+      - name: apidiff
+        run: bash .github/apidiff.sh
+
   bench:
     name: bench
     runs-on: ubuntu-latest

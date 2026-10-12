@@ -97,25 +97,23 @@ var ErrEmptyCommandName = errors.New("collage: empty command name")
 // Name is already registered.
 var ErrDuplicateCommand = errors.New("collage: duplicate command name")
 
-// ErrUnsupportedCache is returned by New when Config.Cache.Enabled is true,
+// ErrInvalidCacheType is returned by New when Config.Cache.Enabled is true,
 // Config.Cache.Store is nil, and Config.Cache.Type names an implementation this
-// package cannot build.
-var ErrUnsupportedCache = errors.New("collage: unsupported cache type")
+// package cannot build. pkg/collage exports it as ErrInvalidCacheType.
+var ErrInvalidCacheType = errors.New("collage: invalid cache type")
 
 // ErrEmptyTemplateRoot is returned by New when Config.Template.Root is empty.
 var ErrEmptyTemplateRoot = errors.New("collage: empty template root")
 
-// defaultMaxKeysPerTag is the per-tag cache-key cap the dependency tracker is given
-// when Config.Cache.MaxKeysPerTag is left at zero. It matches the cache's own
-// default entry cap: a tag cannot usefully resolve to more live cache entries than
-// the cache holds, and an unbounded tracker in front of a bounded cache is how a
-// query-string flood turns into a memory leak.
-//
-// pkg/collage.Config.ApplyDefaults fills the same value in, so this fallback only
-// matters for a Config built here directly — but it is the tracker's only bound,
-// and leaving it to the layer above would mean the bound holds by convention rather
-// than by construction.
-const defaultMaxKeysPerTag = 10000
+// defaultMaxEntries is the cache-key cap the dependency tracker is given when
+// Config.Cache.MaxEntries is left at zero. It matches the cache's own default entry
+// cap: a tag cannot usefully resolve to more live cache entries than the cache
+// holds, and an unbounded tracker in front of a bounded cache is how a
+// query-string flood turns into a memory leak. It is also the fallback for the
+// cache's and the data cache's entry cap, and the per-tag cap of the tracker when
+// MaxEntries is negative. The public layer fills the same value in, so the
+// fallback only matters for a Config built here directly.
+const defaultMaxEntries = 10000
 
 // Config is internal/core's mirror of pkg/collage.Config. The two structs are kept
 // field-aligned on purpose: pkg/collage owns the defaults and the validation, then
@@ -126,8 +124,8 @@ const defaultMaxKeysPerTag = 10000
 // pkg/collage.New hands it. It applies only the few fallbacks it needs to build a
 // working App at all (see New), and does not re-run pkg/collage's defaulting.
 type Config struct {
-	// DevMode enables development-mode behaviour across the framework. The
-	// effective value is this or Template.DevMode; see App.DevMode.
+	// DevMode enables development-mode behaviour across the framework; see
+	// App.DevMode.
 	DevMode bool
 	// DevWatch lists directories whose changes reload a development page.
 	DevWatch []string
@@ -218,9 +216,7 @@ type TemplateConfig struct {
 	Root string
 	// Extension is the file extension that identifies template files under Root.
 	Extension string
-	// DevMode reloads templates from disk on every render.
-	DevMode bool
-	// Timeout is the default DataHandler timeout used when a fragment sets none.
+	// Timeout is the default data handler timeout used when a fragment sets none.
 	// It is also the only bound on a document handler, which has no per-route
 	// Timeout field of its own. See pkg/collage.TemplateConfig.Timeout.
 	Timeout time.Duration
@@ -254,11 +250,6 @@ type CacheConfig struct {
 	// under a subdirectory named for it, so a new build reads a fresh cache rather
 	// than the previous binary's HTML.
 	Version string
-	// MaxKeysPerTag caps how many cache keys the dependency tracker records under
-	// any one tag. Zero means "use the default" (defaultMaxKeysPerTag); a negative
-	// value means unlimited. See pkg/collage.CacheConfig.MaxKeysPerTag for what
-	// dropping a key means.
-	MaxKeysPerTag int
 }
 
 // LocaleConfig is internal/core's mirror of pkg/collage.LocaleConfig.
@@ -267,9 +258,6 @@ type LocaleConfig struct {
 	Default string
 	// Supported lists the locales the application serves.
 	Supported []string
-	// DisablePathLocale turns off resolving the locale from the request path,
-	// which leaves every request in Default.
-	DisablePathLocale bool
 	// PrefixDefault gives Default's pages a prefix; see pkg/collage.LocaleConfig.
 	PrefixDefault bool
 }
@@ -295,8 +283,7 @@ type App struct {
 	invalidOrigins sync.Map
 	// cfg is the configuration the App was built from. It is read-only after New.
 	cfg Config
-	// devMode is the effective development-mode flag: cfg.DevMode or
-	// cfg.Template.DevMode, resolved once so the two cannot drift apart.
+	// devMode is cfg.DevMode, read once.
 	devMode bool
 	// pluginFuncs are template functions contributed by plugins during Configure.
 	// They are merged under the application's own Template.Funcs, so an
@@ -472,7 +459,7 @@ type App struct {
 // so New applies only the fallbacks it needs to construct working subsystems: an
 // empty Template.Extension becomes ".html" and an empty Locale.Default becomes
 // "en". It returns ErrEmptyTemplateRoot
-// for an empty Template.Root, ErrUnsupportedCache for an enabled cache of an
+// for an empty Template.Root, ErrInvalidCacheType for an enabled cache of an
 // unknown type, and a wrapped template error when the template root cannot be
 // loaded.
 //
@@ -488,11 +475,11 @@ func New(cfg Config) (*App, error) {
 	if cfg.Locale.Default == "" {
 		cfg.Locale.Default = "en"
 	}
-	if cfg.Cache.MaxKeysPerTag == 0 {
-		cfg.Cache.MaxKeysPerTag = defaultMaxKeysPerTag
+	if cfg.Cache.MaxEntries == 0 {
+		cfg.Cache.MaxEntries = defaultMaxEntries
 	}
 
-	devMode := cfg.DevMode || cfg.Template.DevMode
+	devMode := cfg.DevMode
 	logger := cfg.Logger
 	if logger == nil {
 		logger = defaultLogger()
@@ -586,26 +573,21 @@ func New(cfg Config) (*App, error) {
 
 	// Bounded before it is ever written to: the tracker is written on every cache
 	// write and nothing prunes it on eviction or expiry, so the cap is what keeps
-	// a bounded cache from sitting behind an unbounded index. A negative
-	// MaxKeysPerTag arrives here as the caller's explicit request for unlimited,
-	// which is MemoryTracker's own meaning for a non-positive value.
+	// a bounded cache from sitting behind an unbounded index. Every cached path is
+	// a tag of its own, so the cap is held per tag and in all: a cache holds at
+	// most MaxEntries entries, so no more keys than that can still be live. A
+	// negative MaxEntries means no entry cap on the cache, not an unbounded
+	// tracker: the cache is still bounded by MaxBytes while the tracker is not
+	// pruned on eviction, so each tag keeps the default cap.
 	tracker := dependency.NewMemory()
-	tracker.MaxKeysPerTag = cfg.Cache.MaxKeysPerTag
-	// And bounded in all, not only per tag: every cached path is a tag of its
-	// own, so the per-tag cap alone lets the index reach that cap times the
-	// number of pages. A built-in cache holds at most MaxEntries entries, so no
-	// more keys than that can still be live, and the oldest are what it has
-	// evicted. A caller's Store has a capacity this package cannot know, and
-	// keeps the per-tag bound only. Zero is the caches' own default, which
-	// defaultMaxKeysPerTag matches; negative, an unlimited cache, leaves the
-	// tracker unlimited too.
-	if cfg.Cache.Store == nil {
-		switch {
-		case cfg.Cache.MaxEntries > 0:
+	switch {
+	case cfg.Cache.MaxEntries > 0:
+		tracker.MaxKeysPerTag = cfg.Cache.MaxEntries
+		if cfg.Cache.Store == nil {
 			tracker.MaxKeys = cfg.Cache.MaxEntries
-		case cfg.Cache.MaxEntries == 0:
-			tracker.MaxKeys = defaultMaxKeysPerTag
 		}
+	default:
+		tracker.MaxKeysPerTag = defaultMaxEntries
 	}
 
 	app.tmpl = tmpl
@@ -642,10 +624,9 @@ func New(cfg Config) (*App, error) {
 		slash = router.SlashAlways
 	}
 	app.routes = router.New(router.LocaleOptions{
-		Default:           cfg.Locale.Default,
-		Supported:         cfg.Locale.Supported,
-		DisablePathLocale: cfg.Locale.DisablePathLocale,
-		PrefixDefault:     cfg.Locale.PrefixDefault,
+		Default:       cfg.Locale.Default,
+		Supported:     cfg.Locale.Supported,
+		PrefixDefault: cfg.Locale.PrefixDefault,
 	}, router.WithSlash(slash))
 	app.metrics = metrics
 	app.tracer = tracer
@@ -660,8 +641,8 @@ func New(cfg Config) (*App, error) {
 	return app, nil
 }
 
-// DevMode reports whether the application is running in development mode: the
-// disjunction of Config.DevMode and Config.Template.DevMode, resolved at New.
+// DevMode reports whether the application is running in development mode, as
+// Config.DevMode said at New.
 func (a *App) DevMode() bool {
 	return a.devMode
 }
@@ -676,7 +657,7 @@ func (a *App) DefaultLocale() string {
 // PrefixDefault reports whether the default locale's pages carry its prefix, as
 // every other locale's do: "/en/about" rather than "/about".
 func (a *App) PrefixDefault() bool {
-	return a.cfg.Locale.PrefixDefault && !a.cfg.Locale.DisablePathLocale
+	return a.cfg.Locale.PrefixDefault
 }
 
 // BaseURL returns the site's public origin without a trailing slash, or "" when
@@ -966,7 +947,7 @@ func (a *App) dataCacheFor() types.DataCache {
 // pageReady reports whether p can render: a page with a layout renders only once
 // registration has bound its content into it.
 func (a *App) pageReady(p *types.Page) bool {
-	if p == nil || p.LayoutFragment == nil {
+	if p == nil || types.LayoutFragment(p) == nil {
 		return true
 	}
 	a.mu.RLock()
@@ -1290,12 +1271,10 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 		a.data.Invalidate(tags)
 	}
 
-	// The URL paths of what is being dropped, read before the keys are forgotten:
+	// The pages and documents being dropped, read before the keys are forgotten:
 	// every cached entry carries a tag naming the path it was rendered for, and
 	// one naming the host it was cached for.
-	var paths []string
 	var entries []plugin.InvalidatedEntry
-	seenPath := make(map[string]bool)
 	seenEntry := make(map[plugin.InvalidatedEntry]bool)
 	for _, key := range keys {
 		keyTags, err := a.tracker.Tags(ctx, key)
@@ -1313,16 +1292,11 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 		if entry.Path == "" {
 			continue
 		}
-		if !seenPath[entry.Path] {
-			seenPath[entry.Path] = true
-			paths = append(paths, entry.Path)
-		}
 		if !seenEntry[entry] {
 			seenEntry[entry] = true
 			entries = append(entries, entry)
 		}
 	}
-	slices.Sort(paths)
 	slices.SortFunc(entries, func(x, y plugin.InvalidatedEntry) int {
 		if c := strings.Compare(x.Host, y.Host); c != 0 {
 			return c
@@ -1358,7 +1332,6 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 	// caller's slice through it.
 	if err := a.plugins.CacheInvalidate(ctx, &plugin.CacheInvalidateEvent{
 		Tags:    append([]string(nil), tags...),
-		Paths:   paths,
 		Entries: entries,
 	}); err != nil {
 		failures = errors.Join(failures, err)
@@ -1462,11 +1435,8 @@ func (a *App) renderResolved(
 	// unannotated where it annotated, with image URLs the server had rewritten left
 	// pointing at the origin — and nothing anywhere said so.
 	//
-	// PageResolved is deliberately not dispatched. Its contract is "once per
-	// request, immediately after the router resolves it", and a build is not a
-	// request; firing it would make every plugin counting requests count renders
-	// that nobody asked for. BeforeRender and AfterRender are about a render, which
-	// this unambiguously is, and they fire as a pair so a plugin that sets something
+	// BeforeRender and AfterRender are about a render, which this unambiguously
+	// is, and they fire as a pair so a plugin that sets something
 	// up in one and uses it in the other is not handed half of each.
 	if err := a.plugins.BeforeRender(ctx, &plugin.BeforeRenderEvent{
 		Context: rc,
@@ -1486,14 +1456,15 @@ func (a *App) renderResolved(
 	event := &plugin.AfterRenderEvent{
 		Page:           page,
 		Locale:         locale,
+		Path:           path,
 		Degraded:       result.Degraded(),
-		Fragments:      result.FragmentReports(),
+		Fragments:      render.FragmentReports(result),
 		DependencyTags: append([]string(nil), result.DependencyTags...),
 		HTML:           result.HTML,
 		Values:         types.ValuesOf(rc),
 		Static:         true,
 	}
-	plugin.PrepareHoist(event, result.HoistEnds, rc.Hoisted())
+	plugin.PrepareHoist(event, render.HoistEnds(result), types.RenderHoisted(rc))
 	if err := a.plugins.AfterRender(ctx, event); err != nil {
 		return nil, err
 	}
@@ -1647,7 +1618,7 @@ func (a *App) localePath(path, locale string) string {
 	if path == "" || path[0] != '/' {
 		path = "/" + path
 	}
-	if locale == "" || locale == a.cfg.Locale.Default || a.cfg.Locale.DisablePathLocale {
+	if locale == "" || locale == a.cfg.Locale.Default {
 		return path
 	}
 	first, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")

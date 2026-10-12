@@ -3,9 +3,10 @@ package collage
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"slices"
 	"time"
 
-	"github.com/Elagoht/collage/internal/core"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -23,7 +24,7 @@ type Document = types.Document
 // RenderDocumentPath's error before reading Body.
 //
 // It is Result's sibling for documents, and exists for the same reason Result
-// does: RenderDocumentPath is public surface reached through the App alias, so a
+// does: RenderDocumentPath is a method of App, so a
 // caller must be able to name what it returns — to declare a variable, a struct
 // field, or a helper's parameter — using nothing but this package.
 type DocumentResult = render.DocumentResult
@@ -33,27 +34,6 @@ type DocumentResult = render.DocumentResult
 // that wraps ErrNotFound makes the response a 404 rather than a 500.
 type DocumentHandlerFunc = types.DocumentHandlerFunc
 
-// ErrNilDocument is returned by RegisterDocument when passed a nil document.
-var ErrNilDocument = types.ErrNilDocument
-
-// ErrEmptyContentType is returned when a document declares no content type. A
-// document's content type is static and required: the framework writes it on every
-// response and never guesses it.
-var ErrEmptyContentType = types.ErrEmptyContentType
-
-// ErrNoDocumentHandler is returned when a document declares neither a handler nor a
-// body. Unlike a page, a document has no template to fall back on, so it must have
-// one or the other.
-var ErrNoDocumentHandler = types.ErrNoDocumentHandler
-
-// ErrDuplicateDocument is returned when a document is registered under a name
-// another document already holds.
-var ErrDuplicateDocument = core.ErrDuplicateDocument
-
-// ErrDocumentNotFound is returned by App.RenderDocumentPath when a path resolves to
-// no document — including when it resolves to a page or a redirect instead.
-var ErrDocumentNotFound = core.ErrDocumentNotFound
-
 // DocumentBuilder builds a Document through a fluent chain of WithX calls. See the
 // package doc comment for how builder errors are accumulated and why it is safe to
 // ignore them until registration. A document built with neither WithHandler nor
@@ -61,6 +41,8 @@ var ErrDocumentNotFound = core.ErrDocumentNotFound
 type DocumentBuilder struct {
 	document *Document
 	errs     []error
+	// buildTime is what the last Build found missing; see PageBuilder.
+	buildTime error
 }
 
 // NewDocument starts building a document named name and served at contentType.
@@ -74,14 +56,24 @@ func NewDocument(name, contentType string) *DocumentBuilder {
 	}
 }
 
-// WithPath registers the path pattern that reaches this document in locale.//
+// WithPath registers the path pattern that reaches this document in locale.
+//
 // locale is not a label: it names the locale tree the path is written into, and
 // a request reaches that tree only when the locale is Config.Locale.Default (at
 // the bare path) or listed in Locale.Supported (under its prefix, "/tr/…").
 // Default is "en" when left unset, so a Turkish-only site writes
 // WithPath("tr", …) and sets Locale.Default to "tr". A path in a locale neither
 // names is refused at registration with ErrLocaleUnreachable.
+//
+// A locale the document already has a path in records ErrDuplicateLocalePath and
+// keeps the first path; an empty locale records ErrInvalidLocale — a document
+// outside every locale says AtRoot. Both are retrievable via BuildErr and refused
+// at registration.
 func (b *DocumentBuilder) WithPath(locale, pattern string) *DocumentBuilder {
+	if err := checkPathLocale(b.document.Paths, locale, "document", b.document.Name); err != nil {
+		b.errs = append(b.errs, err)
+		return b
+	}
 	b.document.Paths[locale] = pattern
 	return b
 }
@@ -92,8 +84,14 @@ func (b *DocumentBuilder) WithPath(locale, pattern string) *DocumentBuilder {
 // rather than to a language, which clients look for at a fixed address:
 // /robots.txt, /llms.txt, /.well-known/security.txt.
 //
-// A link built by name reaches it from a page in any locale.
+// A link built by name reaches it from a page in any locale. Calling AtRoot a
+// second time records ErrDuplicateLocalePath and keeps the first path, retrievable
+// via BuildErr and refused at registration.
 func (b *DocumentBuilder) AtRoot(pattern string) *DocumentBuilder {
+	if _, taken := b.document.Paths[types.RootLocale]; taken {
+		b.errs = append(b.errs, fmt.Errorf("%w: AtRoot on document %q", ErrDuplicateLocalePath, b.document.Name))
+		return b
+	}
 	b.document.Paths[types.RootLocale] = pattern
 	return b
 }
@@ -126,17 +124,17 @@ func (b *DocumentBuilder) WithRedirect(from, to string, status int) *DocumentBui
 	if err := types.RedirectTextError(from, to); err != nil {
 		b.errs = append(b.errs, fmt.Errorf("document %q: %w", b.document.Name, err))
 	}
-	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, StatusCode: status})
+	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, Status: status})
 	return b
 }
 
-// WithPermanentRedirect adds a permanent redirect from the path pattern from to the
-// path to.
+// WithPermanentRedirect adds a redirect from the path pattern from to the path to
+// with status 301 Moved Permanently.
 func (b *DocumentBuilder) WithPermanentRedirect(from, to string) *DocumentBuilder {
 	if err := types.RedirectTextError(from, to); err != nil {
 		b.errs = append(b.errs, fmt.Errorf("document %q: %w", b.document.Name, err))
 	}
-	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, Permanent: true})
+	b.document.Redirects = append(b.document.Redirects, &Redirect{From: from, To: to, Status: http.StatusMovedPermanently})
 	return b
 }
 
@@ -156,8 +154,12 @@ func (b *DocumentBuilder) Dynamic() *DocumentBuilder {
 }
 
 // Incremental sets the document's strategy to StrategyIncremental and its CacheTTL
-// to ttl: serve from cache until ttl elapses since the last render.
+// to ttl: serve from cache until ttl elapses since the last render. A ttl of zero
+// or less records ErrInvalidTTL, retrievable via BuildErr.
 func (b *DocumentBuilder) Incremental(ttl time.Duration) *DocumentBuilder {
+	if ttl <= 0 {
+		b.errs = append(b.errs, fmt.Errorf("%w: document %q: Incremental(%v)", ErrInvalidTTL, b.document.Name, ttl))
+	}
 	b.document.Strategy = StrategyIncremental
 	b.document.CacheTTL = ttl
 	return b
@@ -179,8 +181,8 @@ func (b *DocumentBuilder) WithCacheParams(names ...string) *DocumentBuilder {
 	return b
 }
 
-// WithDependency appends tags to the document's cache dependency tags.
-func (b *DocumentBuilder) WithDependency(tags ...string) *DocumentBuilder {
+// WithDependencyTags appends tags to the document's cache dependency tags.
+func (b *DocumentBuilder) WithDependencyTags(tags ...string) *DocumentBuilder {
 	b.document.DependencyTags = append(b.document.DependencyTags, tags...)
 	return b
 }
@@ -189,16 +191,21 @@ func (b *DocumentBuilder) WithDependency(tags ...string) *DocumentBuilder {
 // nil for a non-nil builder, even if WithX calls recorded errors along the way, or
 // if neither a handler nor a body was ever set (which records ErrNoDocumentHandler);
 // call BuildErr to check whether any errors were recorded.
+//
+// The document returned is a copy: a WithX call after Build changes the builder
+// and what a later Build returns, never a document already built.
 func (b *DocumentBuilder) Build() *Document {
+	b.buildTime = nil
 	if b.document.Handler == nil && len(b.document.Body) == 0 {
-		b.errs = append(b.errs, ErrNoDocumentHandler)
+		b.buildTime = ErrNoDocumentHandler
 	}
-	types.RecordBuildErr(b.document, b.BuildErr())
-	return b.document
+	d := types.CloneDocument(b.document)
+	types.RecordBuildErr(d, b.BuildErr())
+	return d
 }
 
-// BuildErr returns the errors accumulated by prior WithX calls and by Build, joined
-// with errors.Join, or nil if none were recorded. Call it after Build.
+// BuildErr returns the errors accumulated by prior WithX calls and by the last
+// Build, joined with errors.Join, or nil if none were recorded. Call it after Build.
 func (b *DocumentBuilder) BuildErr() error {
-	return errors.Join(b.errs...)
+	return errors.Join(append(slices.Clone(b.errs), b.buildTime)...)
 }

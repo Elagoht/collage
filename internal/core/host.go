@@ -46,29 +46,22 @@ type hostView struct {
 // Host's methods fails to build rather than failing to run.
 var _ plugin.Host = (*hostView)(nil)
 
-// Both views offer Origins, a capability a plugin reaches by type assertion
-// rather than a Host method, so a Host a test writes need not have it.
-var (
-	_ plugin.Origins = (*hostView)(nil)
-	_ plugin.Origins = (*configHostView)(nil)
-)
-
 // OriginFor returns host's public origin. See App.OriginFor.
 func (h *hostView) OriginFor(ctx context.Context, host string) string {
 	return h.app.OriginFor(ctx, host)
 }
 
-// Dynamic reports whether a plugin implementing OriginResolver is registered.
-func (h *hostView) Dynamic() bool { return h.app.plugins.HasOriginResolver() }
+// MultiOrigin reports whether a plugin implementing OriginResolver is registered.
+func (h *hostView) MultiOrigin() bool { return h.app.plugins.HasOriginResolver() }
 
 // OriginFor returns host's public origin. See App.OriginFor.
 func (h *configHostView) OriginFor(ctx context.Context, host string) string {
 	return h.app.OriginFor(ctx, host)
 }
 
-// Dynamic reports whether a plugin implementing OriginResolver is registered —
+// MultiOrigin reports whether a plugin implementing OriginResolver is registered —
 // among those registered so far, at Configure time.
-func (h *configHostView) Dynamic() bool { return h.app.plugins.HasOriginResolver() }
+func (h *configHostView) MultiOrigin() bool { return h.app.plugins.HasOriginResolver() }
 
 // ApplicationPlugins is plugin.Lister: every plugin the application has, in
 // order. collage.FindPlugin reads it.
@@ -111,16 +104,6 @@ func (h *hostView) RegisterCommand(cmd plugin.Command) error {
 	return h.app.RegisterCommand(cmd)
 }
 
-// RegisterPage registers a page the plugin contributes.
-//
-// It goes through the application's own RegisterPage, so a plugin's page collides
-// with the application's on exactly the same terms — a duplicate name, a path
-// another route claims — and fails at startup rather than being decided by
-// registration order.
-func (h *hostView) RegisterPage(page *types.Page) error {
-	return h.app.RegisterPage(page)
-}
-
 // RegisterDocument registers a document the plugin contributes.
 func (h *hostView) RegisterDocument(doc *types.Document) error {
 	return h.app.RegisterDocument(doc)
@@ -152,11 +135,6 @@ func (h *hostView) Use(middleware func(http.Handler) http.Handler) error {
 // URL builds the path of a page or document by name.
 func (h *hostView) URL(name, locale string, params map[string]string) (string, error) {
 	return h.app.URL(name, locale, params)
-}
-
-// FragmentURL builds the path of a page's fragment path by name.
-func (h *hostView) FragmentURL(page, fragment, locale string, params map[string]string) (string, error) {
-	return h.app.FragmentURL(page, fragment, locale, params)
 }
 
 // Locales returns the default locale and every supported one.
@@ -197,7 +175,7 @@ var _ plugin.ConfigHost = (*configHostView)(nil)
 func (h *configHostView) ApplicationPlugins() []plugin.Plugin { return h.app.plugins.Plugins() }
 
 // DevMode reports whether the application is running in development mode.
-func (h *configHostView) DevMode() bool { return h.app.cfg.DevMode || h.app.cfg.Template.DevMode }
+func (h *configHostView) DevMode() bool { return h.app.cfg.DevMode }
 
 // BaseURL returns the site's public origin without a trailing slash, or "" when
 // the application set none.

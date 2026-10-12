@@ -1,16 +1,16 @@
 // Package collage is the public API of the collage framework: a Go framework for
 // server-side component-based rendering built from composable fragments and pages.
 //
-// This is the only package users import. It re-exports internal/types' domain types
-// as Go type aliases (for example, "type Page = types.Page"), so a value built
-// through this package's fluent builders and a value an internal package consumes are
-// literally the same type — no conversion step, no interface{} boundary between them.
+// This is the only package users import. Its domain types are Go type aliases of
+// the framework's own, so a value built through this package's fluent builders and
+// the value the framework consumes are literally the same type — no conversion
+// step and no untyped boundary between them.
 //
 // # Builder error handling
 //
-// FragmentBuilder and PageBuilder accumulate errors instead of returning (*T, error)
-// from every WithX call, because they are meant to be used in a single fluent chain,
-// as in:
+// FragmentBuilder, PageBuilder, DocumentBuilder and ActionBuilder accumulate errors
+// instead of returning (*T, error) from every WithX call, because they are meant to
+// be used in a single fluent chain, as in:
 //
 //	f := collage.NewFragment("home", "pages/home.html").WithData(collage.Load(loadHome)).Build()
 //
@@ -18,10 +18,14 @@
 // the builder unchanged in every other respect; call BuildErr to retrieve whatever was
 // accumulated. Ignoring BuildErr does not lose a builder mistake silently: Build keeps
 // what was recorded on the value it returns, and RegisterPage refuses a page whose
-// builder, or the builder of any fragment reachable from it, recorded an error — as
-// RegisterDocument does for a document — before Page.Validate even runs. A builder
-// mistake therefore surfaces loudly at startup rather than on the first request. Prefer checking BuildErr when a builder's inputs are not known to
-// be well-formed ahead of time.
+// builder, or the builder of any fragment reachable from it or action attached to
+// it, recorded an error — as RegisterDocument and RegisterAction do for a document
+// and an action — before Page.Validate even runs. A builder mistake therefore
+// surfaces loudly at startup rather than on the first request. Prefer checking
+// BuildErr when a builder's inputs are not known to be well-formed ahead of time.
+//
+// Build returns a copy: a WithX call after Build changes the builder and what a
+// later Build returns, never a value already built or registered.
 package collage
 
 import "github.com/Elagoht/collage/internal/types"
@@ -42,6 +46,17 @@ type SlotDefinition = types.SlotDefinition
 // SlotResolverFunc returns the fragments a slot holds for one render. See
 // FragmentBuilder.WithSlotResolver.
 type SlotResolverFunc = types.SlotResolverFunc
+
+// SlotRule constrains a slot declared with FragmentBuilder.WithSlot. A slot with
+// no rule is optional and holds any number of fragments.
+type SlotRule = types.SlotRule
+
+const (
+	// SlotRequired fails the render when nothing is bound to the slot.
+	SlotRequired = types.SlotRequired
+	// SlotSingle lets the slot hold one fragment at most.
+	SlotSingle = types.SlotSingle
+)
 
 // GuardFunc decides whether a request may reach what it guards. See
 // FragmentBuilder.WithGuard.
@@ -107,103 +122,7 @@ const StrategyStatic = types.StrategyStatic
 // StrategyIncremental serves from cache until the page's CacheTTL elapses.
 const StrategyIncremental = types.StrategyIncremental
 
-// ErrNilFragment is returned when a nil *Fragment is used where a non-nil fragment is
-// required.
-var ErrNilFragment = types.ErrNilFragment
-
-// ErrUnknownSlot is returned at registration when a fragment binds into a slot its
-// template never calls — a fill that could never render.
-var ErrUnknownSlot = types.ErrUnknownSlot
-
 // TemplateTypeError is one expression in a fragment's template that does not fit
 // the fragment's data type, reported by RegisterPage. A page's findings come back
 // joined; read each with errors.As.
 type TemplateTypeError = types.TemplateTypeError
-
-// ErrTemplateType matches every TemplateTypeError.
-var ErrTemplateType = types.ErrTemplateType
-
-// ErrSlotOccupied is returned when binding a fragment to a slot that already has a
-// fill and does not allow multiple.
-var ErrSlotOccupied = types.ErrSlotOccupied
-
-// ErrSlotResolved is recorded when one slot is given both a resolver and bound
-// fragments.
-var ErrSlotResolved = types.ErrSlotResolved
-
-// ErrFragmentCycle is returned when a fragment tree contains a fragment reachable
-// from itself.
-var ErrFragmentCycle = types.ErrFragmentCycle
-
-// ErrMissingContent is returned when a page has no content fragment.
-var ErrMissingContent = types.ErrMissingContent
-
-// ErrConflictingData is returned when a fragment's data is set twice (WithData
-// called twice with data), or a document sets both WithBody and WithHandler.
-var ErrConflictingData = types.ErrConflictingData
-
-// ErrMissingTTL is returned when a page uses StrategyIncremental without a positive
-// CacheTTL.
-var ErrMissingTTL = types.ErrMissingTTL
-
-// ErrInvalidTimeout is returned when a fragment's Timeout is negative.
-var ErrInvalidTimeout = types.ErrInvalidTimeout
-
-// ErrInvalidTTL is returned when a page's CacheTTL is negative.
-var ErrInvalidTTL = types.ErrInvalidTTL
-
-// ErrRequiredSlotUnfilled is returned when a fragment declares a slot as Required
-// but the slot has no fill.
-var ErrRequiredSlotUnfilled = types.ErrRequiredSlotUnfilled
-
-// ErrInvalidSlotDefinition is returned when a fragment's slot map contains a
-// malformed entry.
-var ErrInvalidSlotDefinition = types.ErrInvalidSlotDefinition
-
-// ErrInvalidRedirectStatus is returned when a redirect's status code is set to a
-// value other than 0, 301, 302, 307, or 308.
-var ErrInvalidRedirectStatus = types.ErrInvalidRedirectStatus
-
-// ErrInvalidRedirect is returned for a redirect whose source or destination
-// holds a control character.
-var ErrInvalidRedirect = types.ErrInvalidRedirect
-
-// ErrSelfErrorPage is returned when a page references itself as its own NotFoundPage
-// or ErrorPage.
-var ErrSelfErrorPage = types.ErrSelfErrorPage
-
-// ErrEmptyName is returned when a required Name field is empty.
-var ErrEmptyName = types.ErrEmptyName
-
-// ErrEmptyTemplatePath is returned when a fragment's TemplatePath is empty.
-var ErrEmptyTemplatePath = types.ErrEmptyTemplatePath
-
-// ErrConflictingTemplate is returned when a fragment names both a template file
-// and an inline template.
-var ErrConflictingTemplate = types.ErrConflictingTemplate
-
-// ErrInvalidPath is returned when a path pattern does not start with "/".
-var ErrInvalidPath = types.ErrInvalidPath
-
-// ErrNotFound reports that a fragment's data does not exist, as distinct from a
-// failure to fetch it. It is the one sentinel here that application code returns
-// rather than receives: a DataHandler that wraps it — fmt.Errorf("...: %w",
-// collage.ErrNotFound) — makes a Required fragment's failure render the page's
-// NotFoundPage with a 404 instead of its ErrorPage with a 500. Without wrapping
-// it, every missing record is a 500 and a page-specific 404 page is unreachable.
-var ErrNotFound = types.ErrNotFound
-
-// ErrInvalidGuardDecision is returned when a guard's decision cannot be
-// written as an answer.
-var ErrInvalidGuardDecision = types.ErrInvalidGuardDecision
-
-// ErrGuardRefused is returned by RenderFragment when the fragment's guard
-// refuses the reader: the plugin sends that reader nothing.
-var ErrGuardRefused = types.ErrGuardRefused
-
-// ErrMissingLayout is recorded when WithLayouts is called with no layouts.
-var ErrMissingLayout = types.ErrMissingLayout
-
-// ErrConflictingLayout is recorded when WithLayouts is called a second time on
-// one builder.
-var ErrConflictingLayout = types.ErrConflictingLayout

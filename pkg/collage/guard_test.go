@@ -156,9 +156,9 @@ type errBoomType struct{}
 
 func (errBoomType) Error() string { return "boom" }
 
-// A blocked request never reaches the page, so a plugin watching page
-// resolution is not told about it.
-func TestGuardBlocksBeforePageResolved(t *testing.T) {
+// A blocked request never reaches the page, so a plugin watching renders is
+// not told about it.
+func TestGuardBlocksBeforeRender(t *testing.T) {
 	spy := &guardSpy{}
 	app, err := collage.New(&collage.Config{
 		Server: collage.ServerConfig{Host: "localhost", Port: 0},
@@ -188,7 +188,7 @@ func TestGuardBlocksBeforePageResolved(t *testing.T) {
 		t.Fatalf("status = %d, want 401", w.Code)
 	}
 	if spy.resolved != 0 {
-		t.Fatalf("PageResolved fired %d times for a blocked request", spy.resolved)
+		t.Fatalf("BeforeRender fired %d times for a blocked request", spy.resolved)
 	}
 }
 
@@ -198,7 +198,7 @@ func (s *guardSpy) Name() string                             { return "guard-spy
 func (s *guardSpy) Version() string                          { return "0.0.0" }
 func (s *guardSpy) Shutdown(context.Context) error           { return nil }
 func (s *guardSpy) Init(context.Context, collage.Host) error { return nil }
-func (s *guardSpy) OnPageResolved(ctx context.Context, ev *collage.PageResolvedEvent) error {
+func (s *guardSpy) OnBeforeRender(ctx context.Context, ev *collage.BeforeRenderEvent) error {
 	s.resolved++
 	return nil
 }

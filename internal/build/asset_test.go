@@ -276,7 +276,7 @@ func TestBuild_SkipsAPageWithAnUnresolvedToken(t *testing.T) {
 		t.Fatalf("Skipped = %+v, want the one page", report.Skipped)
 	}
 	skip := report.Skipped[0]
-	if skip.Page != "signup" || skip.Locale != "en" || !strings.Contains(skip.Reason, "served rather than exported") {
+	if skip.Name != "signup" || skip.Locale != "en" || !strings.Contains(skip.Reason, "served rather than exported") {
 		t.Errorf("Skipped[0] = %+v, want page signup locale en saying it is served rather than exported", skip)
 	}
 	// And nothing on disk: a skipped page must not leave a half-written file that
@@ -393,7 +393,7 @@ func TestBuild_WarnsAboutAPageThatReadsTheQuery(t *testing.T) {
 	if len(report.Written) != 2 {
 		t.Errorf("Written = %v, want both pages written", report.Written)
 	}
-	if len(report.Warnings) != 1 || report.Warnings[0].Page != "blogs" ||
+	if len(report.Warnings) != 1 || report.Warnings[0].Name != "blogs" ||
 		!strings.Contains(report.Warnings[0].Reason, "page, tag") {
 		t.Errorf("Warnings = %+v, want one for blogs naming its parameters", report.Warnings)
 	}

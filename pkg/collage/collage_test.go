@@ -56,7 +56,7 @@ func TestNew_ServesThroughThePublicAPI(t *testing.T) {
 	}
 
 	layout := NewFragment("layout", "layouts/default.html").
-		WithSlot("content", true, false).
+		WithSlot("content", SlotRequired, SlotSingle).
 		Build()
 	content := NewFragment("home-content", "pages/home.html").Build()
 	page := NewPage("home").
@@ -64,7 +64,7 @@ func TestNew_ServesThroughThePublicAPI(t *testing.T) {
 		WithContent(content).
 		WithPath("en", "/").
 		Incremental(5 * time.Minute).
-		WithDependency("homepage").
+		WithDependencyTags("homepage").
 		Build()
 
 	if err := app.RegisterPage(page); err != nil {
@@ -107,8 +107,8 @@ func TestNew_AppliesDefaults(t *testing.T) {
 // TestNew_Rejections covers every way New refuses to build an application.
 func TestNew_Rejections(t *testing.T) {
 	t.Run("nil config", func(t *testing.T) {
-		if _, err := New(nil); !errors.Is(err, ErrNilConfig) {
-			t.Fatalf("New(nil) = %v, want ErrNilConfig", err)
+		if _, err := New(nil); !errors.Is(err, errNilConfig) {
+			t.Fatalf("New(nil) = %v, want errNilConfig", err)
 		}
 	})
 
@@ -128,7 +128,7 @@ func TestNew_Rejections(t *testing.T) {
 			Cache:    CacheConfig{Enabled: true, Type: "redis"},
 		}
 		// Config.Validate rejects it before the conversion ever happens, which is
-		// why ErrUnsupportedCache is the internal backstop and not this error.
+		// why the internal backstop is not the error returned here.
 		if _, err := New(cfg); !errors.Is(err, ErrInvalidCacheType) {
 			t.Fatalf("New = %v, want ErrInvalidCacheType", err)
 		}
@@ -173,7 +173,6 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 			FS:        templateFS,
 			Root:      "/tmp/templates",
 			Extension: ".gohtml",
-			DevMode:   true,
 			Timeout:   6 * time.Second,
 		},
 		Cache: CacheConfig{
@@ -184,9 +183,9 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 			MaxBytes:   43,
 		},
 		Locale: LocaleConfig{
-			Default:           "tr",
-			Supported:         []string{"tr", "en"},
-			DisablePathLocale: true,
+			Default:       "tr",
+			Supported:     []string{"tr", "en"},
+			PrefixDefault: true,
 		},
 		Observability: ObservabilityConfig{Metrics: metrics, Tracer: tracer},
 	}
@@ -229,8 +228,8 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	if core.Template.Root != "/tmp/templates" || core.Template.Extension != ".gohtml" {
 		t.Errorf("Template = %+v, want the configured root and extension", core.Template)
 	}
-	if !core.Template.DevMode || core.Template.Timeout != 6*time.Second {
-		t.Errorf("Template = %+v, want dev mode and a 6s timeout", core.Template)
+	if core.Template.Timeout != 6*time.Second {
+		t.Errorf("Template = %+v, want a 6s timeout", core.Template)
 	}
 	if !core.Cache.Enabled || core.Cache.Type != "memory" {
 		t.Errorf("Cache = %+v, want it enabled and of type memory", core.Cache)
@@ -247,8 +246,8 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 	if len(core.Locale.Supported) != 2 || core.Locale.Supported[0] != "tr" {
 		t.Errorf("Locale.Supported = %v, want [tr en]", core.Locale.Supported)
 	}
-	if !core.Locale.DisablePathLocale {
-		t.Errorf("Locale = %+v, want path locales disabled", core.Locale)
+	if !core.Locale.PrefixDefault {
+		t.Errorf("Locale = %+v, want PrefixDefault carried over", core.Locale)
 	}
 	if core.Observability.Metrics != metrics {
 		t.Error("Observability.Metrics did not carry over")
@@ -268,7 +267,7 @@ func TestToCoreConfig_CarriesEveryField(t *testing.T) {
 // compile. It imports nothing but the standard library.
 // ---------------------------------------------------------------------------
 
-// hookPlugin implements Plugin and every one of the six hooks, recording which ones
+// hookPlugin implements Plugin and every one of the four hooks, recording which ones
 // fired and appending a marker to the rendered HTML.
 type hookPlugin struct {
 	mu    sync.Mutex
@@ -277,10 +276,8 @@ type hookPlugin struct {
 
 var (
 	_ Plugin              = (*hookPlugin)(nil)
-	_ PageResolvedHook    = (*hookPlugin)(nil)
 	_ BeforeRenderHook    = (*hookPlugin)(nil)
 	_ AfterRenderHook     = (*hookPlugin)(nil)
-	_ CacheWriteHook      = (*hookPlugin)(nil)
 	_ CacheInvalidateHook = (*hookPlugin)(nil)
 	_ ErrorHook           = (*hookPlugin)(nil)
 )
@@ -306,12 +303,6 @@ func (p *hookPlugin) Shutdown(context.Context) error {
 	return nil
 }
 
-// OnPageResolved records the call.
-func (p *hookPlugin) OnPageResolved(_ context.Context, _ *PageResolvedEvent) error {
-	p.record("OnPageResolved")
-	return nil
-}
-
 // OnBeforeRender records the call.
 func (p *hookPlugin) OnBeforeRender(_ context.Context, _ *BeforeRenderEvent) error {
 	p.record("OnBeforeRender")
@@ -323,12 +314,6 @@ func (p *hookPlugin) OnBeforeRender(_ context.Context, _ *BeforeRenderEvent) err
 func (p *hookPlugin) OnAfterRender(_ context.Context, ev *AfterRenderEvent) error {
 	p.record("OnAfterRender")
 	ev.HTML = append(ev.HTML, []byte("<!--plugin-->")...)
-	return nil
-}
-
-// OnCacheWrite records the call.
-func (p *hookPlugin) OnCacheWrite(_ context.Context, _ *CacheWriteEvent) error {
-	p.record("OnCacheWrite")
 	return nil
 }
 
@@ -379,11 +364,11 @@ func TestPlugin_ImplementableFromThePublicPackage(t *testing.T) {
 	}
 
 	page := NewPage("home").
-		WithLayouts(NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()).
+		WithLayouts(NewFragment("layout", "layouts/default.html").WithSlot("content", SlotRequired, SlotSingle).Build()).
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).
 		WithPath("en", "/").
 		Static().
-		WithDependency("homepage").
+		WithDependencyTags("homepage").
 		Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -407,8 +392,8 @@ func TestPlugin_ImplementableFromThePublicPackage(t *testing.T) {
 	}
 
 	for _, hook := range []string{
-		"Init", "OnPageResolved", "OnBeforeRender", "OnAfterRender",
-		"OnCacheWrite", "OnCacheInvalidate", "OnError", "Shutdown",
+		"Init", "OnBeforeRender", "OnAfterRender",
+		"OnCacheInvalidate", "OnError", "Shutdown",
 	} {
 		if got := hooks.count(hook); got == 0 {
 			t.Errorf("%s never fired", hook)

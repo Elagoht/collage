@@ -94,7 +94,6 @@ const (
 	stageRoute        = "route"
 	stageNotFound     = "not_found"
 	stageGuard        = "guard"
-	stagePageResolved = "page_resolved"
 	stageBeforeRender = "before_render"
 	stageBeforeAction = "before_action"
 	stageRender       = "render"
@@ -386,7 +385,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// What the request resolves to is recorded here, in the context every later
 	// frame shares, so a hook, a metric or a trace can name the route instead of
-	// the raw path. See RouteOf. Ahead of the request hooks: a hook keeps the
+	// the raw path. See RouteInfo. Ahead of the request hooks: a hook keeps the
 	// context it was handed and reads the route from it once the response is
 	// written. A request answered before routing leaves it empty.
 	route := &routeRef{}
@@ -731,25 +730,11 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	pagePattern, _ := page.PathFor(match.Locale)
 	route.at(pagePattern, match.Locale)
 
-	// Guards before the cache and before PageResolved: a blocked reader
-	// reaches neither the page's cached render nor the plugins that watch a
-	// page being reached — the request never touched the page.
-	if status, allowed := h.checkGuards(w, r, route, match.Locale, page.Guards()); !allowed {
+	// Guards before the cache: a blocked reader reaches neither the page's
+	// cached render nor the plugins that watch a page being rendered — the
+	// request never touched the page.
+	if status, allowed := h.checkGuards(w, r, route, match.Locale, types.PageGuards(page)); !allowed {
 		return status
-	}
-
-	if err := h.plugins.PageResolved(ctx, &plugin.PageResolvedEvent{
-		Page:   page,
-		Locale: match.Locale,
-		Path:   r.URL.Path,
-	}); err != nil {
-		return h.serveFailure(w, r, failure{
-			status: http.StatusInternalServerError,
-			err:    err,
-			page:   page,
-			locale: match.Locale,
-			stage:  stagePageResolved,
-		})
 	}
 
 	// Only GET and HEAD may be served from cache, and only a cacheable strategy
@@ -780,8 +765,8 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// sensible alone, combining into "my edit did nothing".
 		//
 		// The write path below is left alone deliberately: entries are still
-		// stored, tags still tracked, CacheWrite hooks still fire, so anyone
-		// developing a plugin or an invalidation rule still sees it work. What
+		// stored, tags still tracked, so anyone developing an
+		// invalidation rule still sees it work. What
 		// dev mode removes is serving a page that was rendered before the edit.
 		if content, etag, found := h.cacheGet(ctx, key); found {
 			h.metrics.CacheEvent(ctx, observability.CacheHit, key)
@@ -992,8 +977,7 @@ func (h *Handler) renderPage(
 	cacheable bool,
 ) *outcome {
 	// Deliberately after the cache lookup: BeforeRenderHook documents that it
-	// does not fire when a cached render is served instead of a fresh one, which
-	// is what distinguishes it from PageResolvedHook.
+	// does not fire when a cached render is served instead of a fresh one.
 	// Built before the hook, not after: a plugin contributing to the page hoists
 	// through this, and hoisting only works before the tree renders.
 	rc := types.NewRenderContext(ctx, r, page, match.Locale, match.PathParams)
@@ -1049,13 +1033,14 @@ func (h *Handler) renderPage(
 	afterRender := &plugin.AfterRenderEvent{
 		Page:           page,
 		Locale:         match.Locale,
+		Path:           r.URL.Path,
 		Degraded:       result.Degraded(),
-		Fragments:      result.FragmentReports(),
+		Fragments:      render.FragmentReports(result),
 		DependencyTags: append([]string(nil), result.DependencyTags...),
 		Values:         types.ValuesOf(rc),
 		HTML:           result.HTML,
 	}
-	plugin.PrepareHoist(afterRender, result.HoistEnds, rc.Hoisted())
+	plugin.PrepareHoist(afterRender, render.HoistEnds(result), types.RenderHoisted(rc))
 	if err := h.plugins.AfterRender(ctx, afterRender); err != nil {
 		// No fragment is named: the failure is the plugin's, and pointing the dev
 		// page at a fragment that merely happened to be degraded would send a
@@ -1175,9 +1160,7 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 	return http.StatusOK
 }
 
-// writeCache stores content under key, after giving CacheWriteHook the chance to
-// adjust the TTL and tags or to suppress the write, and records the key's tags with
-// the tracker. Both write paths track: SetTagged indexes the tags inside the cache
+// writeCache stores content under key, and records the key's tags with the tracker. Both write paths track: SetTagged indexes the tags inside the cache
 // and Track indexes them in the tracker, and invalidation may go through either, so
 // the two indexes are kept deliberately redundant.
 //
@@ -1200,26 +1183,14 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 		return ""
 	}
 
-	event := &plugin.CacheWriteEvent{
-		Key:  key,
-		Page: page,
-		TTL:  h.ttlFor(page.Strategy, page.CacheTTL),
-		Tags: tags,
-	}
-	if err := h.plugins.CacheWrite(ctx, event); err != nil {
-		h.reportError(r, failure{err: err, page: page, stage: stageCacheWrite})
-		return ""
-	}
-	if event.Skip {
-		return ""
-	}
+	ttl := h.ttlFor(page.Strategy, page.CacheTTL)
 
 	var etag string
 	var err error
 	if tagged, ok := h.cache.(cache.TaggedCache); ok {
-		etag, err = tagged.SetTagged(ctx, key, content, event.TTL, event.Tags)
+		etag, err = tagged.SetTagged(ctx, key, content, ttl, tags)
 	} else {
-		etag, err = h.cache.Set(ctx, key, content, event.TTL)
+		etag, err = h.cache.Set(ctx, key, content, ttl)
 	}
 	if err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: cache write: %w", err), page: page, stage: stageCacheWrite})
@@ -1227,7 +1198,7 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
 
-	if err := h.tracker.Track(ctx, key, withRouteTags(event.Tags, r.Host, r.URL.Path)); err != nil {
+	if err := h.tracker.Track(ctx, key, withRouteTags(tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
 	}
 	return etag
@@ -1287,8 +1258,8 @@ func cleanLocation(cleaned, rawQuery string) string {
 }
 
 // withRouteTags returns tags plus the tags naming the entry's path and host, so an
-// invalidation can say which URL, on which host, it dropped. Kept out of the
-// CacheWriteEvent, since they are the framework's, not the page's.
+// invalidation can say which URL, on which host, it dropped. Kept out of what
+// the page declares, since they are the framework's, not the page's.
 func withRouteTags(tags []string, host, path string) []string {
 	out := make([]string, 0, len(tags)+2)
 	out = append(out, tags...)
@@ -1374,8 +1345,8 @@ func addVary(header http.Header, names ...string) {
 // cacheControl returns the Cache-Control value for a route with the given render
 // strategy: static is cached but always revalidated, incremental is cached for its
 // effective TTL, and dynamic is never stored. The incremental value is derived from
-// cacheTTL, not from a TTL a CacheWriteHook adjusted, so the header a client sees
-// does not change from request to request. Shared by the page and document paths;
+// cacheTTL, so the header a client sees does not
+// change from request to request. Shared by the page and document paths;
 // see ttlFor for why it is parameterized rather than typed on either route kind.
 func (h *Handler) cacheControl(strategy types.RenderStrategy, cacheTTL time.Duration) string {
 	switch strategy {

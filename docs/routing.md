@@ -133,9 +133,6 @@ status is `301` for `GET` and `HEAD` and `308` for anything else, so a form post
 to the wrong spelling is posted again rather than turned into a `GET`, and the
 query string is carried over.
 
-`DisablePathLocale: true` turns prefixes off, which leaves every request in
-`Default`, and redirects nothing.
-
 A path registered for one locale only is reachable only in that locale.
 
 **The locale in `WithPath(locale, …)` is not a label.** It names the tree the path
@@ -143,8 +140,9 @@ goes into, and a request reaches that tree only if the locale is `Default` or in
 `Supported`. `Default` is `"en"` when left unset. So a site that writes only
 `WithPath("tr", …)` must also set `Default: "tr"`. Without it, every page would sit
 in a tree no URL reaches. Collage refuses such a path when it is registered, with
-`collage.ErrLocaleUnreachable`, rather than answer every request with 404. A path in
-any locale but `Default` is refused the same way under `DisablePathLocale`.
+`collage.ErrLocaleUnreachable`, rather than answer every request with 404.
+A locale named twice for one page, or an empty one, is refused at `WithPath`
+(`collage.ErrDuplicateLocalePath`, `collage.ErrInvalidLocale`).
 
 Collage never assigns a locale from `Accept-Language` or a cookie. It used to, and
 the result was one URL with different content per reader — which is what caches,
@@ -201,8 +199,8 @@ page := collage.NewPage("blog-post").
 	Build()
 ```
 
-- Allowed status codes are `301`, `302`, `307`, and `308`. `0` means "decide from
-  `Permanent`": `301` when permanent, `302` otherwise. Anything else is
+- Allowed status codes are `301`, `302`, `307`, and `308`. `0` means `302`.
+  Anything else is
   `collage.ErrInvalidRedirectStatus` at registration.
 - A placeholder in the destination must be captured by the source pattern, or
   registration fails with `collage.ErrUnsubstitutedPlaceholder` — such a
@@ -278,7 +276,7 @@ submit. There is no list of protected paths to keep in step with the routes; the
 pattern, the locale prefix and the trailing slash are already the router's.
 
 The guard runs after the router resolves the request and **before the page's
-cache is read**, and before `PageResolvedHook` fires. A blocked reader never
+cache is read**, and before any render hook fires. A blocked reader never
 reaches a cached render, so a private page may be `Static()`. Allowed readers
 share the page's cache: a page whose content differs per reader is a
 personalisation question, not a guard question.
@@ -428,12 +426,14 @@ they keep `RegisterNotFoundPage` and `RegisterErrorPage`. `Register` takes a
 | `collage.ErrDuplicatePage` | Two pages registered under one name |
 | `collage.ErrTemplateNotFound` | A fragment names a template the engine did not load |
 | `collage.ErrMissingContent` | A page with no content fragment |
-| `collage.ErrMissingTTL` | `Incremental` with no positive TTL |
+| `collage.ErrInvalidTTL` | `Incremental` with no positive TTL |
 | `collage.ErrInvalidPath` | A path pattern not starting with `/` |
 | `collage.ErrUnregisteredErrorPage` | An error page referenced but never registered |
 | `collage.ErrAppStarted` | Registering after the handler was built |
 | `collage.ErrInvalidPattern` | A malformed path or redirect pattern |
-| `collage.ErrLocaleUnreachable` | A path in a locale that is neither `Locale.Default` nor in `Locale.Supported`, or any non-default locale under `DisablePathLocale` |
+| `collage.ErrLocaleUnreachable` | A path in a locale that is neither `Locale.Default` nor in `Locale.Supported` |
+| `collage.ErrDuplicateLocalePath` | `WithPath` for a locale the page, document or action already has a path in |
+| `collage.ErrInvalidLocale` | `WithPath` with an empty locale |
 | `collage.ErrDuplicateRoute` | Any two of {page, document} at one path, or two redirects at one source |
 | `collage.ErrAmbiguousParameterName` | Two parameter names at one position |
 | `collage.ErrOverlappingPattern` | Two placeholders with text around them that cross: `a{x}` and `{x}b` |

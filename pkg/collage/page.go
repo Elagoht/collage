@@ -3,6 +3,8 @@ package collage
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"slices"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -15,6 +17,10 @@ import (
 type PageBuilder struct {
 	page *Page
 	errs []error
+	// buildTime is what the last Build found missing. Each Build replaces it
+	// rather than adding to errs, so building twice reports it once, and a
+	// Build after the gap is filled reports nothing.
+	buildTime error
 }
 
 // NewPage starts a PageBuilder for a page named name. Until Static, Dynamic, or
@@ -71,7 +77,7 @@ func (b *PageBuilder) WithLayouts(outermost ...*Fragment) *PageBuilder {
 		seen[f] = true
 	}
 	b.page.LayoutChain = append([]*Fragment(nil), outermost...)
-	b.page.LayoutFragment = b.page.LayoutChain[0]
+	types.SetLayoutFragment(b.page, b.page.LayoutChain[0])
 	return b
 }
 
@@ -81,16 +87,37 @@ func (b *PageBuilder) WithContent(f *Fragment) *PageBuilder {
 	return b
 }
 
-// WithPath registers the path pattern that reaches this page in locale.//
+// WithPath registers the path pattern that reaches this page in locale.
+//
 // locale is not a label: it names the locale tree the path is written into, and
 // a request reaches that tree only when the locale is Config.Locale.Default (at
 // the bare path) or listed in Locale.Supported (under its prefix, "/tr/…").
 // Default is "en" when left unset, so a Turkish-only site writes
 // WithPath("tr", …) and sets Locale.Default to "tr". A path in a locale neither
 // names is refused at registration with ErrLocaleUnreachable.
+//
+// A locale the page already has a path in records ErrDuplicateLocalePath and
+// keeps the first path; an empty locale records ErrInvalidLocale. Both are
+// retrievable via BuildErr and refused at registration.
 func (b *PageBuilder) WithPath(locale, pattern string) *PageBuilder {
+	if err := checkPathLocale(b.page.Paths, locale, "page", b.page.Name); err != nil {
+		b.errs = append(b.errs, err)
+		return b
+	}
 	b.page.Paths[locale] = pattern
 	return b
+}
+
+// checkPathLocale reports why WithPath must not write locale into paths: it is
+// empty, or it already holds a path. kind and name say whose paths they are.
+func checkPathLocale(paths map[string]string, locale, kind, name string) error {
+	if locale == "" {
+		return fmt.Errorf("%w: WithPath on %s %q", ErrInvalidLocale, kind, name)
+	}
+	if _, taken := paths[locale]; taken {
+		return fmt.Errorf("%w: %q on %s %q", ErrDuplicateLocalePath, locale, kind, name)
+	}
+	return nil
 }
 
 // WithRedirect adds a redirect from the path pattern from to the path to, using
@@ -99,17 +126,17 @@ func (b *PageBuilder) WithRedirect(from, to string, status int) *PageBuilder {
 	if err := types.RedirectTextError(from, to); err != nil {
 		b.errs = append(b.errs, fmt.Errorf("page %q: %w", b.page.Name, err))
 	}
-	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, StatusCode: status})
+	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, Status: status})
 	return b
 }
 
-// WithPermanentRedirect adds a permanent redirect from the path pattern from to the
-// path to.
+// WithPermanentRedirect adds a redirect from the path pattern from to the path to
+// with status 301 Moved Permanently.
 func (b *PageBuilder) WithPermanentRedirect(from, to string) *PageBuilder {
 	if err := types.RedirectTextError(from, to); err != nil {
 		b.errs = append(b.errs, fmt.Errorf("page %q: %w", b.page.Name, err))
 	}
-	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, Permanent: true})
+	b.page.Redirects = append(b.page.Redirects, &Redirect{From: from, To: to, Status: http.StatusMovedPermanently})
 	return b
 }
 
@@ -145,8 +172,12 @@ func (b *PageBuilder) Dynamic() *PageBuilder {
 }
 
 // Incremental sets the page's strategy to StrategyIncremental and its CacheTTL to
-// ttl: serve from cache until ttl elapses since the last render.
+// ttl: serve from cache until ttl elapses since the last render. A ttl of zero or
+// less records ErrInvalidTTL, retrievable via BuildErr.
 func (b *PageBuilder) Incremental(ttl time.Duration) *PageBuilder {
+	if ttl <= 0 {
+		b.errs = append(b.errs, fmt.Errorf("%w: page %q: Incremental(%v)", ErrInvalidTTL, b.page.Name, ttl))
+	}
 	b.page.Strategy = StrategyIncremental
 	b.page.CacheTTL = ttl
 	return b
@@ -210,8 +241,8 @@ func (b *PageBuilder) WithCacheParams(names ...string) *PageBuilder {
 	return b
 }
 
-// WithDependency appends tags to the page's cache dependency tags.
-func (b *PageBuilder) WithDependency(tags ...string) *PageBuilder {
+// WithDependencyTags appends tags to the page's cache dependency tags.
+func (b *PageBuilder) WithDependencyTags(tags ...string) *PageBuilder {
 	b.page.DependencyTags = append(b.page.DependencyTags, tags...)
 	return b
 }
@@ -270,16 +301,22 @@ func (b *PageBuilder) WithFragmentPath(locale, pattern string, f *Fragment) *Pag
 // for a non-nil builder, even if WithX calls recorded errors along the way, or if no
 // content fragment was ever set (which records ErrMissingContent); call BuildErr to
 // check whether any errors were recorded.
+//
+// The page returned is a copy: a WithX call after Build changes the builder and
+// what a later Build returns, never a page already built. Each Build returns a new
+// value, so build a page once and register that value.
 func (b *PageBuilder) Build() *Page {
+	b.buildTime = nil
 	if b.page.ContentFragment == nil {
-		b.errs = append(b.errs, types.ErrMissingContent)
+		b.buildTime = types.ErrMissingContent
 	}
-	types.RecordBuildErr(b.page, b.BuildErr())
-	return b.page
+	p := types.ClonePage(b.page)
+	types.RecordBuildErr(p, b.BuildErr())
+	return p
 }
 
-// BuildErr returns the errors accumulated by prior WithX calls and by Build, joined
-// with errors.Join, or nil if none were recorded. Call it after Build.
+// BuildErr returns the errors accumulated by prior WithX calls and by the last
+// Build, joined with errors.Join, or nil if none were recorded. Call it after Build.
 func (b *PageBuilder) BuildErr() error {
-	return errors.Join(b.errs...)
+	return errors.Join(append(slices.Clone(b.errs), b.buildTime)...)
 }

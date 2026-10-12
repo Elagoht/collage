@@ -33,8 +33,8 @@ func TestHead_HelpersAndStylesheets(t *testing.T) {
 		t.Fatalf("Mount: %v", err)
 	}
 
-	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", true, false).Build()
-	content := collage.NewFragment("article", "article.html").WithData(collage.DataHandler(
+	layout := collage.NewFragment("layout", "layout.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
+	content := collage.NewFragment("article", "article.html").WithData(collage.LoadTagged(
 		func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 			rc.HoistTitle(`Tom & "Jerry" <3`)
 			rc.HoistMeta("description", `a "quoted" summary`)
@@ -109,8 +109,8 @@ func TestHead_SiblingsDeclareInTreeOrderWhoeverFinishesFirst(t *testing.T) {
 				Build()
 		}
 		root := collage.NewFragment("root", "layout.html").
-			WithSlot("a", true, false).WithSlotFragment("a", part("A", delayA)).
-			WithSlot("b", true, false).WithSlotFragment("b", part("B", delayB)).Build()
+			WithSlot("a", collage.SlotRequired, collage.SlotSingle).WithSlotFragment("a", part("A", delayA)).
+			WithSlot("b", collage.SlotRequired, collage.SlotSingle).WithSlotFragment("b", part("B", delayB)).Build()
 		if err := app.RegisterPage(collage.NewPage("p").WithContent(root).WithPath("en", "/").Dynamic().Build()); err != nil {
 			t.Fatal(err)
 		}

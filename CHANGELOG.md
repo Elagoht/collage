@@ -1,5 +1,130 @@
 # Changelog
 
+## v0.60.0
+
+The public API is sealed for v1.0. `pkg/collage` now exports what an application
+or a plugin needs and no more; what only the engine used has left it. Every name
+below that changed is listed with what to write instead. Plugins compiled against
+v0.59.x need rebuilding; a plugin that uses only `Init(ctx, host)`, `host.Logger()`
+and `host.Use(...)` compiles as it was.
+
+### Changed (breaking)
+
+**Building a static site**
+
+- **`NewBuilder(app, opts)` and `Builder.Build(ctx)` are `collage.Build(ctx, app, opts)`.**
+  It returns `(*BuildReport, error)`. `ErrNilRenderer` is `ErrNilApp`, and
+  `ErrInvalidOutDir` is `ErrEmptyOutDir`.
+- **`SkipRecord.Page` and `WarningRecord.Page` are `.Name`.**
+- **`ErrDuplicateOutputPath` is `ErrOutputPathCollision`.**
+
+**The `App` and the `Host`**
+
+- **`App` is a defined type with a narrower method set.** Gone from `*App`:
+  `Mounts`, `RenderNotFound`, `CSRFMarker`, `PageRouted`, `PrefixDefault`,
+  `DefaultLocale`, `BuildFinished`, `HasBuildFinishedHook`, `PluginRedirects`,
+  `CaptureResponses`. A build asks the application itself which mounts to copy.
+- **`App.Inspect`, `Inspection` and the `Inspected*` types are removed.** The JSON
+  `collage inspect` prints is the contract, and is byte-for-byte what it was.
+  `CheckCommand` and `InspectCommand` are no longer exported.
+- **`collage.Origins` and `host.(collage.Origins)` are `host.OriginFor(ctx, h)` and
+  `host.MultiOrigin()`,** methods of `Host` itself. `Origins.Dynamic` is `MultiOrigin`.
+- **`Host.RegisterPage` and `Host.FragmentURL` are removed.** `App` keeps both.
+- **`collage.Mount` is removed.**
+- **Hooks: `PageResolvedHook`/`PageResolvedEvent` and `CacheWriteHook`/`CacheWriteEvent`
+  are removed.** Nothing used them. A document now dispatches three hooks:
+  `OnDocumentRendered`, `OnCacheInvalidate` and `OnError`.
+- **`RouteOf(ctx)` is `RouteInfo(ctx).Kind` and `.Name`.**
+- **`CacheInvalidateEvent.Paths` is `Entries`,** each a host and a path.
+- **`Cache.Invalidate` is a method of `TaggedCache`,** the interface a store
+  implements to index tags itself.
+
+**Pages, fragments and data**
+
+- **Engine-only methods are no longer public:** `Page.Root`, `Guards`, `Guarded`,
+  `PathFragments`, `ContentSlotName`, `LayoutFragment`; `Fragment.Bind`,
+  `SetDataSource`, `DataSource`, `EffectiveTimeout`, `Slot`, `SlotNames`;
+  `Result.HoistEnds`, `Result.FragmentReports`; `RenderContext.Hoisted` and
+  `RenderContext.WithFragment` (an application hoists with `Hoist`).
+- **`FragmentMetadata` is `FragmentReport`,** with the same fields;
+  `Metadata.Fragments` is a `[]FragmentReport`.
+- **`JSONOf(status, v)` is `JSON(status, v)`.** The old `JSON(status, []byte)` is
+  `JSONBytes(status, body)`.
+- **`NoContent(status)` is `Status(status)`.**
+- **`WithDependency(tags...)` is `WithDependencyTags(tags...)`,** on page and
+  document builders.
+- **`DataHandler(fn)` is `LoadTagged(fn)`.**
+- **`VariedContext` is gone and `Varied` takes a context:** `Varied(ctx, h)`.
+- **`Redirect.StatusCode` is `Redirect.Status`,** and `0` means `302`.
+  `Redirect.Permanent` is removed; `WithPermanentRedirect` writes `301`.
+- **`Redirect.EffectiveStatus` and `Redirect.Validate` are removed.** A zero
+  `Status` still answers 302; a page's or document's `Validate`, and registration,
+  check its redirects.
+- **`SlotResolverFunc` is `func(ctx, rc)`.** It receives the render's context.
+- **`WithSlot(name, required, allowMultiple bool)` is `WithSlot(name, rules ...SlotRule)`,**
+  with `SlotRequired` and `SlotSingle`.
+- **`ErrMissingTTL` is `ErrInvalidTTL`.**
+
+**Configuration**
+
+- **`Template.DevMode` is removed;** `Config.DevMode` is the one switch.
+- **`Locale.DisablePathLocale` is removed.**
+- **`Cache.MaxKeysPerTag` is removed;** `MaxEntries` caps the keys tracked under
+  a tag too, and a negative `MaxEntries` keeps that cap at 10000.
+- **`Security.NoSniff *bool` is `Security.DisableNoSniff bool`.**
+- **`Cache.Type` is a `CacheType`.** An untyped literal (`Type: "disk"`) still
+  compiles; a string variable needs converting: `Type: collage.CacheType(v)`.
+- **`Config.Validate`, `ApplyDefaults` and `IsDevMode` are no longer public.**
+  `WithCacheControl` and `WithoutBuildCopy` are functions now; call sites do not
+  change.
+
+**Errors.** Sentinels an application could not meaningfully match are gone:
+`ErrNilConfig`, `ErrNilPage`, `ErrNilPlugin`, `ErrEmptyCommandName`,
+`ErrEmptyPluginName`, `ErrNoRootFragment`, `ErrEmptyCacheVersion`,
+`ErrDictKeyNotString`, `ErrDictOddArgs`, `ErrNoMountForAsset`,
+`ErrEmptyLocaleDefault` and `ErrEmptyTemplateRoot`. Renamed to the sentinel that
+stays: `ErrUnsupportedCache` is `ErrInvalidCacheType`, `ErrInvalidHandlerPrefix`
+is `ErrInvalidPrefix`, `ErrInvalidBaseURL` is `ErrInvalidOrigin`, `ErrNoMethods`
+is `ErrNoActionMethods`.
+
+### Changed (behaviour)
+
+- **`Build()` returns an independent copy.** Calling it twice gives two values, and
+  `WithPath` on the builder afterwards no longer reaches the one already built or
+  registered. Two values are two pages to the application, so code that called
+  `Build()` again where it meant the same page now fails:
+  `app.RegisterNotFoundPage(nb.Build())` with `WithNotFoundPage(nb.Build())`
+  fails `Start` with `ErrUnregisteredErrorPage`, and
+  `return collage.RenderPage(pb.Build()), nil` in an action handler answers 500 with
+  `ErrUnregisteredPage`. Build once and keep the `*Page`.
+- **`WithPath` refuses a repeated or an empty locale,** recording
+  `ErrDuplicateLocalePath` or `ErrInvalidLocale`. The first path is kept. A
+  document's `WithPath("", p)` used to mean `AtRoot(p)` and is now refused; write
+  `AtRoot(p)`. `AtRoot` called twice records `ErrDuplicateLocalePath` the same way.
+- **An `ActionResult` with two or more of `Location`, `Fragment`, `Page` and `Body`
+  is a 500** with `ErrAmbiguousActionResult`. A result with only `Status` or only
+  `Header` answers as before.
+- **A document whose output file collides with another document's or a page's stops
+  the build** with `ErrOutputPathCollision`, `index.html` of a page included. The
+  build stops before `OutDir` is touched: nothing is cleaned or written, no 404
+  page or mounted file is copied, and `BuildFinishedHook` is not called.
+- **Documents' `StaticParams` run before pages render** in a static build.
+- **An action built with errors is refused at registration.**
+
+### Added
+
+- **`collage.Build`,** with `BuildOptions`, `BuildReport`, `SkipRecord` and
+  `WarningRecord` defined in `pkg/collage`.
+- **`Host.OriginFor` and `Host.MultiOrigin`,** also on `ConfigHost`.
+- **`SlotRule`, `SlotRequired`, `SlotSingle`.**
+- **`CacheType`, `CacheMemory`, `CacheDisk`.**
+- **`ErrDuplicateLocalePath`, `ErrInvalidLocale`, `ErrAmbiguousActionResult`.**
+- **`AfterRenderEvent.Path`.**
+- **`ActionBuilder.BuildErr`.**
+- **An `api` CI job** reports the changes to `pkg/collage` against the last final
+  release, and from v1.0 gates them.
+- Public doc comments in `pkg/collage` name no internal identifier.
+
 ## v0.59.0
 
 ### Added

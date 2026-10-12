@@ -21,8 +21,10 @@ type SlotDefinition struct {
 	Name string
 	// Required reports whether rendering fails when no fragment is bound.
 	Required bool
-	// AllowMultiple reports whether more than one fragment may be bound. When false,
-	// binding a second fragment is a validation error.
+	// AllowMultiple reports whether more than one fragment may be bound. When false
+	// — the zero value — the slot holds one fragment, and binding a second is a
+	// validation error. Slots are declared with the fragment builder's WithSlot,
+	// where a slot given no rule takes any number of fragments.
 	AllowMultiple bool
 	// Fill holds the fragments bound to this slot, rendered in binding order.
 	Fill []*Fragment
@@ -35,8 +37,20 @@ type SlotDefinition struct {
 	Resolve SlotResolverFunc
 }
 
-// SlotResolverFunc returns the fragments a slot holds for one render.
-type SlotResolverFunc func(rc *RenderContext) ([]*Fragment, error)
+// SlotResolverFunc returns the fragments a slot holds for one render. ctx is the
+// render's context, as a data handler receives it.
+type SlotResolverFunc func(ctx context.Context, rc *RenderContext) ([]*Fragment, error)
+
+// SlotRule constrains a declared slot. A slot with no rule is optional and holds
+// any number of fragments.
+type SlotRule int
+
+const (
+	// SlotRequired fails the render when nothing is bound to the slot.
+	SlotRequired SlotRule = iota + 1
+	// SlotSingle lets the slot hold one fragment at most.
+	SlotSingle
+)
 
 // Fragment is the framework's unit of composition: a template, an optional data
 // contract, and the slots it exposes to child fragments.
@@ -94,7 +108,8 @@ type Fragment struct {
 	// render fails.
 	Fallback *Fragment
 	// Timeout bounds how long this fragment's data handler may run. Zero means no
-	// fragment-specific timeout; see EffectiveTimeout.
+	// fragment-specific timeout: the handler gets TemplateConfig.Timeout, the
+	// application's default. WithTimeout sets it.
 	Timeout time.Duration
 	// buildErr is what the builder that made this value recorded; see
 	// RecordBuildErr. Registration refuses a value that carries one.
@@ -188,9 +203,9 @@ func HumanizeTemplateError(err error) error {
 	return humanizedError{err: err}
 }
 
-// Slot looks up the slot named name on f. It is nil-safe: a nil receiver or a
+// FragmentSlot looks up the slot named name on f. It is nil-safe: a nil receiver or a
 // fragment with no matching slot both report ok == false.
-func (f *Fragment) Slot(name string) (*SlotDefinition, bool) {
+func FragmentSlot(f *Fragment, name string) (*SlotDefinition, bool) {
 	if f == nil {
 		return nil, false
 	}
@@ -198,9 +213,9 @@ func (f *Fragment) Slot(name string) (*SlotDefinition, bool) {
 	return s, ok
 }
 
-// SlotNames returns the names of f's declared slots in sorted order, for
+// FragmentSlotNames returns the names of f's declared slots in sorted order, for
 // deterministic iteration and error messages. It is nil-safe.
-func (f *Fragment) SlotNames() []string {
+func FragmentSlotNames(f *Fragment) []string {
 	if f == nil {
 		return nil
 	}
@@ -218,7 +233,7 @@ func (f *Fragment) SlotNames() []string {
 // returns ErrNilFragment if child is nil, ErrInvalidSlotDefinition for an empty
 // slotName, ErrSlotResolved if a resolver fills the slot, and ErrSlotOccupied
 // wrapped with slotName if the slot already has a fill and does not allow multiple.
-func (f *Fragment) Bind(slotName string, child *Fragment) error {
+func Bind(f *Fragment, slotName string, child *Fragment) error {
 	if child == nil {
 		return ErrNilFragment
 	}
@@ -248,7 +263,7 @@ func (f *Fragment) Bind(slotName string, child *Fragment) error {
 
 // EffectiveTimeout returns f.Timeout when it is greater than zero, otherwise def. It
 // is nil-safe, returning def for a nil receiver.
-func (f *Fragment) EffectiveTimeout(def time.Duration) time.Duration {
+func EffectiveTimeout(f *Fragment, def time.Duration) time.Duration {
 	if f != nil && f.Timeout > 0 {
 		return f.Timeout
 	}
@@ -294,7 +309,7 @@ func (f *Fragment) validate(stack map[*Fragment]bool) error {
 		return fmt.Errorf("%w: fragment %q has negative timeout", ErrInvalidTimeout, f.Name)
 	}
 
-	for _, key := range f.SlotNames() {
+	for _, key := range FragmentSlotNames(f) {
 		slot := f.Slots[key]
 		if slot == nil || slot.Name == "" {
 			return fmt.Errorf("%w: slot key %q has no name", ErrInvalidSlotDefinition, key)

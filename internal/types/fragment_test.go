@@ -74,7 +74,7 @@ func TestFragment_Bind(t *testing.T) {
 
 	t.Run("success", func(t *testing.T) {
 		f := newSlotted(false)
-		if err := f.Bind("content", child); err != nil {
+		if err := Bind(f, "content", child); err != nil {
 			t.Fatalf("Bind() error = %v, want nil", err)
 		}
 		fill := f.Slots["content"].Fill
@@ -85,13 +85,13 @@ func TestFragment_Bind(t *testing.T) {
 
 	t.Run("undeclared slot is declared optional and multiple", func(t *testing.T) {
 		f := &Fragment{Name: "parent", TemplatePath: "parent.html"}
-		if err := f.Bind("aside", child); err != nil {
+		if err := Bind(f, "aside", child); err != nil {
 			t.Fatalf("Bind() error = %v, want nil", err)
 		}
-		if err := f.Bind("aside", child); err != nil {
+		if err := Bind(f, "aside", child); err != nil {
 			t.Fatalf("second Bind() error = %v, want a second fill", err)
 		}
-		slot, ok := f.Slot("aside")
+		slot, ok := FragmentSlot(f, "aside")
 		if !ok || slot.Name != "aside" || slot.Required || !slot.AllowMultiple || len(slot.Fill) != 2 {
 			t.Fatalf("slot = %+v, want an optional multi-fill slot with two fills", slot)
 		}
@@ -99,17 +99,17 @@ func TestFragment_Bind(t *testing.T) {
 
 	t.Run("empty slot name", func(t *testing.T) {
 		f := newSlotted(false)
-		if err := f.Bind("", child); !errors.Is(err, ErrInvalidSlotDefinition) {
+		if err := Bind(f, "", child); !errors.Is(err, ErrInvalidSlotDefinition) {
 			t.Fatalf("Bind() error = %v, want ErrInvalidSlotDefinition", err)
 		}
 	})
 
 	t.Run("occupied slot", func(t *testing.T) {
 		f := newSlotted(false)
-		if err := f.Bind("content", child); err != nil {
+		if err := Bind(f, "content", child); err != nil {
 			t.Fatalf("first bind: %v", err)
 		}
-		err := f.Bind("content", child)
+		err := Bind(f, "content", child)
 		if !errors.Is(err, ErrSlotOccupied) {
 			t.Fatalf("Bind() error = %v, want ErrSlotOccupied", err)
 		}
@@ -117,7 +117,7 @@ func TestFragment_Bind(t *testing.T) {
 
 	t.Run("nil child", func(t *testing.T) {
 		f := newSlotted(false)
-		err := f.Bind("content", nil)
+		err := Bind(f, "content", nil)
 		if !errors.Is(err, ErrNilFragment) {
 			t.Fatalf("Bind() error = %v, want ErrNilFragment", err)
 		}
@@ -126,10 +126,10 @@ func TestFragment_Bind(t *testing.T) {
 	t.Run("multiple allowed", func(t *testing.T) {
 		f := newSlotted(true)
 		other := &Fragment{Name: "other", TemplatePath: "other.html"}
-		if err := f.Bind("content", child); err != nil {
+		if err := Bind(f, "content", child); err != nil {
 			t.Fatalf("first bind: %v", err)
 		}
-		if err := f.Bind("content", other); err != nil {
+		if err := Bind(f, "content", other); err != nil {
 			t.Fatalf("second bind: %v", err)
 		}
 		fill := f.Slots["content"].Fill
@@ -149,7 +149,7 @@ func TestFragment_Validate(t *testing.T) {
 			},
 		}
 		leaf := &Fragment{Name: "leaf", TemplatePath: "leaf.html"}
-		if err := parent.Bind("content", leaf); err != nil {
+		if err := Bind(parent, "content", leaf); err != nil {
 			t.Fatalf("bind: %v", err)
 		}
 		if err := parent.Validate(); err != nil {
@@ -233,7 +233,7 @@ func TestFragment_Validate(t *testing.T) {
 			},
 		}
 		badChild := &Fragment{TemplatePath: "bad.html"} // empty name
-		if err := parent.Bind("content", badChild); err != nil {
+		if err := Bind(parent, "content", badChild); err != nil {
 			t.Fatalf("bind: %v", err)
 		}
 		if err := parent.Validate(); !errors.Is(err, ErrEmptyName) {
@@ -263,10 +263,10 @@ func TestFragment_Validate_CycleDetected(t *testing.T) {
 	b := &Fragment{Name: "b", TemplatePath: "b.html", Slots: map[string]*SlotDefinition{
 		"child": {Name: "child", AllowMultiple: true},
 	}}
-	if err := a.Bind("child", b); err != nil {
+	if err := Bind(a, "child", b); err != nil {
 		t.Fatalf("bind a->b: %v", err)
 	}
-	if err := b.Bind("child", a); err != nil {
+	if err := Bind(b, "child", a); err != nil {
 		t.Fatalf("bind b->a: %v", err)
 	}
 
@@ -290,10 +290,10 @@ func TestFragment_Validate_DiamondIsNotACycle(t *testing.T) {
 			"right": {Name: "right", AllowMultiple: true},
 		},
 	}
-	if err := parent.Bind("left", shared); err != nil {
+	if err := Bind(parent, "left", shared); err != nil {
 		t.Fatalf("bind left: %v", err)
 	}
-	if err := parent.Bind("right", shared); err != nil {
+	if err := Bind(parent, "right", shared); err != nil {
 		t.Fatalf("bind right: %v", err)
 	}
 
@@ -316,7 +316,7 @@ func TestFragment_EffectiveTimeout(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			f := &Fragment{Timeout: tt.timeout}
-			if got := f.EffectiveTimeout(tt.def); got != tt.want {
+			if got := EffectiveTimeout(f, tt.def); got != tt.want {
 				t.Errorf("EffectiveTimeout() = %v, want %v", got, tt.want)
 			}
 		})
@@ -331,7 +331,7 @@ func TestFragment_SlotNames(t *testing.T) {
 			"c": {Name: "c"},
 		},
 	}
-	got := f.SlotNames()
+	got := FragmentSlotNames(f)
 	want := []string{"a", "b", "c"}
 	if len(got) != len(want) {
 		t.Fatalf("SlotNames() = %v, want %v", got, want)

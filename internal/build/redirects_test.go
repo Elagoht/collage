@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -36,9 +37,9 @@ var _ BuildFinisher = (*redirectingRenderer)(nil)
 
 func newRedirectingRenderer() *redirectingRenderer {
 	about := newTestPage("about", types.StrategyStatic, map[string]string{"en": "/a"})
-	about.Redirects = []*types.Redirect{{From: "/old", To: "/a", StatusCode: 308}}
+	about.Redirects = []*types.Redirect{{From: "/old", To: "/a", Status: 308}}
 	blog := newTestPage("blog", types.StrategyDynamic, map[string]string{"en": "/blog"})
-	blog.Redirects = []*types.Redirect{{From: "/posts", To: "/blog", Permanent: true}}
+	blog.Redirects = []*types.Redirect{{From: "/posts", To: "/blog", Status: http.StatusMovedPermanently}}
 	feed := newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed.xml"})
 	feed.Redirects = []*types.Redirect{{From: "/rss", To: "/feed.xml"}}
 	return &redirectingRenderer{

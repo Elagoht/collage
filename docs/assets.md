@@ -275,10 +275,6 @@ and logs the reason once, and `App.ListenAndServe()` returns the error instead.
 `Mount` itself returns `collage.ErrAppStarted` once the application has started,
 like every other registration method.
 
-`App.Mounts()` returns every mount, in registration order, as a copy of the
-slice — appending to or reordering it does not affect the application. Its
-element type is `*collage.Mount`.
-
 ## Path resolution
 
 After the prefix is stripped, the remainder is `path.Clean`ed and checked with
@@ -302,7 +298,7 @@ of every path component looking for a symlink that leaves `OutDir` — rather th
 a second implementation of that logic. A failure copying one file is recorded and
 the rest of the build continues.
 
-Which mounts a build copies is answered by the application's own `Mounts()`.
+Which mounts a build copies is answered by the application itself.
 There is no `BuildOptions` field for it, deliberately: a caller cannot hand the
 builder one application's pages alongside another application's assets.
 
@@ -334,8 +330,8 @@ Stated plainly, because each one is a real constraint rather than an oversight:
   recovered while serving it.** `Metrics.HTTPResponse` and the request's trace
   span fire unconditionally, for every asset request, exactly as they do for a
   page or a document — there is no metrics or tracing exemption left to claim.
-  What genuinely does not fire for a mount is the render-hook trio,
-  `OnPageResolved`, `OnBeforeRender`, and `OnAfterRender`: an asset is not a
-  render, so there is nothing for those three to observe. See
-  `docs/plugins.md`'s "Documents dispatch four hooks, not seven" section, which
+  What genuinely does not fire for a mount is the render hooks,
+  `OnBeforeRender` and `OnAfterRender`: an asset is not a
+  render, so there is nothing for those two to observe. See
+  `docs/plugins.md`'s "Documents dispatch three hooks, not five" section, which
   covers the asset case alongside the document one.

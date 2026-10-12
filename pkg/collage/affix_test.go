@@ -20,7 +20,7 @@ func TestAffixedDocumentBesideAPage(t *testing.T) {
 		return []map[string]string{{"slug": "hello"}, {"slug": "a.b"}}, nil
 	}
 	page := NewPage("post").
-		WithLayouts(NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()).
+		WithLayouts(NewFragment("layout", "layouts/default.html").WithSlot("content", SlotRequired, SlotSingle).Build()).
 		WithContent(NewFragment("post-content", "pages/home.html").Build()).
 		WithPath("en", "/blogs/{slug}").
 		WithStaticParams(slugs).
@@ -59,11 +59,7 @@ func TestAffixedDocumentBesideAPage(t *testing.T) {
 	}
 
 	out := t.TempDir()
-	builder, err := NewBuilder(app, BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := builder.Build(context.Background()); err != nil {
+	if _, err := Build(context.Background(), app, BuildOptions{OutDir: out}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	for file, want := range map[string]string{

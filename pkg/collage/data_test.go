@@ -14,7 +14,7 @@ type dataView struct{ Title string }
 func TestData_RecordsTheType(t *testing.T) {
 	viewType := reflect.TypeFor[dataView]()
 	load := Load(func(context.Context, *RenderContext) (dataView, error) { return dataView{Title: "t"}, nil })
-	handler := DataHandler(func(context.Context, *RenderContext) (*dataView, []string, error) {
+	handler := LoadTagged(func(context.Context, *RenderContext) (*dataView, []string, error) {
 		return &dataView{}, []string{"tag"}, nil
 	})
 	loose := Load(func(context.Context, *RenderContext) (any, error) { return 1, nil }) // any: the explicit opt-out the check skips
@@ -26,7 +26,7 @@ func TestData_RecordsTheType(t *testing.T) {
 		typ  reflect.Type
 	}{
 		{"Load", load, types.DataFetched, viewType},
-		{"DataHandler", handler, types.DataFetched, reflect.TypeFor[*dataView]()},
+		{"LoadTagged", handler, types.DataFetched, reflect.TypeFor[*dataView]()},
 		{"Value", Value(dataView{}), types.DataFixed, viewType},
 		{"Effect", Effect(func(context.Context, *RenderContext) error { return nil }), types.DataEffect, nil},
 		{"Load[any] is unknown", loose, types.DataFetched, nil},
@@ -34,7 +34,7 @@ func TestData_RecordsTheType(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			f := NewFragment("f", "f.html").WithData(test.d).Build()
-			got := f.DataSource()
+			got := types.FragmentDataSource(f)
 			if got.Kind != test.kind || got.Type != test.typ {
 				t.Errorf("source = kind %v type %v, want kind %v type %v", got.Kind, got.Type, test.kind, test.typ)
 			}
@@ -43,14 +43,14 @@ func TestData_RecordsTheType(t *testing.T) {
 }
 
 func TestData_HandlersKeepTheirBehaviour(t *testing.T) {
-	failing := DataHandler(func(context.Context, *RenderContext) (*dataView, []string, error) {
+	failing := LoadTagged(func(context.Context, *RenderContext) (*dataView, []string, error) {
 		return &dataView{}, []string{"t"}, errors.New("boom")
 	}).source()
 	data, tags, err := failing.Handler(context.Background(), nil)
 	if data != nil || len(tags) != 1 || err == nil {
 		t.Errorf("failed handler = %v, %v, %v; want nil data, its tags, the error", data, tags, err)
 	}
-	if Load[dataView](nil) != nil || DataHandler[dataView](nil) != nil || Effect(nil) != nil {
+	if Load[dataView](nil) != nil || LoadTagged[dataView](nil) != nil || Effect(nil) != nil {
 		t.Error("a nil fn must give a nil Data")
 	}
 	if Value[error](nil) != nil {

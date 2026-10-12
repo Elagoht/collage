@@ -54,7 +54,7 @@ func TestRegisterPage_BindsContentExactlyOnce(t *testing.T) {
 		t.Fatalf("RegisterPage: %v", err)
 	}
 
-	slot, ok := page.LayoutFragment.Slot(types.DefaultContentSlot)
+	slot, ok := types.FragmentSlot(types.LayoutFragment(page), types.DefaultContentSlot)
 	if !ok {
 		t.Fatal("layout has no content slot after registration")
 	}
@@ -92,7 +92,7 @@ func TestRegisterPage_BindsOnceIntoAMultiFillSlot(t *testing.T) {
 		t.Fatalf("RegisterErrorPage: %v", err)
 	}
 
-	if got := len(page.LayoutFragment.Slots[types.DefaultContentSlot].Fill); got != 1 {
+	if got := len(types.LayoutFragment(page).Slots[types.DefaultContentSlot].Fill); got != 1 {
 		t.Fatalf("content slot has %d fills, want exactly 1", got)
 	}
 	if got := strings.Count(get(app.Handler(), "/").Body.String(), "Welcome Home"); got != 1 {
@@ -227,7 +227,7 @@ func TestRegisterPage_SharedLayoutKeepsEverythingElseShared(t *testing.T) {
 		t.Fatalf("RegisterPage: %v", err)
 	}
 
-	bound := page.LayoutFragment
+	bound := types.LayoutFragment(page)
 	if bound == shared {
 		t.Fatal("the page still points at the shared layout, want its own copy")
 	}
@@ -253,7 +253,7 @@ func TestRegisterPage_HandBoundLayoutStillGetsItsOwnCopy(t *testing.T) {
 
 	page := newHomePage()
 	page.LayoutChain = []*types.Fragment{shared}
-	if err := shared.Bind(types.DefaultContentSlot, page.ContentFragment); err != nil {
+	if err := types.Bind(shared, types.DefaultContentSlot, page.ContentFragment); err != nil {
 		t.Fatalf("hand-binding the content: %v", err)
 	}
 
@@ -261,10 +261,10 @@ func TestRegisterPage_HandBoundLayoutStillGetsItsOwnCopy(t *testing.T) {
 		t.Fatalf("RegisterPage: %v", err)
 	}
 
-	if page.LayoutFragment == shared {
+	if types.LayoutFragment(page) == shared {
 		t.Fatal("the page still points at the shared layout, want its own copy")
 	}
-	if got := len(page.LayoutFragment.Slots[types.DefaultContentSlot].Fill); got != 1 {
+	if got := len(types.LayoutFragment(page).Slots[types.DefaultContentSlot].Fill); got != 1 {
 		t.Fatalf("content slot has %d fills, want exactly 1", got)
 	}
 	if got := strings.Count(get(app.Handler(), "/").Body.String(), "Welcome Home"); got != 1 {
@@ -278,7 +278,7 @@ func TestRegisterPage_HandBoundLayoutStillGetsItsOwnCopy(t *testing.T) {
 func TestRegisterPage_RejectsAPreFilledContentSlot(t *testing.T) {
 	app := newTestApp(t, nil)
 	layout := newLayout("layout")
-	if err := layout.Bind(types.DefaultContentSlot, &types.Fragment{
+	if err := types.Bind(layout, types.DefaultContentSlot, &types.Fragment{
 		Name:         "someone-elses-content",
 		TemplatePath: "pages/about.html",
 	}); err != nil {
@@ -570,10 +570,10 @@ func TestApp_RejectsUnregisteredErrorPage(t *testing.T) {
 		// in its own layout copy, so it renders its own markup rather than an empty
 		// layout when it is finally needed.
 		for _, page := range []*types.Page{fixture.post, fixture.notFound, fixture.errorPage} {
-			if page.LayoutFragment == fixture.layout {
+			if types.LayoutFragment(page) == fixture.layout {
 				t.Fatalf("page %q still points at the shared layout", page.Name)
 			}
-			fill := page.LayoutFragment.Slots[types.DefaultContentSlot].Fill
+			fill := types.LayoutFragment(page).Slots[types.DefaultContentSlot].Fill
 			if len(fill) != 1 || fill[0] != page.ContentFragment {
 				t.Fatalf("page %q content slot = %v, want exactly its own content fragment", page.Name, fill)
 			}
@@ -647,7 +647,7 @@ func TestRegisterPage_RejectsInvalidPage(t *testing.T) {
 		{
 			name:     "incremental without a ttl",
 			mutate:   func(p *types.Page) { p.CacheTTL = 0 },
-			expected: types.ErrMissingTTL,
+			expected: types.ErrInvalidTTL,
 		},
 		{
 			name:     "negative ttl",
@@ -704,7 +704,7 @@ func TestRegisterPage_LayoutNeedsNoContentSlotDeclared(t *testing.T) {
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage = %v, want nil", err)
 	}
-	if slot, ok := page.LayoutFragment.Slot(types.DefaultContentSlot); !ok || len(slot.Fill) != 1 {
+	if slot, ok := types.FragmentSlot(types.LayoutFragment(page), types.DefaultContentSlot); !ok || len(slot.Fill) != 1 {
 		t.Fatalf("content slot = %+v, want the page's content bound", slot)
 	}
 }
@@ -848,7 +848,7 @@ func TestRegisterErrorPage_AcceptsAnAlreadyRegisteredPage(t *testing.T) {
 		t.Fatalf("RegisterErrorPage: %v", err)
 	}
 
-	if got := len(page.LayoutFragment.Slots[types.DefaultContentSlot].Fill); got != 1 {
+	if got := len(types.LayoutFragment(page).Slots[types.DefaultContentSlot].Fill); got != 1 {
 		t.Fatalf("content slot has %d fills, want 1", got)
 	}
 	if got := len(app.Pages()); got != 1 {
@@ -870,7 +870,7 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 
 	page := newHomePage()
 	page.DependencyTags = []string{"homepage"}
-	page.Redirects = []*types.Redirect{{From: "/old", To: "/", Permanent: true}}
+	page.Redirects = []*types.Redirect{{From: "/old", To: "/", Status: http.StatusMovedPermanently}}
 
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -890,7 +890,7 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 	copied.DependencyTags[0] = "mutated"
 	copied.Strategy = types.StrategyDynamic
 	copied.Redirects[0].To = "/mutated"
-	copied.Redirects[0].StatusCode = 307
+	copied.Redirects[0].Status = 307
 
 	if page.Name != "home" {
 		t.Fatalf("live page name = %q, want home", page.Name)
@@ -907,7 +907,7 @@ func TestApp_PagesAreDefensiveCopies(t *testing.T) {
 	if page.Strategy != types.StrategyIncremental {
 		t.Fatalf("live page strategy = %v, want incremental", page.Strategy)
 	}
-	if page.Redirects[0].To != "/" || page.Redirects[0].StatusCode != 0 {
+	if page.Redirects[0].To != "/" || page.Redirects[0].Status != http.StatusMovedPermanently {
 		t.Fatalf("live redirect = %+v, want it untouched by the copy", *page.Redirects[0])
 	}
 }
@@ -1014,11 +1014,11 @@ func newNamedFragment(name, templatePath string) *types.Fragment {
 // the auth copy, whose content slot holds the content fragment.
 func foldTree(t *testing.T, p *types.Page) (master, auth *types.Fragment) {
 	t.Helper()
-	master = p.LayoutFragment
+	master = types.LayoutFragment(p)
 	if master == nil || master.Name != "master" {
 		t.Fatalf("root = %v, want the folded master copy", master)
 	}
-	slot, ok := master.Slot(types.DefaultContentSlot)
+	slot, ok := types.FragmentSlot(master, types.DefaultContentSlot)
 	if !ok || len(slot.Fill) != 1 {
 		t.Fatalf("master content slot = %v, want exactly one fill", slot)
 	}
@@ -1026,7 +1026,7 @@ func foldTree(t *testing.T, p *types.Page) (master, auth *types.Fragment) {
 	if auth.Name != "auth" || auth == p.LayoutChain[1] {
 		t.Fatalf("inner layout = %v, want a copy of auth", auth)
 	}
-	inner, ok := auth.Slot(types.DefaultContentSlot)
+	inner, ok := types.FragmentSlot(auth, types.DefaultContentSlot)
 	if !ok || len(inner.Fill) != 1 || inner.Fill[0].Name != "content" {
 		t.Fatalf("auth content slot = %v, want the content fragment", inner)
 	}
@@ -1050,7 +1050,7 @@ func TestRegisterPageFoldsLayoutChain(t *testing.T) {
 	// The originals are untouched: registration binds into copies. (newLayout
 	// declares its content slot, so what must stay empty is the fill, not the
 	// slot itself.)
-	if slot, ok := master.Slot(types.DefaultContentSlot); ok && len(slot.Fill) > 0 {
+	if slot, ok := types.FragmentSlot(master, types.DefaultContentSlot); ok && len(slot.Fill) > 0 {
 		t.Fatalf("registration bound %d fills into the shared master layout", len(slot.Fill))
 	}
 }
@@ -1075,7 +1075,7 @@ func TestRegisterPageChainSlotsPrivatePerPage(t *testing.T) {
 	if !ok {
 		t.Fatal("page a not found")
 	}
-	slot, _ := pageA.LayoutFragment.Slot(types.DefaultContentSlot)
+	slot, _ := types.FragmentSlot(types.LayoutFragment(pageA), types.DefaultContentSlot)
 	if len(slot.Fill) != 1 || slot.Fill[0].Name != "a-content" {
 		t.Fatalf("page a content slot = %v, want exactly a-content", slot.Fill)
 	}
@@ -1085,7 +1085,7 @@ func TestRegisterPageOuterLayoutPrefilledRejected(t *testing.T) {
 	app := newTestApp(t, nil)
 	stray := newNamedFragment("stray", "pages/home.html")
 	outer := newLayout("outer")
-	if err := outer.Bind(types.DefaultContentSlot, stray); err != nil {
+	if err := types.Bind(outer, types.DefaultContentSlot, stray); err != nil {
 		t.Fatalf("hand-bind: %v", err)
 	}
 	p := &types.Page{
@@ -1104,7 +1104,7 @@ func TestRegisterPageInnermostHandBoundStillCopies(t *testing.T) {
 	app := newTestApp(t, nil)
 	content := newNamedFragment("content", "pages/home.html")
 	inner := newLayout("inner")
-	if err := inner.Bind(types.DefaultContentSlot, content); err != nil {
+	if err := types.Bind(inner, types.DefaultContentSlot, content); err != nil {
 		t.Fatalf("hand-bind: %v", err)
 	}
 	p := &types.Page{
@@ -1116,24 +1116,24 @@ func TestRegisterPageInnermostHandBoundStillCopies(t *testing.T) {
 	if err := app.RegisterPage(p); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
-	if p.LayoutFragment == inner {
+	if types.LayoutFragment(p) == inner {
 		t.Fatal("hand-bound innermost layout was not copied")
 	}
-	slot, _ := p.LayoutFragment.Slot(types.DefaultContentSlot)
+	slot, _ := types.FragmentSlot(types.LayoutFragment(p), types.DefaultContentSlot)
 	if len(slot.Fill) != 1 || slot.Fill[0] != content {
 		t.Fatalf("hand-bound fill = %v, want the original content once", slot.Fill)
 	}
 }
 
-// A page built by hand — a plugin through Host.RegisterPage, or a Page literal —
-// with only LayoutFragment set is the one-layout chain it looks like, not a page
-// whose layout silently renders without its content.
+// A page built by hand — a Page literal — with only LayoutFragment set is the
+// one-layout chain it looks like, not a page whose layout silently renders
+// without its content.
 func TestRegisterPageLoneLayoutFragmentIsAChain(t *testing.T) {
 	app := newTestApp(t, nil)
 	page := newHomePage()
 	layout := page.LayoutChain[0]
 	page.LayoutChain = nil
-	page.LayoutFragment = layout
+	types.SetLayoutFragment(page, layout)
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
@@ -1159,7 +1159,7 @@ func TestRegisterPageNilChainEntryRejected(t *testing.T) {
 func TestRegisterPageConflictingLayoutFragmentRejected(t *testing.T) {
 	app := newTestApp(t, nil)
 	page := newHomePage()
-	page.LayoutFragment = newLayout("another-layout")
+	types.SetLayoutFragment(page, newLayout("another-layout"))
 	err := app.RegisterPage(page)
 	if !errors.Is(err, types.ErrConflictingLayout) {
 		t.Fatalf("RegisterPage = %v, want ErrConflictingLayout", err)

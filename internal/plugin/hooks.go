@@ -7,26 +7,17 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"time"
 
 	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// PageResolvedHook is implemented by a plugin that wants to observe a request
-// having been resolved to a page, before rendering begins.
-type PageResolvedHook interface {
-	// OnPageResolved is called once per request, immediately after the router
-	// resolves it to a page.
-	OnPageResolved(ctx context.Context, ev *PageResolvedEvent) error
-}
-
 // BeforeRenderHook is implemented by a plugin that wants to observe a render about
 // to start.
 type BeforeRenderHook interface {
 	// OnBeforeRender is called immediately before the render engine runs for a
-	// page. Unlike OnPageResolved, it does not fire when a cached render is served
-	// instead of a fresh one.
+	// page. It does not fire when a cached render is served instead of a fresh
+	// one.
 	OnBeforeRender(ctx context.Context, ev *BeforeRenderEvent) error
 }
 
@@ -106,7 +97,7 @@ type DocumentRenderedHook interface {
 // DocumentRenderedEvent describes a document that has just produced its body.
 type DocumentRenderedEvent struct {
 	// Document is the live *types.Document that produced Body. Not copied for
-	// this event, and not defended against mutation; see PageResolvedEvent.Page.
+	// this event, and not defended against mutation; see BeforeRenderEvent.Page.
 	Document *types.Document
 	// ContentType is the document's declared content type, so a hook can decide
 	// whether it handles this format without parsing the body to find out.
@@ -116,18 +107,9 @@ type DocumentRenderedEvent struct {
 	// Path is the request path being served. This event's own copy.
 	Path string
 	// Body is the document's output. A plugin implementing DocumentRenderedHook
-	// MAY replace this slice; the replacement is what the caller serves and,
-	// unless a CacheWriteHook suppresses it, caches.
+	// MAY replace this slice; the replacement is what the caller serves and
+	// caches.
 	Body []byte
-}
-
-// CacheWriteHook is implemented by a plugin that wants to observe, or adjust, a
-// render result about to be written to the cache.
-type CacheWriteHook interface {
-	// OnCacheWrite is called before a render result is written to the cache. A
-	// plugin implementing this hook may set ev.Skip to suppress the write, or
-	// adjust ev.TTL and ev.Tags.
-	OnCacheWrite(ctx context.Context, ev *CacheWriteEvent) error
 }
 
 // CacheInvalidateHook is implemented by a plugin that wants to observe a cache
@@ -149,7 +131,7 @@ type CacheInvalidateHook interface {
 //
 // It also sees the requests collage answers before routing: a path with an
 // encoded slash, answered 404, and a dirty path, redirected to its clean spelling
-// with 301 or 308. For those RouteOf is empty and r.URL is the raw path as it came
+// with 301 or 308. For those RouteInfo is zero and r.URL is the raw path as it came
 // in. The function OnRequest returns is called once, unless serving the request
 // panics.
 type RequestHook interface {
@@ -343,28 +325,9 @@ type ErrorHook interface {
 	OnError(ctx context.Context, ev *ErrorEvent) error
 }
 
-// PageResolvedEvent describes a request having been resolved to a page. Locale
-// and Path are this event's own copies: a plugin may overwrite them without
-// consequence beyond this dispatch. Page is not: see its own doc comment.
-type PageResolvedEvent struct {
-	// Page is the live *types.Page the framework resolved the request to — this
-	// event does not copy it, deliberately: copying a page (and its fragment
-	// tree) on every request would defeat a cache-first framework's hot path.
-	// Nothing in this package stops a plugin from writing through it, but doing
-	// so mutates the same Page every other request and hook sees, concurrently
-	// with those requests reading it: that is a data race, which -race reports and
-	// which silently corrupts a map or slice without it. Treat it as read-only by
-	// convention, not by enforcement. See the package doc comment.
-	Page *types.Page
-	// Locale is the resolved locale for the request.
-	Locale string
-	// Path is the request path that resolved to Page.
-	Path string
-}
-
 // BeforeRenderEvent describes a render about to start. Locale and Path are this
 // event's own copies; Page is the live framework object — see its doc comment,
-// and PageResolvedEvent's, for what that means. See AfterRenderEvent for the
+// and BeforeRenderEvent.Page's, for what that means. See AfterRenderEvent for the
 // point at which a plugin is meant to act on the render's output.
 type BeforeRenderEvent struct {
 	// Context is the render about to run, before any fragment has touched it.
@@ -379,8 +342,14 @@ type BeforeRenderEvent struct {
 	// under the same key wins. That is the right way round: the plugin is providing
 	// a default, the page is providing the specific thing.
 	Context *types.RenderContext
-	// Page is the live *types.Page about to be rendered. Not copied for this
-	// event, and not defended against mutation; see PageResolvedEvent.Page.
+	// Page is the live *types.Page about to be rendered — this event does not
+	// copy it, deliberately: copying a page (and its fragment tree) on every
+	// request would defeat a cache-first framework's hot path. Nothing in this
+	// package stops a plugin from writing through it, but doing so mutates the
+	// same Page every other request and hook sees, concurrently with those
+	// requests reading it: that is a data race, which -race reports and which
+	// silently corrupts a map or slice without it. Treat it as read-only by
+	// convention, not by enforcement. See the package doc comment.
 	Page *types.Page
 	// Locale is the locale the page is about to be rendered for.
 	Locale string
@@ -470,16 +439,19 @@ type AfterRenderEvent struct {
 	// runs then, and in development, and stays out of a production server's way.
 	Static bool
 	// Page is the live *types.Page that was rendered. Not copied for this event,
-	// and not defended against mutation; see PageResolvedEvent.Page.
+	// and not defended against mutation; see BeforeRenderEvent.Page.
 	Page *types.Page
 	// Locale is the locale the page was rendered for. This event's own copy.
 	Locale string
+	// Path is the request path that was rendered — the same value
+	// BeforeRenderEvent.Path carried. This event's own copy.
+	Path string
 	// Degraded reports whether any fragment in the render failed, whether or not
 	// a fallback covered for it. This event's own copy.
 	Degraded bool
 	// HTML is the rendered output. A plugin implementing AfterRenderHook MAY
 	// replace this slice to add a post-process step; the replaced value is what
-	// the caller serves and, unless a CacheWriteHook suppresses it, caches.
+	// the caller serves and caches.
 	HTML []byte
 	// Values are the render's shared values: what its fragments stored with
 	// Key.Set. A plugin reads what it holds a key for — its own, or one an
@@ -495,45 +467,16 @@ type AfterRenderEvent struct {
 	Values *types.Values
 }
 
-// CacheWriteEvent describes a render result about to be written to the cache.
-type CacheWriteEvent struct {
-	// Key is the cache key the result would be stored under. This event's own
-	// copy; changing it does not redirect where the write goes.
-	Key string
-	// Page is the live *types.Page the result was rendered from, or nil when the
-	// result is a document's: a document renders no page, and there is none to
-	// carry. A hook that reads Page MUST check it, exactly as one reading
-	// ErrorEvent.Page must — dereferencing it unguarded panics on every document
-	// request, and because a panicking hook abandons the cache write it was
-	// dispatched for, the document is then never cached at all.
-	//
-	// When non-nil, it is not copied for this event and not defended against
-	// mutation; see PageResolvedEvent.Page.
-	Page *types.Page
-	// TTL is how long the cached entry would remain valid. A plugin implementing
-	// CacheWriteHook may adjust it.
-	TTL time.Duration
-	// Tags are the dependency tags the entry would be written with. A plugin
-	// implementing CacheWriteHook may adjust them.
-	Tags []string
-	// Skip suppresses the cache write when set true by a plugin implementing
-	// CacheWriteHook. It starts false.
-	Skip bool
-}
-
 // CacheInvalidateEvent describes a cache invalidation that has just happened.
 type CacheInvalidateEvent struct {
 	// Tags are the dependency tags that were invalidated. This event's own copy;
 	// a plugin that wants to trigger an invalidation uses Host.InvalidateTags
 	// instead of trying to feed this back into one.
 	Tags []string
-	// Paths are the URL paths of the cached pages and documents the
-	// invalidation dropped, sorted — what a CDN has to purge and a search engine
-	// be told has changed. A page that is not cached is never in it: nothing of
-	// it was dropped.
-	Paths []string
-	// Entries are the same drops with the host each was cached for, sorted by
-	// host, then path: one path cached under two hosts is two entries. A plugin
+	// Entries are the cached pages and documents the invalidation dropped, with
+	// the host each was cached for, sorted by host, then path: one path cached
+	// under two hosts is two entries. A page that is not cached is never in it:
+	// nothing of it was dropped. A plugin
 	// that makes the URLs absolute reads these, because on a site served on
 	// several hosts a path alone does not say which origin it was dropped from.
 	Entries []InvalidatedEntry
@@ -555,7 +498,7 @@ type ErrorEvent struct {
 	// Page is the live *types.Page being processed when the error occurred, or
 	// nil when the error occurred before a page was resolved, for example when
 	// no route matched the request. When non-nil, it is not copied for this
-	// event and not defended against mutation; see PageResolvedEvent.Page.
+	// event and not defended against mutation; see BeforeRenderEvent.Page.
 	Page *types.Page
 	// Path is the request path being processed when the error occurred. This
 	// event's own copy.

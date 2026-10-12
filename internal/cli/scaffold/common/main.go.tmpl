@@ -216,15 +216,10 @@ func shutdown(app *collage.App) error {
 // through collage's own builder, and prints what was written, skipped and
 // failed.
 func staticBuild(app *collage.App, outDir string, clean bool) error {
-	builder, err := collage.NewBuilder(app, collage.BuildOptions{
+	report, buildErr := collage.Build(context.Background(), app, collage.BuildOptions{
 		OutDir: outDir,
 		Clean:  clean,
 	})
-	if err != nil {
-		return err
-	}
-
-	report, buildErr := builder.Build(context.Background())
 
 	collage.PrintBuildReport(os.Stdout, report, buildErr)
 

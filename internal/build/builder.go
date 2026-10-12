@@ -12,9 +12,8 @@
 // RenderPath and RenderDocumentPath run plugin Init first, memoised, and fire
 // BeforeRender and AfterRender around every page and DocumentRendered on every
 // document, so what a plugin contributes to a served page it contributes to a built
-// one. What does not fire for those renders is what is about a request or a cache
-// rather than a render: PageResolvedHook (a build is not a request) and
-// CacheWriteHook (a build writes files, not cache entries).
+// one. What does not fire for those renders is what is about a request rather than
+// a render.
 //
 // Once every file is written, a Renderer that is a ResponseCapturer — the
 // application — is asked for each file's path twice through its real handler, to
@@ -54,7 +53,7 @@ import (
 var ErrNilRenderer = errors.New("collage: nil renderer")
 
 // ErrInvalidOutDir is returned by New when Options.OutDir is empty.
-var ErrInvalidOutDir = errors.New("collage: invalid output directory")
+var ErrInvalidOutDir = errors.New("collage: empty output directory")
 
 // ErrDangerousOutDir is returned by Build when Options.OutDir resolves — after
 // symlinks are followed — to a filesystem root, which Build refuses to write into
@@ -80,18 +79,6 @@ var ErrPathEscapesOutDir = errors.New("collage: resolved path escapes the output
 // segment and the route has no StaticParams. Such a route has no way to enumerate
 // the concrete paths a static build must write.
 var ErrDynamicPathUnresolved = errors.New("collage: a path pattern with a {param} needs WithStaticParams to be built")
-
-// ErrDuplicateOutputPath is recorded, as SkipRecord.Err and in SkipRecord.Reason,
-// when two document build tasks resolve to the same output file — StaticParams
-// listing the same values twice, say. One pattern in two
-// locales is not that: each non-default locale's document is written under its
-// locale's prefix, "/sitemap.xml" and "/tr/sitemap.xml", exactly as they are
-// served. Only one of the colliding tasks is built; the rest are skipped by name
-// rather than racing to overwrite one file.
-//
-// It is a skip and not an error deliberately: the file that is written is the
-// one the URL serves, and the only thing missing is a second copy of it.
-var ErrDuplicateOutputPath = errors.New("collage: two build tasks write the same output path")
 
 // ErrBuildPanic is recorded in Report.Errors when rendering or writing one page
 // panicked. The build worker recovers it, records it against that page, and carries
@@ -240,7 +227,7 @@ type Options struct {
 // cannot carry.
 func queryWarning(name string, params []string) WarningRecord {
 	return WarningRecord{
-		Page: name,
+		Name: name,
 		Reason: fmt.Sprintf("reads the query parameters %s, and a static file has no query string: only the version without them was written",
 			strings.Join(params, ", ")),
 	}
@@ -248,9 +235,8 @@ func queryWarning(name string, params []string) WarningRecord {
 
 // WarningRecord describes a page or document the build wrote, but not all of.
 type WarningRecord struct {
-	// Page is the page's or document's Name, named Page for the reason
-	// SkipRecord.Page is.
-	Page string
+	// Name is the page's or document's Name.
+	Name string
 	// Reason explains what the written file does not contain.
 	Reason string
 }
@@ -258,11 +244,10 @@ type WarningRecord struct {
 // SkipRecord describes one page or document, or one locale of one, that a static
 // build could not produce, and why.
 type SkipRecord struct {
-	// Page is the skipped page's or document's Name. The field is not renamed for
-	// documents: a page and a document are never skipped in the same pass over
-	// the same registry, so one field unambiguously names whichever kind of route
-	// this record describes.
-	Page string
+	// Name is the skipped page's or document's Name. A page and a document are
+	// never skipped in the same pass over the same registry, so one field
+	// unambiguously names whichever kind of route this record describes.
+	Name string
 	// Locale is the specific locale that was skipped. It is empty when the whole
 	// page or document was skipped regardless of locale (a non-cacheable render
 	// strategy).
@@ -270,7 +255,7 @@ type SkipRecord struct {
 	// Reason explains why the page or document, or its locale, was skipped.
 	Reason string
 	// Err is the sentinel for the reason — ErrNotStatic, ErrDynamicPathUnresolved,
-	// ErrUnresolvedToken, ErrDuplicateOutputPath — for a caller that acts on the
+	// ErrUnresolvedToken — for a caller that acts on the
 	// kind of skip rather than reading the sentence.
 	Err error
 }
@@ -382,23 +367,26 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		}
 	}
 
+	tasks, skipped, enumerateErrs := b.enumerate(ctx)
+	docTasks, docSkipped, docEnumerateErrs := b.enumerateDocuments(ctx)
+
+	// Checked before OutDir is prepared, so a collision costs no work and touches
+	// nothing: a Clean build would otherwise have emptied OutDir already, and the
+	// 404 pages, mounted files and BuildFinished would still follow. It has to be
+	// its own pass rather than a check inside the write: the writes run
+	// concurrently, and "did anyone else already claim this file" is exactly the
+	// question a concurrent writer cannot answer about itself.
+	if err := b.checkNoOutputCollisions(tasks, docTasks); err != nil {
+		report.Errors = []error{err}
+		report.Duration = time.Since(start)
+		return report, err
+	}
+	report.Skipped = skipped
+
 	outDirResolved, err := b.prepareOutDir()
 	if err != nil {
 		report.Duration = time.Since(start)
 		return report, err
-	}
-
-	tasks, skipped, enumerateErrs := b.enumerate(ctx)
-	report.Skipped = skipped
-
-	// Checked before anything renders, so a collision costs no work and leaves no
-	// half-built directory. It has to be its own pass rather than a check inside
-	// the write: the writes run concurrently, and "did anyone else already claim
-	// this file" is exactly the question a concurrent writer cannot answer about
-	// itself.
-	if err := b.checkNoOutputCollisions(tasks); err != nil {
-		enumerateErrs = append(enumerateErrs, err)
-		tasks = nil
 	}
 
 	written := make([]string, len(tasks))
@@ -434,7 +422,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 				// Skipped rather than failed. Nothing is wrong with the page; it
 				// has a form, and a form needs the server a built site lacks.
 				taskSkips[i] = &SkipRecord{
-					Page:   task.page.Name,
+					Name:   task.page.Name,
 					Locale: task.locale,
 					Reason: unresolvedTokenReason,
 					Err:    ErrUnresolvedToken,
@@ -488,7 +476,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		errs = append(errs, rootErr)
 	}
 
-	docWritten, docSkipped, docWarnings, docErrs := b.buildDocuments(ctx, outDirResolved)
+	docWritten, docSkipped, docWarnings, docErrs := b.buildDocuments(ctx, outDirResolved, docTasks, docSkipped, docEnumerateErrs)
 	report.Warnings = append(report.Warnings, docWarnings...)
 	report.Skipped = append(report.Skipped, docSkipped...)
 	report.Written = append(report.Written, docWritten...)
@@ -772,12 +760,12 @@ func (b *Builder) collectRedirects(written []string) ([]plugin.BuiltRedirect, []
 			continue
 		}
 		for _, r := range p.Redirects {
-			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "page:" + p.Name})
+			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: types.RedirectStatus(r), Source: "page:" + p.Name})
 		}
 	}
 	for _, d := range b.app.Documents() {
 		for _, r := range d.Redirects {
-			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: r.EffectiveStatus(), Source: "document:" + d.Name})
+			add(plugin.BuiltRedirect{From: r.From, To: r.To, Status: types.RedirectStatus(r), Source: "document:" + d.Name})
 		}
 	}
 	if source, ok := b.app.(pluginRedirecter); ok {
@@ -969,23 +957,40 @@ func urlPathOf(outDir, file string) string {
 // file. Two pages whose patterns differ only in a trailing slash, or StaticParams
 // listing the same values twice, both land here — and without the check the
 // second write silently replaced the first, dropping a page from the build with
-// nothing in the report to show for it.
+// nothing in the report to show for it. Documents claim from the same map: a
+// document and a page, or two documents, resolving to one file is the same loss.
 //
-// Locale is already folded in by localeOutputPath, so the same pattern in two
+// Locale is already folded in by pageOutputPath, so the same pattern in two
 // locales is not a collision: that is the ordinary multi-locale case and each
 // locale has its own directory.
-func (b *Builder) checkNoOutputCollisions(tasks []buildTask) error {
+func (b *Builder) checkNoOutputCollisions(tasks []buildTask, docs []documentTask) error {
 	defaultLocale := b.app.DefaultLocale()
-	claimed := make(map[string]buildTask, len(tasks))
+	claimed := make(map[string]string, len(tasks)+len(docs))
+
+	claim := func(key, owner string) error {
+		if previous, taken := claimed[key]; taken {
+			return fmt.Errorf("%w: %q, claimed by %s and %s", ErrOutputPathCollision, key, previous, owner)
+		}
+		claimed[key] = owner
+		return nil
+	}
 
 	for _, task := range tasks {
 		key := path.Clean(b.pageOutputPath(task.locale, defaultLocale, task.path))
-		if previous, taken := claimed[key]; taken {
-			return fmt.Errorf("%w: %q, claimed by page %q locale %q and page %q locale %q",
-				ErrOutputPathCollision, key,
-				previous.page.Name, previous.locale, task.page.Name, task.locale)
+		owner := fmt.Sprintf("page %q locale %q", task.page.Name, task.locale)
+		// The file it writes, and the directory that file sits in: a document
+		// whose file is that directory's name cannot be written beside it.
+		for _, k := range []string{path.Join(key, "index.html"), key} {
+			if err := claim(k, owner); err != nil {
+				return err
+			}
 		}
-		claimed[key] = task
+	}
+	for _, task := range docs {
+		key := path.Clean(b.documentURL(task))
+		if err := claim(key, fmt.Sprintf("document %q locale %q", task.doc.Name, task.locale)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -1021,15 +1026,15 @@ func (b *Builder) enumerate(ctx context.Context) ([]buildTask, []SkipRecord, []e
 		}
 		if !page.Strategy.Cacheable() {
 			skipped = append(skipped, SkipRecord{
-				Page:   page.Name,
+				Name:   page.Name,
 				Reason: fmt.Sprintf("page uses the %s render strategy, which cannot be built statically", page.Strategy),
 				Err:    ErrNotStatic,
 			})
 			continue
 		}
-		if page.Guarded() {
+		if types.PageGuarded(page) {
 			skipped = append(skipped, SkipRecord{
-				Page:   page.Name,
+				Name:   page.Name,
 				Reason: "page has a guard, and a file on a static host has no guard in front of it",
 				Err:    ErrGuarded,
 			})
@@ -1178,7 +1183,7 @@ type pathInstance struct {
 func expandPattern(ctx context.Context, kind, name, locale, pattern string, list types.StaticParamsFunc) ([]pathInstance, *SkipRecord, []error) {
 	if list == nil {
 		return nil, &SkipRecord{
-			Page:   name,
+			Name:   name,
 			Locale: locale,
 			Reason: ErrDynamicPathUnresolved.Error(),
 			Err:    ErrDynamicPathUnresolved,
@@ -1408,7 +1413,7 @@ func verifyNoSymlinksBeneath(outDirResolved, target string) error {
 func (b *Builder) prepareOutDir() (string, error) {
 	absOutDir, err := filepath.Abs(b.opts.OutDir)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", ErrInvalidOutDir, err)
+		return "", fmt.Errorf("collage: output directory %q: %w", b.opts.OutDir, err)
 	}
 	cleanOutDir := filepath.Clean(absOutDir)
 

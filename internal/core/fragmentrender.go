@@ -129,7 +129,7 @@ func (a *App) resolveFragmentRequest(r *http.Request, req plugin.FragmentRequest
 	if page == nil {
 		return nil, nil, "", nil, nil, fmt.Errorf("%w: %q", types.ErrUnknownRoute, req.Page)
 	}
-	for _, f := range page.PathFragments() {
+	for _, f := range types.PagePathFragments(page) {
 		if f.Name == req.Fragment {
 			return page, f, locale, req.Params, r, nil
 		}
@@ -156,7 +156,7 @@ func readerFree(f *types.Fragment) bool {
 func subtreeFree(f *types.Fragment, trusted func(*types.Fragment) bool) bool {
 	fetches := errors.New("fetches per render")
 	err := walkFragments(f, make(map[*types.Fragment]bool), func(f *types.Fragment) error {
-		if f.DataSource().Handler != nil && !trusted(f) {
+		if types.FragmentDataSource(f).Handler != nil && !trusted(f) {
 			return fetches
 		}
 		for _, slot := range f.Slots {

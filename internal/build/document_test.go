@@ -83,7 +83,7 @@ func TestBuild_SkipsDynamicStrategyDocuments(t *testing.T) {
 		t.Fatalf("Build: %v", err)
 	}
 
-	if len(report.Skipped) != 1 || report.Skipped[0].Page != "live" || report.Skipped[0].Locale != "" {
+	if len(report.Skipped) != 1 || report.Skipped[0].Name != "live" || report.Skipped[0].Locale != "" {
 		t.Fatalf("Skipped = %+v", report.Skipped)
 	}
 	if report.Skipped[0].Reason == "" {
@@ -120,7 +120,7 @@ func TestBuild_SkipsADynamicPatternWithoutStaticParams(t *testing.T) {
 		t.Fatalf("Skipped = %v, want 1 entry", report.Skipped)
 	}
 	got := report.Skipped[0]
-	if got.Page != "api-item" || got.Locale != "en" || got.Reason != ErrDynamicPathUnresolved.Error() {
+	if got.Name != "api-item" || got.Locale != "en" || got.Reason != ErrDynamicPathUnresolved.Error() {
 		t.Fatalf("Skipped[0] = %+v", got)
 	}
 	if len(report.Written) != 0 {
@@ -374,5 +374,74 @@ func TestBuild_DistinctPathsPerLocaleAreBothWritten(t *testing.T) {
 	// Under the tr prefix, the URL the server answers it at.
 	if got := readFile(t, filepath.Join(out, "tr", "akis.xml")); got != "<rss>tr</rss>" {
 		t.Errorf("tr/akis.xml = %q, want the tr body", got)
+	}
+}
+
+// Two documents, or a document and a page, that resolve to one file stop the
+// build. They are no skip: a skip would leave one of them off the site with a
+// line in the report nobody is made to read.
+func TestBuild_DocumentCollisionStopsBuild(t *testing.T) {
+	cases := []struct {
+		name      string
+		pages     []*types.Page
+		documents []*types.Document
+	}{
+		{
+			name: "document and document",
+			documents: []*types.Document{
+				newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed.xml"}),
+				newTestDocument("feed-again", types.StrategyStatic, map[string]string{"en": "/feed.xml/"}),
+			},
+		},
+		{
+			name:  "document and page",
+			pages: []*types.Page{newTestPage("feed-page", types.StrategyStatic, map[string]string{"en": "/feed.xml"})},
+			documents: []*types.Document{
+				newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed.xml"}),
+			},
+		},
+		{
+			name:  "root page and /index.html document",
+			pages: []*types.Page{newTestPage("home", types.StrategyStatic, map[string]string{"en": "/"})},
+			documents: []*types.Document{
+				newTestDocument("idx", types.StrategyStatic, map[string]string{"en": "/index.html"}),
+			},
+		},
+		{
+			name:  "page and its index.html document",
+			pages: []*types.Page{newTestPage("blog", types.StrategyStatic, map[string]string{"en": "/blog"})},
+			documents: []*types.Document{
+				newTestDocument("blogidx", types.StrategyStatic, map[string]string{"en": "/blog/index.html"}),
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := resolvedTempDir(t)
+			app := &fakeRenderer{
+				pages:         c.pages,
+				documents:     c.documents,
+				defaultLocale: "en",
+				docBodies: map[string][]byte{
+					renderKey("/feed.xml", "en"):        []byte("<rss/>"),
+					renderKey("/index.html", "en"):      []byte("<x/>"),
+					renderKey("/blog/index.html", "en"): []byte("<x/>"),
+				},
+			}
+			b, err := New(app, Options{OutDir: out, Concurrency: 4})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			report, err := b.Build(context.Background())
+			if !errors.Is(err, ErrOutputPathCollision) {
+				t.Fatalf("Build error = %v, want ErrOutputPathCollision", err)
+			}
+			if len(report.Skipped) != 0 {
+				t.Errorf("Report.Skipped = %+v, want none", report.Skipped)
+			}
+			if len(report.Written) != 0 {
+				t.Errorf("Report.Written = %v, want nothing rendered", report.Written)
+			}
+		})
 	}
 }

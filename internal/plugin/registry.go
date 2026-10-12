@@ -271,23 +271,6 @@ func (r *Registry) Serve(ctx context.Context) {
 	}
 }
 
-// PageResolved dispatches ev to every registered plugin implementing
-// PageResolvedHook, in registration order. It stops and returns a wrapped error at
-// the first hook failure, including a contained panic. A nil Registry, or a
-// registry with no plugin implementing the hook, is a no-op that returns nil.
-func (r *Registry) PageResolved(ctx context.Context, ev *PageResolvedEvent) error {
-	for _, p := range r.snapshot() {
-		hook, ok := p.(PageResolvedHook)
-		if !ok {
-			continue
-		}
-		if err := runHook(p.Name(), "OnPageResolved", func() error { return hook.OnPageResolved(ctx, ev) }); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // BeforeRender dispatches ev to every registered plugin implementing
 // BeforeRenderHook, in registration order. It stops and returns a wrapped error at
 // the first hook failure, including a contained panic. A nil Registry, or a
@@ -401,25 +384,6 @@ func stamp(findings []types.Finding, from int, plugin string) {
 			findings[i].Plugin = plugin
 		}
 	}
-}
-
-// CacheWrite dispatches ev to every registered plugin implementing CacheWriteHook,
-// in registration order. A plugin may set ev.Skip or adjust ev.TTL and ev.Tags;
-// later plugins see the changes made by earlier ones. It stops and returns a
-// wrapped error at the first hook failure, including a contained panic. A nil
-// Registry, or a registry with no plugin implementing the hook, is a no-op that
-// returns nil.
-func (r *Registry) CacheWrite(ctx context.Context, ev *CacheWriteEvent) error {
-	for _, p := range r.snapshot() {
-		hook, ok := p.(CacheWriteHook)
-		if !ok {
-			continue
-		}
-		if err := runHook(p.Name(), "OnCacheWrite", func() error { return hook.OnCacheWrite(ctx, ev) }); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // CacheInvalidate dispatches ev to every registered plugin implementing

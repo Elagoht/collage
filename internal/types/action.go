@@ -2,6 +2,7 @@ package types
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 )
@@ -19,8 +20,9 @@ type ActionHandlerFunc func(ctx context.Context, rc *RenderContext) (*ActionResu
 
 // ActionResult is what an action answers with.
 //
-// Exactly one of Location, Fragment, Page and Body decides the response body; they are
-// checked in that order, and a result that sets none of them is a bare status. The
+// At most one of Location, Fragment, Page and Body decides the response body: a
+// result that sets more than one is refused with ErrAmbiguousActionResult, and a
+// result that sets none of them is a bare status. The
 // zero Status means "whatever the body implies": 303 for a Location, 200 otherwise,
 // and 204 for a result with no body at all.
 type ActionResult struct {
@@ -103,6 +105,9 @@ type Action struct {
 	// protection entirely, so it is named for what it does rather than for when it
 	// is convenient.
 	SkipCSRF bool
+	// buildErr is what the builder that made this value recorded; see
+	// RecordBuildErr. Registration refuses a value that carries one.
+	buildErr error
 }
 
 // SafeMethod reports whether method is one that must not change anything, and
@@ -114,3 +119,9 @@ func SafeMethod(method string) bool {
 	}
 	return false
 }
+
+// ErrAmbiguousActionResult reports an ActionResult that sets more than one of
+// Location, Fragment, Page and Body. Each asks for a different response, and
+// picking the first would answer with a body the handler did not mean to be
+// the one that counts.
+var ErrAmbiguousActionResult = errors.New("collage: action result sets more than one of Location, Fragment, Page, Body")

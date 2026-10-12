@@ -76,7 +76,7 @@ func printSkipped(w io.Writer, s term.Style, skipped []SkipRecord) {
 	// Counted as routes, not pages: documents are skipped for the same reasons.
 	fmt.Fprintf(w, "\n%s %s\n", s.Warn(s.Mark("▲", "!")), s.Bold(fmt.Sprintf("%d skipped", len(skipped))))
 	for _, skip := range skipped {
-		name := skip.Page
+		name := skip.Name
 		if skip.Locale != "" {
 			name += " (" + skip.Locale + ")"
 		}
@@ -93,7 +93,7 @@ func printWarnings(w io.Writer, s term.Style, warnings []WarningRecord) {
 	// file is not the whole of what the server answers.
 	fmt.Fprintf(w, "\n%s %s\n", s.Warn(s.Mark("▲", "!")), s.Bold(plural(len(warnings), "warning", "warnings")))
 	for _, warning := range warnings {
-		fmt.Fprintf(w, "    %s  %s\n", s.Warn(warning.Page), s.Dim(warning.Reason))
+		fmt.Fprintf(w, "    %s  %s\n", s.Warn(warning.Name), s.Dim(warning.Reason))
 	}
 }
 

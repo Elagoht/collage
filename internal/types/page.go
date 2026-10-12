@@ -17,12 +17,8 @@ type Redirect struct {
 	From string
 	// To is the destination path the request is redirected to.
 	To string
-	// StatusCode is the HTTP status code to use. Zero selects a default based on
-	// Permanent; see EffectiveStatus.
-	StatusCode int
-	// Permanent reports whether the redirect should be treated as permanent when
-	// StatusCode is zero.
-	Permanent bool
+	// Status is the HTTP status code to use: 301, 302, 307 or 308. Zero means 302.
+	Status int
 }
 
 // RedirectTextError reports a control character in a redirect's from or to,
@@ -38,23 +34,20 @@ func RedirectTextError(from, to string) error {
 	return nil
 }
 
-// EffectiveStatus returns r.StatusCode when it is one of 301, 302, 307, or 308;
-// otherwise it returns 301 when r.Permanent, else 302.
-func (r *Redirect) EffectiveStatus() int {
-	switch r.StatusCode {
+// RedirectStatus returns r.Status when it is one of 301, 302, 307, or 308, and
+// 302 otherwise.
+func RedirectStatus(r *Redirect) int {
+	switch r.Status {
 	case 301, 302, 307, 308:
-		return r.StatusCode
-	}
-	if r.Permanent {
-		return 301
+		return r.Status
 	}
 	return 302
 }
 
-// Validate reports whether r is well-formed: From and To are both non-empty and
-// start with "/" (ErrInvalidPath), and StatusCode is 0 or one of 301, 302, 307, 308
+// ValidateRedirect reports whether r is well-formed: From and To are both non-empty
+// and start with "/" (ErrInvalidPath), and Status is 0 or one of 301, 302, 307, 308
 // (ErrInvalidRedirectStatus). A control character in either is ErrInvalidRedirect.
-func (r *Redirect) Validate() error {
+func ValidateRedirect(r *Redirect) error {
 	if err := RedirectTextError(r.From, r.To); err != nil {
 		return err
 	}
@@ -69,10 +62,10 @@ func (r *Redirect) Validate() error {
 	if len(r.To) > 1 && (r.To[1] == '/' || r.To[1] == '\\') {
 		return fmt.Errorf("%w: redirect to %q leaves the site", ErrInvalidPath, r.To)
 	}
-	switch r.StatusCode {
+	switch r.Status {
 	case 0, 301, 302, 307, 308:
 	default:
-		return fmt.Errorf("%w: %d", ErrInvalidRedirectStatus, r.StatusCode)
+		return fmt.Errorf("%w: %d", ErrInvalidRedirectStatus, r.Status)
 	}
 	return nil
 }
@@ -82,16 +75,17 @@ func (r *Redirect) Validate() error {
 type Page struct {
 	// Name identifies the page, primarily for diagnostics and error messages.
 	Name string
-	// LayoutFragment is the fragment tree's root once registration has folded
+	// layoutFragment is the fragment tree's root once registration has folded
 	// LayoutChain: the page's own copy of the outermost layout, with the rest of
 	// the chain and the content fragment bound inside it. Before registration it
-	// is the chain's outermost original, as WithLayouts sets it. A page built by
-	// hand with only LayoutFragment is taken as the one-layout chain; one whose
-	// LayoutFragment is not LayoutChain[0] is refused. Page itself never mutates
-	// its fragments.
-	LayoutFragment *Fragment
+	// is the chain's outermost original, as WithLayouts sets it. It is unexported;
+	// LayoutFragment and SetLayoutFragment read and write it. A page built by
+	// hand with only a layout fragment set is taken as the one-layout chain; one
+	// whose layout fragment is not LayoutChain[0] is refused. Page itself never
+	// mutates its fragments.
+	layoutFragment *Fragment
 	// LayoutChain holds the page's layouts outermost-first, as the builder
-	// declared them. Registration folds the chain into LayoutFragment — a
+	// declared them. Registration folds the chain into the layout fragment — a
 	// per-page copy of each layout, the content fragment bound into the
 	// innermost and each layout into the next outer one — and leaves this
 	// field pointing at the originals, which is where a guard or an inspection
@@ -149,11 +143,11 @@ type Page struct {
 	buildErr error
 }
 
-// Root returns p.LayoutFragment when it is set, otherwise p.ContentFragment. It is
+// PageRoot returns p's layout fragment when it is set, otherwise p.ContentFragment. It is
 // the entry point for rendering p's fragment tree.
-func (p *Page) Root() *Fragment {
-	if p.LayoutFragment != nil {
-		return p.LayoutFragment
+func PageRoot(p *Page) *Fragment {
+	if p.layoutFragment != nil {
+		return p.layoutFragment
 	}
 	return p.ContentFragment
 }
@@ -174,16 +168,16 @@ func (p *Page) PathFor(locale string) (string, bool) {
 	return path, ok
 }
 
-// ContentSlotName returns DefaultContentSlot, the slot name a page's content
+// PageContentSlotName returns DefaultContentSlot, the slot name a page's content
 // fragment is bound to when the page has a layout fragment.
-func (p *Page) ContentSlotName() string {
+func PageContentSlotName(p *Page) string {
 	return DefaultContentSlot
 }
 
-// Guarded reports whether any fragment on the page's spine carries a guard. It
+// PageGuarded reports whether any fragment on the page's spine carries a guard. It
 // is the one question every path that serves a page outside a guarded request —
 // response cache headers, a static build — asks before handing it out.
-func (p *Page) Guarded() bool {
+func PageGuarded(p *Page) bool {
 	for _, f := range p.LayoutChain {
 		if f != nil && f.Guard != nil {
 			return true
@@ -192,11 +186,11 @@ func (p *Page) Guarded() bool {
 	return p.ContentFragment != nil && p.ContentFragment.Guard != nil
 }
 
-// Guards returns the guards on the page's spine: each layout in LayoutChain,
+// PageGuards returns the guards on the page's spine: each layout in LayoutChain,
 // outermost first, then the content fragment. A nil guard — the common
 // fragment — is skipped rather than represented. The first guard in this
 // order is the first asked; see the httpx dispatch for what a decision does.
-func (p *Page) Guards() []GuardFunc {
+func PageGuards(p *Page) []GuardFunc {
 	var out []GuardFunc
 	for _, f := range p.LayoutChain {
 		if f != nil && f.Guard != nil {
@@ -209,12 +203,20 @@ func (p *Page) Guards() []GuardFunc {
 	return out
 }
 
+// LayoutFragment returns p's layout fragment: nil for a page with no layout,
+// the chain's outermost original before registration folds the chain, and the
+// folded per-page copy after.
+func LayoutFragment(p *Page) *Fragment { return p.layoutFragment }
+
+// SetLayoutFragment sets p's layout fragment; see LayoutFragment.
+func SetLayoutFragment(p *Page, f *Fragment) { p.layoutFragment = f }
+
 // Validate reports whether p is well-formed: Name is non-empty (ErrEmptyName),
 // ContentFragment is non-nil (ErrMissingContent), every entry in Paths starts with
-// "/" (ErrInvalidPath), CacheTTL is not negative (ErrInvalidTTL), CacheTTL is
-// positive when Strategy is StrategyIncremental (ErrMissingTTL), every redirect in
+// "/" (ErrInvalidPath), CacheTTL is not negative and is positive when Strategy is
+// StrategyIncremental (ErrInvalidTTL), every redirect in
 // Redirects validates, neither NotFoundPage nor ErrorPage is p itself
-// (ErrSelfErrorPage), and p.Root() validates. NotFoundPage and ErrorPage are not
+// (ErrSelfErrorPage), and its root fragment validates. NotFoundPage and ErrorPage are not
 // recursed into: they are validated when registered in their own right.
 func (p *Page) Validate() error {
 	if p.Name == "" {
@@ -228,14 +230,11 @@ func (p *Page) Validate() error {
 			return fmt.Errorf("%w: path %q for locale %q must start with \"/\"", ErrInvalidPath, path, locale)
 		}
 	}
-	if p.CacheTTL < 0 {
+	if p.CacheTTL < 0 || (p.Strategy == StrategyIncremental && p.CacheTTL == 0) {
 		return fmt.Errorf("%w: page %q", ErrInvalidTTL, p.Name)
 	}
-	if p.Strategy == StrategyIncremental && p.CacheTTL <= 0 {
-		return fmt.Errorf("%w: page %q", ErrMissingTTL, p.Name)
-	}
 	for _, redirect := range p.Redirects {
-		if err := redirect.Validate(); err != nil {
+		if err := ValidateRedirect(redirect); err != nil {
 			return err
 		}
 	}
@@ -245,20 +244,20 @@ func (p *Page) Validate() error {
 	if p.ErrorPage != nil && p.ErrorPage == p {
 		return fmt.Errorf("%w: %q is its own ErrorPage", ErrSelfErrorPage, p.Name)
 	}
-	for _, fragment := range p.PathFragments() {
+	for _, fragment := range PagePathFragments(p) {
 		if err := fragment.Validate(); err != nil {
 			return err
 		}
 	}
-	if err := p.Root().Validate(); err != nil {
+	if err := PageRoot(p).Validate(); err != nil {
 		return err
 	}
 	return nil
 }
 
-// PathFragments returns every fragment the page opened at a URL of its own with
+// PagePathFragments returns every fragment the page opened at a URL of its own with
 // WithFragmentPath, each once, in a stable order.
-func (p *Page) PathFragments() []*Fragment {
+func PagePathFragments(p *Page) []*Fragment {
 	var out []*Fragment
 	seen := make(map[*Fragment]bool)
 	locales := make([]string, 0, len(p.FragmentPaths))

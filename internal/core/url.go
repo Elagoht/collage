@@ -187,7 +187,7 @@ func (a *App) localeReachable(locale string) bool {
 	if locale == a.cfg.Locale.Default {
 		return true
 	}
-	return !a.cfg.Locale.DisablePathLocale && slices.Contains(a.cfg.Locale.Supported, locale)
+	return slices.Contains(a.cfg.Locale.Supported, locale)
 }
 
 // prefixLocale puts path under locale's prefix, which the default locale does

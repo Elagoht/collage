@@ -113,7 +113,7 @@ func checkerSite(t *testing.T, dev bool) (*collage.App, *checker) {
 		collage.NewPage("home").WithContent(collage.NewFragment("home", "home.html").Build()).WithPath("en", "/").Build(),
 		collage.NewPage("about").WithContent(collage.NewFragment("about", "about.html").Build()).
 			WithPath("en", "/about").WithPath("tr", "/hakkinda").Build(),
-		collage.NewPage("post").WithContent(collage.NewFragment("post", "post.html").WithData(collage.DataHandler(
+		collage.NewPage("post").WithContent(collage.NewFragment("post", "post.html").WithData(collage.LoadTagged(
 			func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 				return rc.Param("slug"), nil, nil
 			})).
@@ -200,11 +200,7 @@ func TestFindings_DevOverlay(t *testing.T) {
 func TestFindings_Build(t *testing.T) {
 	app, c := checkerSite(t, false)
 	out := t.TempDir()
-	builder, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatal(err)
-	}
-	report, err := builder.Build(context.Background())
+	report, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out})
 	if !errors.Is(err, collage.ErrBuildFindings) {
 		t.Fatalf("Build = %v, want ErrBuildFindings", err)
 	}
@@ -280,8 +276,9 @@ func TestFindings_OnAnActionsPage(t *testing.T) {
 	}
 }
 
-// A page a plugin registers in Init is built: the build starts the application
-// before it enumerates pages.
+// A route a plugin registers in Init is built: the build starts the application
+// before it enumerates routes. Host has no RegisterPage, so the plugin's route
+// is a document.
 func TestBuild_RunsPluginInitFirst(t *testing.T) {
 	app, err := collage.New(&collage.Config{
 		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
@@ -292,15 +289,11 @@ func TestBuild_RunsPluginInitFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := t.TempDir()
-	b, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: out})
-	if err != nil {
+	if _, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Build(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if body, err := os.ReadFile(out + "/from-plugin/index.html"); err != nil || !strings.Contains(string(body), "from a plugin") {
-		t.Errorf("the plugin's page was not built: %v %q", err, body)
+	if body, err := os.ReadFile(out + "/from-plugin.txt"); err != nil || !strings.Contains(string(body), "from a plugin") {
+		t.Errorf("the plugin's document was not built: %v %q", err, body)
 	}
 }
 
@@ -310,5 +303,6 @@ func (pagePlugin) Name() string                   { return "test/pages" }
 func (pagePlugin) Version() string                { return "0" }
 func (pagePlugin) Shutdown(context.Context) error { return nil }
 func (pagePlugin) Init(_ context.Context, host collage.Host) error {
-	return host.RegisterPage(collage.NewPage("from-plugin").WithContent(collage.NewFragment("p", "p.html").Build()).WithPath("en", "/from-plugin").Build())
+	return host.RegisterDocument(collage.NewDocument("from-plugin", "text/plain").WithPath("en", "/from-plugin.txt").
+		WithBody([]byte("from a plugin")).Static().Build())
 }

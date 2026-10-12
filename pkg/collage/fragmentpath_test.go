@@ -250,7 +250,7 @@ func TestRenderFragment_Parts(t *testing.T) {
 		"a.html":    `<p>{{.}}</p>`,
 		"b.html":    `<p>fixed</p>`,
 	})
-	a := collage.NewFragment("a", "a.html").WithData(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
+	a := collage.NewFragment("a", "a.html").WithData(collage.LoadTagged(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 		rc.Hoist("head", "k", template.HTML(`<meta name="k">`))
 		return "cpu 12%", []string{"system:cpu"}, nil
 	})).
@@ -297,7 +297,7 @@ func TestRenderFragment_ByPath(t *testing.T) {
 		"page.html":    `<main>{{slot "results"}}</main>`,
 		"results.html": `<p>{{.}}</p>`,
 	})
-	results := collage.NewFragment("results", "results.html").WithData(collage.DataHandler(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
+	results := collage.NewFragment("results", "results.html").WithData(collage.LoadTagged(func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
 		return rc.Locale + ":" + rc.Param("slug") + ":" + rc.Request.URL.Query().Get("q"), nil, nil
 	})).
 		Build()
@@ -338,7 +338,7 @@ func TestShared_SharesTheRenderAndLeavesThePageDynamic(t *testing.T) {
 		"cpu.html":  `<p>{{.}}</p>`,
 	})
 	var n int
-	cpu := collage.NewFragment("cpu", "cpu.html").WithData(collage.DataHandler(func(context.Context, *collage.RenderContext) (int, []string, error) {
+	cpu := collage.NewFragment("cpu", "cpu.html").WithData(collage.LoadTagged(func(context.Context, *collage.RenderContext) (int, []string, error) {
 		n++
 		return n, []string{"system:cpu"}, nil
 	})).

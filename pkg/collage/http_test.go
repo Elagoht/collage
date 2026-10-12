@@ -37,11 +37,11 @@ func langApp(t *testing.T, vary bool, extra func(*collage.App)) *collage.App {
 		t.Fatalf("New: %v", err)
 	}
 
-	layout := collage.NewFragment("layout", "layouts/default.html").WithSlot("content", true, false).Build()
-	content := collage.NewFragment("home-content", "pages/home.html").WithData(collage.DataHandler(
-		func(_ context.Context, rc *collage.RenderContext) (string, []string, error) {
+	layout := collage.NewFragment("layout", "layouts/default.html").WithSlot("content", collage.SlotRequired, collage.SlotSingle).Build()
+	content := collage.NewFragment("home-content", "pages/home.html").WithData(collage.LoadTagged(
+		func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
 
-			lang, _ := collage.Varied(rc, "Accept-Language")
+			lang, _ := collage.Varied(ctx, "Accept-Language")
 			return lang, nil, nil
 		})).
 		Build()
@@ -210,8 +210,8 @@ func TestHandle_ExactPath(t *testing.T) {
 func TestHandle_Rejections(t *testing.T) {
 	app := langApp(t, false, nil)
 	for _, prefix := range []string{"/", "api/", "//api/", "/api/../x"} {
-		if err := app.Handle(prefix, http.NotFoundHandler()); !errors.Is(err, collage.ErrInvalidHandlerPrefix) {
-			t.Errorf("Handle(%q) = %v, want ErrInvalidHandlerPrefix", prefix, err)
+		if err := app.Handle(prefix, http.NotFoundHandler()); !errors.Is(err, collage.ErrInvalidPrefix) {
+			t.Errorf("Handle(%q) = %v, want ErrInvalidPrefix", prefix, err)
 		}
 	}
 	if err := app.Handle("/api/", nil); !errors.Is(err, collage.ErrNilHandler) {
@@ -247,18 +247,18 @@ func TestUse_OrderAndShortCircuit(t *testing.T) {
 	}
 }
 
-func TestJSONOf(t *testing.T) {
-	result, err := collage.JSONOf(http.StatusCreated, struct {
+func TestJSON_Marshals(t *testing.T) {
+	result, err := collage.JSON(http.StatusCreated, struct {
 		Count int `json:"count"`
 	}{3})
 	if err != nil {
-		t.Fatalf("JSONOf() = %v", err)
+		t.Fatalf("JSON() = %v", err)
 	}
 	if result.Status != http.StatusCreated || result.ContentType != "application/json" || string(result.Body) != `{"count":3}` {
-		t.Errorf("JSONOf() = %+v", result)
+		t.Errorf("JSON() = %+v", result)
 	}
-	if _, err := collage.JSONOf(http.StatusOK, func() {}); err == nil {
-		t.Error("JSONOf(func) = nil error, want the marshal error")
+	if _, err := collage.JSON(http.StatusOK, func() {}); err == nil {
+		t.Error("JSON(func) = nil error, want the marshal error")
 	}
 }
 
@@ -278,7 +278,7 @@ func TestSkipCache_Preview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	content := collage.NewFragment("post", "post.html").WithData(collage.DataHandler(
+	content := collage.NewFragment("post", "post.html").WithData(collage.LoadTagged(
 		func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
 			if drafts, _ := ctx.Value(langKey{}).(bool); drafts {
 				return "draft", nil, nil

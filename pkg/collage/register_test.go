@@ -41,7 +41,7 @@ func TestRegisterTakesEveryKind(t *testing.T) {
 		collage.NewDocument("robots", "text/plain").AtRoot("/robots.txt").WithBody([]byte("User-agent: *")).Build(),
 		collage.NewAction("ping").WithPath("en", "/ping").WithMethods(http.MethodPost).WithoutCSRF().
 			WithHandler(func(_ context.Context, _ *collage.RenderContext) (*collage.ActionResult, error) {
-				return collage.NoContent(http.StatusNoContent), nil
+				return collage.Status(http.StatusNoContent), nil
 			}).Build(),
 	)
 	if err != nil {

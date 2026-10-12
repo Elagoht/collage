@@ -43,6 +43,12 @@ func (a *App) RegisterAction(action *types.Action) error {
 	if action.Name == "" {
 		return ErrEmptyActionName
 	}
+	// What the builder recorded is refused whether or not anyone asked the
+	// builder, as a page's is: an action that recorded an empty locale reports
+	// that, not that it has no paths.
+	if err := types.ActionBuildErr(action); err != nil {
+		return fmt.Errorf("collage: action %q was built with errors: %w", action.Name, err)
+	}
 	if len(action.Paths) == 0 {
 		return fmt.Errorf("%w: %q", ErrNoActionPaths, action.Name)
 	}
@@ -191,7 +197,7 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 // guarded layout, its content opened at a URL of its own for a script to
 // refresh — served that content to anyone who asked the second URL.
 func fragmentGuard(ctx context.Context, r *http.Request, page *types.Page, f *types.Fragment) (*types.GuardDecision, error) {
-	guards := page.Guards()
+	guards := types.PageGuards(page)
 	if f != page.ContentFragment && f.Guard != nil {
 		guards = append(guards, f.Guard)
 	}

@@ -31,7 +31,7 @@ func TestSharedRender_OutlivesTheRequestThatStartedIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	panel := collage.NewFragment("panel", "panel.html").Static().WithData(collage.DataHandler(func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
+	panel := collage.NewFragment("panel", "panel.html").Static().WithData(collage.LoadTagged(func(ctx context.Context, _ *collage.RenderContext) (string, []string, error) {
 		select {
 		case started <- struct{}{}:
 		default:

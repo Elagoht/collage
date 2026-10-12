@@ -242,8 +242,8 @@ func BenchmarkPage_VariedHit(b *testing.B) {
 		b.Fatal(err)
 	}
 	lang := collage.NewInlineFragment("lang", `<p>{{.}}</p>`).WithData(collage.Load(
-		func(_ context.Context, rc *collage.RenderContext) (string, error) {
-			v, _ := collage.Varied(rc, "Accept-Language")
+		func(ctx context.Context, _ *collage.RenderContext) (string, error) {
+			v, _ := collage.Varied(ctx, "Accept-Language")
 			return v, nil
 		})).
 		Build()

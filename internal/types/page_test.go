@@ -6,51 +6,48 @@ import (
 	"time"
 )
 
-func TestRedirect_EffectiveStatus(t *testing.T) {
+func TestRedirectStatus(t *testing.T) {
 	tests := []struct {
-		name       string
-		statusCode int
-		permanent  bool
-		want       int
+		name   string
+		status int
+		want   int
 	}{
-		{"301 explicit", 301, false, 301},
-		{"302 explicit", 302, true, 302},
-		{"307 explicit", 307, false, 307},
-		{"308 explicit", 308, true, 308},
-		{"zero and permanent", 0, true, 301},
-		{"zero and not permanent", 0, false, 302},
-		{"non-standard code and permanent", 404, true, 301},
-		{"non-standard code and not permanent", 404, false, 302},
+		{"301 explicit", 301, 301},
+		{"302 explicit", 302, 302},
+		{"307 explicit", 307, 307},
+		{"308 explicit", 308, 308},
+		{"zero means 302", 0, 302},
+		{"non-standard code", 404, 302},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &Redirect{StatusCode: tt.statusCode, Permanent: tt.permanent}
-			if got := r.EffectiveStatus(); got != tt.want {
-				t.Errorf("EffectiveStatus() = %d, want %d", got, tt.want)
+			r := &Redirect{Status: tt.status}
+			if got := RedirectStatus(r); got != tt.want {
+				t.Errorf("RedirectStatus() = %d, want %d", got, tt.want)
 			}
 		})
 	}
 }
 
-func TestRedirect_Validate(t *testing.T) {
+func TestValidateRedirect(t *testing.T) {
 	tests := []struct {
 		name    string
 		r       *Redirect
 		wantErr error
 	}{
-		{"valid with explicit status", &Redirect{From: "/a", To: "/b", StatusCode: 301}, nil},
+		{"valid with explicit status", &Redirect{From: "/a", To: "/b", Status: 301}, nil},
 		{"valid with zero status", &Redirect{From: "/a", To: "/b"}, nil},
 		{"empty from", &Redirect{From: "", To: "/b"}, ErrInvalidPath},
 		{"from missing leading slash", &Redirect{From: "a", To: "/b"}, ErrInvalidPath},
 		{"empty to", &Redirect{From: "/a", To: ""}, ErrInvalidPath},
 		{"to missing leading slash", &Redirect{From: "/a", To: "b"}, ErrInvalidPath},
-		{"invalid status code", &Redirect{From: "/a", To: "/b", StatusCode: 404}, ErrInvalidRedirectStatus},
+		{"invalid status code", &Redirect{From: "/a", To: "/b", Status: 404}, ErrInvalidRedirectStatus},
 		{"to another site", &Redirect{From: "/a", To: "//evil.example"}, ErrInvalidPath},
 		{"to another site by backslash", &Redirect{From: "/a", To: "/\\evil.example"}, ErrInvalidPath},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := tt.r.Validate()
+			err := ValidateRedirect(tt.r)
 			if tt.wantErr == nil {
 				if err != nil {
 					t.Fatalf("Validate() error = %v, want nil", err)
@@ -69,15 +66,15 @@ func TestPage_Root(t *testing.T) {
 	layout := &Fragment{Name: "layout", TemplatePath: "layout.html"}
 
 	t.Run("with layout", func(t *testing.T) {
-		p := &Page{ContentFragment: content, LayoutFragment: layout}
-		if got := p.Root(); got != layout {
+		p := &Page{ContentFragment: content, layoutFragment: layout}
+		if got := PageRoot(p); got != layout {
 			t.Fatalf("Root() = %v, want layout", got)
 		}
 	})
 
 	t.Run("without layout", func(t *testing.T) {
 		p := &Page{ContentFragment: content}
-		if got := p.Root(); got != content {
+		if got := PageRoot(p); got != content {
 			t.Fatalf("Root() = %v, want content", got)
 		}
 	})
@@ -107,7 +104,7 @@ func TestPage_LocalesAndPathFor(t *testing.T) {
 
 func TestPage_ContentSlotName(t *testing.T) {
 	p := &Page{}
-	if got := p.ContentSlotName(); got != DefaultContentSlot {
+	if got := PageContentSlotName(p); got != DefaultContentSlot {
 		t.Fatalf("ContentSlotName() = %q, want %q", got, DefaultContentSlot)
 	}
 }
@@ -154,8 +151,8 @@ func TestPage_Validate(t *testing.T) {
 
 	t.Run("incremental strategy without ttl", func(t *testing.T) {
 		p := &Page{Name: "home", ContentFragment: validContent(), Strategy: StrategyIncremental}
-		if err := p.Validate(); !errors.Is(err, ErrMissingTTL) {
-			t.Fatalf("Validate() error = %v, want ErrMissingTTL", err)
+		if err := p.Validate(); !errors.Is(err, ErrInvalidTTL) {
+			t.Fatalf("Validate() error = %v, want ErrInvalidTTL", err)
 		}
 	})
 

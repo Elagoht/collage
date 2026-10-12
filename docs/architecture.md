@@ -39,7 +39,7 @@ same type — there is no conversion layer, no wrapper, and no `interface{}`
 boundary between the public API and the engine.
 
 The one exception is a fragment's data. `collage.Data` is a sealed interface
-whose only implementations are made by `collage.Load`, `DataHandler`, `Value` and
+whose only implementations are made by `collage.Load`, `LoadTagged`, `Value` and
 `Effect`, each wrapping the engine's data source together with the Go type its
 template will see. The seal is the point: since no other value can be a `Data`,
 every fragment's data type is known at registration, which is what lets
@@ -56,7 +56,7 @@ field into `internal/core.Config`. That conversion is written out by hand
 is visible in a diff.
 
 Boolean options that default to on are spelled in `Disable*` form, such as
-`DisablePathLocale`. A bool documented "default true" could never be turned off:
+`DisableNoSniff`. A bool documented "default true" could never be turned off:
 its zero value is indistinguishable from "caller left it unset", so applying the
 default would flip it back on every time.
 
@@ -72,7 +72,7 @@ different mechanisms rather than one generalised one.
 | Templates | Fragments and slots | None | None |
 | Page cache | Yes | Yes — same key, same ETag, same tags | Never |
 | `Range` requests | No | No | Yes, via `http.ServeContent` |
-| Plugin hooks | Every hook but `OnDocumentRendered` | `OnDocumentRendered`, `OnCacheWrite`, `OnCacheInvalidate`, `OnError` | `OnError` only |
+| Plugin hooks | Every hook but `OnDocumentRendered` | `OnDocumentRendered`, `OnCacheInvalidate`, `OnError` | `OnError` only |
 | A failure renders | The page's error page, in HTML | `text/plain` | `text/plain` |
 
 A generated payload (sitemap, feed, JWKS) is small, computed from application
@@ -99,7 +99,7 @@ See [documents.md](documents.md) and [assets.md](assets.md).
 For one GET on a page, in order — middleware runs first, the plugins' and
 `app.Use`'s in the order they were registered, a mount or a handler registered with `app.Handle` claims the request before
 step 1 if its prefix matches, and a document runs the same steps with its handler
-and `OnDocumentRendered` in place of 4, 5 and 6:
+and `OnDocumentRendered` in place of 3, 4 and 5:
 
 1. **Route.** The router resolves the locale from the path prefix — or the
    default, when there is none — and matches the remaining path in that locale's
@@ -107,30 +107,28 @@ and `OnDocumentRendered` in place of 4, 5 and 6:
    path. A locale prefix that is not its locale's one URL — the default locale's
    own `/en/`, or `/TR/` for `tr` — is answered with a permanent redirect to the
    canonical URL before anything is matched.
-2. **`OnPageResolved`.** Plugins observe the resolved page.
-3. **Cache lookup.** Only for a `GET`/`HEAD` on a page whose strategy is
+2. **Cache lookup.** Only for a `GET`/`HEAD` on a page whose strategy is
    cacheable. On a hit, an `If-None-Match` that matches the stored ETag answers
    `304`; otherwise the stored bytes are served. Nothing below runs. A stored body
    carrying another forgery key's marker counts as a miss.
-4. **`OnBeforeRender`.** Plugins observe a render that is actually about to
-   happen — this is what distinguishes the hook from `OnPageResolved`.
-5. **Render.** The engine walks the page's fragment tree depth-first, running each
+3. **`OnBeforeRender`.** Plugins observe a render that is actually about to
+   happen — it does not fire on a cache hit.
+4. **Render.** The engine walks the page's fragment tree depth-first, running each
    fragment's data handler under its timeout — its children's handlers are
    started together, before its template runs — executing templates in order, and
    expanding `{{slot "name"}}` into the rendered children.
-6. **`OnAfterRender`.** Plugins may replace the HTML. The replacement is what is
+5. **`OnAfterRender`.** Plugins may replace the HTML. The replacement is what is
    served *and* what is cached.
-7. **Cache write.** Skipped for a degraded render, a `HEAD`, or when a
-   `OnCacheWrite` hook sets `Skip`. The key's dependency tags are recorded with
+6. **Cache write.** Skipped for a degraded render or a `HEAD`. The key's dependency tags are recorded with
    the tracker.
-8. **Respond.** `Content-Type`, `ETag`, `Cache-Control`, and — on a publicly
+7. **Respond.** `Content-Type`, `ETag`, `Cache-Control`, and — on a publicly
    cacheable response — `Vary`.
 
-A failure anywhere in 1–6 goes to the error path: log, dispatch `OnError`, then
+A failure anywhere in 1–5 goes to the error path: log, dispatch `OnError`, then
 render the page's own `NotFoundPage`/`ErrorPage` — through `OnBeforeRender` and
 `OnAfterRender`, like any page — falling back to the site-wide one and then to the
 framework's built-in page. An error response is always
-`no-store` and is never cached. A failure in step 7 is the exception — it is
+`no-store` and is never cached. A failure in step 6 is the exception — it is
 logged and reported to plugins, but the page has already rendered, so it is
 served uncached rather than turned into a 500.
 
@@ -248,7 +246,7 @@ error instead, so a program that starts a server never loses it.
 
 A plugin cannot mutate core state directly: that is the framework's rule. So
 `Plugin.Init` receives a `collage.Host` — `DevMode`, `Pages`, `Page`,
-`InvalidateTags`, `Logger`, `RegisterCommand`, `Config`, `RegisterPage`,
+`InvalidateTags`, `Logger`, `RegisterCommand`, `Config`,
 `RegisterDocument`, `Mount` — and not the `*App`. A plugin has no way to reach the
 router, the cache, the render engine, the template set, or any page it was not
 explicitly handed; it can add to the application through those methods, but not
@@ -280,8 +278,7 @@ This is deliberate rather than an oversight: in-process Go plugins are trusted
 code, not a sandbox boundary. The goal is to make accidental mutation hard and
 deliberate mutation obvious, not to make mutation impossible — which Go's type
 system cannot give us without copying everything. Where mutation *is* intended it
-is explicit: `AfterRenderEvent.HTML`, and `CacheWriteEvent`'s `Skip`, `TTL`, and
-`Tags`.
+is explicit: `AfterRenderEvent.HTML`.
 
 ## Further reading
 

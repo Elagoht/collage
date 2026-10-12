@@ -67,17 +67,16 @@ func (m *routeMetrics) FragmentDuration(context.Context, string, string, time.Du
 func (m *routeMetrics) CacheEvent(context.Context, collage.CacheEvent, string)                 {}
 func (m *routeMetrics) Invalidation(context.Context, []string, int)                            {}
 func (m *routeMetrics) HTTPResponse(ctx context.Context, status int, path string, _ time.Duration) {
-	kind, name := collage.RouteOf(ctx)
 	info := collage.RouteInfo(ctx)
 	m.mu.Lock()
-	m.routes = append(m.routes, kind+":"+name)
+	m.routes = append(m.routes, info.Kind+":"+info.Name)
 	m.infos = append(m.infos, info.Kind+"|"+info.Name+"|"+info.Pattern+"|"+info.Locale)
 	m.mu.Unlock()
 }
 
 // A request hook runs before collage's own span, so a caller's trace is its
 // parent; it hears the status; and a metric names the route, not the path.
-func TestRequestHookAndRouteOf(t *testing.T) {
+func TestRequestHookAndRouteInfo(t *testing.T) {
 	hook, tracer, metrics := &tracingPlugin{}, &parentTracer{}, &routeMetrics{}
 	app, err := collage.New(&collage.Config{
 		Server:        collage.ServerConfig{Host: "localhost", Port: 3000},

@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/Elagoht/collage/internal/datacache"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -68,8 +67,3 @@ func Once[T any](rc *RenderContext, key Key[T], fetch func(context.Context) (T, 
 func Cached[T any](rc *RenderContext, key Key[T], ttl time.Duration, tags []string, fetch func(context.Context) (T, error)) (T, error) {
 	return types.Cached(rc, key, ttl, tags, fetch)
 }
-
-// ErrCachedFetchPanicked is what a Cached call waiting on another's fetch is
-// told when that fetch panicked. The panic goes to the render whose fetch it
-// was, and the key is free: the next call fetches again.
-var ErrCachedFetchPanicked = datacache.ErrFetchPanicked

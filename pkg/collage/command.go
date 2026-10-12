@@ -3,25 +3,12 @@ package collage
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
 
 	"github.com/Elagoht/collage/internal/core"
 )
-
-// ErrNilApp is returned by DispatchCommands when passed a nil *App. There is nothing
-// to dispatch against and nothing to start, and inventing an application would run a
-// program the caller never built.
-var ErrNilApp = errors.New("collage: nil app")
-
-// ErrUnknownCommand is returned by DispatchCommands when args is empty or names no
-// command any registered plugin contributed. It is the signal to fall through to
-// whatever the program does by default — serving, building, or printing its own
-// usage — so test for it with errors.Is rather than treating every non-nil error as
-// fatal.
-var ErrUnknownCommand = errors.New("collage: unknown command")
 
 // DispatchCommands runs the plugin-contributed CLI subcommand named by args[0], with
 // args[1:] as its arguments, and returns the exit code the program should use
@@ -48,9 +35,10 @@ var ErrUnknownCommand = errors.New("collage: unknown command")
 // it when the start failed: that start has already shut down the plugins it
 // started.
 //
-// It dispatches plugin commands, and two of its own: InspectCommand, which prints
-// App.Inspect as JSON for an editor or a linter, and CheckCommand, which prints
-// App.Check's findings. "dev", "build", "export" and the
+// It dispatches plugin commands, and two of its own: "collage-inspect", which prints
+// a description of the application as versioned JSON for an editor or a linter
+// (what `collage inspect` reads), and "collage-check", which prints App.Check's
+// findings. "dev", "build", "export" and the
 // rest belong to the `collage` binary, which invokes this program rather than the
 // other way round, and a program that wants a usage listing has App.Commands.
 //
@@ -76,7 +64,7 @@ var ErrUnknownCommand = errors.New("collage: unknown command")
 //	// no plugin claimed it: carry on and serve
 //	log.Fatal(app.ListenAndServe())
 func DispatchCommands(ctx context.Context, app *App, args []string) (int, error) {
-	if app == nil {
+	if app == nil || app.c == nil {
 		return 2, ErrNilApp
 	}
 	if ctx == nil {
@@ -91,9 +79,9 @@ func DispatchCommands(ctx context.Context, app *App, args []string) (int, error)
 
 	name, rest := args[0], args[1:]
 	switch name {
-	case InspectCommand:
+	case inspectCommand:
 		return inspect(app, rest)
-	case CheckCommand:
+	case checkCommand:
 		return check(app, os.Stdout, rest)
 	}
 	for _, cmd := range app.Commands() {
@@ -115,46 +103,29 @@ func DispatchCommands(ctx context.Context, app *App, args []string) (int, error)
 	return 2, fmt.Errorf("%w: %q", ErrUnknownCommand, name)
 }
 
-// InspectCommand is the command DispatchCommands answers itself with App.Inspect,
-// as indented JSON on standard output: `go run . collage-inspect`, which is what
+// inspectCommand is the command DispatchCommands answers itself with a description
+// of the application, as indented JSON on standard output: `go run . collage-inspect`, which is what
 // `collage inspect` and editor extensions run. Prefixed, so no plugin's command is
 // taken.
-const InspectCommand = "collage-inspect"
-
-// Inspection is what an application is made of, as a tool outside it needs to
-// know it; see App.Inspect.
-type Inspection = core.Inspection
-
-// InspectedPage, InspectedFragment, InspectedDocument, InspectedAction,
-// InspectedPlugin, InspectedMount and InspectedFragmentPath are the parts of an
-// Inspection.
-type (
-	InspectedPage         = core.InspectedPage
-	InspectedFragment     = core.InspectedFragment
-	InspectedDocument     = core.InspectedDocument
-	InspectedAction       = core.InspectedAction
-	InspectedPlugin       = core.InspectedPlugin
-	InspectedMount        = core.InspectedMount
-	InspectedFragmentPath = core.InspectedFragmentPath
-)
+const inspectCommand = "collage-inspect"
 
 func inspect(app *App, args []string) (int, error) {
 	if len(args) > 0 {
-		return 2, fmt.Errorf("collage: %s takes no arguments", InspectCommand)
+		return 2, fmt.Errorf("collage: %s takes no arguments", inspectCommand)
 	}
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(app.Inspect()); err != nil {
+	if err := enc.Encode(app.c.Inspect()); err != nil {
 		return 1, err
 	}
 	return 0, nil
 }
 
-// CheckCommand is the command DispatchCommands answers itself with App.Check:
+// checkCommand is the command DispatchCommands answers itself with App.Check:
 // `go run . collage-check`, which is what `collage check` runs. It prints one
 // line per finding, or with -json the findings as a JSON array for an editor,
 // and exits 1 when there is any. Prefixed, so no plugin's command is taken.
-const CheckCommand = "collage-check"
+const checkCommand = "collage-check"
 
 // The rules App.Check reports under; see App.Check.
 const (
@@ -177,7 +148,7 @@ func check(app *App, w io.Writer, args []string) (int, error) {
 	case len(args) == 1 && (args[0] == "-json" || args[0] == "--json"):
 		asJSON = true
 	case len(args) > 0:
-		return 2, fmt.Errorf("collage: %s takes no arguments but -json", CheckCommand)
+		return 2, fmt.Errorf("collage: %s takes no arguments but -json", checkCommand)
 	}
 
 	findings := app.Check()

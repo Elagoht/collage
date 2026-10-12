@@ -13,6 +13,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Elagoht/collage/internal/plugin"
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // writeTemplates writes files (path relative to the root, content) into a fresh
@@ -167,7 +170,7 @@ func cacheTestApp(t *testing.T, store Cache, enabled bool) (*App, http.Handler) 
 	page := NewPage("home").
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).
 		WithPath("en", "/").
-		WithDependency("homepage").
+		WithDependencyTags("homepage").
 		Static().
 		Build()
 	if err := app.RegisterPage(page); err != nil {
@@ -300,8 +303,8 @@ func TestValidate_StoreMakesCacheTypeIrrelevant(t *testing.T) {
 		Template: TemplateConfig{Root: "templates"},
 		Cache:    CacheConfig{Enabled: true, Store: newRecordingCache(), Type: "not-a-real-cache"},
 	}
-	withStore.ApplyDefaults()
-	if err := withStore.Validate(); err != nil {
+	withStore.applyDefaults()
+	if err := withStore.validate(); err != nil {
 		t.Errorf("Validate() with a Store = %v, want nil", err)
 	}
 
@@ -309,8 +312,8 @@ func TestValidate_StoreMakesCacheTypeIrrelevant(t *testing.T) {
 		Template: TemplateConfig{Root: "templates"},
 		Cache:    CacheConfig{Enabled: true, Type: "not-a-real-cache"},
 	}
-	withoutStore.ApplyDefaults()
-	if err := withoutStore.Validate(); !errors.Is(err, ErrInvalidCacheType) {
+	withoutStore.applyDefaults()
+	if err := withoutStore.validate(); !errors.Is(err, ErrInvalidCacheType) {
 		t.Errorf("Validate() without a Store = %v, want ErrInvalidCacheType", err)
 	}
 }
@@ -487,10 +490,10 @@ func TestRegisterPlugin_DuplicateIsMatchable(t *testing.T) {
 	if err := app.RegisterPlugin(&namedPlugin{name: "twice"}); !errors.Is(err, ErrDuplicatePlugin) {
 		t.Fatalf("second RegisterPlugin = %v, want ErrDuplicatePlugin", err)
 	}
-	if err := app.RegisterPlugin(&namedPlugin{name: ""}); !errors.Is(err, ErrEmptyPluginName) {
+	if err := app.RegisterPlugin(&namedPlugin{name: ""}); !errors.Is(err, plugin.ErrEmptyPluginName) {
 		t.Fatalf("RegisterPlugin with an empty name = %v, want ErrEmptyPluginName", err)
 	}
-	if err := app.RegisterPlugin(nil); !errors.Is(err, ErrNilPlugin) {
+	if err := app.RegisterPlugin(nil); !errors.Is(err, plugin.ErrNilPlugin) {
 		t.Fatalf("RegisterPlugin(nil) = %v, want ErrNilPlugin", err)
 	}
 }
@@ -545,7 +548,7 @@ func TestDefaultContentSlot_IsTheSlotRegistrationFills(t *testing.T) {
 
 	page := NewPage("home").
 		WithLayouts(NewFragment("layout", "layouts/default.html").
-			WithSlot(DefaultContentSlot, true, false).
+			WithSlot(DefaultContentSlot, SlotRequired, SlotSingle).
 			Build()).
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).
 		WithPath("en", "/").
@@ -578,7 +581,7 @@ func TestRenderPath_ResultIsNameable(t *testing.T) {
 	page := NewPage("home").
 		WithContent(NewFragment("home-content", "pages/home.html").Build()).
 		WithPath("en", "/").
-		WithDependency("homepage").
+		WithDependencyTags("homepage").
 		Build()
 	if err := app.RegisterPage(page); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
@@ -607,7 +610,7 @@ func TestRenderPath_ResultIsNameable(t *testing.T) {
 // compile without the alias — and returns how many fragments it recorded.
 func describe(metadata *Metadata) int {
 	var timing Timing = metadata.Timing
-	var first FragmentMetadata = metadata.Fragments[0]
+	var first types.FragmentReport = metadata.Fragments[0]
 	if first.Failed || timing.Total < 0 {
 		return 0
 	}

@@ -47,7 +47,7 @@ func strategyApp(t *testing.T) *App {
 }
 
 func strategyLayout() *FragmentBuilder {
-	return NewFragment("layout", "layouts/default.html").WithSlot("content", true, false)
+	return NewFragment("layout", "layouts/default.html").WithSlot("content", SlotRequired, SlotSingle)
 }
 
 // TestAutoStrategy_FixedPageIsStatic: a page that declares no strategy and renders
@@ -99,14 +99,14 @@ func TestAutoStrategy_HandlerMakesDynamic(t *testing.T) {
 		},
 		"handler in a bound child": func() *Page {
 			child := NewFragment("child", "pages/data.html").WithData(effect).Build()
-			layout := strategyLayout().WithSlot("aside", false, false).WithSlotFragment("aside", child).Build()
+			layout := strategyLayout().WithSlot("aside", SlotSingle).WithSlotFragment("aside", child).Build()
 			return NewPage("p").WithLayouts(layout).
 				WithContent(NewFragment("content", "pages/data.html").Build()).
 				WithPath("en", "/").Build()
 		},
 		"slot resolver": func() *Page {
-			layout := strategyLayout().WithSlot("aside", false, true).
-				WithSlotResolver("aside", func(*RenderContext) ([]*Fragment, error) { return nil, nil }).
+			layout := strategyLayout().WithSlot("aside").
+				WithSlotResolver("aside", func(context.Context, *RenderContext) ([]*Fragment, error) { return nil, nil }).
 				Build()
 			return NewPage("p").WithLayouts(layout).
 				WithContent(NewFragment("content", "pages/data.html").Build()).
@@ -248,20 +248,20 @@ func TestSlots_NeedNoDeclaring(t *testing.T) {
 func TestWithSlot_ConstrainsInEitherOrder(t *testing.T) {
 	child := NewFragment("child", "child.html").Build()
 
-	after := NewFragment("a", "a.html").WithSlotFragment("s", child).WithSlot("s", true, false)
+	after := NewFragment("a", "a.html").WithSlotFragment("s", child).WithSlot("s", SlotRequired, SlotSingle)
 	if err := after.BuildErr(); err != nil {
 		t.Fatalf("WithSlot after a binding: BuildErr() = %v, want nil", err)
 	}
-	if slot, _ := after.Build().Slot("s"); !slot.Required || slot.AllowMultiple || len(slot.Fill) != 1 {
+	if slot, _ := types.FragmentSlot(after.Build(), "s"); !slot.Required || slot.AllowMultiple || len(slot.Fill) != 1 {
 		t.Errorf("slot = %+v, want required, single, and still holding its fill", slot)
 	}
 
-	single := NewFragment("b", "b.html").WithSlot("s", false, false).WithSlotFragment("s", child).WithSlotFragment("s", child)
+	single := NewFragment("b", "b.html").WithSlot("s", SlotSingle).WithSlotFragment("s", child).WithSlotFragment("s", child)
 	if err := single.BuildErr(); !errors.Is(err, ErrSlotOccupied) {
 		t.Errorf("second fill of a single slot: BuildErr() = %v, want ErrSlotOccupied", err)
 	}
 
-	twice := NewFragment("c", "c.html").WithSlotFragment("s", child).WithSlot("s", false, true).WithSlot("s", true, true)
+	twice := NewFragment("c", "c.html").WithSlotFragment("s", child).WithSlot("s").WithSlot("s", SlotRequired)
 	if err := twice.BuildErr(); !errors.Is(err, ErrDuplicateSlot) {
 		t.Errorf("WithSlot twice: BuildErr() = %v, want ErrDuplicateSlot", err)
 	}
@@ -300,7 +300,7 @@ func TestAutoStrategy_StaticFragment(t *testing.T) {
 		"with a resolver of its own": {
 			page: func() *Page {
 				more := NewFragment("more", "pages/slotted.html").WithData(load).Static().
-					WithSlotResolver("x", func(*RenderContext) ([]*Fragment, error) { return nil, nil }).Build()
+					WithSlotResolver("x", func(context.Context, *RenderContext) ([]*Fragment, error) { return nil, nil }).Build()
 				return NewPage("p").WithLayouts(strategyLayout().WithSlotFragment("aside", more).Build()).
 					WithContent(NewFragment("content", "pages/data.html").Build()).
 					WithPath("en", "/").Build()
@@ -359,7 +359,7 @@ func TestFragment_NilDataIsNoData(t *testing.T) {
 		if len(b.errs) != 0 {
 			t.Errorf("%s: recorded %v, want no conflict", name, b.errs)
 		}
-		if got := b.fragment.DataSource().Kind; got != wantKind[name] {
+		if got := types.FragmentDataSource(b.fragment).Kind; got != wantKind[name] {
 			t.Errorf("%s: kind = %v, want %v (existing source kept)", name, got, wantKind[name])
 		}
 	}
@@ -369,7 +369,7 @@ func TestFragment_NilDataIsNoData(t *testing.T) {
 func TestFragment_WithDataRecordsType(t *testing.T) {
 	type view struct{ N int }
 	f := NewFragment("v", "pages/data.html").WithData(Value(view{N: 1})).Build()
-	if got := f.DataSource().Type; got != reflect.TypeOf(view{}) {
+	if got := types.FragmentDataSource(f).Type; got != reflect.TypeOf(view{}) {
 		t.Errorf("Type = %v, want %v", got, reflect.TypeOf(view{}))
 	}
 }

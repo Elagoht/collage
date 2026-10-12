@@ -277,3 +277,33 @@ func TestPanicPlainTextAnswer(t *testing.T) {
 		}
 	}
 }
+
+func TestActionResult_TwoBodiesReachTheErrorHook(t *testing.T) {
+	rec := &eventRecorder{}
+	app := errorEventApp(t, rec, &lockedBuffer{})
+	page := collage.NewPage("p").
+		WithContent(collage.NewFragment("body", "p.html").Build()).
+		WithPath("en", "/p").Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatal(err)
+	}
+	act := collage.NewAction("both").WithPath("en", "/both").WithMethods(http.MethodPost).WithoutCSRF().
+		WithHandler(func(context.Context, *collage.RenderContext) (*collage.ActionResult, error) {
+			return &collage.ActionResult{Page: page, Body: []byte("x")}, nil
+		}).Build()
+	if err := app.RegisterAction(act); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/both", nil)
+	rr := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", rr.Code)
+	}
+	events := rec.at("/both")
+	if len(events) != 1 || !errors.Is(events[0].Err, collage.ErrAmbiguousActionResult) ||
+		!strings.Contains(events[0].Err.Error(), "Page") || !strings.Contains(events[0].Err.Error(), "Body") {
+		t.Errorf("events = %+v (status %d)", events, rr.Code)
+	}
+}

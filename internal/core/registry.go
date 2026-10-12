@@ -166,10 +166,10 @@ func (a *App) remember(p *types.Page) {
 	a.order = append(a.order, p.Name)
 }
 
-// bindContent folds p's layout chain into p.LayoutFragment: each layout gets
+// bindContent folds p's layout chain into the page's layout fragment: each layout gets
 // its own per-page copy of its slot table, the content fragment is bound into
 // the innermost copy's content slot, and each copy is bound into the next outer
-// copy's content slot. p.LayoutFragment ends as the outermost copy — the folded
+// copy's content slot. the layout fragment ends as the outermost copy — the folded
 // tree's root — and p.LayoutChain keeps pointing at the originals.
 //
 // The per-page copies are what make layouts shareable, and a layout is the most
@@ -219,7 +219,7 @@ func (a *App) bindContent(p *types.Page) error {
 		if err := requireEmptyContentSlot(p, innermost); err != nil {
 			return err
 		}
-		if err := innermost.Bind(types.DefaultContentSlot, p.ContentFragment); err != nil {
+		if err := types.Bind(innermost, types.DefaultContentSlot, p.ContentFragment); err != nil {
 			return fmt.Errorf(
 				"collage: page %q: binding content fragment %q into layout fragment %q slot %q: %w",
 				p.Name, p.ContentFragment.Name, p.LayoutChain[len(p.LayoutChain)-1].Name, types.DefaultContentSlot, err,
@@ -230,7 +230,7 @@ func (a *App) bindContent(p *types.Page) error {
 		if err := requireEmptyContentSlot(p, copies[i]); err != nil {
 			return err
 		}
-		if err := copies[i].Bind(types.DefaultContentSlot, copies[i+1]); err != nil {
+		if err := types.Bind(copies[i], types.DefaultContentSlot, copies[i+1]); err != nil {
 			return fmt.Errorf(
 				"collage: page %q: binding layout %q into layout %q slot %q (registration fills every content slot in the chain, so no layout may have it filled already): %w",
 				p.Name, p.LayoutChain[i+1].Name, p.LayoutChain[i].Name, types.DefaultContentSlot, err,
@@ -238,22 +238,21 @@ func (a *App) bindContent(p *types.Page) error {
 		}
 	}
 
-	p.LayoutFragment = copies[0]
+	types.SetLayoutFragment(p, copies[0])
 	a.bound[p] = true
 	return nil
 }
 
 // normalizeChain reconciles the two layout fields of a page that did not come
-// from the builder — a plugin's page through Host.RegisterPage, a Page literal —
-// before folding reads them. The builder keeps them agreeing: LayoutChain is the
-// chain and LayoutFragment its outermost entry. A page with only LayoutFragment
-// is the one-layout chain it looks like; one whose LayoutFragment is some other
+// from the builder — a Page literal — before folding reads them. The builder
+// keeps them agreeing: LayoutChain is the chain and LayoutFragment its outermost
+// entry. A page with only LayoutFragment is the one-layout chain it looks like; one whose LayoutFragment is some other
 // fragment says two things about what wraps it, and a nil chain entry is a
 // fragment that is not there — both are refused rather than guessed at.
 func normalizeChain(p *types.Page) error {
 	if len(p.LayoutChain) == 0 {
-		if p.LayoutFragment != nil {
-			p.LayoutChain = []*types.Fragment{p.LayoutFragment}
+		if types.LayoutFragment(p) != nil {
+			p.LayoutChain = []*types.Fragment{types.LayoutFragment(p)}
 		}
 		return nil
 	}
@@ -262,9 +261,9 @@ func normalizeChain(p *types.Page) error {
 			return fmt.Errorf("collage: page %q: layout %d: %w", p.Name, i, types.ErrNilFragment)
 		}
 	}
-	if p.LayoutFragment != nil && p.LayoutFragment != p.LayoutChain[0] {
+	if types.LayoutFragment(p) != nil && types.LayoutFragment(p) != p.LayoutChain[0] {
 		return fmt.Errorf("collage: page %q: LayoutFragment %q is not the chain's outermost layout %q (set LayoutChain, or use WithLayouts): %w",
-			p.Name, p.LayoutFragment.Name, p.LayoutChain[0].Name, types.ErrConflictingLayout)
+			p.Name, types.LayoutFragment(p).Name, p.LayoutChain[0].Name, types.ErrConflictingLayout)
 	}
 	return nil
 }
@@ -276,7 +275,7 @@ func normalizeChain(p *types.Page) error {
 // sentinel, as it was when the single-layout Bind path produced this error
 // itself: an error hook or a test matching it keeps matching it.
 func requireEmptyContentSlot(p *types.Page, layout *types.Fragment) error {
-	if slot, ok := layout.Slot(types.DefaultContentSlot); ok && len(slot.Fill) > 0 {
+	if slot, ok := types.FragmentSlot(layout, types.DefaultContentSlot); ok && len(slot.Fill) > 0 {
 		return fmt.Errorf(
 			"collage: page %q: layout %q content slot is already filled (registration fills the content slot itself, so a layout must not have it filled already): %w",
 			p.Name, layout.Name, types.ErrSlotOccupied,
@@ -287,7 +286,7 @@ func requireEmptyContentSlot(p *types.Page, layout *types.Fragment) error {
 
 // contentBound reports whether layout's content slot already holds content.
 func contentBound(layout, content *types.Fragment) bool {
-	slot, ok := layout.Slot(types.DefaultContentSlot)
+	slot, ok := types.FragmentSlot(layout, types.DefaultContentSlot)
 	return ok && slices.Contains(slot.Fill, content)
 }
 
@@ -333,7 +332,7 @@ func describeTemplate(f *types.Fragment) string {
 // the type of its data, in the fixed order joinTypeErrors gives them.
 //
 // It walks the layout tree and the content tree separately rather than just
-// p.Root(): p is not always a page being registered in its own right — it may be
+// the page's root fragment: p is not always a page being registered in its own right — it may be
 // another page's NotFoundPage or ErrorPage, which has not been through binding yet,
 // so its content fragment is not in its layout's slot and Root alone would miss it.
 // The shared visited set means a fragment reachable both ways is still checked once.
@@ -368,7 +367,7 @@ func (a *App) checkTemplates(p *types.Page) error {
 		if dynamic {
 			return nil
 		}
-		for _, slotName := range f.SlotNames() {
+		for _, slotName := range types.FragmentSlotNames(f) {
 			slot := f.Slots[slotName]
 			if slot == nil || (len(slot.Fill) == 0 && slot.Resolve == nil) || slices.Contains(calls, slotName) {
 				continue
@@ -385,7 +384,7 @@ func (a *App) checkTemplates(p *types.Page) error {
 	// or ErrorPage is checked before it is registered — and folded — in its own
 	// right, so its layouts are reachable only through the chain. The visited
 	// set keeps the double walk of an already-folded page harmless.
-	if err := walkFragments(p.LayoutFragment, visited, visit); err != nil {
+	if err := walkFragments(types.LayoutFragment(p), visited, visit); err != nil {
 		return err
 	}
 	for _, layout := range p.LayoutChain {
@@ -398,7 +397,7 @@ func (a *App) checkTemplates(p *types.Page) error {
 	}
 	// A fragment opened at its own URL may be reachable from nowhere else, and
 	// unchecked it answered with an empty 200 for a template that did not exist.
-	for _, fragment := range p.PathFragments() {
+	for _, fragment := range types.PagePathFragments(p) {
 		if err := walkFragments(fragment, visited, visit); err != nil {
 			return err
 		}
@@ -414,7 +413,7 @@ func (a *App) typeFindings(p *types.Page, f *types.Fragment, name string) []*typ
 	if f.SkipTypeCheck {
 		return nil
 	}
-	ds := f.DataSource()
+	ds := types.FragmentDataSource(f)
 	if (ds.Kind == types.DataFixed || ds.Kind == types.DataFetched) && ds.Type == nil {
 		return nil
 	}
@@ -483,7 +482,7 @@ func walkFragments(f *types.Fragment, visited map[*types.Fragment]bool, visit fu
 	if err := visit(f); err != nil {
 		return err
 	}
-	for _, name := range f.SlotNames() {
+	for _, name := range types.FragmentSlotNames(f) {
 		slot := f.Slots[name]
 		if slot == nil {
 			continue
@@ -519,7 +518,7 @@ func resolveStrategy(p *types.Page) {
 	// fragments once a page is folded, and a page resolved before it is folded
 	// — see checkTemplates — has its layouts only in the chain.
 	roots := append(append([]*types.Fragment(nil), p.LayoutChain...), p.ContentFragment)
-	roots = append(roots, p.PathFragments()...)
+	roots = append(roots, types.PagePathFragments(p)...)
 	for _, root := range roots {
 		if !fetchFree(root) {
 			p.Strategy = types.StrategyDynamic

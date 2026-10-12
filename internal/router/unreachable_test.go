@@ -19,7 +19,6 @@ func TestRegister_PathInUnreachableLocale_Rejected(t *testing.T) {
 		want []string
 	}{
 		{"not supported", LocaleOptions{Default: "en", Supported: []string{"en"}}, []string{`"tr"`, `default locale is "en"`, "[en]"}},
-		{"path locale off", LocaleOptions{Default: "en", Supported: []string{"en", "tr"}, DisablePathLocale: true}, []string{`"tr"`, "DisablePathLocale"}},
 	}
 	register := map[string]func(Router) error{
 		"page": func(rt Router) error {

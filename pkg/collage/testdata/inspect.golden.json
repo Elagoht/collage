@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "templateRoot": "t",
+  "templateExtension": ".html",
+  "defaultLocale": "en",
+  "locales": [
+    "en",
+    "tr"
+  ],
+  "pages": [
+    {
+      "name": "post",
+      "paths": {
+        "en": "/blog/{slug}",
+        "tr": "/yazi/{slug}"
+      },
+      "params": [
+        "slug"
+      ],
+      "strategy": "dynamic",
+      "layouts": [
+        "layout"
+      ],
+      "content": "post",
+      "fragmentPaths": [
+        {
+          "fragment": "comments",
+          "locale": "en",
+          "pattern": "/blog/{slug}/comments",
+          "params": [
+            "slug"
+          ]
+        }
+      ]
+    }
+  ],
+  "fragments": [
+    {
+      "name": "comments",
+      "template": "comments.html",
+      "handler": true,
+      "shared": true,
+      "dataType": "string"
+    },
+    {
+      "name": "layout",
+      "template": "layout.html",
+      "dataType": "nil"
+    },
+    {
+      "name": "post",
+      "template": "post.html",
+      "slots": [
+        "aside",
+        "comments"
+      ],
+      "dataType": "nil"
+    }
+  ],
+  "documents": [
+    {
+      "name": "feed",
+      "paths": {
+        "": "/feed.xml"
+      },
+      "contentType": "application/rss+xml"
+    }
+  ],
+  "actions": [
+    {
+      "name": "subscribe",
+      "paths": {
+        "en": "/subscribe"
+      },
+      "methods": [
+        "POST"
+      ]
+    }
+  ],
+  "templateFuncs": [
+    "actionURL",
+    "asset",
+    "csrfToken",
+    "default",
+    "dict",
+    "formatTime",
+    "fragmentURL",
+    "fragmentURLIn",
+    "hoist",
+    "join",
+    "localeURL",
+    "lower",
+    "pageURL",
+    "pageURLIn",
+    "safeHTML",
+    "safeURL",
+    "shout",
+    "slot",
+    "stylesheet",
+    "title",
+    "upper"
+  ],
+  "plugins": [],
+  "mounts": [
+    {
+      "prefix": "/static/",
+      "files": [
+        "/static/app.css",
+        "/static/img/logo.svg"
+      ]
+    }
+  ]
+}

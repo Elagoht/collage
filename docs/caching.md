@@ -9,11 +9,10 @@ app, err := collage.New(&collage.Config{
 	Template: collage.TemplateConfig{Root: "templates"},
 	Cache: collage.CacheConfig{
 		Enabled:    true,
-		Type:       "memory",
+		Type:       collage.CacheMemory, // or collage.CacheDisk; "memory" and "disk" still compile
 		DefaultTTL:    5 * time.Minute,
 		MaxEntries:    10000,
 		MaxBytes:      256 << 20, // 0 means the type's default; negative, unlimited
-		MaxKeysPerTag: 10000,
 	},
 })
 ```
@@ -34,7 +33,7 @@ page := collage.NewPage("blog-post").
 	WithContent(postContent).
 	WithPath("en", "/blog/{slug}").
 	Incremental(10 * time.Minute).
-	WithDependency("blog:posts").
+	WithDependencyTags("blog:posts").
 	Build()
 ```
 
@@ -43,7 +42,7 @@ page := collage.NewPage("blog-post").
 A page that calls none of the three is resolved when it is registered:
 
 - **Dynamic** if anything it renders fetches per render — a data handler
-  (`WithData` with `collage.DataHandler`, `Load` or `Effect`) or a slot resolver, in its
+  (`WithData` with `collage.LoadTagged`, `Load` or `Effect`) or a slot resolver, in its
   layout, its content, anything bound into their slots, their fallbacks, or a
   fragment opened with `WithFragmentPath`.
 - **Static** otherwise: a page rendering templates and fixed values —
@@ -99,7 +98,7 @@ body (`WithBody`). A declared strategy is never second-guessed, in either
 direction, and a registered page's `Strategy` is always the resolved one.
 
 `Incremental` without a positive TTL is a registration error
-(`collage.ErrMissingTTL`), not a page that silently never expires.
+(`collage.ErrInvalidTTL`), not a page that silently never expires.
 
 `Static()` means what it says: its cache entry is written with no practical
 expiry, so `DefaultTTL` does not apply to it. Only `InvalidateTags`, or eviction
@@ -212,9 +211,9 @@ unioned, de-duplicated, and sorted:
 
 ```go
 // From the page:
-WithDependency("blog:posts")
+WithDependencyTags("blog:posts")
 
-// From a collage.DataHandler, per render:
+// From a collage.LoadTagged handler, per render:
 return post, []string{"post:" + slug}, nil
 ```
 
@@ -230,20 +229,19 @@ invalidation.
 and nothing else. Behind a load balancer with a shared store, instance A's
 tracker cannot name the keys instance B wrote; after a restart, no tracker can
 name anything written before it. The framework closes this as far as it can by
-also calling `Cache.Invalidate(ctx, tags)` whenever your store implements
+also calling `TaggedCache.Invalidate(ctx, tags)` whenever your store implements
 `collage.TaggedCache` — a store that indexes tags itself can resolve what the
 tracker never saw — but with a store that does not, tag invalidation reaches only
 what the running process happens to remember.
 
-**It is bounded by `MaxKeysPerTag`.** Nothing removes a key from the tracker when
+**It is bounded by `MaxEntries`.** Nothing removes a key from the tracker when
 the cache evicts or expires it, and the cache key carries the request's query
 string, so any client can mint unlimited distinct keys for one page. Without a
 cap the tracker would grow without bound behind a cache that stays at
-`MaxEntries`. When a tag reaches the cap, recording a new key under it drops the
+`MaxEntries`. When a tag reaches the cap — `MaxEntries` keys, so 10000 by default — recording a new key under it drops the
 oldest key recorded under that tag: the cache entry itself is untouched and keeps
-being served until it expires, but `InvalidateTags` no longer reaches it. The
-default is 10000, matching `MaxEntries`; a negative value means unlimited, which
-is a deliberate choice to accept unbounded growth rather than ever drop.
+being served until it expires, but `InvalidateTags` no longer reaches it. A
+negative `MaxEntries` keeps this per-tag cap at 10000.
 
 ## Invalidating
 
@@ -414,25 +412,6 @@ with `{{asset "/static/app.css"}}` (or `rc.Asset`) and the URL carries a hash of
 the file's contents, served `immutable`, so a changed file is a new URL — see
 [assets](assets.md). A file linked by its plain path gets no such help.
 
-## Adjusting a write from a plugin
-
-```go
-// OnCacheWrite may extend the TTL, add tags, or suppress the write entirely.
-func (p *myPlugin) OnCacheWrite(ctx context.Context, ev *collage.CacheWriteEvent) error {
-	if ev.Page.Name == "home" {
-		ev.TTL = time.Minute
-		ev.Tags = append(ev.Tags, "homepage")
-	}
-	return nil
-}
-```
-
-A failure in the cache-write path never fails the request: the page has already
-rendered, and serving it uncached beats turning a cache problem into a 500.
-
-Note that the `Cache-Control` header is derived from the page, not from a TTL a
-hook adjusted, so the value a client sees does not change from request to request.
-
 ## The built-in memory cache
 
 `Type: "memory"` is a process-local `map` with:
@@ -599,8 +578,8 @@ smaller key with `WithCacheParams`; the framework never guesses one for it.
 
 What keeps an unbounded number of query variants from becoming unbounded memory is
 the cache's bounds, not the key: `Cache.MaxEntries` (10000 by default) and
-`Cache.MaxBytes` cap the memory cache, and the dependency tracker is capped per tag
-by `MaxKeysPerTag` and in all at `MaxEntries` (see
+`Cache.MaxBytes` cap the memory cache, and the dependency tracker is capped
+per tag and in all at `MaxEntries` (see
 [the tracker is bounded](#the-tracker-is-in-process-and-bounded)). A client minting
 variants evicts entries — a cost in hit rate, not in memory.
 
@@ -700,16 +679,13 @@ Two consequences worth knowing before they surprise you:
   cache keeps the HTML, or a restart serves pages that refer to what no longer
   exists. `collage-opti-image` writes its recipes to disk for this reason.
 
-**A cached page is never served in development.** `Config.DevMode` or
-`Template.DevMode` turns off cache *lookups*: every request renders again. Templates
+**A cached page is never served in development.** `Config.DevMode` turns off cache *lookups*: every request renders again. Templates
 reload from disk in development, and a cached page hides that reload for as long as
 its TTL — on exactly the pages someone is most likely to be editing. The write path
-is untouched, so entries are still stored, tags still tracked and `CacheWrite` hooks
-still fire; what dev mode removes is serving a page that was rendered before the
+is untouched, so entries are still stored, tags still tracked; what dev mode removes is serving a page that was rendered before the
 edit.
 
-**A disk cache is never used in development.** `Config.DevMode` or
-`Template.DevMode` substitutes an in-memory one and logs that it did. Development is
+**A disk cache is never used in development.** `Config.DevMode` substitutes an in-memory one and logs that it did. Development is
 exactly where the output changes between runs, and nobody bumps a version to save a
 file — the version guard catches a released build, not a developer.
 

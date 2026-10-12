@@ -67,7 +67,7 @@ func (h *Handler) checkGuards(w http.ResponseWriter, r *http.Request, route *rou
 // no-cache" still lets the reader's own browser keep the page and revalidate it
 // with its ETag — a revalidation is a request, and a request meets the guard.
 func guardedCacheControl(header http.Header, page *types.Page) {
-	if page.Guarded() {
+	if types.PageGuarded(page) {
 		header.Set("Cache-Control", "private, no-cache")
 	}
 }

@@ -110,7 +110,7 @@ func newApp(t *testing.T) http.Handler {
 					if err := rc.Request.ParseMultipartForm(1 << 20); err != nil {
 						return nil, err
 					}
-					return collage.JSON(http.StatusOK, []byte(`"`+rc.Request.FormValue("bio")+`"`)), nil
+					return collage.JSONBytes(http.StatusOK, []byte(`"`+rc.Request.FormValue("bio")+`"`)), nil
 				}).
 				Build()).
 			Build(),

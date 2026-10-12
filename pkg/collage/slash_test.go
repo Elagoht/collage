@@ -46,7 +46,7 @@ func slashApp(t *testing.T, trailing bool) *collage.App {
 		page("home", map[string]string{"en": "/", "tr": "/"}).Build(),
 		page("about", map[string]string{"en": "/about", "tr": "/hakkinda"}).
 			WithAction(http.MethodPost, func(context.Context, *collage.RenderContext) (*collage.ActionResult, error) {
-				return collage.NoContent(http.StatusNoContent), nil
+				return collage.Status(http.StatusNoContent), nil
 			}).
 			Build(),
 		page("post", map[string]string{"en": "/blog/{slug}"}).Dynamic().Build(),
@@ -164,11 +164,7 @@ func TestTrailingSlash_NeverRedirectsOffSite(t *testing.T) {
 func TestTrailingSlash_ExportWritesEveryPage(t *testing.T) {
 	app := slashApp(t, true)
 	out := t.TempDir()
-	builder, err := collage.NewBuilder(app, collage.BuildOptions{OutDir: out})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := builder.Build(context.Background()); err != nil {
+	if _, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
 	for _, file := range []string{"index.html", "about/index.html", "tr/index.html", "tr/hakkinda/index.html"} {

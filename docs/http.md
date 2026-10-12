@@ -127,7 +127,7 @@ func sign(value string) string {
 func startPreview(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
 	query := rc.Request.URL.Query()
 	if !hmac.Equal([]byte(query.Get("secret")), []byte(os.Getenv("PREVIEW_SECRET"))) {
-		return collage.NoContent(http.StatusUnauthorized), nil
+		return collage.Status(http.StatusUnauthorized), nil
 	}
 	target, err := rc.URL("blog-post", map[string]string{"slug": query.Get("slug")})
 	if err != nil {

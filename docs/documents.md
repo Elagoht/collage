@@ -17,7 +17,7 @@ sitemap := collage.NewDocument("sitemap", "application/xml").
 		return body, []string{"blog:posts"}, err
 	}).
 	Incremental(time.Hour).
-	WithDependency("blog:posts").
+	WithDependencyTags("blog:posts").
 	Build()
 
 if err := app.RegisterDocument(sitemap); err != nil {
@@ -73,7 +73,7 @@ func buildSitemap(posts []Post) ([]byte, error) {
 | `Incremental(ttl)` | Serve from cache until `ttl` elapses since the last execution |
 | `WithCacheParams(names...)` | The query parameters that take part in the cache key, as for a page |
 | `WithStaticParams(fn)` | The placeholder values a static build writes a `{param}` pattern for |
-| `WithDependency(tags...)` | Tags every response from this document carries |
+| `WithDependencyTags(tags...)` | Tags every response from this document carries |
 | `WithRedirect(from, to, status)` | A source pattern that redirects here |
 | `WithPermanentRedirect(from, to)` | The same, as a 301 |
 | `Build()` / `BuildErr()` | The document, and whatever errors the chain accumulated |
@@ -204,15 +204,14 @@ if err := app.InvalidateTags(ctx, "blog:posts"); err != nil {
 }
 ```
 
-## Plugins see four hooks, not seven
+## Plugins see three hooks, not five
 
-A document dispatches `OnDocumentRendered`, `OnCacheWrite`, `OnCacheInvalidate`
-and `OnError`. It does **not** dispatch `OnPageResolved`, `OnBeforeRender` or
-`OnAfterRender`.
+A document dispatches `OnDocumentRendered`, `OnCacheInvalidate` and `OnError`. It
+does **not** dispatch `OnBeforeRender` or `OnAfterRender`.
 
-The reason is that those three events are about a page render, and no page is
+The reason is that those events are about a page render, and no page is
 rendered. `AfterRenderEvent.HTML` would be a lie for a zip file or a JPEG, and
-`PageResolvedEvent.Page` has no value to carry. A plugin that post-processes a
+`BeforeRenderEvent.Page` has no value to carry. A plugin that post-processes a
 document body does it in `OnDocumentRendered`, which carries the bytes, the
 content type and the locale, and runs before the body is cached, ETagged or
 served — so what is stored is what the plugin produced. A plugin that stamps every
@@ -255,9 +254,8 @@ cache key, so the two feeds are two entries.
 The static build writes each locale where it is served: the feed above becomes
 `<OutDir>/feed.xml` and `<OutDir>/tr/feed.xml`, so one pattern in two locales is
 two files. (Two tasks that still resolve to one file — `WithStaticParams` listing
-the same values twice — are detected, and the later one is recorded in
-`Report.Skipped` as `collage.ErrDuplicateOutputPath` rather than letting two
-goroutines race to write one file.)
+the same values twice — are detected, and so is a document and a page that resolve to one file. The build
+stops with `collage.ErrOutputPathCollision` before anything renders.)
 
 ## Registration
 
@@ -273,7 +271,7 @@ coin toss at request time.
 | `collage.ErrNoDocumentHandler` | Neither a handler nor a body |
 | `collage.ErrConflictingData` | Both a handler and a body |
 | `collage.ErrInvalidPath` | A path pattern not starting with `/` |
-| `collage.ErrMissingTTL` | `Incremental` with no positive TTL |
+| `collage.ErrInvalidTTL` | `Incremental` with no positive TTL |
 | `collage.ErrDuplicateDocument` | A name another document already holds |
 | `collage.ErrDuplicateRoute` | A path a page or another document already claims |
 | `collage.ErrAppStarted` | Registration after the application started |
@@ -322,8 +320,7 @@ It works as it does for a page; see [the CLI guide](cli.md#pages-with-a-param-in
 **A static build runs plugins on documents**, as it does on pages. The builder goes
 through `App.RenderDocumentPath`, not through `App.Handler()`, but that starts the
 application first — plugin `Init` included — and dispatches `OnDocumentRendered`,
-so a minified feed on the server is a minified feed in the export. `OnCacheWrite`
-does not fire, since a build writes files rather than cache entries. Like a page, a
+so a minified feed on the server is a minified feed in the export. Like a page, a
 document that declared query parameters it reads is written without a query and
 listed in `Report.Warnings`.
 
@@ -333,7 +330,7 @@ Stated so you do not go looking for them:
 
 - **No templating, no fragments, no slots.** By design — see "Why not a page".
 - **No page render hooks.** `OnDocumentRendered` is the one a document gets; see
-  "Plugins see four hooks, not seven".
+  "Plugins see three hooks, not five".
 - **No `Range` requests.** A document's body is produced in full, in memory, and
   served in full. Files that want seeking — audio, video, large downloads — are
   [assets](assets.md), which are served with `http.ServeContent` and do support

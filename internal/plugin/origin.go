@@ -9,9 +9,8 @@ import (
 )
 
 // ErrInvalidOrigin is returned by ParseOrigin for anything that is not a bare
-// origin. pkg/collage exports it as ErrInvalidBaseURL, the error Config.BaseURL
-// is refused with.
-var ErrInvalidOrigin = errors.New("collage: BaseURL must be a bare origin, scheme://host[:port]")
+// origin. pkg/collage exports it as ErrInvalidOrigin.
+var ErrInvalidOrigin = errors.New("collage: invalid origin: want scheme://host[:port] with no path, query or fragment")
 
 // ParseOrigin checks that raw is a bare origin — an http or https scheme, a host,
 // and nothing else: no path beyond "/", no query, no fragment, no user info — and
@@ -50,17 +49,4 @@ func hasHostname(origin string) bool {
 // plugin knows has Config.BaseURL's origin.
 type OriginResolver interface {
 	Origin(ctx context.Context, host string) (origin string, ok bool)
-}
-
-// Origins is a capability of the Host and ConfigHost a plugin receives: reach it
-// with a type assertion, host.(collage.Origins). It is how a plugin that writes
-// absolute URLs outside a render — an invalidation, a command — learns a host's
-// origin, and whether origins vary by host at all.
-type Origins interface {
-	// OriginFor is host's origin: an OriginResolver's, else Config.BaseURL, which
-	// may be "".
-	OriginFor(ctx context.Context, host string) string
-	// Dynamic reports whether a plugin implementing OriginResolver is registered,
-	// so an empty Config.BaseURL is not, by itself, a misconfiguration.
-	Dynamic() bool
 }

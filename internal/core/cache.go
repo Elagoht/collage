@@ -95,7 +95,7 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 		return disk, nil
 
 	default:
-		return nil, fmt.Errorf("%w: %q", ErrUnsupportedCache, cfg.Cache.Type)
+		return nil, fmt.Errorf("%w: %q", ErrInvalidCacheType, cfg.Cache.Type)
 	}
 }
 

@@ -103,7 +103,7 @@ func (d *Document) PathFor(locale string) (string, bool) {
 // Validate reports whether the document is coherent enough to register. It returns
 // ErrNilDocument, ErrEmptyName, ErrEmptyContentType, ErrNoDocumentHandler (neither a Handler nor a
 // Body), ErrConflictingData (both),
-// ErrInvalidPath, ErrInvalidTTL, ErrMissingTTL, or a redirect's own error.
+// ErrInvalidPath, ErrInvalidTTL, or a redirect's own error.
 func (d *Document) Validate() error {
 	if d == nil {
 		return ErrNilDocument
@@ -125,14 +125,11 @@ func (d *Document) Validate() error {
 			return fmt.Errorf("%w: document %q locale %q pattern %q", ErrInvalidPath, d.Name, locale, pattern)
 		}
 	}
-	if d.CacheTTL < 0 {
+	if d.CacheTTL < 0 || (d.Strategy == StrategyIncremental && d.CacheTTL == 0) {
 		return fmt.Errorf("%w: document %q", ErrInvalidTTL, d.Name)
 	}
-	if d.Strategy == StrategyIncremental && d.CacheTTL <= 0 {
-		return fmt.Errorf("%w: document %q", ErrMissingTTL, d.Name)
-	}
 	for _, redirect := range d.Redirects {
-		if err := redirect.Validate(); err != nil {
+		if err := ValidateRedirect(redirect); err != nil {
 			return fmt.Errorf("collage: document %q: %w", d.Name, err)
 		}
 	}

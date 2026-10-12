@@ -38,9 +38,9 @@ func FuzzMatch(f *testing.F) {
 		"/a%00b", "/\t/evil.com", "/blog/x/", "//evil.com", "/%09/x",
 		"/blog/x.md", "/blog/.md", "/blog/...md", "/blog/..md", "/old/x.html", "/old/%2F.html", "/tr/blog/x.md", "/post-1",
 	} {
-		f.Add(seed, false, false)
+		f.Add(seed, false)
 	}
-	f.Fuzz(func(t *testing.T, target string, prefixDefault, disable bool) {
+	f.Fuzz(func(t *testing.T, target string, prefixDefault bool) {
 		if !strings.HasPrefix(target, "/") {
 			return
 		}
@@ -48,12 +48,9 @@ func FuzzMatch(f *testing.F) {
 		if err != nil {
 			return
 		}
-		rt := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr", "sk"}, PrefixDefault: prefixDefault, DisablePathLocale: disable})
-		// With path locales off nothing reaches "tr", and a path there is refused.
+		rt := New(LocaleOptions{Default: "en", Supported: []string{"en", "tr", "sk"}, PrefixDefault: prefixDefault})
 		inTR := func(paths map[string]string) map[string]string {
-			if !disable {
-				paths["tr"] = paths["en"]
-			}
+			paths["tr"] = paths["en"]
 			return paths
 		}
 		for _, page := range []*types.Page{
