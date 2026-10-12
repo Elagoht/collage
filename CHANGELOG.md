@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.61.2
+
+One fix in plugin configuration. No exported name changed.
+
+### Fixed
+
+- **A list in plugins-config.json replaces the plugin's default list whole.**
+  `PluginConfig` decoded a section's array over the Go defaults' elements, so a
+  field an element left out kept the Go element's value: a Go font
+  `{A, 700, italic}` and a JSON font `{"family": "B", "file": "b.ttf"}` came back
+  as B in bold italic, and a tenant listed in JSON without hosts took the hosts
+  of the Go tenant it landed on. The decode also wrote into the caller's slices
+  and maps. A top-level list the section has now replaces the default with new
+  elements, a top-level map gets the section's entries in a copy, and neither
+  touches the caller's memory, on success or on a malformed section.
+
 ## v0.61.1
 
 Two test helpers for plugin authors and three fixes. Additions only: no exported

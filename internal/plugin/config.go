@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // ConfigReader is what PluginConfig reads a plugin's configuration through. Its
@@ -29,15 +31,16 @@ func (s ConfigSource) pluginConfig() (json.RawMessage, string) {
 
 // PluginConfig returns the plugin's configuration decoded over defaults. With no
 // section — or an empty or null one — defaults come back unchanged; a section is
-// decoded over a copy of them, so what it leaves out keeps its default. A map or
-// slice inside defaults is filled in place, as decoding into a pointer always
-// did. A malformed section is an error, and defaults come back with it: the
+// decoded over a copy of them, so what it leaves out keeps its default. A
+// top-level list the section has replaces the default list, element and all; a
+// top-level map gets the section's entries added to a copy of the default's.
+// Neither is written into the caller's memory. A malformed section is an error, and defaults come back with it: the
 // operator wrote something, and running on defaults silently would hide it.
 // What comes back depends on how it is malformed. A section that is not JSON
 // leaves defaults untouched. A value of the wrong type fails while decoding, and
-// decoding the rest goes on: defaults' plain fields come back as they were, but
-// its maps may hold entries from the section and its slices' elements may be
-// written over.
+// decoding the rest goes on, into the copy: defaults come back with their
+// top-level lists and maps as they were (a map inside a nested object may still
+// hold entries from the section).
 //
 // A value that fails to decode is named by its top-level key when the section is
 // an object: `collage: elagoht/fail2ban: "banTime": …`.
@@ -53,7 +56,7 @@ func PluginConfig[T any](r ConfigReader, defaults T) (T, error) {
 	if len(raw) == 0 {
 		return defaults, nil
 	}
-	out := defaults
+	out := detach(defaults, raw)
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {
@@ -120,4 +123,61 @@ func failingMember[T any](raw []byte) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// detach copies defaults so decoding raw over the copy never writes into the
+// caller's memory: a top-level slice the section has is dropped, so the section's
+// list replaces it with new elements (encoding/json would otherwise decode each
+// element over the default's, keeping fields the element leaves out), and a
+// top-level map is cloned, so the section's entries join the defaults' in a map of
+// the copy's own.
+func detach[T any](defaults T, raw []byte) T {
+	out := defaults
+	v := reflect.ValueOf(&out).Elem()
+	if v.Kind() != reflect.Struct {
+		return out
+	}
+	var members map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &members) // not an object: Decode reports it
+	for _, field := range reflect.VisibleFields(v.Type()) {
+		if !field.IsExported() || field.Anonymous {
+			continue
+		}
+		key := field.Name
+		if tag, _, _ := strings.Cut(field.Tag.Get("json"), ","); tag == "-" {
+			continue
+		} else if tag != "" {
+			key = tag
+		}
+		f, err := v.FieldByIndexErr(field.Index)
+		if err != nil || !f.CanSet() {
+			continue // behind a nil embedded pointer
+		}
+		switch f.Kind() {
+		case reflect.Slice:
+			if hasMember(members, key) {
+				f.SetZero()
+			}
+		case reflect.Map:
+			if !f.IsNil() {
+				clone := reflect.MakeMapWithSize(f.Type(), f.Len())
+				for it := f.MapRange(); it.Next(); {
+					clone.SetMapIndex(it.Key(), it.Value())
+				}
+				f.Set(clone)
+			}
+		}
+	}
+	return out
+}
+
+// hasMember reports whether members has key, matched case-insensitively as
+// encoding/json matches keys to fields.
+func hasMember(members map[string]json.RawMessage, key string) bool {
+	for name := range members {
+		if strings.EqualFold(name, key) {
+			return true
+		}
+	}
+	return false
 }

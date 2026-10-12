@@ -806,13 +806,17 @@ its default: "not configured" and "configured to the zero value" are different
 statements, and only this can tell them apart. A malformed section is an error naming
 the plugin and, when one member's value is what fails, its key —
 `collage: you/greeting: "limit": json: cannot unmarshal string …` — returned with
-the defaults. A section that is not JSON at all leaves them untouched. A value of the
-wrong type (`"limit": "three"`) fails while the section is being decoded, and the
-rest of it is still decoded: the plain fields come back as the defaults had them,
-but a map inside the defaults may hold entries from the section and a slice's
-elements may be written over. A map or slice inside the
-defaults is decoded into in place, so write the defaults as a literal in the call
-rather than sharing one value between calls.
+the defaults. A section that is not JSON at all leaves them untouched. A value of
+the wrong type (`"limit": "three"`) fails while the section is being decoded,
+into a copy, so the defaults come back as they were.
+
+A list in the section replaces the default list whole: `"fonts": [{"family":
+"B", "file": "b.ttf"}]` over a Go default of one bold font gives one font, B,
+with the weight it was given in JSON (none), not the Go font's. A map in the
+section adds its entries to a copy of the default map. Neither writes into the
+caller's slices or maps. Below the top level, a section's object is decoded over
+the default's, so a nested map is still filled in place: write the defaults as
+a literal in the call rather than sharing one value between calls.
 
 **A key the plugin's options do not have is an error too**, at whatever depth,
 and so is one named after a field tagged `json:"-"`: `collage: elagoht/robots:

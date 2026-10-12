@@ -73,3 +73,57 @@ func TestPluginConfig_SyntaxError(t *testing.T) {
 		t.Errorf("got %+v, want the defaults untouched", got)
 	}
 }
+
+type font struct {
+	Family string `json:"family"`
+	File   string `json:"file"`
+	Weight int    `json:"weight"`
+}
+
+type withLists struct {
+	Fonts []font            `json:"fonts"`
+	Extra map[string]string `json:"extra"`
+	Embedded
+}
+
+type Embedded struct {
+	Skip []string `json:"skip"`
+}
+
+// A list the section has replaces the default list: its elements are new values,
+// not the defaults' elements written over, so a field an element leaves out is
+// its zero value, and the caller's slices and maps are not touched.
+func TestPluginConfig_ListsReplaceDefaults(t *testing.T) {
+	defaults := withLists{
+		Fonts:    []font{{Family: "A", File: "a.ttf", Weight: 700}},
+		Extra:    map[string]string{"a": "1"},
+		Embedded: Embedded{Skip: []string{"/a", "/b"}},
+	}
+	got, err := PluginConfig(source(`{"fonts":[{"family":"B","file":"b.ttf"}],"extra":{"b":"2"},"skip":["/c"]}`), defaults)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Fonts) != 1 || got.Fonts[0] != (font{Family: "B", File: "b.ttf"}) {
+		t.Errorf("fonts = %+v, want only the section's font, weight unset", got.Fonts)
+	}
+	if len(got.Skip) != 1 || got.Skip[0] != "/c" {
+		t.Errorf("skip = %v, want [/c]", got.Skip)
+	}
+	if got.Extra["a"] != "1" || got.Extra["b"] != "2" {
+		t.Errorf("extra = %v, want the default entry and the section's", got.Extra)
+	}
+	if defaults.Fonts[0] != (font{Family: "A", File: "a.ttf", Weight: 700}) || defaults.Skip[0] != "/a" || len(defaults.Extra) != 1 {
+		t.Errorf("the caller's defaults changed: %+v", defaults)
+	}
+}
+
+// A malformed section leaves the caller's slices and maps as they were, too.
+func TestPluginConfig_MalformedLeavesDefaultsListsAlone(t *testing.T) {
+	defaults := withLists{Fonts: []font{{Family: "A"}}, Extra: map[string]string{"a": "1"}}
+	if _, err := PluginConfig(source(`{"fonts":[{"family":"B"}],"extra":{"b":"2"},"skip":"x"}`), defaults); err == nil {
+		t.Fatal("want an error")
+	}
+	if defaults.Fonts[0].Family != "A" || len(defaults.Extra) != 1 {
+		t.Errorf("the caller's defaults changed: %+v", defaults)
+	}
+}

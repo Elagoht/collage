@@ -62,6 +62,7 @@ func TestNoUnicodeFoldingOutsideThisPackage(t *testing.T) {
 		"internal/template/funcs.go": `the "upper" and "lower" template functions fold a page's text, where Unicode is right`,
 		"internal/cli/build.go":      "a yes or no typed at the terminal",
 		"internal/router/action.go":  "a method name at registration, the application's own",
+		"internal/plugin/config.go":  "a plugins-config.json key matched to a field as encoding/json matches it, which folds Unicode",
 	}
 	forbidden := map[string]bool{
 		"strings.EqualFold": true, "strings.ToLower": true, "strings.ToUpper": true,
