@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.61.5
+
+### Changed
+
+- **`collage new` puts the home page at the top of `pages/`, with no `landing`
+  area.** The page is `pages/home.go` and its content `fragments/pages/home.go`,
+  imported in `routes.go` as `"<module>/pages"` and registered as `pages.Home()`
+  — the layout `collage add page <name>` writes for a page with no area. Before,
+  they were `pages/landing/home.go` and `fragments/pages/landing/home.go` under a
+  `landingpages` import. Existing projects need no change.
+
 ## v0.61.4
 
 ### Fixed

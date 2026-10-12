@@ -314,12 +314,12 @@ func TestAdd_TemplateFileUsesTheConfiguredRoot(t *testing.T) {
 func TestAdd_InsertsIntoListsOfEveryShape(t *testing.T) {
 	for name, tt := range map[string]struct{ register, want string }{
 		"one-line literal": {
-			register: "\tfor _, p := range []*collage.Page{landingpages.Home()} {\n\t\t_ = app.RegisterPage(p)\n\t}\n\treturn nil",
-			want:     "[]*collage.Page{landingpages.Home(), blogpages.Post()}",
+			register: "\tfor _, p := range []*collage.Page{pages.Home()} {\n\t\t_ = app.RegisterPage(p)\n\t}\n\treturn nil",
+			want:     "[]*collage.Page{pages.Home(), blogpages.Post()}",
 		},
 		"one-line call": {
-			register: "\treturn app.Register(landingpages.Home())",
-			want:     "app.Register(landingpages.Home(), blogpages.Post())",
+			register: "\treturn app.Register(pages.Home())",
+			want:     "app.Register(pages.Home(), blogpages.Post())",
 		},
 		"empty call": {
 			register: "\treturn app.Register()",
@@ -330,7 +330,7 @@ func TestAdd_InsertsIntoListsOfEveryShape(t *testing.T) {
 			dir := t.TempDir()
 			writeFiles(t, dir, map[string]string{
 				"go.mod": "module site\n",
-				"routes.go": "package main\n\nimport (\n\tlandingpages \"site/pages/landing\"\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\nfunc register(app *collage.App) error {\n" +
+				"routes.go": "package main\n\nimport (\n\t\"site/pages\"\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\nfunc register(app *collage.App) error {\n" +
 					tt.register + "\n}\n",
 			})
 			if code, _, stderr := add(t, dir, "page", "blog/post"); code != 0 {
@@ -340,7 +340,7 @@ func TestAdd_InsertsIntoListsOfEveryShape(t *testing.T) {
 			if !strings.Contains(routes, tt.want) {
 				t.Errorf("routes.go lacks %s:\n%s", tt.want, routes)
 			}
-			wantInOrder(t, routes, `blogpages "site/pages/blog"`, `landingpages "site/pages/landing"`, `"github.com/Elagoht/collage/pkg/collage"`)
+			wantInOrder(t, routes, `"site/pages"`, `blogpages "site/pages/blog"`, `"github.com/Elagoht/collage/pkg/collage"`)
 		})
 	}
 }
