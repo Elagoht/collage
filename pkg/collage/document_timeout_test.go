@@ -17,9 +17,17 @@ import (
 // TemplateConfig.Timeout engine.
 func timeoutDocApp(t *testing.T, engine, own, wait time.Duration) *collage.App {
 	t.Helper()
+	return timeoutDocAppWith(t, engine, own, wait, false)
+}
+
+// timeoutDocAppWith is timeoutDocApp, with the document Static and the cache on
+// when static is set.
+func timeoutDocAppWith(t *testing.T, engine, own, wait time.Duration, static bool) *collage.App {
+	t.Helper()
 	app, err := collage.New(&collage.Config{
 		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>x</p>`)}}, Root: "t", Timeout: engine},
+		Cache:    collage.CacheConfig{Enabled: static},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -34,6 +42,9 @@ func timeoutDocApp(t *testing.T, engine, own, wait time.Duration) *collage.App {
 			}
 		}).
 		WithTimeout(own)
+	if static {
+		b.Static()
+	}
 	doc := b.Build()
 	if err := b.BuildErr(); err != nil {
 		t.Fatal(err)
@@ -98,5 +109,17 @@ func TestDocumentTimeout_Negative(t *testing.T) {
 	literal := &collage.Document{Name: "d", ContentType: "text/plain", Paths: map[string]string{"": "/d.txt"}, Body: []byte("x"), Timeout: -time.Second}
 	if err := literal.Validate(); !errors.Is(err, collage.ErrInvalidTimeout) {
 		t.Errorf("Validate() = %v, want ErrInvalidTimeout", err)
+	}
+}
+
+// A cached document's render, shared by every reader, keeps its own long
+// timeout too.
+func TestDocumentTimeout_OwnLongTimeoutWinsWhenCached(t *testing.T) {
+	app := timeoutDocAppWith(t, 10*time.Millisecond, time.Minute, 100*time.Millisecond, true)
+
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/slow.txt", nil))
+	if rec.Code != http.StatusOK || rec.Body.String() != "done" {
+		t.Errorf("GET /slow.txt = %d %q, want 200 done", rec.Code, rec.Body)
 	}
 }

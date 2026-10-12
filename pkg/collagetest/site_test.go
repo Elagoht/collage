@@ -175,6 +175,9 @@ func TestSite_Logs(t *testing.T) {
 		_ = site.Logs.String()
 	}
 	wg.Wait()
+	if !site.Logs.Has(slog.LevelDebug, "/missing") {
+		t.Errorf("Logs lack the debug record of a route miss:\n%s", site.Logs)
+	}
 	if !strings.Contains(site.Logs.String(), "level=WARN") {
 		t.Errorf("String() = %q, want text records", site.Logs.String())
 	}
