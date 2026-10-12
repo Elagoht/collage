@@ -187,6 +187,19 @@ func (b *DocumentBuilder) WithDependencyTags(tags ...string) *DocumentBuilder {
 	return b
 }
 
+// WithTimeout bounds how long the document's handler may run, on a live request
+// and in a static build alike; zero, the default, means TemplateConfig.Timeout. A
+// negative d records ErrInvalidTimeout, retrievable via BuildErr, and leaves the
+// document's Timeout unchanged.
+func (b *DocumentBuilder) WithTimeout(d time.Duration) *DocumentBuilder {
+	if d < 0 {
+		b.errs = append(b.errs, fmt.Errorf("%w: document %q timeout %s", ErrInvalidTimeout, b.document.Name, d))
+		return b
+	}
+	b.document.Timeout = d
+	return b
+}
+
 // Build returns the Document constructed so far. It never panics and never returns
 // nil for a non-nil builder, even if WithX calls recorded errors along the way, or
 // if neither a handler nor a body was ever set (which records ErrNoDocumentHandler);

@@ -116,7 +116,8 @@ var (
 	// ErrConflictingData is returned when a fragment's data is set twice (WithData
 	// called twice with data), or a document sets both WithBody and WithHandler.
 	ErrConflictingData = types.ErrConflictingData
-	// ErrInvalidTimeout is returned when a fragment's Timeout is negative.
+	// ErrInvalidTimeout is returned when a fragment's or a document's Timeout
+	// is negative.
 	ErrInvalidTimeout = types.ErrInvalidTimeout
 	// ErrInvalidTTL is returned when a page's or document's CacheTTL is negative, or
 	// zero or less under StrategyIncremental: Incremental(0) records it.

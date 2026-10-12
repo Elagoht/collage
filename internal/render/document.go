@@ -30,9 +30,8 @@ type DocumentResult struct {
 }
 
 // ExecuteDocument runs doc's handler — or, for a document with none, takes its
-// fixed Body — with panic containment and the engine's
-// default timeout — Document has no per-document Timeout field, unlike Fragment, so
-// there is no effective timeout to resolve — and returns its body, content type and
+// fixed Body — with panic containment and the document's own Timeout, or the
+// engine's default when it sets none, and returns its body, content type and
 // collected tags. The handler runs on the calling goroutine — see Execute for why a
 // spawned one would leak, and for the limitation that a handler ignoring its context
 // can still overrun.
@@ -53,7 +52,7 @@ func (e *SlotEngine) ExecuteDocument(ctx context.Context, doc *types.Document, r
 	if doc.Handler == nil {
 		body = doc.Body
 	} else {
-		err = Execute(ctx, e.defaultTimeout, func(ctx context.Context) error {
+		err = Execute(ctx, documentTimeout(doc, e.defaultTimeout), func(ctx context.Context) error {
 			var handlerErr error
 			body, tags, handlerErr = doc.Handler(ctx, rc.WithContext(ctx))
 			return handlerErr
@@ -76,4 +75,13 @@ func (e *SlotEngine) ExecuteDocument(ctx context.Context, doc *types.Document, r
 
 	result.Body = body
 	return result, nil
+}
+
+// documentTimeout is doc's own Timeout when it sets one, otherwise def: the
+// document counterpart of types.EffectiveTimeout.
+func documentTimeout(doc *types.Document, def time.Duration) time.Duration {
+	if doc.Timeout > 0 {
+		return doc.Timeout
+	}
+	return def
 }

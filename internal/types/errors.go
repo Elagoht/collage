@@ -39,7 +39,8 @@ var ErrMissingContent = errors.New("collage: missing content")
 // wrapping error says which clashed.
 var ErrConflictingData = errors.New("collage: conflicting data")
 
-// ErrInvalidTimeout is returned when a fragment's Timeout is negative.
+// ErrInvalidTimeout is returned when a fragment's or a document's Timeout is
+// negative.
 var ErrInvalidTimeout = errors.New("collage: invalid timeout")
 
 // ErrInvalidTTL is returned when a page's or document's CacheTTL is negative, or
