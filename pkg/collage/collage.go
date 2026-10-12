@@ -252,11 +252,13 @@ func IsHTTPS(r *http.Request) bool { return httpx.IsHTTPS(r) }
 // StreamCloser is implemented by a plugin serving connections that never end by
 // themselves — an event stream, a WebSocket. CloseStreams runs when shutdown
 // begins, before the server waits for open requests, which a stream never ends.
+// Only a plugin whose Init succeeded is asked.
 type StreamCloser = plugin.StreamCloser
 
 // DrainHook is implemented by a plugin that must know the server is about to
 // stop taking traffic. OnDrain is called once, when the drain starts and before
-// ServerConfig.DrainDelay; it must not block.
+// ServerConfig.DrainDelay; it must not block. Only a plugin whose Init succeeded
+// is told: a Shutdown before Start, or after a failed Start, tells none.
 type DrainHook = plugin.DrainHook
 
 // ServeHook is implemented by a plugin that does work only while the

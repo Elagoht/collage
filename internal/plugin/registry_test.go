@@ -34,6 +34,13 @@ func (l *callLog) add(name string) {
 	l.calls = append(l.calls, name)
 }
 
+// reset forgets the calls recorded so far.
+func (l *callLog) reset() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.calls = nil
+}
+
 func (l *callLog) get() []string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -519,6 +526,8 @@ func TestRegistry_CloseStreams(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	mustInit(t, r)
+	log.reset()
 	r.CloseStreams()
 	got := strings.Join(log.get(), ",")
 	if got != "a.CloseStreams,d.CloseStreams" {

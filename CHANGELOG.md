@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.61.4
+
+### Fixed
+
+- **Only plugins whose `Init` succeeded hear of a drain or are asked to close
+  their streams.** A `Shutdown` before `Start`, or after a `Start` that failed,
+  used to call `OnDrain` and `CloseStreams` on plugins that never ran. A plugin
+  reused for a second start — as `collagetest.TrySite` followed by `NewSite`
+  does with the same plugin value since v0.61.3 shuts a failed site down — then
+  started already draining: collage-health answered `/readyz` with 503.
+
 ## v0.61.3
 
 Small fixes from the plugin sealing reviews. No exported name changed.
