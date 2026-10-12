@@ -1196,6 +1196,50 @@ func (s *startRecorder) Start() error {
 	return nil
 }
 
+// TestBuild_OutDirRepointedToSafeTargetBuildsThere checks that an OutDir symlink
+// user code re-points while the build runs — a deploy plugin's Init switching
+// dist to a new release directory — is built into where it now points, when
+// that is not dangerous: only a dangerous target is refused.
+func TestBuild_OutDirRepointedToSafeTargetBuildsThere(t *testing.T) {
+	requireSymlinkSupport(t)
+
+	parent := resolvedTempDir(t)
+	first := filepath.Join(parent, "release-41")
+	second := filepath.Join(parent, "release-42")
+	for _, dir := range []string{first, second} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	link := filepath.Join(parent, "dist")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	page := newTestPage("home", types.StrategyStatic, map[string]string{"en": "/"})
+	app := &startRecorder{fakeRenderer: &fakeRenderer{pages: []*types.Page{page}, defaultLocale: "en"}, onStart: func() {
+		if err := os.Remove(link); err != nil {
+			t.Errorf("remove link: %v", err)
+		}
+		if err := os.Symlink(second, link); err != nil {
+			t.Errorf("re-point link: %v", err)
+		}
+	}}
+	b, err := New(app, Options{OutDir: link})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := b.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := readFile(t, filepath.Join(second, "index.html")); got != "<html>en|/</html>" {
+		t.Errorf("new target's index.html = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(first, "index.html")); err == nil {
+		t.Error("the old target was written to")
+	}
+}
+
 // TestBuild_OutDirRecheckedBeforeClean checks that OutDir is checked again just
 // before it is cleaned: user code runs between the first check and the clean, and
 // an OutDir symlink it re-points at a repository root must not be emptied.

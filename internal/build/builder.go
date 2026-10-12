@@ -362,8 +362,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	// plugins' Init and enumerating the routes runs each StaticParams, both user
 	// code that may reach the network, and a build that is going to be refused
 	// must not have run either first.
-	outDirChecked, err := b.checkOutDir()
-	if err != nil {
+	if _, err := b.checkOutDir(); err != nil {
 		report.Duration = time.Since(start)
 		return report, err
 	}
@@ -395,7 +394,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	}
 	report.Skipped = skipped
 
-	outDirResolved, err := b.prepareOutDir(outDirChecked)
+	outDirResolved, err := b.prepareOutDir()
 	if err != nil {
 		// The returned error is this failure alone, as for every early stop, but
 		// what enumerating the routes found is still worth reading: the report
@@ -1472,19 +1471,20 @@ func (b *Builder) checkOutDir() (string, error) {
 	return resolved, nil
 }
 
-// prepareOutDir empties resolved — the path checkOutDir accepted — when
-// Options.Clean is set, creates it, and returns it resolved once more for the rest
-// of Build to write under and check escapes against.
-func (b *Builder) prepareOutDir(resolved string) (string, error) {
-	// Checked again: user code has run since checkOutDir — Init, StaticParams —
-	// and a symlink it moved must not turn an accepted OutDir into a refused one
-	// on the way to being cleaned.
-	again, err := b.checkOutDir()
+// prepareOutDir checks OutDir again, empties it when Options.Clean is set, creates
+// it, and returns it resolved once more for the rest of Build to write under and
+// check escapes against.
+//
+// The check is repeated rather than its earlier result reused: user code has run
+// since Build first checked — plugins' Init, StaticParams — and may have changed
+// where OutDir points, re-pointing a "dist" symlink at a new release or changing
+// the working directory a relative OutDir resolves against. The build goes where
+// OutDir points now, and a target that is dangerous now is refused now, before
+// anything is cleaned.
+func (b *Builder) prepareOutDir() (string, error) {
+	resolved, err := b.checkOutDir()
 	if err != nil {
 		return "", err
-	}
-	if again != resolved {
-		return "", fmt.Errorf("%w: %s now resolves to %s", ErrDangerousOutDir, resolved, again)
 	}
 	if b.opts.Clean {
 		if err := cleanDirContents(resolved); err != nil {
