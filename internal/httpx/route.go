@@ -3,6 +3,8 @@ package httpx
 import (
 	"context"
 	"net/http"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // routeKind names what kind of route a request resolved to. It exists for exactly
@@ -109,21 +111,24 @@ func (ref *routeRef) resolvedPage(name string) {
 func (k routeKind) String() string {
 	switch k {
 	case routeKindDocument:
-		return "document"
+		return types.RouteKindDocument
 	case routeKindMount:
-		return "mount"
+		return types.RouteKindMount
 	case routeKindAction:
-		return "action"
+		return types.RouteKindAction
 	case routeKindHandler:
-		return "handler"
+		return types.RouteKindHandler
 	default:
-		return "page"
+		return types.RouteKindPage
 	}
 }
 
 // Route is what a request resolved to, as RouteInfo reports it.
 type Route struct {
-	// Kind is "page", "document", "action", "mount" or "handler".
+	// Kind is what the request resolved to: RouteKindPage, RouteKindDocument,
+	// RouteKindAction, RouteKindMount or RouteKindHandler. The set may grow, so
+	// a comparison names the kinds it handles rather than assuming it has seen
+	// them all.
 	Kind string
 	// Name is the page's, document's or action's registered name, or the mount's
 	// or handler's prefix.

@@ -218,7 +218,8 @@ type Route = httpx.Route
 
 // RouteInfo reports what the request carrying ctx resolved to, pattern and locale
 // included — a bounded label for a span or a metric, for pages, documents and
-// actions alike. Kind is "page", "document", "action", "mount" or "handler"; Name
+// actions alike. Kind is RouteKindPage, RouteKindDocument, RouteKindAction,
+// RouteKindMount or RouteKindHandler, a set that may grow; Name
 // is the registered name, or the prefix of a mount or handler. The zero Route
 // means it resolved to nothing, or has not yet.
 func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
@@ -237,6 +238,16 @@ func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
 // RemoteAddr. A plugin keying anything on the client — a rate limit, a ban —
 // should use it rather than RemoteAddr.
 func ClientIP(r *http.Request) netip.Addr { return httpx.ClientIP(r) }
+
+// IsHTTPS reports whether r arrived over TLS: on its own connection, or at a
+// proxy that says so in X-Forwarded-Proto — whose first entry counts, when a
+// proxy appends to a list. With ServerConfig.TrustedProxies listed the header
+// is believed only from one of them, so a client cannot claim a TLS connection
+// it does not have; with none listed it is believed from anyone, as for a
+// request outside an application. It is the decision the forgery guard makes
+// for its cookie's Secure flag; a plugin setting a cookie's Secure flag, or
+// sending Strict-Transport-Security, should use it rather than read the header.
+func IsHTTPS(r *http.Request) bool { return httpx.IsHTTPS(r) }
 
 // StreamCloser is implemented by a plugin serving connections that never end by
 // themselves — an event stream, a WebSocket. CloseStreams runs when shutdown
@@ -322,7 +333,10 @@ type ConfigReader = plugin.ConfigReader
 //
 //	cfg, err := collage.PluginConfig(host, Config{Limit: 10, Window: time.Minute})
 //
-// No section leaves defaults as they are; a malformed one is an error.
+// No section leaves defaults as they are; a malformed one is an error, and so is
+// a key T does not have — a misspelt or renamed key stops the application at
+// Configure or Init with an error naming the plugin and the key, instead of
+// leaving the option at its default without a word.
 func PluginConfig[T any](host ConfigReader, defaults T) (T, error) {
 	return plugin.PluginConfig(host, defaults)
 }
@@ -369,7 +383,8 @@ type InvalidatedEntry = plugin.InvalidatedEntry
 type OriginResolver = plugin.OriginResolver
 
 // ParseOrigin checks that raw is a bare origin, scheme://host[:port], and returns
-// it without a trailing slash; anything else is ErrInvalidOrigin.
+// it without a trailing slash; anything else — a port with no host,
+// "https://:8080", included — is ErrInvalidOrigin.
 func ParseOrigin(raw string) (string, error) { return plugin.ParseOrigin(raw) }
 
 // ErrorEvent describes a failure encountered while serving a request.

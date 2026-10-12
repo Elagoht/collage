@@ -57,6 +57,11 @@ type Document struct {
 	DependencyTags []string
 	// Redirects are source patterns that redirect to this document.
 	Redirects []*Redirect
+	// Timeout bounds how long this document's handler may run, on a live
+	// request and in a static build alike. Zero means no document-specific
+	// timeout: the handler gets TemplateConfig.Timeout, the application's
+	// default. WithTimeout sets it.
+	Timeout time.Duration
 	// buildErr is what the builder that made this value recorded; see
 	// RecordBuildErr. Registration refuses a value that carries one.
 	buildErr error
@@ -124,6 +129,9 @@ func (d *Document) Validate() error {
 		if pattern := d.Paths[locale]; !strings.HasPrefix(pattern, "/") {
 			return fmt.Errorf("%w: document %q locale %q pattern %q", ErrInvalidPath, d.Name, locale, pattern)
 		}
+	}
+	if d.Timeout < 0 {
+		return fmt.Errorf("%w: document %q has negative timeout", ErrInvalidTimeout, d.Name)
 	}
 	if d.CacheTTL < 0 || (d.Strategy == StrategyIncremental && d.CacheTTL == 0) {
 		return fmt.Errorf("%w: document %q", ErrInvalidTTL, d.Name)

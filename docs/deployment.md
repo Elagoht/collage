@@ -298,6 +298,12 @@ trusted addresses, and the first untrusted one is the client (the leftmost, when
 every one is trusted). Empty, the default, trusts no header, and `ClientIP` is
 always `RemoteAddr`.
 
+The same list decides `collage.IsHTTPS(r)`, which the forgery guard's cookie and
+plugins setting `Secure` cookies or HSTS ask: `X-Forwarded-Proto: https` is
+believed only from a listed proxy. With the list empty it is believed from anyone,
+so a site behind a proxy is still marked HTTPS before it lists the proxy; list it
+to stop a client claiming the TLS connection it does not have.
+
 A header entry may carry a port (`9.9.9.9:4567`, `[2001:db8::1]:443`) or brackets
 (`[2001:db8::1]`), as some proxies write it; it is read as the address. An entry
 that is still not an address — `unknown`, which some proxies send — ends the walk.

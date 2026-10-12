@@ -267,10 +267,10 @@ type TemplateConfig struct {
 	// Timeout is the default data handler timeout used when a fragment sets none.
 	// Defaults to 5s.
 	//
-	// It also bounds every *document* handler, and is the only bound on one:
-	// unlike Fragment, Document has no per-route Timeout field, so this value is
-	// not merely a default there but the whole budget. Raising it for a slow
-	// fragment raises it for every sitemap and feed as well.
+	// It is also the default for every *document* handler that sets no Timeout
+	// of its own: a slow feed raises its own budget with
+	// DocumentBuilder.WithTimeout rather than this one for every fragment and
+	// document.
 	//
 	// As everywhere else in the framework, it bounds the context the handler is
 	// given, not the handler itself: one that never consults ctx.Done() can still

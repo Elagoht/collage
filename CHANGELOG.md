@@ -1,5 +1,71 @@
 # Changelog
 
+## v0.61.0
+
+Additions for plugin authors, one stricter rule and one fix. No exported name
+changed or went; one behaviour did — a plugin configuration key the plugin does
+not know is now an error (see Changed).
+
+### Added
+
+- **`collagetest.NewSite` builds a real application for a plugin's tests.** It
+  starts a collage application with the least configuration a test needs — a
+  layout with a head hoist and a content slot, a `home` page at `/`, a debug-level
+  text logger — and hands back the started `App`, a `Client` on its handler and
+  the captured `Logs`. `WithPlugins`, `WithPluginConfig`, `WithTemplates`,
+  `WithRegister`, `WithoutHome` and `WithConfig` add what a test needs; plugins'
+  `Configure` and `Init` errors fail the test at once, and the application shuts
+  down when the test ends. `TrySite` returns the error for a test that expects
+  starting to fail. `Logs.Has(level, parts...)` is safe while the site serves
+  concurrently. See [plugins](docs/plugins.md#testing-a-plugin).
+- **Named route kinds, built file kinds and pipeline stages.** `RouteKindPage`,
+  `RouteKindDocument`, `RouteKindAction`, `RouteKindMount`, `RouteKindHandler`
+  for `Route.Kind`; `BuiltPage`, `BuiltDocument`, `BuiltAsset` for
+  `BuiltFile.Kind`; `StageRoute` … `StagePanic` for `ErrorEvent.Stage`. They are
+  untyped string constants equal to the strings the engine already sends, so a
+  comparison against the literal keeps compiling; the fields stay `string`, and
+  each set may grow.
+- **`DocumentBuilder.WithTimeout` gives a document its own handler timeout.**
+  `Document.Timeout`, when set, replaces `TemplateConfig.Timeout` for that
+  document, on live requests and in static builds alike, so a slow sitemap no
+  longer raises the budget of every fragment and feed. A negative timeout is
+  `ErrInvalidTimeout`, from the builder and from `Document.Validate`.
+- **`collage.Duration` reads a duration from configuration as a string.** A
+  `type Duration time.Duration` whose JSON is `"10s"`, `"1h30m"`: a bare number,
+  which `time.Duration` reads as nanoseconds (`"banTime": 3600` is 3.6µs), is
+  refused with an error naming it, and so is a negative duration; `null` leaves
+  the default. Plugins use it for a duration in their options.
+- **`collage.IsHTTPS(r)` says whether a request arrived over TLS.** TLS on the
+  connection, or `X-Forwarded-Proto: https` — believed only from
+  `Server.TrustedProxies` when any are listed, from anyone when none are. It is
+  the decision the forgery guard's cookie already made, now one function both
+  use; plugins setting `Secure` cookies or HSTS use it instead of reading the
+  header.
+
+### Changed
+
+- **`collage.PluginConfig` refuses a key the plugin's options do not have.** A
+  misspelt or renamed key — at any depth, or one named after a `json:"-"` field —
+  stops the application at `Configure` or `Init` with
+  `collage: elagoht/robots: unknown key "dissallow" in plugins-config.json`, where
+  it used to be ignored and the option left at its default. Keys still match
+  case-insensitively. **Migration:** remove the key the error names, or rename it
+  to the one the plugin documents.
+- **A plugin configuration value that fails to decode is named by its key.**
+  `collage: elagoht/fail2ban: "banTime": write a duration as a string such as
+  "10s", not 3600`, where the message used to name the Go field.
+
+### Fixed
+
+- **A start that fails after plugin `Init` shuts the plugins down.** A mount that
+  swallows a page, or an error page never registered, used to fail `Start` with
+  every plugin left initialised; they are now shut down, once, as a failing `Init`
+  rolls back the ones before it. `App.Shutdown` shuts down only plugins whose
+  `Init` succeeded and that are not shut down already.
+- **`collage.ParseOrigin` refuses an origin with no host.** `https://:8080` was
+  accepted; it is now `ErrInvalidOrigin`, from `ParseOrigin` and from
+  `Config.BaseURL` validation, which shares it.
+
 ## v0.60.1
 
 ### Fixed

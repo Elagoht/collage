@@ -116,7 +116,8 @@ var (
 	// ErrConflictingData is returned when a fragment's data is set twice (WithData
 	// called twice with data), or a document sets both WithBody and WithHandler.
 	ErrConflictingData = types.ErrConflictingData
-	// ErrInvalidTimeout is returned when a fragment's Timeout is negative.
+	// ErrInvalidTimeout is returned when a fragment's or a document's Timeout
+	// is negative.
 	ErrInvalidTimeout = types.ErrInvalidTimeout
 	// ErrInvalidTTL is returned when a page's or document's CacheTTL is negative, or
 	// zero or less under StrategyIncremental: Incremental(0) records it.
@@ -189,8 +190,8 @@ var (
 	// "{name}" its source pattern does not capture, so it could never be substituted at
 	// match time.
 	ErrUnsubstitutedPlaceholder = router.ErrUnsubstitutedPlaceholder
-	// ErrUnsafeRedirectTarget is the failure a plugin's ErrorHook receives, under the
-	// stage "route", when a redirect's destination is not a single-slash-prefixed
+	// ErrUnsafeRedirectTarget is the failure a plugin's ErrorHook receives, under
+	// StageRoute, when a redirect's destination is not a single-slash-prefixed
 	// relative path once its placeholders are substituted — a protocol-relative
 	// "//host" or "/\host", or one carrying a control character. The framework
 	// percent-escapes every substituted value, so this reports a redirect whose own To
@@ -270,12 +271,12 @@ var (
 	// ErrInvalidGuardDecision is returned when a guard's decision cannot be
 	// written as an answer.
 	ErrInvalidGuardDecision = types.ErrInvalidGuardDecision
-	// ErrEmptyErrorPage is the error a plugin's ErrorHook receives, under the stage
-	// "error_page", when a registered error page rendered successfully but produced no
+	// ErrEmptyErrorPage is the error a plugin's ErrorHook receives, under
+	// StageErrorPage, when a registered error page rendered successfully but produced no
 	// markup. It is the failure nobody finds out about otherwise, because the client
 	// still receives a plausible-looking built-in page.
 	ErrEmptyErrorPage = httpx.ErrEmptyErrorPage
-	// ErrPanic is the error a plugin's ErrorHook receives, under the stage "panic", when
+	// ErrPanic is the error a plugin's ErrorHook receives, under StagePanic, when
 	// something panicked while serving a request and the framework recovered it into a
 	// 500. It covers a panic anywhere the request touches code the framework did not
 	// write — a Router, Cache, Metrics, or Tracer implementation, or a plugin hook — but
@@ -285,8 +286,8 @@ var (
 	// The error wraps a *PanicError as well, so errors.As reaches the panic value and
 	// the stack it was raised on, and errors.Is reaches the value when it was an error.
 	ErrPanic = httpx.ErrPanic
-	// ErrAssetFailed is the error a plugin's ErrorHook receives, under the stage
-	// "asset", when a mounted asset request completes with a status of 400 or above.
+	// ErrAssetFailed is the error a plugin's ErrorHook receives, under
+	// StageAsset, when a mounted asset request completes with a status of 400 or above.
 	// It is one sentinel for every such status — a 404 for a missing file and a 405
 	// for a disallowed method both report it — rather than one per code, since a
 	// plugin reacting to "this asset request failed" needs no finer distinction than

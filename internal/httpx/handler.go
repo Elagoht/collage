@@ -87,23 +87,23 @@ var ErrPanic = errors.New("collage: panic recovered while serving the request")
 // mount that returned normally with an error status already on the wire.
 var ErrAssetFailed = errors.New("collage: asset request failed")
 
-// Pipeline stages, as reported to plugins through ErrorEvent.Stage. The field is
-// documented as caller-defined rather than an enum, so these are the names this
-// handler happens to use.
+// Pipeline stages, as reported to plugins through ErrorEvent.Stage: the names
+// types defines once, so the public constants pkg/collage publishes for them are
+// the strings this handler sends.
 const (
-	stageRoute        = "route"
-	stageNotFound     = "not_found"
-	stageGuard        = "guard"
-	stageBeforeRender = "before_render"
-	stageBeforeAction = "before_action"
-	stageRender       = "render"
-	stageAfterRender  = "after_render"
-	stageCacheWrite   = "cache_write"
-	stageErrorPage    = "error_page"
-	stagePanic        = "panic"
-	stageAsset        = "asset"
-	stageHandler      = "handler"
-	stagePlugin       = "plugin"
+	stageRoute        = types.StageRoute
+	stageNotFound     = types.StageNotFound
+	stageGuard        = types.StageGuard
+	stageBeforeRender = types.StageBeforeRender
+	stageBeforeAction = types.StageBeforeAction
+	stageRender       = types.StageRender
+	stageAfterRender  = types.StageAfterRender
+	stageCacheWrite   = types.StageCacheWrite
+	stageErrorPage    = types.StageErrorPage
+	stagePanic        = types.StagePanic
+	stageAsset        = types.StageAsset
+	stageHandler      = types.StageHandler
+	stagePlugin       = types.StagePlugin
 )
 
 // contentTypeHTML is the Content-Type every rendered page and built-in error page

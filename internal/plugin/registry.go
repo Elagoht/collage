@@ -46,6 +46,9 @@ type Registry struct {
 	logger  *slog.Logger
 	plugins []Plugin
 	started bool
+	// initialized are the plugins whose Init succeeded and whose Shutdown has
+	// not run yet, in registration order: what Shutdown shuts down, once.
+	initialized []Plugin
 }
 
 // NewRegistry returns an empty Registry that logs through logger. A nil logger
@@ -114,33 +117,38 @@ func (r *Registry) Init(ctx context.Context, hostFor func(name string) Host) err
 	plugins := append([]Plugin(nil), r.plugins...)
 	r.mu.Unlock()
 
-	for i, p := range plugins {
+	for _, p := range plugins {
 		// One host per plugin, not one shared: a plugin's Config call has to find
 		// its own section, and the section is chosen by the plugin's name.
 		host := hostFor(p.Name())
 		if err := safeCall(func() error { return p.Init(ctx, host) }); err != nil {
 			initErr := fmt.Errorf("collage: plugin %q init: %w", p.Name(), err)
-
-			var shutdownErr error
-			for j := i - 1; j >= 0; j-- {
-				if serr := safeCall(func() error { return plugins[j].Shutdown(ctx) }); serr != nil {
-					shutdownErr = errors.Join(shutdownErr, fmt.Errorf("collage: plugin %q shutdown: %w", plugins[j].Name(), serr))
-				}
-			}
-			return errors.Join(initErr, shutdownErr)
+			return errors.Join(initErr, r.Shutdown(ctx))
 		}
+		r.mu.Lock()
+		r.initialized = append(r.initialized, p)
+		r.mu.Unlock()
 	}
 	return nil
 }
 
-// Shutdown calls Shutdown on every registered plugin, in reverse registration
-// order. Unlike Init, it never stops early: every plugin is given a chance to shut
+// Shutdown calls Shutdown on every plugin whose Init succeeded, in reverse
+// registration order, once: a plugin already shut down — by Init's own rollback,
+// by a start that failed after Init, or by an earlier Shutdown — is not shut down
+// again, and a plugin whose Init never ran or never finished is not shut down at
+// all. Unlike Init, it never stops early: every plugin is given a chance to shut
 // down even if an earlier one — later in the reverse order — failed or panicked.
 // Every failure is collected with errors.Join, so a caller can still inspect any
 // one of them with errors.Is or errors.As. A nil Registry does nothing and returns
 // nil.
 func (r *Registry) Shutdown(ctx context.Context) error {
-	plugins := r.snapshot()
+	if r == nil {
+		return nil
+	}
+	r.mu.Lock()
+	plugins := r.initialized
+	r.initialized = nil
+	r.mu.Unlock()
 
 	var err error
 	for i := len(plugins) - 1; i >= 0; i-- {
@@ -216,9 +224,6 @@ func (r *Registry) Origin(ctx context.Context, host string, invalid func(plugin,
 			continue
 		}
 		normalized, err := ParseOrigin(origin)
-		if err == nil && !hasHostname(normalized) {
-			err = ErrInvalidOrigin
-		}
 		if err != nil {
 			if invalid != nil {
 				invalid(p.Name(), origin)

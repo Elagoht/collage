@@ -126,3 +126,11 @@ func parseForwardedAddr(entry string) (netip.Addr, bool) {
 	}
 	return netip.Addr{}, false
 }
+
+// IsHTTPS reports whether r arrived over TLS, believing X-Forwarded-Proto only
+// from the trusted proxies r's context carries when there are any: the decision
+// the forgery guard's cookie makes. See netaddr.HTTPS.
+func IsHTTPS(r *http.Request) bool {
+	trusted, _ := r.Context().Value(trustedProxiesKey{}).([]netip.Prefix)
+	return netaddr.HTTPS(trusted, r)
+}

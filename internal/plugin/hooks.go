@@ -286,7 +286,8 @@ func (ev *BuildFinishedEvent) Error(path, rule, message string) {
 
 // BuiltFile is one file a static build wrote.
 type BuiltFile struct {
-	// Kind is "page", "document" or "asset".
+	// Kind is BuiltPage, BuiltDocument or BuiltAsset ("page", "document",
+	// "asset"). The set may grow, so a comparison names the kinds it handles.
 	Kind string
 	// Name is the page's or document's registered name; empty for an asset.
 	Name string
@@ -504,8 +505,10 @@ type ErrorEvent struct {
 	// event's own copy.
 	Path string
 	// Stage names where in the request pipeline the error occurred, for example
-	// "render" or "cache_write". It is caller-defined, not an exhaustive enum,
-	// and this event's own copy.
+	// StageRender ("render") or StageCacheWrite ("cache_write"); the Stage
+	// constants name every stage the framework reports. The set may grow, so a
+	// comparison names the stages it handles rather than assuming it has seen
+	// them all. This event's own copy.
 	Stage string
 	// Status is the HTTP status the failure is answered with, or 0 when it is
 	// unknown or no response is written for it, as for a cache write that failed

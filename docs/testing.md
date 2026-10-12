@@ -94,3 +94,10 @@ than a second wiring. Point the disk cache at `t.TempDir()` before building it �
 otherwise a test can be served a page an earlier test or run rendered. The demo
 project `collage new --template demo` scaffolds has a `main_test.go` written this
 way.
+
+## Test a plugin with a site of its own
+
+A plugin has no application of its own to build. `collagetest.NewSite(t, ...)`
+builds a real one around it — a layout, a home page at `/`, a captured debug log —
+starts it, shuts it down when the test ends, and gives back the app, a `Client` on
+it and its `Logs`. See [plugins.md](plugins.md#testing-a-plugin).
