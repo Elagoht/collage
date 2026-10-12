@@ -18,6 +18,8 @@ Every plugin repo (github.com/Elagoht/collage-<name>) is brought to these before
 4. **No plugin-level `baseURL`:** remove it from meta, cdnpurge, sitemap, indexnow, feed (`Feed.BaseURL`) and jsonld (`siteURL`); use core's origin (`collage.BaseURL(rc)`, `host.OriginFor`). Init keeps failing loudly when no origin exists.
 
 ## Rules (controller rulings from the inventories)
+0. **Three-state settings (user, 2026-10-12):** a setting whose default depends on development vs production and that can be forced either way is a string: `""` (the default), `"always"`, `"never"` — bundle's `minify` and `sourcemap`. The manifest schema lists the three values as an enum. Plain on/off settings stay `noX` bools (rule 2).
+0b. **A `locales` entry for the default locale** is accepted and merged over `text` (toc, search and consent behave the same).
 5. **Durations are `collage.Duration`** (delete the 8 copies: live, ogimage, errortrack, cdnpurge, fail2ban, health, opti-image, tenant; health and indexnow too). Integers stay only where the key name carries a protocol unit (secure `hsts` max-age seconds, robots `crawlDelay`, consent `maxAgeDays`); cookie lifetimes in session, flash and honeypot become `collage.Duration` (old integer configs then fail loudly through strict decoding).
 6. **Numbers:** 0 means the default, a negative value is an error. No "negative means unlimited" (ogimage `maxEntries`/`maxBytes` change; document a large explicit limit instead).
 7. **JSON keys:** lowerCamel with initialisms upper-case (`baseURL`, `requestIDHeader`, `websiteID`, `measurementID`, `respectDNT`, `goatCounter`, `startURL`). Every exported Options field has a json tag or `json:"-"`.
