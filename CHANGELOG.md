@@ -1,5 +1,41 @@
 # Changelog
 
+## v0.61.1
+
+Two test helpers for plugin authors and three fixes. Additions only: no exported
+name changed or went.
+
+### Added
+
+- **`collagetest.WithSetup` registers on the application before it starts.** A
+  plugin test that needs `app.Handle`, `app.Mount`, `app.Use`,
+  `RegisterNotFoundPage` or `RegisterErrorPage` no longer hand-builds its app:
+  `WithSetup(func(app *collage.App) error)` runs after `New` and the default
+  registrations, before `Start`. Several run in order, and an error fails
+  `NewSite` or is returned by `TrySite`.
+- **`(*collagetest.Site).Shutdown(ctx)` shuts the site down once.**
+  `App.Shutdown` returns its first error on every later call, so a test that shut
+  the app down itself, expecting an error, had the same error reported again by
+  the cleanup. `site.Shutdown` closes the site and the cleanup does nothing more:
+  call it, not `site.App.Shutdown`, when the test shuts down itself.
+
+### Fixed
+
+- **A `Shutdown` while plugins are still initialising leaves none running.** A
+  signal during `Start` used to shut down only the plugins whose `Init` had
+  finished; the one still in `Init` stayed running once it returned, and the rest
+  were initialised after it. That plugin is now shut down as soon as its `Init`
+  returns, no further plugin is initialised, and `Start` fails. A `Shutdown`
+  before `Start` likewise makes a later `Start` fail without initialising any
+  plugin.
+- **`collage.ParseOrigin` refuses an empty query or fragment marker.**
+  `https://cms.example.com/?`, `https://x/#`, `https://x?` and `https://x#` were
+  accepted and returned as they were, so a `Config.BaseURL` of
+  `https://x/?` joined into `https://x/?/path`; they are now `ErrInvalidOrigin`.
+- **Documentation follows the v1 plugin conventions.** Plugin constructors in the
+  docs and README are `x.New(x.Options{})`, and `LoadPluginConfig`'s example uses
+  keys the plugins still read.
+
 ## v0.61.0
 
 Additions for plugin authors, one stricter rule and one fix. No exported name
