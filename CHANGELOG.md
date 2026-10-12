@@ -21,13 +21,14 @@ name changed or went.
 
 ### Fixed
 
-- **A `Shutdown` while plugins are still initialising leaves none running.** A
-  signal during `Start` used to shut down only the plugins whose `Init` had
-  finished; the one still in `Init` stayed running once it returned, and the rest
-  were initialised after it. That plugin is now shut down as soon as its `Init`
-  returns, no further plugin is initialised, and `Start` fails. A `Shutdown`
-  before `Start` likewise makes a later `Start` fail without initialising any
-  plugin.
+- **A `Shutdown` before `Start` initialises no plugin.** `Start` used to run every
+  plugin's `Init` after the application was already shut down, and nothing was
+  left to shut them down. It now fails without initialising any plugin, and
+  `ListenAndServe` returns nil, the clean stop that was asked for. Through `App`,
+  a `Shutdown` while `Start` is still running waits for `Start` to finish, then
+  shuts every plugin down once. The plugin registry itself now also handles a
+  `Shutdown` that races `Init`: the plugin in `Init` is shut down as soon as it
+  returns and no further plugin is initialised.
 - **`collage.ParseOrigin` refuses an empty query or fragment marker.**
   `https://cms.example.com/?`, `https://x/#`, `https://x?` and `https://x#` were
   accepted and returned as they were, so a `Config.BaseURL` of
