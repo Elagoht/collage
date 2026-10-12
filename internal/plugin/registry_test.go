@@ -377,13 +377,12 @@ func TestRegistry_Shutdown(t *testing.T) {
 		}
 	})
 
+	// A Shutdown before Init, which closes the registry, is
+	// TestRegistry_ShutdownBeforeInit's.
 	t.Run("once, and only what Init started", func(t *testing.T) {
 		log := &callLog{}
 		r := NewRegistry(nil)
 		mustRegister(t, r, &testPlugin{name: "a", log: log})
-		if err := r.Shutdown(context.Background()); err != nil || len(log.get()) != 0 {
-			t.Fatalf("Shutdown() before Init = %v, calls %v; want nil and none", err, log.get())
-		}
 		if err := r.Init(context.Background(), hostFor); err != nil {
 			t.Fatal(err)
 		}

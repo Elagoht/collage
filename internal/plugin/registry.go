@@ -33,6 +33,11 @@ var ErrDuplicatePlugin = errors.New("collage: duplicate plugin")
 // registration order and a plugin added afterward would never see it.
 var ErrRegistryStarted = errors.New("collage: plugin registry already started")
 
+// ErrShuttingDown is returned by Init when Shutdown ran before Init finished: a
+// signal during Start, say. The plugin whose Init was running is shut down as soon
+// as its Init returns, and the plugins after it are never initialised.
+var ErrShuttingDown = errors.New("collage: plugin registry shutting down")
+
 // Registry owns plugin registration, lifecycle, and hook dispatch. The zero value
 // is not ready to use; construct one with NewRegistry.
 //
@@ -49,6 +54,9 @@ type Registry struct {
 	// initialized are the plugins whose Init succeeded and whose Shutdown has
 	// not run yet, in registration order: what Shutdown shuts down, once.
 	initialized []Plugin
+	// closed is set by Shutdown: an Init still running then shuts each plugin
+	// down as its Init returns, instead of adding it to initialized.
+	closed bool
 }
 
 // NewRegistry returns an empty Registry that logs through logger. A nil logger
@@ -106,7 +114,12 @@ func (r *Registry) Plugins() []Plugin {
 // the already-initialised plugins in reverse registration order (the failing
 // plugin itself is not shut down, since it never finished initialising), and
 // returns an error that wraps both the original failure and any error from that
-// rollback via errors.Join. A nil Registry does nothing and returns nil.
+// rollback via errors.Join.
+//
+// If Shutdown runs before or while Init does — a signal during Start — Init
+// initialises no further plugin: the one whose Init was running is shut down as
+// soon as that Init returns, and Init returns ErrShuttingDown, joined with that
+// plugin's Shutdown error if any. A nil Registry does nothing and returns nil.
 func (r *Registry) Init(ctx context.Context, hostFor func(name string) Host) error {
 	if r == nil {
 		return nil
@@ -118,6 +131,12 @@ func (r *Registry) Init(ctx context.Context, hostFor func(name string) Host) err
 	r.mu.Unlock()
 
 	for _, p := range plugins {
+		r.mu.RLock()
+		closed := r.closed
+		r.mu.RUnlock()
+		if closed {
+			return ErrShuttingDown
+		}
 		// One host per plugin, not one shared: a plugin's Config call has to find
 		// its own section, and the section is chosen by the plugin's name.
 		host := hostFor(p.Name())
@@ -125,9 +144,21 @@ func (r *Registry) Init(ctx context.Context, hostFor func(name string) Host) err
 			initErr := fmt.Errorf("collage: plugin %q init: %w", p.Name(), err)
 			return errors.Join(initErr, r.Shutdown(ctx))
 		}
+		// The check and the append are one critical section: a Shutdown between
+		// them would swap initialized out before p is in it, and p would run on.
 		r.mu.Lock()
-		r.initialized = append(r.initialized, p)
+		closed = r.closed
+		if !closed {
+			r.initialized = append(r.initialized, p)
+		}
 		r.mu.Unlock()
+		if closed {
+			var serr error
+			if err := safeCall(func() error { return p.Shutdown(ctx) }); err != nil {
+				serr = fmt.Errorf("collage: plugin %q shutdown: %w", p.Name(), err)
+			}
+			return errors.Join(ErrShuttingDown, serr)
+		}
 	}
 	return nil
 }
@@ -135,8 +166,9 @@ func (r *Registry) Init(ctx context.Context, hostFor func(name string) Host) err
 // Shutdown calls Shutdown on every plugin whose Init succeeded, in reverse
 // registration order, once: a plugin already shut down — by Init's own rollback,
 // by a start that failed after Init, or by an earlier Shutdown — is not shut down
-// again, and a plugin whose Init never ran or never finished is not shut down at
-// all. Unlike Init, it never stops early: every plugin is given a chance to shut
+// again, and a plugin whose Init never ran or never finished is not shut down here:
+// it closes the registry, so an Init still running shuts that plugin down itself
+// when its Init returns and starts no other (see Init). Unlike Init, it never stops early: every plugin is given a chance to shut
 // down even if an earlier one — later in the reverse order — failed or panicked.
 // Every failure is collected with errors.Join, so a caller can still inspect any
 // one of them with errors.Is or errors.As. A nil Registry does nothing and returns
@@ -148,6 +180,7 @@ func (r *Registry) Shutdown(ctx context.Context) error {
 	r.mu.Lock()
 	plugins := r.initialized
 	r.initialized = nil
+	r.closed = true
 	r.mu.Unlock()
 
 	var err error

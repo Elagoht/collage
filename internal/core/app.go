@@ -1179,7 +1179,9 @@ func cleanStop(err error) error {
 // It is idempotent: the work runs exactly once and every caller — including one
 // racing another — observes the same result. Calling it before ListenAndServe has
 // started a server shuts the plugins down and prevents a later ListenAndServe from
-// serving.
+// serving. Calling it while Start is still running plugins' Init — a signal during
+// startup — shuts down the plugin whose Init is running as soon as it returns, and
+// Start initialises no other and fails.
 func (a *App) Shutdown(ctx context.Context) error {
 	// A caller's deadline ends a drain's wait even when the drain is not its own:
 	// an application that traps the signal itself calls Shutdown while
