@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
@@ -105,16 +106,11 @@ func TestInspect(t *testing.T) {
 // `go run . collage-inspect` prints the same as JSON.
 func TestDispatchCommands_Inspect(t *testing.T) {
 	app := inspectedAppInternal(t)
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	stdout := os.Stdout
-	os.Stdout = w
-	code, err := DispatchCommands(context.Background(), app, []string{inspectCommandName()})
-	os.Stdout = stdout
-	w.Close()
-	out, _ := io.ReadAll(r)
+	var code int
+	var err error
+	out := captureStdout(t, func() {
+		code, err = DispatchCommands(context.Background(), app, []string{inspectCommand})
+	})
 	if code != 0 || err != nil {
 		t.Fatalf("DispatchCommands = %d, %v", code, err)
 	}
@@ -125,7 +121,7 @@ func TestDispatchCommands_Inspect(t *testing.T) {
 	if len(in.Pages) != 1 || in.Pages[0].Name != "post" {
 		t.Errorf("decoded = %+v", in)
 	}
-	if code, err := DispatchCommands(context.Background(), inspectedAppInternal(t), []string{inspectCommandName(), "extra"}); code != 2 || err == nil {
+	if code, err := DispatchCommands(context.Background(), inspectedAppInternal(t), []string{inspectCommand, "extra"}); code != 2 || err == nil {
 		t.Errorf("with an argument: %d, %v", code, err)
 	}
 }
@@ -226,8 +222,10 @@ func TestInspectJSONDataTypes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An interface type is a dot whose concrete type is unknown until the
+	// render, which inspect writes as null.
 	b := NewFragment("b", "b.html").WithoutTypeCheck().WithData(Load(
-		func(context.Context, *RenderContext) (any, error) { return nil, nil })).Build() // any: data of unknown type, which inspect writes as null
+		func(context.Context, *RenderContext) (fmt.Stringer, error) { return nil, nil })).Build()
 	c := NewFragment("c", "c.html").WithData(Value(inspectUser{})).Build()
 	a := NewFragment("a", "a.html").WithSlotFragment("b", b).WithSlotFragment("c", c).Build()
 	if err := app.RegisterPage(NewPage("p").WithContent(a).WithPath("en", "/").Build()); err != nil {
@@ -250,8 +248,6 @@ func TestInspectJSONDataTypes(t *testing.T) {
 
 var updateGolden = flag.Bool("update", false, "rewrite testdata golden files")
 
-func inspectCommandName() string { return inspectCommand }
-
 func captureStdout(t *testing.T, fn func()) []byte {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -271,7 +267,7 @@ func captureStdout(t *testing.T, fn func()) []byte {
 func TestInspect_GoldenJSON(t *testing.T) {
 	app := inspectedAppInternal(t)
 	out := captureStdout(t, func() {
-		if code, err := DispatchCommands(context.Background(), app, []string{inspectCommandName()}); err != nil || code != 0 {
+		if code, err := DispatchCommands(context.Background(), app, []string{inspectCommand}); err != nil || code != 0 {
 			t.Errorf("DispatchCommands = %d, %v", code, err)
 		}
 	})

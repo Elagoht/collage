@@ -26,6 +26,8 @@ var (
 type pathsHookPlugin struct {
 	mu   sync.Mutex
 	seen map[string]string
+	// path is each page's AfterRenderEvent.Path.
+	path map[string]string
 }
 
 func (p *pathsHookPlugin) Name() string                             { return "test/paths" }
@@ -43,14 +45,18 @@ func (p *pathsHookPlugin) OnAfterRender(_ context.Context, ev *collage.AfterRend
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.seen[ev.Page.Name] = "action=" + action + " error=" + errorPage + " " + before
+	if p.path != nil {
+		p.path[ev.Page.Name] = ev.Path
+	}
 	return nil
 }
 
 // An action that answers with its page (a 422 re-render) and an error page each
 // hand AfterRender hooks the values of the render they produced — what the action,
-// the error page's fragments and BeforeRender stored.
+// the error page's fragments and BeforeRender stored — and the path the request
+// was for, the action's and the failed page's.
 func TestAfterRenderValues_ActionAndErrorPage(t *testing.T) {
-	p := &pathsHookPlugin{seen: map[string]string{}}
+	p := &pathsHookPlugin{seen: map[string]string{}, path: map[string]string{}}
 	app, err := collage.New(&collage.Config{
 		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{
@@ -100,6 +106,12 @@ func TestAfterRenderValues_ActionAndErrorPage(t *testing.T) {
 	}
 	if got, want := p.seen["oops"], "action= error=from-error-page before:oops"; got != want {
 		t.Errorf("error page: hook saw %q, want %q", got, want)
+	}
+	if got := p.path["form"]; got != "/" {
+		t.Errorf("action's re-render: AfterRenderEvent.Path = %q, want /", got)
+	}
+	if got := p.path["oops"]; got != "/boom" {
+		t.Errorf("error page: AfterRenderEvent.Path = %q, want /boom", got)
 	}
 }
 

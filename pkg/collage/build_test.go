@@ -107,7 +107,8 @@ func TestBuild_CleanRefusesRepositoryRoot(t *testing.T) {
 // TestBuildOptions_FieldsAlignWithInternalBuild checks that every BuildOptions
 // field reaches the build engine: BuildOptions.internal copies them one by one,
 // and a field it forgot would read back as the zero value here. That no field
-// exists on one side only is TestBuildTypes_MirrorTheEngine's job.
+// exists on one side only is TestBuildTypes_MirrorTheEngine's job; a field
+// left zero in the fixture below fails, so a new one has to be set here too.
 func TestBuildOptions_FieldsAlignWithInternalBuild(t *testing.T) {
 	opts := BuildOptions{
 		OutDir:        t.TempDir(),
@@ -117,12 +118,15 @@ func TestBuildOptions_FieldsAlignWithInternalBuild(t *testing.T) {
 		AllowDegraded: true,
 	}
 	got := opts.internal()
-	if got.OutDir != opts.OutDir || !slices.Equal(got.Locales, opts.Locales) || got.Clean != opts.Clean ||
-		got.Concurrency != opts.Concurrency || got.AllowDegraded != opts.AllowDegraded {
-		t.Fatalf("internal() = %+v, want the fields of %+v", got, opts)
-	}
-	if n := reflect.TypeFor[BuildOptions]().NumField(); n != 5 {
-		t.Fatalf("BuildOptions has %d fields; copy the new one in BuildOptions.internal and here", n)
+	pub, eng := reflect.ValueOf(opts), reflect.ValueOf(got)
+	for i := range pub.NumField() {
+		name := pub.Type().Field(i).Name
+		if pub.Field(i).IsZero() {
+			t.Fatalf("BuildOptions.%s is zero in the fixture: set it so internal() is checked for it", name)
+		}
+		if e := eng.FieldByName(name); !e.IsValid() || !reflect.DeepEqual(e.Interface(), pub.Field(i).Interface()) {
+			t.Fatalf("internal().%s = %v, want %v", name, e, pub.Field(i))
+		}
 	}
 	app := buildTestApp(t)
 	if _, err := Build(context.Background(), app, opts); err != nil {

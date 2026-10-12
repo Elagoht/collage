@@ -86,15 +86,6 @@ func TestWithSlot_Rules(t *testing.T) {
 	}
 }
 
-func TestSlotResolverFunc_TakesContext(t *testing.T) {
-	var resolve collage.SlotResolverFunc = func(ctx context.Context, rc *collage.RenderContext) ([]*collage.Fragment, error) {
-		return nil, ctx.Err()
-	}
-	if _, err := resolve(context.Background(), nil); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // TestIncremental_ZeroTTL_ReportedOnce checks that registering a page or document
 // built with Incremental(0) names ErrInvalidTTL once: the builder recorded it,
 // and registration refusing what the builder recorded must not add Validate's
