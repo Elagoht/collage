@@ -186,14 +186,86 @@ func TestDocComments_NoInternalNames(t *testing.T) {
 	}
 }
 
-// The internal packages pkg/collage aliases show their own doc comments on
-// hover: an exported type's, its exported fields' and its exported methods'
-// name no internal package or identifier either. Comments on unexported things,
-// and on package-level functions pkg/collage wraps with its own doc, are the
-// engine's own business and out of scope.
+// aliasedInternals returns, per internal package (types, plugin), the names of
+// the types pkg/collage declares aliases of — "Page = types.Page", and generic
+// ones such as "Key[T any] = types.Key[T]".
+func aliasedInternals(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliased := map[string]map[string]bool{"types": {}, "plugin": {}}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, e.Name(), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range f.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				ts := spec.(*ast.TypeSpec)
+				if !ts.Assign.IsValid() {
+					continue
+				}
+				target := ts.Type
+				switch x := target.(type) {
+				case *ast.IndexExpr:
+					target = x.X
+				case *ast.IndexListExpr:
+					target = x.X
+				}
+				sel, ok := target.(*ast.SelectorExpr)
+				if !ok {
+					continue
+				}
+				if pkg, ok := sel.X.(*ast.Ident); ok && aliased[pkg.Name] != nil {
+					aliased[pkg.Name][sel.Sel.Name] = true
+				}
+			}
+		}
+	}
+	return aliased
+}
+
+// receiverTypeName is the name of the type a method's receiver expression
+// names: T, *T, T[P] and *T[P, Q] all name T.
+func receiverTypeName(expr ast.Expr) string {
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	switch x := expr.(type) {
+	case *ast.IndexExpr:
+		expr = x.X
+	case *ast.IndexListExpr:
+		expr = x.X
+	}
+	if id, ok := expr.(*ast.Ident); ok {
+		return id.Name
+	}
+	return ""
+}
+
+// The internal types pkg/collage aliases show their own doc comments on hover:
+// such a type's comment, its exported fields' and interface methods', and its
+// exported methods' name no internal package or identifier either. Types
+// pkg/collage does not alias are the engine's own business and out of scope.
 func TestDocComments_AliasedInternalsNoInternalNames(t *testing.T) {
 	bad := regexp.MustCompile(`internal/|\b(types|core|plugin|render|httpx|build|router|cache|asset|observability)\.[A-Z]`)
-	for _, dir := range []string{"../../internal/plugin", "../../internal/types"} {
+	aliased := aliasedInternals(t)
+	if len(aliased["types"]) == 0 || len(aliased["plugin"]) == 0 {
+		t.Fatalf("found no aliases of internal types: %v", aliased)
+	}
+	seen := map[string]bool{}
+	for pkg, names := range aliased {
+		dir := "../../internal/" + pkg
 		fset := token.NewFileSet()
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -225,9 +297,10 @@ func TestDocComments_AliasedInternalsNoInternalNames(t *testing.T) {
 					}
 					for _, spec := range decl.Specs {
 						ts := spec.(*ast.TypeSpec)
-						if !ts.Name.IsExported() {
+						if !names[ts.Name.Name] {
 							continue
 						}
+						seen[pkg+"."+ts.Name.Name] = true
 						doc := ts.Doc
 						if doc == nil && len(decl.Specs) == 1 {
 							doc = decl.Doc
@@ -255,14 +328,17 @@ func TestDocComments_AliasedInternalsNoInternalNames(t *testing.T) {
 					if decl.Recv == nil || !decl.Name.IsExported() {
 						continue
 					}
-					recv := decl.Recv.List[0].Type
-					if star, ok := recv.(*ast.StarExpr); ok {
-						recv = star.X
-					}
-					if id, ok := recv.(*ast.Ident); ok && id.IsExported() {
-						check(id.Name+"."+decl.Name.Name, decl.Doc)
+					if name := receiverTypeName(decl.Recv.List[0].Type); names[name] {
+						check(name+"."+decl.Name.Name, decl.Doc)
 					}
 				}
+			}
+		}
+	}
+	for pkg, names := range aliased {
+		for name := range names {
+			if !seen[pkg+"."+name] {
+				t.Errorf("pkg/collage aliases %s.%s, which this test did not find", pkg, name)
 			}
 		}
 	}
