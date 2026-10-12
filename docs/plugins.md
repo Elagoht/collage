@@ -594,7 +594,11 @@ what earlier ones changed.
 5. `Shutdown` — in reverse registration order, *after* the HTTP server has
    stopped, so a plugin is never torn out from under an in-flight request. Unlike
    `Init`, it never stops early: every plugin is given its chance and the failures
-   are joined.
+   are joined. It runs once per plugin, and only for a plugin whose `Init`
+   succeeded: a start that fails *after* every `Init` succeeded — a mount that
+   swallows a page, an error page never registered — shuts the plugins down
+   there and then, and a later `app.Shutdown` does not shut them down again, nor
+   a plugin whose `Init` never ran or failed.
 
 `RegisterCommand` is the one registration call deliberately exempt from
 `ErrAppStarted`: plugins register commands from inside `Init`, which by definition

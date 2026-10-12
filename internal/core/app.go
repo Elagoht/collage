@@ -858,7 +858,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 	// their say, so a page a plugin contributed is checked on the same terms as
 	// one the application registered.
 	if err := a.checkErrorPagesRegistered(); err != nil {
-		return a.buildFailed(err)
+		return a.failedAfterInit(err)
 	}
 
 	// Also run at close-out, beside checkErrorPagesRegistered and for the same
@@ -868,7 +868,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 	// on exactly this guarantee to check every mount before consulting the router
 	// at all — see checkMountsDoNotShadow's own doc comment.
 	if err := a.checkMountsDoNotShadow(); err != nil {
-		return a.buildFailed(err)
+		return a.failedAfterInit(err)
 	}
 
 	// Here rather than at construction: whether a generated forgery key matters
@@ -911,7 +911,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		DevHosts:       a.devHosts(),
 	})
 	if err != nil {
-		return a.buildFailed(err)
+		return a.failedAfterInit(err)
 	}
 
 	a.handler = handler
@@ -971,6 +971,18 @@ func (a *App) devSources() []fs.FS {
 		}
 	}
 	return sources
+}
+
+// failedAfterInit is buildFailed for a start that fails once every plugin's Init
+// has succeeded: the plugins are shut down, once, as Init rolls back the ones
+// before a plugin whose Init failed, so none is left running behind an
+// application that will never serve. A later Shutdown does not shut them down
+// again. It must be called with buildMu held.
+func (a *App) failedAfterInit(err error) (http.Handler, error) {
+	if shutdownErr := a.plugins.Shutdown(context.Background()); shutdownErr != nil {
+		err = errors.Join(err, shutdownErr)
+	}
+	return a.buildFailed(err)
 }
 
 // buildFailed memoises a failed handler build: it logs err once, installs the

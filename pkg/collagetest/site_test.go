@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/fstest"
 
 	"github.com/Elagoht/collage/pkg/collage"
 	"github.com/Elagoht/collage/pkg/collagetest"
@@ -230,5 +231,41 @@ func TestSite_ShutdownAtCleanup(t *testing.T) {
 	})
 	if !plugin.shutdown.Load() {
 		t.Error("the plugin's Shutdown did not run at cleanup")
+	}
+}
+
+// mountingPlugin mounts a file system at /docs/ in Init, swallowing any page
+// under it, which fails the start after Init succeeded.
+type mountingPlugin struct{ shutdown atomic.Int32 }
+
+func (p *mountingPlugin) Name() string    { return "test/mount" }
+func (p *mountingPlugin) Version() string { return "0" }
+func (p *mountingPlugin) Init(_ context.Context, host collage.Host) error {
+	return host.Mount("/docs/", fstest.MapFS{"a.txt": {Data: []byte("a")}})
+}
+func (p *mountingPlugin) Shutdown(context.Context) error {
+	p.shutdown.Add(1)
+	return nil
+}
+
+// A start that fails after Init leaves no plugin running: TrySite returns the
+// error, and the plugin has been shut down, once.
+func TestSite_FailureAfterInitLeavesNothingRunning(t *testing.T) {
+	plugin := &mountingPlugin{}
+	page := collage.NewPage("doc").
+		WithContent(collage.NewFragment("doc", "home.html").Build()).
+		WithPath("en", "/docs/x").
+		Build()
+	t.Run("site", func(t *testing.T) {
+		site, err := collagetest.TrySite(t, collagetest.WithPlugins(plugin), collagetest.WithRegister(page))
+		if !errors.Is(err, collage.ErrMountShadowsRoute) || site != nil {
+			t.Fatalf("TrySite = %v, %v; want ErrMountShadowsRoute", site, err)
+		}
+		if plugin.shutdown.Load() != 1 {
+			t.Errorf("plugin Shutdown calls after the failed start = %d, want 1", plugin.shutdown.Load())
+		}
+	})
+	if plugin.shutdown.Load() != 1 {
+		t.Errorf("plugin Shutdown calls after the test = %d, want 1", plugin.shutdown.Load())
 	}
 }

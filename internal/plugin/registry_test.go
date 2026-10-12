@@ -352,6 +352,10 @@ func TestRegistry_Shutdown(t *testing.T) {
 		mustRegister(t, r, &testPlugin{name: "a", log: log, shutdownErr: errFirst})
 		mustRegister(t, r, &testPlugin{name: "panicky", log: log, shutdownPanics: true})
 		mustRegister(t, r, &testPlugin{name: "c", log: log, shutdownErr: errThird})
+		if err := r.Init(context.Background(), hostFor); err != nil {
+			t.Fatalf("Init() error = %v, want nil", err)
+		}
+		log.calls = nil
 
 		err := r.Shutdown(context.Background())
 		if err == nil {
@@ -370,6 +374,24 @@ func TestRegistry_Shutdown(t *testing.T) {
 		want := []string{"shutdown:c", "shutdown:panicky", "shutdown:a"}
 		if got := log.get(); !equalStrings(got, want) {
 			t.Fatalf("Shutdown() call order = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("once, and only what Init started", func(t *testing.T) {
+		log := &callLog{}
+		r := NewRegistry(nil)
+		mustRegister(t, r, &testPlugin{name: "a", log: log})
+		if err := r.Shutdown(context.Background()); err != nil || len(log.get()) != 0 {
+			t.Fatalf("Shutdown() before Init = %v, calls %v; want nil and none", err, log.get())
+		}
+		if err := r.Init(context.Background(), hostFor); err != nil {
+			t.Fatal(err)
+		}
+		log.calls = nil
+		_ = r.Shutdown(context.Background())
+		_ = r.Shutdown(context.Background())
+		if got, want := log.get(), []string{"shutdown:a"}; !equalStrings(got, want) {
+			t.Fatalf("two Shutdowns called %v, want %v", got, want)
 		}
 	})
 
