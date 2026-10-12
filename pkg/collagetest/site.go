@@ -9,6 +9,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -36,12 +37,18 @@ import (
 // The application is collage's own, built with New and started with Start, not
 // a stand-in: a plugin that passes against a Site passes against an application.
 type Site struct {
-	// App is the application, started.
+	// App is the application, started. A test that shuts it down itself calls
+	// Site.Shutdown, not App.Shutdown: App.Shutdown returns its first error on
+	// every call, so the cleanup would report that error again.
 	App *collage.App
 	// Client sends requests to App's handler; its methods are the Site's.
 	*Client
 	// Logs is everything App logged.
 	Logs *Logs
+
+	// closed is set by Shutdown, so the cleanup NewSite registered does not
+	// shut App down again and report the same error a second time.
+	closed atomic.Bool
 }
 
 // SiteOption changes what NewSite and TrySite build.
@@ -56,6 +63,7 @@ type siteConfig struct {
 	register     []collage.Registrable
 	withoutHome  bool
 	edits        []func(*collage.Config)
+	setup        []func(*collage.App) error
 }
 
 // The templates a Site starts with, under the template root "t": a layout with
@@ -123,6 +131,21 @@ func WithoutHome() SiteOption {
 // with it.
 func WithConfig(edit func(*collage.Config)) SiteOption {
 	return func(c *siteConfig) { c.edits = append(c.edits, edit) }
+}
+
+// WithSetup registers what a test needs on the application itself before it
+// starts — a handler, a mount, middleware, an error page:
+//
+//	collagetest.WithSetup(func(app *collage.App) error {
+//		return app.Handle("/api/", api)
+//	})
+//
+// setup runs after New and the default registrations (the home page and
+// WithRegister's items), before Start. Several WithSetup options run in the
+// order given; an error stops there and is returned by TrySite, or fails the
+// test from NewSite.
+func WithSetup(setup func(app *collage.App) error) SiteOption {
+	return func(c *siteConfig) { c.setup = append(c.setup, setup) }
 }
 
 // NewSite builds the application, starts it — plugins' Configure and Init run
@@ -194,17 +217,37 @@ func TrySite(t testing.TB, options ...SiteOption) (*Site, error) {
 	if err := app.Register(append(items, sc.register...)...); err != nil {
 		return nil, err
 	}
+	for _, setup := range sc.setup {
+		if err := setup(app); err != nil {
+			return nil, err
+		}
+	}
 	if err := app.Start(); err != nil {
 		return nil, err
 	}
+	site := &Site{App: app, Client: New(t, app.Handler()), Logs: logs}
 	t.Cleanup(func() {
+		if site.closed.Load() {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		if err := app.Shutdown(ctx); err != nil {
 			t.Errorf("collagetest: shutting the site down: %v", err)
 		}
 	})
-	return &Site{App: app, Client: New(t, app.Handler()), Logs: logs}, nil
+	return site, nil
+}
+
+// Shutdown shuts the application down, with ctx bounding the wait, and returns
+// what App.Shutdown returned. The site is then closed: the cleanup NewSite
+// registered does nothing more, so an error the test expects is not reported
+// again when the test ends.
+//
+// Call site.Shutdown, not site.App.Shutdown, when the test shuts down itself.
+func (s *Site) Shutdown(ctx context.Context) error {
+	s.closed.Store(true)
+	return s.App.Shutdown(ctx)
 }
 
 // Logs is everything the application logged, at debug level and above, as
