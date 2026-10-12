@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -47,8 +48,9 @@ type Site struct {
 	Logs *Logs
 
 	// closed is set by Shutdown, so the cleanup NewSite registered does not
-	// shut App down again and report the same error a second time.
-	closed atomic.Bool
+	// shut App down again and report the same error a second time. A pointer, so
+	// a copied Site shares it and go vet's copylocks check has nothing to say.
+	closed *atomic.Bool
 }
 
 // SiteOption changes what NewSite and TrySite build.
@@ -214,18 +216,25 @@ func TrySite(t testing.TB, options ...SiteOption) (*Site, error) {
 			WithPath(locale, "/").
 			Build())
 	}
+	// Every failure from here on shuts the app down, so nothing New set up is
+	// left behind; a Start that failed after plugins' Init has already shut them.
+	fail := func(err error) (*Site, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return nil, errors.Join(err, app.Shutdown(ctx))
+	}
 	if err := app.Register(append(items, sc.register...)...); err != nil {
-		return nil, err
+		return fail(err)
 	}
 	for _, setup := range sc.setup {
 		if err := setup(app); err != nil {
-			return nil, err
+			return fail(err)
 		}
 	}
 	if err := app.Start(); err != nil {
-		return nil, err
+		return fail(err)
 	}
-	site := &Site{App: app, Client: New(t, app.Handler()), Logs: logs}
+	site := &Site{App: app, Client: New(t, app.Handler()), Logs: logs, closed: new(atomic.Bool)}
 	t.Cleanup(func() {
 		if site.closed.Load() {
 			return
@@ -246,7 +255,9 @@ func TrySite(t testing.TB, options ...SiteOption) (*Site, error) {
 //
 // Call site.Shutdown, not site.App.Shutdown, when the test shuts down itself.
 func (s *Site) Shutdown(ctx context.Context) error {
-	s.closed.Store(true)
+	if s.closed != nil {
+		s.closed.Store(true)
+	}
 	return s.App.Shutdown(ctx)
 }
 

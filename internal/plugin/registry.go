@@ -168,8 +168,11 @@ func (r *Registry) Init(ctx context.Context, hostFor func(name string) Host) err
 // by a start that failed after Init, or by an earlier Shutdown — is not shut down
 // again, and a plugin whose Init never ran or never finished is not shut down here:
 // it closes the registry, so an Init still running shuts that plugin down itself
-// when its Init returns and starts no other (see Init). Unlike Init, it never stops early: every plugin is given a chance to shut
-// down even if an earlier one — later in the reverse order — failed or panicked.
+// when its Init returns and starts no other (see Init). Shutdown does not wait for
+// that Init: it may return first, and that plugin's Shutdown error goes to Init's
+// caller, not to Shutdown's. Unlike Init, it never stops early: every plugin is
+// given a chance to shut down even if an earlier one — later in the reverse
+// order — failed or panicked.
 // Every failure is collected with errors.Join, so a caller can still inspect any
 // one of them with errors.Is or errors.As. A nil Registry does nothing and returns
 // nil.

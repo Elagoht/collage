@@ -27,7 +27,7 @@ func ParseOrigin(raw string) (string, error) {
 	case u.RawQuery != "", u.Fragment != "", u.RawFragment != "":
 	// An empty query or fragment, "https://x/?" or "https://x#", leaves the
 	// fields above empty but its marker in raw, which a joined path would follow.
-	case u.ForceQuery, strings.ContainsAny(raw, "?#"):
+	case strings.ContainsAny(raw, "?#"):
 	default:
 		return strings.TrimSuffix(raw, "/"), nil
 	}
