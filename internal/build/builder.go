@@ -672,7 +672,7 @@ func captureHeaders(ctx context.Context, capturer ResponseCapturer, files []plug
 		// Not in development, whose no-store capture-dev-mode already explains.
 		// A PersonaliseHook's Personal is set aside for a capture, so what is
 		// left is a Cache-Control the application set some other way.
-		if !devMode && f.Kind == "page" && resp.Status >= 200 && resp.Status <= 299 && len(resp.Unstable) > 0 && personalCacheControl(resp.Headers) {
+		if !devMode && f.Kind == types.BuiltPage && resp.Status >= 200 && resp.Status <= 299 && len(resp.Unstable) > 0 && personalCacheControl(resp.Headers) {
 			personal = append(personal, f.Path)
 		}
 		for _, name := range resp.Unstable {
@@ -920,10 +920,10 @@ func countErrors(findings []types.Finding) int {
 func (b *Builder) builtFiles(outDir string, tasks []buildTask, pages, documents, assets, all []string) []plugin.BuiltFile {
 	kind := make(map[string]string, len(all))
 	for _, f := range documents {
-		kind[f] = "document"
+		kind[f] = types.BuiltDocument
 	}
 	for _, f := range assets {
-		kind[f] = "asset"
+		kind[f] = types.BuiltAsset
 	}
 	files := make([]plugin.BuiltFile, 0, len(all))
 	seen := make(map[string]bool, len(all))
@@ -933,7 +933,7 @@ func (b *Builder) builtFiles(outDir string, tasks []buildTask, pages, documents,
 		}
 		seen[pages[i]] = true
 		files = append(files, plugin.BuiltFile{
-			Kind:   "page",
+			Kind:   types.BuiltPage,
 			Name:   task.page.Name,
 			Locale: task.locale,
 			Path:   b.pageOutputPath(task.locale, b.app.DefaultLocale(), task.path),
@@ -946,7 +946,7 @@ func (b *Builder) builtFiles(outDir string, tasks []buildTask, pages, documents,
 		}
 		k := kind[f]
 		if k == "" {
-			k = "page" // the root redirect, a not-found page
+			k = types.BuiltPage // the root redirect, a not-found page
 		}
 		files = append(files, plugin.BuiltFile{Kind: k, Path: urlPathOf(outDir, f), File: f})
 	}
