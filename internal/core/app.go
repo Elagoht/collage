@@ -823,7 +823,13 @@ func (a *App) buildHandler() (http.Handler, error) {
 	// same way as after a successful one.
 	a.mu.Lock()
 	a.startAttempted = true
+	closing := a.closing
 	a.mu.Unlock()
+	// After Shutdown nothing starts, with or without plugins: the registry refuses
+	// their Init too, and an application with none must say the same.
+	if closing {
+		return a.buildFailed(plugin.ErrShuttingDown)
+	}
 
 	// Checked here rather than in New, because RegisterPlugin can add a plugin
 	// after New and a key naming one of those would otherwise be reported as

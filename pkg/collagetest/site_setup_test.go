@@ -184,3 +184,28 @@ func TestSite_ShutdownErrorAtCleanup(t *testing.T) {
 		t.Errorf("plugin Shutdown calls = %d, want 1", n)
 	}
 }
+
+// A setup that fails leaves no application running: TrySite shuts it down, so
+// the app a setup saw can no longer start.
+func TestTrySite_FailedSetupShutsTheAppDown(t *testing.T) {
+	var seen *collage.App
+	_, err := collagetest.TrySite(t, collagetest.WithSetup(func(app *collage.App) error {
+		seen = app
+		return errors.New("no")
+	}))
+	if err == nil {
+		t.Fatal("TrySite = nil error, want the setup's")
+	}
+	if err := seen.Start(); err == nil {
+		t.Error("the app a failed setup saw still starts: TrySite did not shut it down")
+	}
+}
+
+// A Site can be copied without go vet's copylocks check objecting.
+func TestSite_CopyShares(t *testing.T) {
+	site := collagetest.NewSite(t)
+	copied := *site
+	if err := copied.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}

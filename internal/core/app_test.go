@@ -712,6 +712,25 @@ func TestApp_ListenAndServeAfterShutdown(t *testing.T) {
 	waitListening(t, app)
 }
 
+// TestApp_StartAfterShutdownFails: a Start after Shutdown fails whether or not
+// a plugin is registered; it used to succeed when none was.
+func TestApp_StartAfterShutdownFails(t *testing.T) {
+	for _, withPlugin := range []bool{false, true} {
+		app := newTestApp(t, nil)
+		if withPlugin {
+			if err := app.RegisterPlugin(&lifecyclePlugin{}); err != nil {
+				t.Fatalf("RegisterPlugin: %v", err)
+			}
+		}
+		if err := app.Shutdown(context.Background()); err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+		if err := app.Start(); !errors.Is(err, plugin.ErrShuttingDown) {
+			t.Errorf("with a plugin %v: Start after Shutdown = %v, want ErrShuttingDown", withPlugin, err)
+		}
+	}
+}
+
 // TestApp_ListenAndServeAfterShutdownWithPlugin: with a plugin registered the
 // registry refuses Init after Shutdown, and ListenAndServe must still report the
 // clean stop it was asked for, not a startup failure.

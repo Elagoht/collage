@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.61.3
+
+Small fixes from the plugin sealing reviews. No exported name changed.
+
+### Fixed
+
+- **`Start` after `Shutdown` fails with or without plugins.** It failed when a
+  plugin was registered and succeeded when none was; it now fails either way,
+  and `ListenAndServe` after `Shutdown` still returns nil.
+- **`collagetest.TrySite` shuts the application down when building it fails.**
+  A failing `WithRegister` item, `WithSetup` or `Start` used to leave the app
+  `collage.New` had made open.
+- **A `collagetest.Site` can be copied.** Its internal flag no longer trips
+  `go vet`'s copylocks check on `s := *site`.
+
+### Documentation
+
+- The plugin registry's `Shutdown` says it does not wait for a plugin still in
+  `Init`.
+
 ## v0.61.2
 
 One fix in plugin configuration. No exported name changed.
