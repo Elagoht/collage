@@ -13,6 +13,7 @@ func TestParseOrigin(t *testing.T) {
 		"https://example.com/":      "https://example.com",
 		"http://localhost:3000":     "http://localhost:3000",
 		"https://acme.app.com:8443": "https://acme.app.com:8443",
+		"https://[::1]:8443":        "https://[::1]:8443",
 	}
 	for raw, want := range good {
 		got, err := ParseOrigin(raw)
@@ -21,7 +22,7 @@ func TestParseOrigin(t *testing.T) {
 		}
 	}
 	for _, raw := range []string{
-		"", "example.com", "ftp://example.com", "https://", "https://u:p@example.com",
+		"", "example.com", "ftp://example.com", "https://", "https://:8080", "http://:80/", "https://u:p@example.com",
 		"https://example.com/blog", "https://example.com?x=1", "https://example.com#top", "mailto:a@b.c",
 	} {
 		if got, err := ParseOrigin(raw); !errors.Is(err, ErrInvalidOrigin) {

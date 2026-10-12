@@ -382,7 +382,8 @@ type InvalidatedEntry = plugin.InvalidatedEntry
 type OriginResolver = plugin.OriginResolver
 
 // ParseOrigin checks that raw is a bare origin, scheme://host[:port], and returns
-// it without a trailing slash; anything else is ErrInvalidOrigin.
+// it without a trailing slash; anything else — a port with no host,
+// "https://:8080", included — is ErrInvalidOrigin.
 func ParseOrigin(raw string) (string, error) { return plugin.ParseOrigin(raw) }
 
 // ErrorEvent describes a failure encountered while serving a request.

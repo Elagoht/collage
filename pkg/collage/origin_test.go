@@ -3,6 +3,7 @@ package collage_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -198,5 +199,28 @@ func TestBaseURL_OriginWithoutHostnameIsIgnored(t *testing.T) {
 	}
 	if n := strings.Count(logs.String(), "invalid origin"); n != 1 {
 		t.Errorf("logged %d times, want once: %s", n, logs.String())
+	}
+}
+
+// ParseOrigin refuses an origin with a port and no host, and so does the
+// configuration's BaseURL, which it validates.
+func TestParseOrigin_NoHost(t *testing.T) {
+	for _, raw := range []string{"https://:8080", "https://"} {
+		if got, err := collage.ParseOrigin(raw); !errors.Is(err, collage.ErrInvalidOrigin) {
+			t.Errorf("ParseOrigin(%q) = %q, %v; want ErrInvalidOrigin", raw, got, err)
+		}
+	}
+	for _, raw := range []string{"https://example.com", "http://localhost:3000", "https://[::1]:8443"} {
+		if got, err := collage.ParseOrigin(raw); err != nil || got != raw {
+			t.Errorf("ParseOrigin(%q) = %q, %v; want it accepted", raw, got, err)
+		}
+	}
+	_, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>x</p>`)}}, Root: "t"},
+		BaseURL:  "https://:8080",
+	})
+	if !errors.Is(err, collage.ErrInvalidOrigin) {
+		t.Errorf("New with BaseURL https://:8080 = %v, want ErrInvalidOrigin", err)
 	}
 }
