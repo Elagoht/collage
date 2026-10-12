@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -80,6 +81,9 @@ func TestWithSlot_Rules(t *testing.T) {
 	if !errors.Is(b.BuildErr(), collage.ErrInvalidSlotDefinition) {
 		t.Errorf("unknown slot rule: %v", b.BuildErr())
 	}
+	if want := `slot "x" on fragment "h": rule 99`; b.BuildErr() == nil || !strings.Contains(b.BuildErr().Error(), want) {
+		t.Errorf("unknown slot rule error = %v, want it to contain %s", b.BuildErr(), want)
+	}
 }
 
 func TestSlotResolverFunc_TakesContext(t *testing.T) {
@@ -88,6 +92,37 @@ func TestSlotResolverFunc_TakesContext(t *testing.T) {
 	}
 	if _, err := resolve(context.Background(), nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestIncremental_ZeroTTL_ReportedOnce checks that registering a page or document
+// built with Incremental(0) names ErrInvalidTTL once: the builder recorded it,
+// and registration refusing what the builder recorded must not add Validate's
+// own report of the same TTL beside it.
+func TestIncremental_ZeroTTL_ReportedOnce(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/c.html": {Data: []byte(`<html><body>c</body></html>`)}}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := collage.NewPage("p").WithContent(collage.NewFragment("c", "c.html").Build()).
+		WithPath("en", "/p").Incremental(0).Build()
+	doc := collage.NewDocument("d", "text/plain").WithBody([]byte("x")).
+		WithPath("en", "/d.txt").Incremental(0).Build()
+	for name, err := range map[string]error{
+		"RegisterPage":       app.RegisterPage(page),
+		"RegisterDocument":   app.RegisterDocument(doc),
+		"Register(page)":     app.Register(page),
+		"Register(document)": app.Register(doc),
+	} {
+		if !errors.Is(err, collage.ErrInvalidTTL) {
+			t.Errorf("%s = %v, want ErrInvalidTTL", name, err)
+			continue
+		}
+		if n := strings.Count(err.Error(), collage.ErrInvalidTTL.Error()); n != 1 {
+			t.Errorf("%s names ErrInvalidTTL %d times: %v", name, n, err)
+		}
 	}
 }
 

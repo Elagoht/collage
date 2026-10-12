@@ -279,7 +279,9 @@ type Report struct {
 	// Errors lists every render, path-resolution, or write failure encountered.
 	// Build's returned error is errors.Join of exactly these, so a caller that
 	// wants the individual failures can read them here instead of unwrapping the
-	// joined error.
+	// joined error — except when the build stopped before rendering, where the
+	// returned error is that failure alone; when OutDir could not be cleaned or
+	// created, Errors holds the path-resolution failures beside it.
 	Errors []error
 	// Duration is how long the Build call took, from entry to return.
 	Duration time.Duration
@@ -356,7 +358,17 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	start := time.Now()
 	report := &Report{}
 
-	// The application is started first, which runs every plugin's Init: a page
+	// OutDir is checked before anything else: starting the application runs
+	// plugins' Init and enumerating the routes runs each StaticParams, both user
+	// code that may reach the network, and a build that is going to be refused
+	// must not have run either first.
+	outDirChecked, err := b.checkOutDir()
+	if err != nil {
+		report.Duration = time.Since(start)
+		return report, err
+	}
+
+	// The application is then started, which runs every plugin's Init: a page
 	// a plugin registers, or the WithStaticParams of a page whose data a plugin
 	// loads, must be ready before the pages are enumerated — as it is before a
 	// server answers its first request.
@@ -383,8 +395,12 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	}
 	report.Skipped = skipped
 
-	outDirResolved, err := b.prepareOutDir()
+	outDirResolved, err := b.prepareOutDir(outDirChecked)
 	if err != nil {
+		// The returned error is this failure alone, as for every early stop, but
+		// what enumerating the routes found is still worth reading: the report
+		// keeps it beside the failure.
+		report.Errors = slices.Concat(enumerateErrs, docEnumerateErrs, []error{err})
 		report.Duration = time.Since(start)
 		return report, err
 	}
@@ -959,36 +975,52 @@ func urlPathOf(outDir, file string) string {
 // second write silently replaced the first, dropping a page from the build with
 // nothing in the report to show for it. Documents claim from the same map: a
 // document and a page, or two documents, resolving to one file is the same loss.
+// Every file also claims the directories above it, so a document whose file is
+// a directory another output is written under — "/feed.xml" beside a page at
+// "/feed.xml/sub" — is caught here too, rather than failing at write time.
 //
 // Locale is already folded in by pageOutputPath, so the same pattern in two
 // locales is not a collision: that is the ordinary multi-locale case and each
 // locale has its own directory.
 func (b *Builder) checkNoOutputCollisions(tasks []buildTask, docs []documentTask) error {
 	defaultLocale := b.app.DefaultLocale()
-	claimed := make(map[string]string, len(tasks)+len(docs))
+	type claim struct {
+		owner string
+		dir   bool
+	}
+	claimed := make(map[string]claim, 2*(len(tasks)+len(docs)))
 
-	claim := func(key, owner string) error {
-		if previous, taken := claimed[key]; taken {
-			return fmt.Errorf("%w: %q, claimed by %s and %s", ErrOutputPathCollision, key, previous, owner)
+	// claimFile claims file for owner, and each directory above it: a file and a
+	// directory cannot share a path, so a file claimed where another output needs
+	// a directory — or the other way round — collides as two files do. Two
+	// outputs needing one directory do not.
+	claimFile := func(file, owner string) error {
+		for dir := path.Dir(file); dir != "/" && dir != "."; dir = path.Dir(dir) {
+			if previous, taken := claimed[dir]; taken {
+				if previous.dir {
+					break // and so is every directory above it
+				}
+				return fmt.Errorf("%w: %q, claimed by %s and %s", ErrOutputPathCollision, dir, previous.owner, owner)
+			}
+			claimed[dir] = claim{owner: owner, dir: true}
 		}
-		claimed[key] = owner
+		if previous, taken := claimed[file]; taken {
+			return fmt.Errorf("%w: %q, claimed by %s and %s", ErrOutputPathCollision, file, previous.owner, owner)
+		}
+		claimed[file] = claim{owner: owner}
 		return nil
 	}
 
 	for _, task := range tasks {
 		key := path.Clean(b.pageOutputPath(task.locale, defaultLocale, task.path))
 		owner := fmt.Sprintf("page %q locale %q", task.page.Name, task.locale)
-		// The file it writes, and the directory that file sits in: a document
-		// whose file is that directory's name cannot be written beside it.
-		for _, k := range []string{path.Join(key, "index.html"), key} {
-			if err := claim(k, owner); err != nil {
-				return err
-			}
+		if err := claimFile(path.Join(key, "index.html"), owner); err != nil {
+			return err
 		}
 	}
 	for _, task := range docs {
 		key := path.Clean(b.documentURL(task))
-		if err := claim(key, fmt.Sprintf("document %q locale %q", task.doc.Name, task.locale)); err != nil {
+		if err := claimFile(key, fmt.Sprintf("document %q locale %q", task.doc.Name, task.locale)); err != nil {
 			return err
 		}
 	}
@@ -1399,18 +1431,19 @@ func verifyNoSymlinksBeneath(outDirResolved, target string) error {
 	return nil
 }
 
-// prepareOutDir resolves Options.OutDir to an absolute, symlink-resolved directory,
-// refuses to proceed at all when that resolved directory is a filesystem root,
-// refuses to additionally clean it (though a non-Clean build still writes into it)
-// when it is a repository root, and returns the resolved path for the rest of
-// Build to write under and check escapes against.
+// checkOutDir resolves Options.OutDir to an absolute, symlink-resolved path and
+// refuses it when it is a filesystem root, or, for a Clean build, a repository
+// root; a non-Clean build still writes into a repository root. It changes
+// nothing on disk: Build calls it before enumerating the routes, so a refused
+// OutDir is refused before any StaticParams runs, and prepareOutDir does the
+// cleaning and creating afterwards.
 //
 // The danger checks run against the resolved path, not the literal Options.OutDir
 // string: OutDir can itself be a symlink — to "/", for instance — and
 // isFilesystemRoot is a pure string comparison with no I/O of its own, so checking
 // it against the unresolved string would fail open on exactly the case it exists
 // to catch. Resolution happens before either danger check, not after.
-func (b *Builder) prepareOutDir() (string, error) {
+func (b *Builder) checkOutDir() (string, error) {
 	absOutDir, err := filepath.Abs(b.opts.OutDir)
 	if err != nil {
 		return "", fmt.Errorf("collage: output directory %q: %w", b.opts.OutDir, err)
@@ -1428,16 +1461,32 @@ func (b *Builder) prepareOutDir() (string, error) {
 		return "", fmt.Errorf("%w: %s", ErrDangerousOutDir, resolved)
 	}
 
+	// Scoped to Clean, unlike the filesystem-root check above: building (without
+	// deleting) into a repository root is a plausible setup — a "docs/" or
+	// "dist/" directory inside the project — but deleting its contents because
+	// Options.OutDir was left pointing at the wrong directory is not something a
+	// blank or mistyped config field should be able to trigger.
+	if b.opts.Clean && hasRepositoryMarker(resolved) {
+		return "", fmt.Errorf("%w: %s", ErrDangerousOutDir, resolved)
+	}
+	return resolved, nil
+}
+
+// prepareOutDir empties resolved — the path checkOutDir accepted — when
+// Options.Clean is set, creates it, and returns it resolved once more for the rest
+// of Build to write under and check escapes against.
+func (b *Builder) prepareOutDir(resolved string) (string, error) {
+	// Checked again: user code has run since checkOutDir — Init, StaticParams —
+	// and a symlink it moved must not turn an accepted OutDir into a refused one
+	// on the way to being cleaned.
+	again, err := b.checkOutDir()
+	if err != nil {
+		return "", err
+	}
+	if again != resolved {
+		return "", fmt.Errorf("%w: %s now resolves to %s", ErrDangerousOutDir, resolved, again)
+	}
 	if b.opts.Clean {
-		// Scoped to Clean, unlike the filesystem-root check above: building
-		// (without deleting) into a repository root is a plausible setup — a
-		// "docs/" or "dist/" directory inside the project — but deleting its
-		// contents because Options.OutDir was left pointing at the wrong
-		// directory is not something a blank or mistyped config field should be
-		// able to trigger.
-		if hasRepositoryMarker(resolved) {
-			return "", fmt.Errorf("%w: %s", ErrDangerousOutDir, resolved)
-		}
 		if err := cleanDirContents(resolved); err != nil {
 			return "", fmt.Errorf("collage: clean %q: %w", resolved, err)
 		}
@@ -1447,12 +1496,12 @@ func (b *Builder) prepareOutDir() (string, error) {
 		return "", fmt.Errorf("collage: create output directory %q: %w", resolved, err)
 	}
 
-	// Re-resolved after MkdirAll: resolveExistingPrefix above may have stopped
-	// short of the full path if OutDir did not exist yet (filepath.EvalSymlinks
-	// requires its argument to exist) and appended the missing suffix literally.
-	// Now that MkdirAll has created it, resolving the complete path is possible,
-	// and this is the value every per-file containment and symlink check is
-	// measured against for the rest of Build.
+	// Re-resolved after MkdirAll: checkOutDir may have stopped short of the full
+	// path if OutDir did not exist yet (filepath.EvalSymlinks requires its
+	// argument to exist) and appended the missing suffix literally. Now that
+	// MkdirAll has created it, resolving the complete path is possible, and this
+	// is the value every per-file containment and symlink check is measured
+	// against for the rest of Build.
 	finalResolved, err := filepath.EvalSymlinks(resolved)
 	if err != nil {
 		return "", fmt.Errorf("collage: resolve output directory %q: %w", resolved, err)

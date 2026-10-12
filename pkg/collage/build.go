@@ -126,9 +126,11 @@ func reportFrom(r *build.Report) *BuildReport {
 // The report is returned alongside the error, so a caller can print what was
 // written as well as what failed. The error is errors.Join of BuildReport.Errors,
 // except when the build stopped before rendering — the application failed to
-// start, two outputs collided (ErrOutputPathCollision), or OutDir was refused —
-// where it is that failure alone. A build stopped by a start failure or a
-// collision has not touched OutDir.
+// start, OutDir was refused, two outputs collided (ErrOutputPathCollision), or
+// OutDir could not be cleaned or created — where it is that failure alone. A
+// refused OutDir is refused before any StaticParams runs. When OutDir could not
+// be cleaned or created, BuildReport.Errors also holds whatever resolving the
+// routes' StaticParams failed with. Only that last stop can have touched OutDir.
 func Build(ctx context.Context, app *App, opts BuildOptions) (*BuildReport, error) {
 	if app == nil || app.c == nil {
 		return nil, ErrNilApp

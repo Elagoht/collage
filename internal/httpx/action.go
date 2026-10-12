@@ -209,6 +209,12 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		result = &types.ActionResult{Status: http.StatusNoContent}
 	}
 
+	// Refused before anything is invalidated: a result refused with a 500 tells
+	// the reader the action failed, and must not have changed what they read next.
+	if err := checkUnambiguousResult(result); err != nil {
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
+	}
+
 	// Before the response, deliberately. An action that changed something and then
 	// redirected to a page built from it must not have that page served from an
 	// entry the change made wrong; invalidating afterwards leaves a window in which
@@ -319,9 +325,10 @@ func (h *Handler) writeActionResult(
 	result *types.ActionResult,
 	route *routeRef,
 ) int {
+	// Checked again here for a BeforeAction hook's result, which reaches this
+	// without passing the check in serveAction; checking twice costs nothing.
 	if err := checkUnambiguousResult(result); err != nil {
-		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender,
-			err))
+		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
 	}
 
 	header := w.Header()

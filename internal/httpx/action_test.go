@@ -185,6 +185,31 @@ func TestAction_InvalidatesBeforeResponding(t *testing.T) {
 	}
 }
 
+// An ambiguous result is refused with a 500, and a refused result changes
+// nothing: the tags it named are not invalidated, since the reader is told the
+// action failed.
+func TestAction_AmbiguousResultInvalidatesNothing(t *testing.T) {
+	var invalidated []string
+	both := action("both", "/both", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+			return &types.ActionResult{Location: "/posts", Body: []byte("x"), InvalidateTags: []string{"posts"}}, nil
+		})
+	env := actionEnv(t, nil, []*types.Action{both}, func(d *Deps) {
+		d.Invalidator = func(_ context.Context, tags []string) error {
+			invalidated = append(invalidated, tags...)
+			return nil
+		}
+	})
+
+	res := env.do(post("/both", ""))
+	if res.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", res.Code)
+	}
+	if len(invalidated) != 0 {
+		t.Errorf("invalidated = %v, want nothing for a refused result", invalidated)
+	}
+}
+
 // A body larger than the limit is refused rather than read into memory. Without a
 // bound, the size of the allocation is chosen by whoever sent the request.
 func TestAction_BodyIsBounded(t *testing.T) {
