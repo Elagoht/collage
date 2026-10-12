@@ -2,7 +2,9 @@
 
 ## v0.61.0
 
-Three additions, all compatible with v0.60.x: no exported name changed or went.
+Additions for plugin authors, one stricter rule and one fix. No exported name
+changed or went; one behaviour did — a plugin configuration key the plugin does
+not know is now an error (see Changed).
 
 ### Added
 
@@ -28,6 +30,32 @@ Three additions, all compatible with v0.60.x: no exported name changed or went.
   document, on live requests and in static builds alike, so a slow sitemap no
   longer raises the budget of every fragment and feed. A negative timeout is
   `ErrInvalidTimeout`, from the builder and from `Document.Validate`.
+- **`collage.Duration` reads a duration from configuration as a string.** A
+  `type Duration time.Duration` whose JSON is `"10s"`, `"1h30m"`: a bare number,
+  which `time.Duration` reads as nanoseconds (`"banTime": 3600` is 3.6µs), is
+  refused with an error naming it; `null` leaves the default. Plugins use it for a
+  duration in their options.
+- **`collage.IsHTTPS(r)` says whether a request arrived over TLS.** TLS on the
+  connection, or `X-Forwarded-Proto: https` — believed only from
+  `Server.TrustedProxies` when any are listed, from anyone when none are. It is
+  the decision the forgery guard's cookie already made, now one function both
+  use; plugins setting `Secure` cookies or HSTS use it instead of reading the
+  header.
+
+### Changed
+
+- **`collage.PluginConfig` refuses a key the plugin's options do not have.** A
+  misspelt or renamed key — at any depth, or one named after a `json:"-"` field —
+  stops the application at `Configure` or `Init` with
+  `collage: elagoht/robots: unknown key "dissallow" in plugins-config.json`, where
+  it used to be ignored and the option left at its default. **Migration:** remove
+  the key the error names, or rename it to the one the plugin documents.
+
+### Fixed
+
+- **`collage.ParseOrigin` refuses an origin with no host.** `https://:8080` was
+  accepted; it is now `ErrInvalidOrigin`, from `ParseOrigin` and from
+  `Config.BaseURL` validation, which shares it.
 
 ## v0.60.1
 

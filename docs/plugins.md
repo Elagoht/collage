@@ -334,7 +334,7 @@ The host arrives lower-cased with its port stripped, and an IPv6 literal without
 its brackets (`::1`). The first plugin in registration order that returns `ok`
 wins. An origin must be a bare `scheme://host[:port]` with scheme `http` or
 `https`, which `collage.ParseOrigin` checks and normalizes, and must name a host
-(`https://:8080` does not); an invalid one counts as not known, and dev mode logs it
+(`https://:8080` does not, and `ParseOrigin` refuses it); an invalid one counts as not known, and dev mode logs it
 once per plugin and origin. A host no plugin knows gets `Config.BaseURL`, and a
 resolver that panics is logged and skipped. Application code reads the result with
 `collage.BaseURL(rc)`, which is safe in a cached render because the host is in the
@@ -440,6 +440,15 @@ than `RemoteAddr`, which behind a proxy is the proxy for every request. It is th
 zero `netip.Addr` when there is no address to give: in a shared page render,
 whose request has no `RemoteAddr`, and behind a trusted proxy whose
 `X-Forwarded-For` holds no usable client (`unknown`). Never count that one.
+
+`collage.IsHTTPS(r)` is whether the request arrived over TLS: on its own
+connection, or at a proxy that says so in `X-Forwarded-Proto`. With
+`Server.TrustedProxies` listed, the header is believed only from one of them, so a
+client cannot claim a TLS connection it does not have; with none listed it is
+believed from anyone, which is what an application behind a proxy it has not
+described needs. It is the decision the forgery guard makes for its own cookie's
+`Secure` flag. A plugin setting `Secure` on a cookie, or sending
+`Strict-Transport-Security`, uses it rather than reading the header itself.
 
 ### Checking the output: findings
 
@@ -799,6 +808,27 @@ but a map inside the defaults may hold entries from the section and a slice's
 elements may be written over. A map or slice inside the
 defaults is decoded into in place, so write the defaults as a literal in the call
 rather than sharing one value between calls.
+
+**A key the plugin's options do not have is an error too**, at whatever depth,
+and so is one named after a field tagged `json:"-"`: `collage: elagoht/robots:
+unknown key "dissallow" in plugins-config.json; remove it, or rename it to a key
+the plugin documents`. It stops the application at `Configure` or `Init`, where a
+misspelt or renamed key used to be ignored and the option left at its default.
+
+**A duration in options is a `collage.Duration`**, not a `time.Duration`:
+
+```go
+type Options struct {
+	BanTime collage.Duration `json:"banTime"` // "1h", "90s", "1h30m"
+}
+
+ban := time.Duration(p.opts.BanTime)
+```
+
+It reads a string `time.ParseDuration` understands and writes one back. A bare
+number is refused with an error naming it — `time.Duration` would have read
+`"banTime": 3600` as 3600 nanoseconds, 3.6µs, without a word — and `null` leaves
+the default as it was.
 
 **A key matching no registered plugin is a startup error** (`ErrUnknownPluginConfig`).
 Ignoring `"elagoht/minimzer"` would leave the plugin running on defaults and the
