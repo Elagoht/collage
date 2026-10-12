@@ -5,9 +5,9 @@ import (
 
 	"@@MODULE@@/actions"
 	"@@MODULE@@/documents"
+	"@@MODULE@@/pages"
 	demopages "@@MODULE@@/pages/demo"
 	errorpages "@@MODULE@@/pages/errors"
-	landingpages "@@MODULE@@/pages/landing"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
@@ -16,7 +16,7 @@ import (
 // "collage add" puts the ones it writes here too.
 func register(app *collage.App) error {
 	if err := app.Register(
-		landingpages.Home(),
+		pages.Home(),
 		demopages.Features(),
 		demopages.Hello(),
 		documents.Health(),
