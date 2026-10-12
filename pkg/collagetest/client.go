@@ -31,6 +31,10 @@
 //
 // Redirects are not followed: a test usually wants to see the 303 and where it
 // points. Follow takes it when the page behind it is what the test is about.
+//
+// A plugin's tests have no application of their own to build: NewSite builds a
+// real one with the least configuration a test needs, the plugin in it, and
+// returns it started, with a Client on it and what it logged.
 package collagetest
 
 import (
