@@ -1186,6 +1186,8 @@ type startRecorder struct {
 	started bool
 	// onStart, when set, runs as Start does: user code in a plugin's Init.
 	onStart func()
+	// startErr is what Start returns.
+	startErr error
 }
 
 func (s *startRecorder) Start() error {
@@ -1193,7 +1195,7 @@ func (s *startRecorder) Start() error {
 	if s.onStart != nil {
 		s.onStart()
 	}
-	return nil
+	return s.startErr
 }
 
 // TestBuild_OutDirRepointedToSafeTargetBuildsThere checks that an OutDir symlink
@@ -1447,5 +1449,70 @@ func TestBuild_OutputsSharingADirectoryDoNotCollide(t *testing.T) {
 	}
 	if len(report.Written) != 3 {
 		t.Errorf("Report.Written = %v, want three files", report.Written)
+	}
+}
+
+// TestBuild_EarlyStopsReportTheirError checks that every stop before rendering
+// returns its failure alone and also puts it in Report.Errors, beside whatever
+// resolving the routes' StaticParams failed with when that ran.
+func TestBuild_EarlyStopsReportTheirError(t *testing.T) {
+	paramsErr := errors.New("params unavailable")
+	failingPage := func() *types.Page {
+		p := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/blog/{slug}"})
+		p.StaticParams = func(context.Context, string) ([]map[string]string, error) { return nil, paramsErr }
+		return p
+	}
+	startErr := errors.New("init failed")
+	cases := []struct {
+		name       string
+		app        Renderer
+		outDir     string
+		want       error
+		wantParams bool
+	}{
+		{
+			name:   "start failure",
+			app:    &startRecorder{fakeRenderer: &fakeRenderer{defaultLocale: "en"}, startErr: startErr},
+			outDir: resolvedTempDir(t),
+			want:   startErr,
+		},
+		{
+			name:   "OutDir refused",
+			app:    &fakeRenderer{defaultLocale: "en"},
+			outDir: string(filepath.Separator),
+			want:   ErrDangerousOutDir,
+		},
+		{
+			name: "collision",
+			app: &fakeRenderer{defaultLocale: "en", pages: []*types.Page{
+				failingPage(),
+				newTestPage("a", types.StrategyStatic, map[string]string{"en": "/dup"}),
+				newTestPage("b", types.StrategyStatic, map[string]string{"en": "/dup/"}),
+			}},
+			outDir:     resolvedTempDir(t),
+			want:       ErrOutputPathCollision,
+			wantParams: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b, err := New(c.app, Options{OutDir: c.outDir})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			report, err := b.Build(context.Background())
+			if !errors.Is(err, c.want) {
+				t.Fatalf("Build error = %v, want %v", err, c.want)
+			}
+			if errors.Is(err, paramsErr) {
+				t.Errorf("Build error = %v, want the stop's failure alone", err)
+			}
+			if !slices.ContainsFunc(report.Errors, func(e error) bool { return e == err }) {
+				t.Errorf("Report.Errors = %v, missing %v", report.Errors, err)
+			}
+			if got := errors.Is(errors.Join(report.Errors...), paramsErr); got != c.wantParams {
+				t.Errorf("Report.Errors = %v, holds the StaticParams failure: %v, want %v", report.Errors, got, c.wantParams)
+			}
+		})
 	}
 }

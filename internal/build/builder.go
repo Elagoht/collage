@@ -280,8 +280,9 @@ type Report struct {
 	// Build's returned error is errors.Join of exactly these, so a caller that
 	// wants the individual failures can read them here instead of unwrapping the
 	// joined error — except when the build stopped before rendering, where the
-	// returned error is that failure alone; when OutDir could not be cleaned or
-	// created, Errors holds the path-resolution failures beside it.
+	// returned error is that failure alone. Errors then holds it last, after the
+	// path-resolution failures when enumerating had run (a collision, or OutDir
+	// not cleaned or created).
 	Errors []error
 	// Duration is how long the Build call took, from entry to return.
 	Duration time.Duration
@@ -358,13 +359,21 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	start := time.Now()
 	report := &Report{}
 
+	// stop ends the build before anything renders. The error returned is the
+	// failure alone; Report.Errors holds it too, after what resolving the routes'
+	// StaticParams failed with when that has run.
+	stop := func(err error, enumerated ...error) (*Report, error) {
+		report.Errors = append(slices.Clip(enumerated), err)
+		report.Duration = time.Since(start)
+		return report, err
+	}
+
 	// OutDir is checked before anything else: starting the application runs
 	// plugins' Init and enumerating the routes runs each StaticParams, both user
 	// code that may reach the network, and a build that is going to be refused
 	// must not have run either first.
 	if _, err := b.checkOutDir(); err != nil {
-		report.Duration = time.Since(start)
-		return report, err
+		return stop(err)
 	}
 
 	// The application is then started, which runs every plugin's Init: a page
@@ -373,8 +382,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	// server answers its first request.
 	if starter, ok := b.app.(Starter); ok {
 		if err := starter.Start(); err != nil {
-			report.Duration = time.Since(start)
-			return report, err
+			return stop(err)
 		}
 	}
 
@@ -387,21 +395,15 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 	// its own pass rather than a check inside the write: the writes run
 	// concurrently, and "did anyone else already claim this file" is exactly the
 	// question a concurrent writer cannot answer about itself.
+	enumerated := slices.Concat(enumerateErrs, docEnumerateErrs)
 	if err := b.checkNoOutputCollisions(tasks, docTasks); err != nil {
-		report.Errors = []error{err}
-		report.Duration = time.Since(start)
-		return report, err
+		return stop(err, enumerated...)
 	}
 	report.Skipped = skipped
 
 	outDirResolved, err := b.prepareOutDir()
 	if err != nil {
-		// The returned error is this failure alone, as for every early stop, but
-		// what enumerating the routes found is still worth reading: the report
-		// keeps it beside the failure.
-		report.Errors = slices.Concat(enumerateErrs, docEnumerateErrs, []error{err})
-		report.Duration = time.Since(start)
-		return report, err
+		return stop(err, enumerated...)
 	}
 
 	written := make([]string, len(tasks))

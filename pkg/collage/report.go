@@ -130,9 +130,9 @@ func printFindings(w io.Writer, s term.Style, findings []Finding) {
 }
 
 func printErrors(w io.Writer, s term.Style, errs []error, buildErr error) {
-	// buildErr is errors.Join of exactly report.Errors, so the list is what to
-	// print — unless a build failed before it could record any, which is the one
-	// case where the joined error is all there is.
+	// buildErr is errors.Join of report.Errors, or one of them when the build
+	// stopped early, so the list is what to print — unless there is no list,
+	// which is the one case where the error is all there is.
 	if len(errs) == 0 {
 		if buildErr != nil {
 			fmt.Fprintf(w, "\n%s %s\n    %s\n",

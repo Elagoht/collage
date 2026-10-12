@@ -7,10 +7,12 @@
 - **A static build refuses a dangerous `OutDir` before running any of your code.**
   A filesystem root, or a repository root with `Clean`, used to be refused only
   after the application started and every `StaticParams` ran. It is now refused
-  first, and checked again just before `OutDir` is cleaned.
-- **A build that cannot clean or create `OutDir` keeps what enumeration found.**
-  The returned error is still that failure alone; `BuildReport.Errors` also holds
-  the `StaticParams` failures.
+  first, and checked again, where it then points, just before `OutDir` is
+  cleaned or created.
+- **A build that stops before rendering reports why in `BuildReport.Errors`.**
+  The returned error is still that failure alone; `BuildReport.Errors` now holds
+  it at every early stop (start failure, refused `OutDir`, collision, `OutDir`
+  not cleaned or created), after the `StaticParams` failures when they had run.
 - **A document whose file is a directory another output needs collides up front.**
   A document at `/feed.xml` beside a page or document under `/feed.xml/` stops the
   build with `ErrOutputPathCollision` before `OutDir` is touched, instead of

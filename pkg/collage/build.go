@@ -61,7 +61,8 @@ type BuildReport struct {
 	Findings []Finding
 	// Errors lists every render, path-resolution or write failure. Build's
 	// returned error is errors.Join of exactly these, except when the build
-	// stopped before rendering; see Build.
+	// stopped before rendering, where it is the one failure that stopped it —
+	// which Errors also holds, last; see Build.
 	Errors []error
 	// Duration is how long the Build call took.
 	Duration time.Duration
@@ -125,12 +126,17 @@ func reportFrom(r *build.Report) *BuildReport {
 //
 // The report is returned alongside the error, so a caller can print what was
 // written as well as what failed. The error is errors.Join of BuildReport.Errors,
-// except when the build stopped before rendering — the application failed to
-// start, OutDir was refused, two outputs collided (ErrOutputPathCollision), or
-// OutDir could not be cleaned or created — where it is that failure alone. A
-// refused OutDir is refused before any StaticParams runs. When OutDir could not
-// be cleaned or created, BuildReport.Errors also holds whatever resolving the
-// routes' StaticParams failed with. Only that last stop can have touched OutDir.
+// except when the build stopped before rendering — OutDir was refused, the
+// application failed to start, two outputs collided (ErrOutputPathCollision), or
+// OutDir could not be cleaned or created. Then the error is that failure alone,
+// and BuildReport.Errors holds it last, after whatever resolving the routes'
+// StaticParams failed with when that had run (a collision, or OutDir not cleaned
+// or created).
+//
+// A dangerous OutDir (ErrDangerousOutDir) is refused before your plugins' Init or
+// any StaticParams runs, unless your code changes OutDir while the build runs: it
+// is checked again, where it then points, before it is cleaned or created, and
+// refused there. Only that last stop can have touched OutDir.
 func Build(ctx context.Context, app *App, opts BuildOptions) (*BuildReport, error) {
 	if app == nil || app.c == nil {
 		return nil, ErrNilApp
