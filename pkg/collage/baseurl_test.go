@@ -66,6 +66,10 @@ func TestConfig_BaseURLValidation(t *testing.T) {
 		"https://example.com/path", // a path
 		"https://example.com?q=1",  // a query
 		"https://example.com#frag", // a fragment
+		"https://example.com/?",    // an empty query: joined, https://example.com/?/path
+		"https://example.com/#",    // an empty fragment
+		"https://example.com?",
+		"https://example.com#",
 		"https://user@example.com", // credentials
 		"not a url",
 	}

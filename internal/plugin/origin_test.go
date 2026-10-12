@@ -24,6 +24,10 @@ func TestParseOrigin(t *testing.T) {
 	for _, raw := range []string{
 		"", "example.com", "ftp://example.com", "https://", "https://:8080", "http://:80/", "https://u:p@example.com",
 		"https://example.com/blog", "https://example.com?x=1", "https://example.com#top", "mailto:a@b.c",
+		// An empty query or fragment marker is not bare either: joined with a
+		// path it would give https://example.com/?/path.
+		"https://example.com/?", "https://example.com/#", "https://example.com?", "https://example.com#",
+		"https://example.com/?#", "https://example.com:8443?",
 	} {
 		if got, err := ParseOrigin(raw); !errors.Is(err, ErrInvalidOrigin) {
 			t.Errorf("ParseOrigin(%q) = %q, %v; want ErrInvalidOrigin", raw, got, err)
