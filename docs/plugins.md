@@ -22,7 +22,7 @@ go get github.com/Elagoht/collage-minimizer
 import minimizer "github.com/Elagoht/collage-minimizer"
 
 app, err := collage.New(&collage.Config{
-	Plugins: []collage.Plugin{minimizer.New()},
+	Plugins: []collage.Plugin{minimizer.New(minimizer.Options{})},
 })
 ```
 
@@ -656,7 +656,7 @@ otherwise leave you wondering why no template can call it.
 
 ```go
 app, err := collage.New(&collage.Config{
-	Plugins: []collage.Plugin{minimizer.New()},
+	Plugins: []collage.Plugin{minimizer.New(minimizer.Options{})},
 })
 ```
 
@@ -779,7 +779,7 @@ it last wins. The prefix keeps a plugin's keys its own.
 
 ```go
 app, err := collage.New(&collage.Config{
-	Plugins:      []collage.Plugin{minimizer.New()},
+	Plugins:      []collage.Plugin{minimizer.New(minimizer.Options{})},
 	PluginConfig: pluginConfig,
 })
 ```
@@ -944,10 +944,17 @@ plugin needs:
 | `WithRegister(items...)` | Registers pages, documents and actions after the home page |
 | `WithoutHome()` | Leaves the home page out, so `/` is the test's |
 | `WithConfig(func(*collage.Config))` | Edits the configuration before the application is built: locales, a cache, `BaseURL`, development mode, anything |
+| `WithSetup(func(*collage.App) error)` | Registers on the application itself before it starts — `Handle`, `Mount`, `Use`, `RegisterNotFoundPage`, `RegisterErrorPage`. Runs after the default registrations; several run in order; an error fails the site |
 
 `collagetest.TrySite` is `NewSite` for a test that expects building or starting
 to fail — a plugin refusing a bad configuration in `Init` — and returns the error
 instead of failing the test.
+
+A test that shuts the application down itself — to check what a plugin's
+`Shutdown` returns — calls `site.Shutdown(ctx)`, not `site.App.Shutdown(ctx)`.
+`App.Shutdown` runs once and returns its first error on every later call, so the
+cleanup would report the error the test expected; `site.Shutdown` closes the site
+and the cleanup does nothing more.
 
 ## Third-party plugins need no mechanism
 
@@ -959,7 +966,7 @@ third-party plugin is an ordinary Go module:
 import optimage "github.com/Elagoht/collage-opti-image"
 
 app, err := collage.New(&collage.Config{
-	Plugins: []collage.Plugin{optimage.New()},
+	Plugins: []collage.Plugin{optimage.New(optimage.Options{})},
 })
 ```
 

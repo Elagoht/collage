@@ -1,5 +1,42 @@
 # Changelog
 
+## v0.61.1
+
+Two test helpers for plugin authors and three fixes. Additions only: no exported
+name changed or went.
+
+### Added
+
+- **`collagetest.WithSetup` registers on the application before it starts.** A
+  plugin test that needs `app.Handle`, `app.Mount`, `app.Use`,
+  `RegisterNotFoundPage` or `RegisterErrorPage` no longer hand-builds its app:
+  `WithSetup(func(app *collage.App) error)` runs after `New` and the default
+  registrations, before `Start`. Several run in order, and an error fails
+  `NewSite` or is returned by `TrySite`.
+- **`(*collagetest.Site).Shutdown(ctx)` shuts the site down once.**
+  `App.Shutdown` returns its first error on every later call, so a test that shut
+  the app down itself, expecting an error, had the same error reported again by
+  the cleanup. `site.Shutdown` closes the site and the cleanup does nothing more:
+  call it, not `site.App.Shutdown`, when the test shuts down itself.
+
+### Fixed
+
+- **A `Shutdown` before `Start` initialises no plugin.** `Start` used to run every
+  plugin's `Init` after the application was already shut down, and nothing was
+  left to shut them down. It now fails without initialising any plugin, and
+  `ListenAndServe` returns nil, the clean stop that was asked for. Through `App`,
+  a `Shutdown` while `Start` is still running waits for `Start` to finish, then
+  shuts every plugin down once. The plugin registry itself now also handles a
+  `Shutdown` that races `Init`: the plugin in `Init` is shut down as soon as it
+  returns and no further plugin is initialised.
+- **`collage.ParseOrigin` refuses an empty query or fragment marker.**
+  `https://cms.example.com/?`, `https://x/#`, `https://x?` and `https://x#` were
+  accepted and returned as they were, so a `Config.BaseURL` of
+  `https://x/?` joined into `https://x/?/path`; they are now `ErrInvalidOrigin`.
+- **Documentation follows the v1 plugin conventions.** Plugin constructors in the
+  docs and README are `x.New(x.Options{})`, and `LoadPluginConfig`'s example uses
+  keys the plugins still read.
+
 ## v0.61.0
 
 Additions for plugin authors, one stricter rule and one fix. No exported name

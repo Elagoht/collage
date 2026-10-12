@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -709,6 +710,44 @@ func TestApp_ListenAndServeAfterShutdown(t *testing.T) {
 	// Nothing will ever listen on this path, and a waiter has to learn that rather
 	// than wait for a server that is never coming.
 	waitListening(t, app)
+}
+
+// TestApp_ListenAndServeAfterShutdownWithPlugin: with a plugin registered the
+// registry refuses Init after Shutdown, and ListenAndServe must still report the
+// clean stop it was asked for, not a startup failure.
+func TestApp_ListenAndServeAfterShutdownWithPlugin(t *testing.T) {
+	var logs bytes.Buffer
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	spy := &lifecyclePlugin{}
+	if err := app.RegisterPlugin(spy); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+	if err := app.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+
+	served := make(chan error, 1)
+	go func() { served <- app.ListenAndServe() }()
+
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatalf("ListenAndServe = %v, want nil after Shutdown", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ListenAndServe blocked although the App was already shut down")
+	}
+	waitListening(t, app)
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("a requested stop was logged as an error:\n%s", logs.String())
+	}
+	spy.mu.Lock()
+	defer spy.mu.Unlock()
+	if spy.initCount != 0 {
+		t.Errorf("Init ran %d times after Shutdown, want 0", spy.initCount)
+	}
 }
 
 // TestApp_ListenAndServeReportsBindFailure: a port that cannot be bound is a real

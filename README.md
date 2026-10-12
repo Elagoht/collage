@@ -164,7 +164,7 @@ here: they are separate projects, fetched with `go get` and registered in
 import optimage "github.com/Elagoht/collage-opti-image"
 
 app, err := collage.New(&collage.Config{
-	Plugins:      []collage.Plugin{optimage.New()},
+	Plugins:      []collage.Plugin{optimage.New(optimage.Options{})},
 	PluginConfig: pluginConfig,
 })
 ```

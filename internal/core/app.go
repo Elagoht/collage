@@ -991,6 +991,11 @@ func (a *App) failedAfterInit(err error) (http.Handler, error) {
 func (a *App) buildFailed(err error) (http.Handler, error) {
 	a.handler = unavailableHandler{}
 	a.handlerErr = err
+	if errors.Is(err, plugin.ErrShuttingDown) {
+		// A stop was asked for before the plugins were up: not a failure to report.
+		a.logger.Info("collage: shut down before the application started")
+		return a.handler, err
+	}
 	a.logger.Error("collage: starting the application failed", "error", err)
 	return a.handler, err
 }
@@ -1020,6 +1025,12 @@ func (a *App) buildFailed(err error) (http.Handler, error) {
 // returns. Neither can outlive it.
 func (a *App) ListenAndServe() error {
 	handler, err := a.buildHandler()
+	if errors.Is(err, plugin.ErrShuttingDown) {
+		// Shutdown ran first and the registry refused to initialise the plugins:
+		// the clean stop that was asked for, as when no plugin is registered below.
+		a.listenOnce.Do(func() { close(a.listening) })
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -1179,7 +1190,9 @@ func cleanStop(err error) error {
 // It is idempotent: the work runs exactly once and every caller — including one
 // racing another — observes the same result. Calling it before ListenAndServe has
 // started a server shuts the plugins down and prevents a later ListenAndServe from
-// serving.
+// serving, and a later Start fail without initialising any plugin. Calling it
+// while Start is still running plugins' Init waits for Start to finish, then shuts
+// every plugin down once.
 func (a *App) Shutdown(ctx context.Context) error {
 	// A caller's deadline ends a drain's wait even when the drain is not its own:
 	// an application that traps the signal itself calls Shutdown while

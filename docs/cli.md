@@ -527,7 +527,7 @@ the call into `plugins.go`, before the first entry whose manifest has a greater
 ```
 $ collage plugin add elagoht/consent
 added elagoht/consent v0.1.2
-  plugins.go           consent.New()
+  plugins.go           consent.New(consent.Options{})
   plugins-config.json  "elagoht/consent": {}
 ```
 
@@ -607,7 +607,7 @@ func main() {
 		log.Fatal(err)
 	}
 	registerPages(app)
-	app.RegisterPlugin(sitemap.New())
+	app.RegisterPlugin(sitemap.New(sitemap.Options{}))
 
 	// Starts the application (running every plugin's Init, which is what
 	// registers their commands) and dispatches the first word after the flags

@@ -14,7 +14,8 @@ var ErrInvalidOrigin = errors.New("collage: invalid origin: want scheme://host[:
 
 // ParseOrigin checks that raw is a bare origin — an http or https scheme, a host
 // name (a port alone, "https://:8080", is not one), an optional port, and nothing
-// else: no path beyond "/", no query, no fragment, no user info — and
+// else: no path beyond "/", no query or fragment (not even an empty "?" or "#"),
+// no user info — and
 // returns it without a trailing slash, so a path joined to it gets one slash.
 func ParseOrigin(raw string) (string, error) {
 	u, err := url.Parse(raw)
@@ -24,6 +25,9 @@ func ParseOrigin(raw string) (string, error) {
 	case u.Hostname() == "", u.User != nil, u.Opaque != "":
 	case u.Path != "" && u.Path != "/":
 	case u.RawQuery != "", u.Fragment != "", u.RawFragment != "":
+	// An empty query or fragment, "https://x/?" or "https://x#", leaves the
+	// fields above empty but its marker in raw, which a joined path would follow.
+	case u.ForceQuery, strings.ContainsAny(raw, "?#"):
 	default:
 		return strings.TrimSuffix(raw, "/"), nil
 	}
