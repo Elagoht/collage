@@ -10,40 +10,40 @@ import (
 	"github.com/Elagoht/collage/internal/core"
 )
 
-// DispatchCommands runs the plugin-contributed CLI subcommand named by args[0], with
-// args[1:] as its arguments, and returns the exit code the program should use
+// DispatchCommands runs the plugin-contributed CLI subcommand named by args[0],
+// with args[1:] as its arguments, and returns the exit code the program should use
 // alongside the error that produced it.
 //
-// It exists because a plugin's commands are otherwise unreachable. A plugin registers
-// one from inside Init, through Host.RegisterCommand; Init runs when the application
-// starts; and the `collage` binary never loads the application at all — dev builds
-// the project with go build and runs the result, build compiles it, and export runs
-// "go run . -collage-build". None of them links the project's plugins into itself.
-// Nothing was ever going to dispatch those commands but the application's own main,
-// and until this function there was no way for it to.
+// It exists because a plugin's commands are otherwise unreachable. A plugin
+// registers one from inside Init, through Host.RegisterCommand; Init runs when the
+// application starts; and the `collage` binary never loads the application at all —
+// dev builds the project with go build and runs the result, build compiles it, and
+// export runs "go run . -collage-build". None of them links the project's plugins
+// into itself. Nothing was ever going to dispatch those commands but the
+// application's own main, and until this function there was no way for it to.
 //
-// DispatchCommands starts the application first (see App.Start), because Init is what
-// registers the commands: there is nothing to dispatch against before it has run. A
-// startup failure is returned with exit code 1 and nothing is dispatched. Starting
-// also closes registration, so call it after everything is registered — which is the
-// same rule Handler and ListenAndServe already impose, and a later ListenAndServe on
-// the same App reuses this start rather than repeating it.
+// DispatchCommands starts the application first (see App.Start), because Init is
+// what registers the commands: there is nothing to dispatch against before it has
+// run. A startup failure is returned with exit code 1 and nothing is dispatched.
+// Starting also closes registration, so call it after everything is registered —
+// which is the same rule Handler and ListenAndServe already impose, and a later
+// ListenAndServe on the same App reuses this start rather than repeating it.
 //
-// It does not shut the application down, because a caller may go on to serve it
-// or dispatch again. A program that exits after a command calls App.Shutdown
-// first, as below, so that every plugin's Shutdown runs; nothing else would. Skip
-// it when the start failed: that start has already shut down the plugins it
-// started.
+// It does not shut the application down, because a caller may go on to serve it or
+// dispatch again. A program that exits after a command calls App.Shutdown first, as
+// below, so that every plugin's Shutdown runs; nothing else would. Skip it when the
+// start failed: that start has already shut down the plugins it started.
 //
-// It dispatches plugin commands, and two of its own: "collage-inspect", which prints
-// a description of the application as versioned JSON for an editor or a linter
-// (what `collage inspect` reads), and "collage-check", which prints App.Check's
-// findings. "dev", "build", "export" and the
-// rest belong to the `collage` binary, which invokes this program rather than the
-// other way round, and a program that wants a usage listing has App.Commands.
+// It dispatches plugin commands, and two of its own: "collage-inspect", which
+// prints a description of the application as versioned JSON for an editor or a
+// linter (what `collage inspect` reads), and "collage-check", which prints
+// App.Check's findings. "dev", "build", "export" and the rest belong to the
+// `collage` binary, which invokes this program rather than the other way round, and
+// a program that wants a usage listing has App.Commands.
 //
-// The exit codes follow the `collage` binary's: 0 for success, 2 for a usage problem
-// (a nil App, or a name nothing claims), and 1 for a command that ran and failed.
+// The exit codes follow the `collage` binary's: 0 for success, 2 for a usage
+// problem (a nil App, or a name nothing claims), and 1 for a command that ran and
+// failed.
 //
 // Pass what is left once the program's own flags are parsed — flag.Args(), not
 // os.Args[1:], which would hand a flag such as -port to DispatchCommands as a
@@ -104,9 +104,9 @@ func DispatchCommands(ctx context.Context, app *App, args []string) (int, error)
 }
 
 // inspectCommand is the command DispatchCommands answers itself with a description
-// of the application, as indented JSON on standard output: `go run . collage-inspect`, which is what
-// `collage inspect` and editor extensions run. Prefixed, so no plugin's command is
-// taken.
+// of the application, as indented JSON on standard output: `go run .
+// collage-inspect`, which is what `collage inspect` and editor extensions run.
+// Prefixed, so no plugin's command is taken.
 const inspectCommand = "collage-inspect"
 
 func inspect(app *App, args []string) (int, error) {

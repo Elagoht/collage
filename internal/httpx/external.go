@@ -166,19 +166,15 @@ func Vary(r *http.Request, header, value string) error {
 	return nil
 }
 
-// Varied returns the value a middleware declared for header through Vary,
-// and whether one was declared. It is what Varied reads: a shared render's data
-// handler asks the framework for a dimension's value rather than reaching into
-// the request context, because the value is part of the cache key — the one kind
-// of per-reader input a cached page is allowed to depend on — while a raw context
-// value is stripped from a shared render as a possible leak.
-func Varied(r *http.Request, header string) (string, bool) {
-	return VariedContext(r.Context(), header)
-}
-
-// VariedContext is Varied for code that holds only a context: a page's
-// StaticParams, a document handler's ctx. The vary set is a framework key, kept
-// in a shared render's context.
+// VariedContext returns the value a middleware declared for header through
+// Vary, and whether one was declared. It is what collage.Varied reads: a shared
+// render's data handler asks the framework for a dimension's value rather than
+// reaching into the request context, because the value is part of the cache key
+// — the one kind of per-reader input a cached page is allowed to depend on —
+// while a raw context value is stripped from a shared render as a possible leak.
+// It takes a context, not a request, so a page's StaticParams or a document
+// handler's ctx can ask too; the vary set is a framework key, kept in a shared
+// render's context.
 func VariedContext(ctx context.Context, header string) (string, bool) {
 	set, ok := ctx.Value(varySetKey{}).(*varySet)
 	if !ok {

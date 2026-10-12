@@ -3,6 +3,7 @@ package collage_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -48,10 +49,9 @@ func TestBuild_ReturnsIndependentCopy_NoSharedContainers(t *testing.T) {
 		WithFragmentPath("en", "/p/f", copyContent())
 	assertBuildsShareNothing(t, "Page", reflect.ValueOf(pb.Build()), reflect.ValueOf(pb.Build()))
 
+	// Descends into Fragment.Slots["s"], a *SlotDefinition each Build owns.
 	fb := collage.NewInlineFragment("f", `{{slot "s"}}`).WithSlotFragment("s", copyContent())
-	f1, f2 := fb.Build(), fb.Build()
-	assertBuildsShareNothing(t, "Fragment", reflect.ValueOf(f1), reflect.ValueOf(f2))
-	assertBuildsShareNothing(t, "Fragment.Slots[s]", reflect.ValueOf(f1.Slots["s"]), reflect.ValueOf(f2.Slots["s"]))
+	assertBuildsShareNothing(t, "Fragment", reflect.ValueOf(fb.Build()), reflect.ValueOf(fb.Build()))
 
 	db := collage.NewDocument("d", "text/plain").WithBody([]byte("x")).WithPath("en", "/d").
 		WithCacheParams("q").WithDependencyTags("t").WithRedirect("/old.txt", "/d", 302)
@@ -67,7 +67,23 @@ func assertBuildsShareNothing(t *testing.T, name string, a, b reflect.Value) {
 	if a.Pointer() == b.Pointer() {
 		t.Fatalf("%s: two Builds returned one value", name)
 	}
-	va, vb := a.Elem(), b.Elem()
+	assertFieldsShareNothing(t, name, a.Elem(), b.Elem())
+}
+
+// ownedByBuild are the pointer types each Build copies rather than shares,
+// because a builder writes through them in place. A pointer to another built
+// value — a *Fragment child, an error *Page, an attached *Action — is shared on
+// purpose and not descended into; a *Redirect is made once and never written
+// again.
+var ownedByBuild = map[reflect.Type]bool{
+	reflect.TypeFor[*collage.SlotDefinition](): true,
+}
+
+// assertFieldsShareNothing compares two built struct values field by field,
+// descending into struct-valued fields and into owned pointers wherever they
+// sit: a field, a slice element or a map value.
+func assertFieldsShareNothing(t *testing.T, name string, va, vb reflect.Value) {
+	t.Helper()
 	for i := range va.NumField() {
 		fa, fb := va.Field(i), vb.Field(i)
 		field := name + "." + va.Type().Field(i).Name
@@ -83,6 +99,14 @@ func assertBuildsShareNothing(t *testing.T, name string, a, b reflect.Value) {
 		if fa.CanInterface() && !reflect.DeepEqual(fa.Interface(), fb.Interface()) {
 			t.Errorf("%s differs between two Builds", field)
 		}
+		switch fa.Kind() {
+		case reflect.Struct:
+			assertFieldsShareNothing(t, field, fa, fb)
+			continue
+		case reflect.Pointer:
+			assertOwnedCopied(t, field, fa, fb)
+			continue
+		}
 		if fa.Kind() != reflect.Slice && fa.Kind() != reflect.Map {
 			continue
 		}
@@ -93,7 +117,32 @@ func assertBuildsShareNothing(t *testing.T, name string, a, b reflect.Value) {
 		if fa.UnsafePointer() == fb.UnsafePointer() {
 			t.Errorf("%s is shared between two Builds", field)
 		}
+		if fa.Kind() == reflect.Slice {
+			for j := range min(fa.Len(), fb.Len()) {
+				assertOwnedCopied(t, fmt.Sprintf("%s[%d]", field, j), fa.Index(j), fb.Index(j))
+			}
+			continue
+		}
+		for _, k := range fa.MapKeys() {
+			if ib := fb.MapIndex(k); ib.IsValid() {
+				assertOwnedCopied(t, fmt.Sprintf("%s[%v]", field, k), fa.MapIndex(k), ib)
+			}
+		}
 	}
+}
+
+// assertOwnedCopied checks that a and b, when they are an owned pointer, point
+// at two values sharing nothing, and does nothing for any other value.
+func assertOwnedCopied(t *testing.T, name string, a, b reflect.Value) {
+	t.Helper()
+	if a.Kind() != reflect.Pointer || !ownedByBuild[a.Type()] || a.IsNil() {
+		return
+	}
+	if b.IsNil() || a.Pointer() == b.Pointer() {
+		t.Errorf("%s is shared between two Builds", name)
+		return
+	}
+	assertFieldsShareNothing(t, name, a.Elem(), b.Elem())
 }
 
 func TestBuild_ReturnsIndependentCopy_Fragment(t *testing.T) {

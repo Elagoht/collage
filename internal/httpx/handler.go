@@ -1160,9 +1160,10 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 	return http.StatusOK
 }
 
-// writeCache stores content under key, and records the key's tags with the tracker. Both write paths track: SetTagged indexes the tags inside the cache
-// and Track indexes them in the tracker, and invalidation may go through either, so
-// the two indexes are kept deliberately redundant.
+// writeCache stores content under key, and records the key's tags with the tracker.
+// Both write paths track: SetTagged indexes the tags inside the cache and Track
+// indexes them in the tracker, and invalidation may go through either, so the two
+// indexes are kept deliberately redundant.
 //
 // A failure here never fails the request. The page has already rendered, and
 // serving it uncached is strictly better than turning a cache problem into a 500.
@@ -1171,9 +1172,9 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 // nothing was written. Cache is an interface the application may implement, and its
 // contract is that Set returns the content's ETag — so the stored value, not a
 // locally recomputed one, is what the fresh response must advertise. A cache that
-// derives ETags its own way would otherwise send one value on the fresh response and
-// a different one on every hit that followed, and every conditional request would
-// miss.
+// derives ETags its own way would otherwise send one value on the fresh response
+// and a different one on every hit that followed, and every conditional request
+// would miss.
 func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string) string {
 	ctx := r.Context()
 	// A static build asking what it answers is not a reader: the build has
@@ -1293,10 +1294,12 @@ func (h *Handler) ttlFor(strategy types.RenderStrategy, cacheTTL time.Duration) 
 
 // setCacheHeaders writes the Cache-Control for a route with the given strategy and
 // cacheTTL, and, whenever that response is publicly cacheable, the Vary header
-// naming the headers the request declared through Vary. Vary belongs only on a public response: it tells a shared
-// cache which request headers select between representations, and a no-store
-// response has no representation to select. Shared by the page and document paths;
-// see ttlFor for why it is parameterized rather than typed on either route kind.
+// naming the headers the request declared through Vary.
+//
+// Vary belongs only on a public response: it tells a shared cache which request
+// headers select between representations, and a no-store response has no
+// representation to select. Shared by the page and document paths; see ttlFor for
+// why it is parameterized rather than typed on either route kind.
 func (h *Handler) setCacheHeaders(header http.Header, r *http.Request, strategy types.RenderStrategy, cacheTTL time.Duration) {
 	control := h.cacheControl(strategy, cacheTTL)
 	switch {
@@ -1345,9 +1348,9 @@ func addVary(header http.Header, names ...string) {
 // cacheControl returns the Cache-Control value for a route with the given render
 // strategy: static is cached but always revalidated, incremental is cached for its
 // effective TTL, and dynamic is never stored. The incremental value is derived from
-// cacheTTL, so the header a client sees does not
-// change from request to request. Shared by the page and document paths;
-// see ttlFor for why it is parameterized rather than typed on either route kind.
+// cacheTTL, so the header a client sees does not change from request to request.
+// Shared by the page and document paths; see ttlFor for why it is parameterized
+// rather than typed on either route kind.
 func (h *Handler) cacheControl(strategy types.RenderStrategy, cacheTTL time.Duration) string {
 	switch strategy {
 	case types.StrategyStatic:

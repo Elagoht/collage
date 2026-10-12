@@ -96,8 +96,8 @@ type DocumentRenderedHook interface {
 
 // DocumentRenderedEvent describes a document that has just produced its body.
 type DocumentRenderedEvent struct {
-	// Document is the live *types.Document that produced Body. Not copied for
-	// this event, and not defended against mutation; see BeforeRenderEvent.Page.
+	// Document is the live Document that produced Body. Not copied for this event,
+	// and not defended against mutation; see BeforeRenderEvent.Page.
 	Document *types.Document
 	// ContentType is the document's declared content type, so a hook can decide
 	// whether it handles this format without parsing the body to find out.
@@ -342,14 +342,14 @@ type BeforeRenderEvent struct {
 	// under the same key wins. That is the right way round: the plugin is providing
 	// a default, the page is providing the specific thing.
 	Context *types.RenderContext
-	// Page is the live *types.Page about to be rendered — this event does not
-	// copy it, deliberately: copying a page (and its fragment tree) on every
-	// request would defeat a cache-first framework's hot path. Nothing in this
-	// package stops a plugin from writing through it, but doing so mutates the
-	// same Page every other request and hook sees, concurrently with those
-	// requests reading it: that is a data race, which -race reports and which
-	// silently corrupts a map or slice without it. Treat it as read-only by
-	// convention, not by enforcement. See the package doc comment.
+	// Page is the live Page about to be rendered — this event does not copy it,
+	// deliberately: copying a page (and its fragment tree) on every request would
+	// defeat a cache-first framework's hot path. Nothing in this package stops a
+	// plugin from writing through it, but doing so mutates the same Page every
+	// other request and hook sees, concurrently with those requests reading it:
+	// that is a data race, which -race reports and which silently corrupts a map or
+	// slice without it. Treat it as read-only by convention, not by enforcement.
+	// See the package doc comment.
 	Page *types.Page
 	// Locale is the locale the page is about to be rendered for.
 	Locale string
@@ -419,7 +419,7 @@ const formMemory = 32 << 20
 // AfterRenderEvent describes a render that just completed.
 //
 // A plugin checking the output reports what it finds with Warn and Error; see
-// types.Finding.
+// Finding.
 type AfterRenderEvent struct {
 	// Findings are what the plugins that ran so far reported about this render,
 	// through Warn and Error.
@@ -438,8 +438,8 @@ type AfterRenderEvent struct {
 	// App.RenderPath — rather than for a request. A plugin checking the output
 	// runs then, and in development, and stays out of a production server's way.
 	Static bool
-	// Page is the live *types.Page that was rendered. Not copied for this event,
-	// and not defended against mutation; see BeforeRenderEvent.Page.
+	// Page is the live Page that was rendered. Not copied for this event, and not
+	// defended against mutation; see BeforeRenderEvent.Page.
 	Page *types.Page
 	// Locale is the locale the page was rendered for. This event's own copy.
 	Locale string
@@ -473,12 +473,12 @@ type CacheInvalidateEvent struct {
 	// a plugin that wants to trigger an invalidation uses Host.InvalidateTags
 	// instead of trying to feed this back into one.
 	Tags []string
-	// Entries are the cached pages and documents the invalidation dropped, with
-	// the host each was cached for, sorted by host, then path: one path cached
-	// under two hosts is two entries. A page that is not cached is never in it:
-	// nothing of it was dropped. A plugin
-	// that makes the URLs absolute reads these, because on a site served on
-	// several hosts a path alone does not say which origin it was dropped from.
+	// Entries are the cached pages and documents the invalidation dropped, with the
+	// host each was cached for, sorted by host, then path: one path cached under
+	// two hosts is two entries. A page that is not cached is never in it: nothing
+	// of it was dropped. A plugin that makes the URLs absolute reads these, because
+	// on a site served on several hosts a path alone does not say which origin it
+	// was dropped from.
 	Entries []InvalidatedEntry
 }
 
@@ -495,10 +495,10 @@ type InvalidatedEntry struct {
 type ErrorEvent struct {
 	// Err is the error that occurred. This event's own value.
 	Err error
-	// Page is the live *types.Page being processed when the error occurred, or
-	// nil when the error occurred before a page was resolved, for example when
-	// no route matched the request. When non-nil, it is not copied for this
-	// event and not defended against mutation; see BeforeRenderEvent.Page.
+	// Page is the live Page being processed when the error occurred, or nil when
+	// the error occurred before a page was resolved, for example when no route
+	// matched the request. When non-nil, it is not copied for this event and not
+	// defended against mutation; see BeforeRenderEvent.Page.
 	Page *types.Page
 	// Path is the request path being processed when the error occurred. This
 	// event's own copy.

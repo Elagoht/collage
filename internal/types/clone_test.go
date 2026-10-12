@@ -2,19 +2,32 @@ package types
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // Review Focus 2: after a clone no slice or map is shared, for every field the
 // types have now or gain later. A container field the fixture leaves empty fails
 // the test, so a field added later has to be put in the fixture to pass.
+//
+// It descends into struct-valued fields, and into the pointers a clone owns —
+// ownedPointers — wherever they sit: a field, a slice element or a map value. A
+// pointer to another built value (a *Fragment child, an error *Page, an attached
+// *Action) is not descended into: it is a value of its own, which its builder
+// already copied, and sharing it is the point.
 func assertNoSharedContainers(t *testing.T, a, b reflect.Value, path string) {
 	t.Helper()
 	for i := range a.NumField() {
 		fa, fb := a.Field(i), b.Field(i)
 		name := path + "." + a.Type().Field(i).Name
 		switch fa.Kind() {
+		case reflect.Struct:
+			assertNoSharedContainers(t, fa, fb, name)
+		case reflect.Pointer:
+			assertOwnedPointer(t, fa, fb, name)
 		case reflect.Slice, reflect.Map:
 			if fa.Len() == 0 {
 				t.Errorf("%s is empty in the fixture: fill it so the clone is checked", name)
@@ -23,18 +36,48 @@ func assertNoSharedContainers(t *testing.T, a, b reflect.Value, path string) {
 			if fa.UnsafePointer() == fb.UnsafePointer() {
 				t.Errorf("%s is shared after clone", name)
 			}
-			// A map of maps — Page.FragmentPaths — is written through its inner
-			// maps, so those must be independent too.
-			if fa.Kind() == reflect.Map && fa.Type().Elem().Kind() == reflect.Map {
-				for _, k := range fa.MapKeys() {
-					ia, ib := fa.MapIndex(k), fb.MapIndex(k)
-					if ia.Len() > 0 && ia.UnsafePointer() == ib.UnsafePointer() {
-						t.Errorf("%s[%v] is shared after clone", name, k)
-					}
+			if fa.Kind() == reflect.Slice {
+				for j := range min(fa.Len(), fb.Len()) {
+					assertOwnedPointer(t, fa.Index(j), fb.Index(j), fmt.Sprintf("%s[%d]", name, j))
 				}
+				continue
+			}
+			for _, k := range fa.MapKeys() {
+				ia, ib := fa.MapIndex(k), fb.MapIndex(k)
+				if !ib.IsValid() {
+					t.Errorf("%s[%v] is missing after clone", name, k)
+					continue
+				}
+				// A map of maps — Page.FragmentPaths — is written through its
+				// inner maps, so those must be independent too.
+				if ia.Kind() == reflect.Map && ia.Len() > 0 && ia.UnsafePointer() == ib.UnsafePointer() {
+					t.Errorf("%s[%v] is shared after clone", name, k)
+				}
+				assertOwnedPointer(t, ia, ib, fmt.Sprintf("%s[%v]", name, k))
 			}
 		}
 	}
+}
+
+// ownedPointers are the pointer types a clone copies rather than shares: a
+// builder writes through them in place. A *Redirect is not one — a builder
+// makes it once and never writes it again.
+var ownedPointers = map[reflect.Type]bool{
+	reflect.TypeFor[*SlotDefinition](): true,
+}
+
+// assertOwnedPointer checks that a and b, when they are an owned pointer, point
+// at two values sharing no container, and does nothing for any other value.
+func assertOwnedPointer(t *testing.T, a, b reflect.Value, path string) {
+	t.Helper()
+	if a.Kind() != reflect.Pointer || !ownedPointers[a.Type()] || a.IsNil() {
+		return
+	}
+	if b.IsNil() || a.Pointer() == b.Pointer() {
+		t.Errorf("%s is shared after clone", path)
+		return
+	}
+	assertNoSharedContainers(t, a.Elem(), b.Elem(), path)
 }
 
 func clonePageFixture() *Page {
@@ -67,11 +110,8 @@ func TestClone_NoSharedContainers(t *testing.T) {
 
 	f := &Fragment{Name: "f", Slots: map[string]*SlotDefinition{"s": {Name: "s", Fill: []*Fragment{{Name: "c"}}}}}
 	c := CloneFragment(f)
+	// Descends into Fragment.Slots["s"], a *SlotDefinition the clone owns.
 	assertNoSharedContainers(t, reflect.ValueOf(f).Elem(), reflect.ValueOf(c).Elem(), "Fragment")
-	if c.Slots["s"] == f.Slots["s"] {
-		t.Error("SlotDefinition pointer shared")
-	}
-	assertNoSharedContainers(t, reflect.ValueOf(f.Slots["s"]).Elem(), reflect.ValueOf(c.Slots["s"]).Elem(), "Fragment.Slots[s]")
 	if !reflect.DeepEqual(f, c) {
 		t.Error("CloneFragment is not equal to its source")
 	}
@@ -89,12 +129,28 @@ func TestClone_NoSharedContainers(t *testing.T) {
 
 	a := &Action{
 		Name: "a", Paths: map[string]string{"en": "/a"}, Methods: []string{"POST"},
-		Handler: func(context.Context, *RenderContext) (*ActionResult, error) { return nil, nil },
+		Handler:      func(context.Context, *RenderContext) (*ActionResult, error) { return nil, nil },
+		MaxBodyBytes: 1, StreamingBody: true, BodyTimeout: time.Second, SkipCSRF: true,
+		buildErr: errors.New("recorded"),
+	}
+	av := reflect.ValueOf(a).Elem()
+	for i := range av.NumField() {
+		if av.Field(i).IsZero() {
+			t.Errorf("Action.%s is zero in the fixture: set it so the clone is compared", av.Type().Field(i).Name)
+		}
 	}
 	ca := CloneAction(a)
-	assertNoSharedContainers(t, reflect.ValueOf(a).Elem(), reflect.ValueOf(ca).Elem(), "Action")
-	if ca.Name != a.Name || !reflect.DeepEqual(ca.Paths, a.Paths) || !reflect.DeepEqual(ca.Methods, a.Methods) {
-		t.Error("CloneAction is not equal to its source")
+	assertNoSharedContainers(t, av, reflect.ValueOf(ca).Elem(), "Action")
+	// Every field, unexported ones included: reflect.DeepEqual calls two
+	// non-nil funcs unequal even when they are one func, so Handler is compared
+	// by identity and left out of the rest.
+	if reflect.ValueOf(ca.Handler).Pointer() != reflect.ValueOf(a.Handler).Pointer() {
+		t.Error("CloneAction's Handler is not its source's")
+	}
+	x, y := *a, *ca
+	x.Handler, y.Handler = nil, nil
+	if !reflect.DeepEqual(x, y) {
+		t.Errorf("CloneAction is not equal to its source:\n%+v\n%+v", y, x)
 	}
 }
 

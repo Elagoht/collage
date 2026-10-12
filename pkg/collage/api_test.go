@@ -185,3 +185,161 @@ func TestDocComments_NoInternalNames(t *testing.T) {
 		}
 	}
 }
+
+// aliasedInternals returns, per internal package (types, plugin), the names of
+// the types pkg/collage declares aliases of — "Page = types.Page", and generic
+// ones such as "Key[T any] = types.Key[T]".
+func aliasedInternals(t *testing.T) map[string]map[string]bool {
+	t.Helper()
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	aliased := map[string]map[string]bool{"types": {}, "plugin": {}}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, e.Name(), nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range f.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				ts := spec.(*ast.TypeSpec)
+				if !ts.Assign.IsValid() {
+					continue
+				}
+				target := ts.Type
+				switch x := target.(type) {
+				case *ast.IndexExpr:
+					target = x.X
+				case *ast.IndexListExpr:
+					target = x.X
+				}
+				sel, ok := target.(*ast.SelectorExpr)
+				if !ok {
+					continue
+				}
+				if pkg, ok := sel.X.(*ast.Ident); ok && aliased[pkg.Name] != nil {
+					aliased[pkg.Name][sel.Sel.Name] = true
+				}
+			}
+		}
+	}
+	return aliased
+}
+
+// receiverTypeName is the name of the type a method's receiver expression
+// names: T, *T, T[P] and *T[P, Q] all name T.
+func receiverTypeName(expr ast.Expr) string {
+	if star, ok := expr.(*ast.StarExpr); ok {
+		expr = star.X
+	}
+	switch x := expr.(type) {
+	case *ast.IndexExpr:
+		expr = x.X
+	case *ast.IndexListExpr:
+		expr = x.X
+	}
+	if id, ok := expr.(*ast.Ident); ok {
+		return id.Name
+	}
+	return ""
+}
+
+// The internal types pkg/collage aliases show their own doc comments on hover:
+// such a type's comment, its exported fields' and interface methods', and its
+// exported methods' name no internal package or identifier either. Types
+// pkg/collage does not alias are the engine's own business and out of scope.
+func TestDocComments_AliasedInternalsNoInternalNames(t *testing.T) {
+	bad := regexp.MustCompile(`internal/|\b(types|core|plugin|render|httpx|build|router|cache|asset|observability)\.[A-Z]`)
+	aliased := aliasedInternals(t)
+	if len(aliased["types"]) == 0 || len(aliased["plugin"]) == 0 {
+		t.Fatalf("found no aliases of internal types: %v", aliased)
+	}
+	seen := map[string]bool{}
+	for pkg, names := range aliased {
+		dir := "../../internal/" + pkg
+		fset := token.NewFileSet()
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			f, err := parser.ParseFile(fset, dir+"/"+e.Name(), nil, parser.ParseComments)
+			if err != nil {
+				t.Fatal(err)
+			}
+			check := func(what string, groups ...*ast.CommentGroup) {
+				for _, cg := range groups {
+					if cg == nil {
+						continue
+					}
+					for _, m := range bad.FindAllString(cg.Text(), -1) {
+						t.Errorf("%s: %s's comment names %q", fset.Position(cg.Pos()), what, m)
+					}
+				}
+			}
+			for _, decl := range f.Decls {
+				switch decl := decl.(type) {
+				case *ast.GenDecl:
+					if decl.Tok != token.TYPE {
+						continue
+					}
+					for _, spec := range decl.Specs {
+						ts := spec.(*ast.TypeSpec)
+						if !names[ts.Name.Name] {
+							continue
+						}
+						seen[pkg+"."+ts.Name.Name] = true
+						doc := ts.Doc
+						if doc == nil && len(decl.Specs) == 1 {
+							doc = decl.Doc
+						}
+						check(ts.Name.Name, doc, ts.Comment)
+						var fields *ast.FieldList
+						switch typ := ts.Type.(type) {
+						case *ast.StructType:
+							fields = typ.Fields
+						case *ast.InterfaceType:
+							fields = typ.Methods
+						}
+						if fields == nil {
+							continue
+						}
+						for _, field := range fields.List {
+							for _, name := range field.Names {
+								if name.IsExported() {
+									check(ts.Name.Name+"."+name.Name, field.Doc, field.Comment)
+								}
+							}
+						}
+					}
+				case *ast.FuncDecl:
+					if decl.Recv == nil || !decl.Name.IsExported() {
+						continue
+					}
+					if name := receiverTypeName(decl.Recv.List[0].Type); names[name] {
+						check(name+"."+decl.Name.Name, decl.Doc)
+					}
+				}
+			}
+		}
+	}
+	for pkg, names := range aliased {
+		for name := range names {
+			if !seen[pkg+"."+name] {
+				t.Errorf("pkg/collage aliases %s.%s, which this test did not find", pkg, name)
+			}
+		}
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -230,7 +231,7 @@ func newTestPage(name string, strategy types.RenderStrategy, paths map[string]st
 // resolved, so tests that compare Report.Written by exact string equality are not
 // tripped up by a symlinked temp root (macOS's /tmp -> /private/tmp, and the same
 // shape under /var/folders) the way Build itself is careful to avoid via the same
-// resolution in prepareOutDir.
+// resolution in checkOutDir and prepareOutDir.
 func resolvedTempDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -681,7 +682,7 @@ func TestBuild_RefusesFilesystemRoot_WithoutClean(t *testing.T) {
 // TestBuild_Clean_RefusesSymlinkedFilesystemRoot is the required test reproducing
 // the C2 review finding: the filesystem-root check (filepath.Dir(dir) == dir) is a
 // pure string comparison with no I/O, so run against the unresolved OutDir string
-// it fails open on an OutDir that is itself a symlink to "/". prepareOutDir must
+// it fails open on an OutDir that is itself a symlink to "/". checkOutDir must
 // resolve symlinks before running that check, not after.
 func TestBuild_Clean_RefusesSymlinkedFilesystemRoot(t *testing.T) {
 	requireSymlinkSupport(t)
@@ -1175,5 +1176,343 @@ func TestBuild_TwoPagesOnOneOutputPathIsAnError(t *testing.T) {
 	}
 	if len(report.Written) > 1 {
 		t.Errorf("Written = %v, want at most one file; the collision must stop the second write", report.Written)
+	}
+}
+
+// startRecorder is a fakeRenderer that is a Starter, recording whether Build
+// started it — which, for the application, runs plugins' Init.
+type startRecorder struct {
+	*fakeRenderer
+	started bool
+	// onStart, when set, runs as Start does: user code in a plugin's Init.
+	onStart func()
+	// startErr is what Start returns.
+	startErr error
+}
+
+func (s *startRecorder) Start() error {
+	s.started = true
+	if s.onStart != nil {
+		s.onStart()
+	}
+	return s.startErr
+}
+
+// TestBuild_OutDirRepointedToSafeTargetBuildsThere checks that an OutDir symlink
+// user code re-points while the build runs — a deploy plugin's Init switching
+// dist to a new release directory — is built into where it now points, when
+// that is not dangerous: only a dangerous target is refused.
+func TestBuild_OutDirRepointedToSafeTargetBuildsThere(t *testing.T) {
+	requireSymlinkSupport(t)
+
+	parent := resolvedTempDir(t)
+	first := filepath.Join(parent, "release-41")
+	second := filepath.Join(parent, "release-42")
+	for _, dir := range []string{first, second} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	link := filepath.Join(parent, "dist")
+	if err := os.Symlink(first, link); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	page := newTestPage("home", types.StrategyStatic, map[string]string{"en": "/"})
+	app := &startRecorder{fakeRenderer: &fakeRenderer{pages: []*types.Page{page}, defaultLocale: "en"}, onStart: func() {
+		if err := os.Remove(link); err != nil {
+			t.Errorf("remove link: %v", err)
+		}
+		if err := os.Symlink(second, link); err != nil {
+			t.Errorf("re-point link: %v", err)
+		}
+	}}
+	b, err := New(app, Options{OutDir: link})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, err := b.Build(context.Background()); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if got := readFile(t, filepath.Join(second, "index.html")); got != "<html>en|/</html>" {
+		t.Errorf("new target's index.html = %q", got)
+	}
+	if _, err := os.Stat(filepath.Join(first, "index.html")); err == nil {
+		t.Error("the old target was written to")
+	}
+}
+
+// TestBuild_OutDirRecheckedBeforeClean checks that OutDir is checked again just
+// before it is cleaned: user code runs between the first check and the clean, and
+// an OutDir symlink it re-points at a repository root must not be emptied.
+func TestBuild_OutDirRecheckedBeforeClean(t *testing.T) {
+	requireSymlinkSupport(t)
+
+	parent := resolvedTempDir(t)
+	safe := filepath.Join(parent, "safe")
+	repo := filepath.Join(parent, "repo")
+	for _, dir := range []string{safe, repo} {
+		if err := os.Mkdir(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	sentinel := filepath.Join(repo, "keepme.txt")
+	if err := os.WriteFile(sentinel, []byte("do not delete"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	link := filepath.Join(parent, "out")
+	if err := os.Symlink(safe, link); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	app := &startRecorder{fakeRenderer: &fakeRenderer{}, onStart: func() {
+		if err := os.Remove(link); err != nil {
+			t.Errorf("remove link: %v", err)
+		}
+		if err := os.Symlink(repo, link); err != nil {
+			t.Errorf("re-point link: %v", err)
+		}
+	}}
+	b, err := New(app, Options{OutDir: link, Clean: true})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	_, err = b.Build(context.Background())
+	if !errors.Is(err, ErrDangerousOutDir) {
+		t.Fatalf("Build error = %v, want ErrDangerousOutDir", err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("sentinel file was deleted: %v", err)
+	}
+}
+
+// TestBuild_DangerousOutDirRefusedBeforeStaticParams checks that an OutDir the
+// build refuses is refused before any user code runs: plugins' Init and
+// StaticParams may reach the network, and a build that is going to be refused
+// must not have called them first.
+func TestBuild_DangerousOutDirRefusedBeforeStaticParams(t *testing.T) {
+	repo := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example\n"), 0o644); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	cases := []struct {
+		name string
+		opts Options
+	}{
+		{name: "filesystem root", opts: Options{OutDir: string(filepath.Separator)}},
+		{name: "repository root with Clean", opts: Options{OutDir: repo, Clean: true}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var pageCalled, docCalled bool
+			page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/blog/{slug}"})
+			page.StaticParams = func(context.Context, string) ([]map[string]string, error) {
+				pageCalled = true
+				return []map[string]string{{"slug": "hello"}}, nil
+			}
+			doc := newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed/{id}.xml"})
+			doc.StaticParams = func(context.Context, string) ([]map[string]string, error) {
+				docCalled = true
+				return []map[string]string{{"id": "1"}}, nil
+			}
+			app := &startRecorder{fakeRenderer: &fakeRenderer{pages: []*types.Page{page}, documents: []*types.Document{doc}, defaultLocale: "en"}}
+			b, err := New(app, c.opts)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			_, err = b.Build(context.Background())
+			if !errors.Is(err, ErrDangerousOutDir) {
+				t.Fatalf("Build error = %v, want ErrDangerousOutDir", err)
+			}
+			if app.started {
+				t.Error("the application was started before OutDir was refused")
+			}
+			if pageCalled || docCalled {
+				t.Errorf("StaticParams called (page %v, document %v) before OutDir was refused", pageCalled, docCalled)
+			}
+		})
+	}
+}
+
+// TestBuild_PrepareOutDirFailureKeepsEnumerationErrors checks that a build stopped
+// by failing to create OutDir still reports what enumerating the routes found:
+// the returned error is that failure alone, and Report.Errors holds both.
+func TestBuild_PrepareOutDirFailureKeepsEnumerationErrors(t *testing.T) {
+	// A regular file where OutDir should be: it passes the danger checks and
+	// cannot be created as a directory.
+	out := filepath.Join(resolvedTempDir(t), "not-a-dir")
+	if err := os.WriteFile(out, []byte("x"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	pageErr := errors.New("page params unavailable")
+	docErr := errors.New("document params unavailable")
+	page := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/blog/{slug}"})
+	page.StaticParams = func(context.Context, string) ([]map[string]string, error) { return nil, pageErr }
+	doc := newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed/{id}.xml"})
+	doc.StaticParams = func(context.Context, string) ([]map[string]string, error) { return nil, docErr }
+	app := &fakeRenderer{pages: []*types.Page{page}, documents: []*types.Document{doc}, defaultLocale: "en"}
+
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err == nil {
+		t.Fatal("Build error = nil, want the OutDir failure")
+	}
+	if errors.Is(err, pageErr) || errors.Is(err, docErr) {
+		t.Errorf("Build error = %v, want the OutDir failure alone", err)
+	}
+	joined := errors.Join(report.Errors...)
+	for _, want := range []error{pageErr, docErr} {
+		if !errors.Is(joined, want) {
+			t.Errorf("Report.Errors = %v, missing %v", report.Errors, want)
+		}
+	}
+	if !slices.ContainsFunc(report.Errors, func(e error) bool { return e == err }) {
+		t.Errorf("Report.Errors = %v, missing the OutDir failure %v", report.Errors, err)
+	}
+}
+
+// TestBuild_DocumentFileOverPageDirectoryCollides covers a document whose file is
+// a directory some other output is written under: the file and the directory
+// cannot both exist, and the build must say so before touching OutDir rather
+// than fail at write time.
+func TestBuild_DocumentFileOverPageDirectoryCollides(t *testing.T) {
+	cases := []struct {
+		name      string
+		pages     []*types.Page
+		documents []*types.Document
+	}{
+		{
+			name:      "document file, page beneath it",
+			pages:     []*types.Page{newTestPage("sub", types.StrategyStatic, map[string]string{"en": "/feed.xml/sub"})},
+			documents: []*types.Document{newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed.xml"})},
+		},
+		{
+			name: "document file, then a document beneath it",
+			documents: []*types.Document{
+				newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed.xml"}),
+				newTestDocument("sub", types.StrategyStatic, map[string]string{"en": "/feed.xml/sub.xml"}),
+			},
+		},
+		{
+			name: "document beneath, then the document file",
+			documents: []*types.Document{
+				newTestDocument("sub", types.StrategyStatic, map[string]string{"en": "/feed.xml/sub.xml"}),
+				newTestDocument("feed", types.StrategyStatic, map[string]string{"en": "/feed.xml"}),
+			},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := resolvedTempDir(t)
+			app := &fakeRenderer{pages: c.pages, documents: c.documents, defaultLocale: "en"}
+			b, err := New(app, Options{OutDir: out})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			report, err := b.Build(context.Background())
+			if !errors.Is(err, ErrOutputPathCollision) {
+				t.Fatalf("Build error = %v, want ErrOutputPathCollision", err)
+			}
+			if len(report.Written) != 0 {
+				t.Errorf("Report.Written = %v, want nothing written", report.Written)
+			}
+		})
+	}
+}
+
+// TestBuild_OutputsSharingADirectoryDoNotCollide keeps the ordinary case working:
+// a page at /blog and a document at /blog/rss.xml both need the directory /blog,
+// which is no collision.
+func TestBuild_OutputsSharingADirectoryDoNotCollide(t *testing.T) {
+	out := resolvedTempDir(t)
+	app := &fakeRenderer{
+		pages: []*types.Page{
+			newTestPage("blog", types.StrategyStatic, map[string]string{"en": "/blog"}),
+			newTestPage("post", types.StrategyStatic, map[string]string{"en": "/blog/post"}),
+		},
+		documents:     []*types.Document{newTestDocument("rss", types.StrategyStatic, map[string]string{"en": "/blog/rss.xml"})},
+		defaultLocale: "en",
+	}
+	b, err := New(app, Options{OutDir: out})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	report, err := b.Build(context.Background())
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if len(report.Written) != 3 {
+		t.Errorf("Report.Written = %v, want three files", report.Written)
+	}
+}
+
+// TestBuild_EarlyStopsReportTheirError checks that every stop before rendering
+// returns its failure alone and also puts it in Report.Errors, beside whatever
+// resolving the routes' StaticParams failed with when that ran.
+func TestBuild_EarlyStopsReportTheirError(t *testing.T) {
+	paramsErr := errors.New("params unavailable")
+	failingPage := func() *types.Page {
+		p := newTestPage("post", types.StrategyStatic, map[string]string{"en": "/blog/{slug}"})
+		p.StaticParams = func(context.Context, string) ([]map[string]string, error) { return nil, paramsErr }
+		return p
+	}
+	startErr := errors.New("init failed")
+	cases := []struct {
+		name       string
+		app        Renderer
+		outDir     string
+		want       error
+		wantParams bool
+	}{
+		{
+			name:   "start failure",
+			app:    &startRecorder{fakeRenderer: &fakeRenderer{defaultLocale: "en"}, startErr: startErr},
+			outDir: resolvedTempDir(t),
+			want:   startErr,
+		},
+		{
+			name:   "OutDir refused",
+			app:    &fakeRenderer{defaultLocale: "en"},
+			outDir: string(filepath.Separator),
+			want:   ErrDangerousOutDir,
+		},
+		{
+			name: "collision",
+			app: &fakeRenderer{defaultLocale: "en", pages: []*types.Page{
+				failingPage(),
+				newTestPage("a", types.StrategyStatic, map[string]string{"en": "/dup"}),
+				newTestPage("b", types.StrategyStatic, map[string]string{"en": "/dup/"}),
+			}},
+			outDir:     resolvedTempDir(t),
+			want:       ErrOutputPathCollision,
+			wantParams: true,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			b, err := New(c.app, Options{OutDir: c.outDir})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			report, err := b.Build(context.Background())
+			if !errors.Is(err, c.want) {
+				t.Fatalf("Build error = %v, want %v", err, c.want)
+			}
+			if errors.Is(err, paramsErr) {
+				t.Errorf("Build error = %v, want the stop's failure alone", err)
+			}
+			if !slices.ContainsFunc(report.Errors, func(e error) bool { return e == err }) {
+				t.Errorf("Report.Errors = %v, missing %v", report.Errors, err)
+			}
+			if got := errors.Is(errors.Join(report.Errors...), paramsErr); got != c.wantParams {
+				t.Errorf("Report.Errors = %v, holds the StaticParams failure: %v, want %v", report.Errors, got, c.wantParams)
+			}
+		})
 	}
 }

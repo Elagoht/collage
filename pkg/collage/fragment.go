@@ -173,7 +173,7 @@ func (b *FragmentBuilder) WithGuard(g GuardFunc) *FragmentBuilder {
 func (b *FragmentBuilder) WithSlot(name string, rules ...SlotRule) *FragmentBuilder {
 	for _, r := range rules {
 		if r != SlotRequired && r != SlotSingle {
-			b.errs = append(b.errs, fmt.Errorf("%w: rule %d", ErrInvalidSlotDefinition, r))
+			b.errs = append(b.errs, fmt.Errorf("%w: slot %q on fragment %q: rule %d", ErrInvalidSlotDefinition, name, b.fragment.Name, r))
 		}
 	}
 	required := slices.Contains(rules, SlotRequired)

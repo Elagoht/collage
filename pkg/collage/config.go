@@ -455,10 +455,10 @@ func (c *Config) applyDefaults() {
 // validate reports whether c is well-formed: Server.Port is in 1..65535
 // (ErrInvalidPort), Cache.Type is "memory" or "disk" when Cache.Enabled and
 // Cache.Store is nil (ErrInvalidCacheType; a caller-supplied Store makes Type
-// irrelevant) and a "disk" cache has a Cache.Dir (ErrEmptyCacheDir),
-// Locale.Default is present in Locale.Supported
-// (ErrLocaleDefaultNotSupported), and every duration field is not negative
-// (ErrNegativeDuration). It returns nil when c is well-formed.
+// irrelevant) and a "disk" cache has a Cache.Dir (ErrEmptyCacheDir), Locale.Default
+// is present in Locale.Supported (ErrLocaleDefaultNotSupported), and every duration
+// field is not negative (ErrNegativeDuration). It returns nil when c is
+// well-formed.
 func (c *Config) validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("%w: %d", ErrInvalidPort, c.Server.Port)

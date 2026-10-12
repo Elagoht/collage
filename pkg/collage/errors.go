@@ -17,81 +17,8 @@ import (
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// Registering several things at once.
-var (
-	// ErrNilRegistrable is returned by Register for a nil item, where a page, a
-	// document or an action was expected.
-	ErrNilRegistrable = core.ErrNilRegistrable
-)
-
-// Registering an action.
-var (
-	// ErrNilAction is returned by RegisterAction for a nil action.
-	ErrNilAction = core.ErrNilAction
-	// ErrDuplicateAction is returned for a second action registered under a name
-	// already taken.
-	ErrDuplicateAction = core.ErrDuplicateAction
-	// ErrEmptyActionName is returned for an action with no name.
-	ErrEmptyActionName = core.ErrEmptyActionName
-	// ErrNoActionPaths is returned for a standalone action with no path.
-	ErrNoActionPaths = core.ErrNoActionPaths
-	// ErrNoActionHandler is returned for an action with no handler.
-	ErrNoActionHandler = core.ErrNoActionHandler
-	// ErrNoActionMethods is returned for an action that answers no method.
-	ErrNoActionMethods = router.ErrNoMethods
-	// ErrInvalidActionMethod is returned for an action that declares OPTIONS,
-	// TRACE or CONNECT. The router answers OPTIONS itself, and an action
-	// claiming it would skip the forgery check.
-	ErrInvalidActionMethod = router.ErrInvalidActionMethod
-	// ErrStreamingBodyMethod is returned for an action that declares
-	// WithStreamingBody but answers none of POST, PUT or PATCH.
-	ErrStreamingBodyMethod = router.ErrStreamingBodyMethod
-	// ErrNegativeBodyTimeout is returned for an action given a negative
-	// WithBodyTimeout.
-	ErrNegativeBodyTimeout = router.ErrNegativeBodyTimeout
-	// ErrStreamingBody is returned by BeforeActionEvent.Form for an action
-	// declared WithStreamingBody, without reading the body: such an action has
-	// no form for a plugin to check.
-	ErrStreamingBody = plugin.ErrStreamingBody
-	// ErrNilFragmentPath is returned for a WithFragmentPath given no fragment.
-	ErrNilFragmentPath = core.ErrNilFragmentPath
-)
-
-// Request-forgery refusals, reported to error hooks when a submission is refused
-// with a 403.
-var (
-	// ErrCSRFMissing reports a submission that carried no token, or no cookie.
-	ErrCSRFMissing = csrf.ErrMissing
-	// ErrCSRFMismatch reports a token that is not the one in the cookie.
-	ErrCSRFMismatch = csrf.ErrMismatch
-	// ErrCSRFInvalid reports a token this application did not sign.
-	ErrCSRFInvalid = csrf.ErrInvalid
-	// ErrCSRFCrossOrigin reports a submission the browser marked as sent from
-	// another origin — by Sec-Fetch-Site, or by an Origin that is not the Host —
-	// refused whatever token it carried. An origin whose forms may post here is
-	// named in Security.CSRFTrustedOrigins.
-	ErrCSRFCrossOrigin = csrf.ErrCrossOrigin
-	// ErrCSRFHeaderRequired reports a submission to a WithStreamingBody action
-	// that did not carry its token in the header — the only place such an action
-	// looks. It wraps ErrCSRFMissing.
-	ErrCSRFHeaderRequired = csrf.ErrHeaderRequired
-	// ErrCSRFDisabled is returned by {{csrfToken}} when forgery protection is off.
-	ErrCSRFDisabled = core.ErrCSRFDisabled
-)
-
-// ErrMethodNotAllowed is reported for a request whose path exists but answers no
-// such method: a 405, with an Allow header naming what it does answer.
-var ErrMethodNotAllowed = httpx.ErrMethodNotAllowed
-
-// ErrTemplateEscapesRoot is returned by New for a template path that resolves
-// outside Template.Root.
-var ErrTemplateEscapesRoot = template.ErrTemplateEscapesRoot
-
-// ErrSourceConflict is returned at registration for an inline template that
-// defines a template of its own, which would replace a file template of that name.
-var ErrSourceConflict = template.ErrSourceConflict
-
-// Configuration and startup.
+// Configuration and startup: what New, Start, Build and DispatchCommands refuse
+// before any page is involved.
 var (
 	// ErrInvalidPort is returned when Config.Server.Port is outside the valid TCP port
 	// range 1..65535.
@@ -104,18 +31,18 @@ var (
 	// ErrLocaleDefaultNotSupported is returned when Config.Locale.Default is not present
 	// in Config.Locale.Supported.
 	ErrLocaleDefaultNotSupported = errors.New("collage: default locale not in supported locales")
-	// ErrNegativeDuration is returned when a Config duration field is negative. It is
-	// shared deliberately across all eight duration fields New checks
+	// ErrNegativeDuration is returned when a Config duration field is negative. It
+	// is shared deliberately across all eight duration fields New checks
 	// (Server.ReadTimeout, Server.ReadHeaderTimeout, Server.WriteTimeout,
-	// Server.IdleTimeout, Server.ShutdownTimeout, Server.DrainDelay, Template.Timeout,
-	// Cache.DefaultTTL): unlike
-	// ErrInvalidTimeout and ErrInvalidTTL, which mean genuinely different
-	// things to a caller (a fragment's data-fetch deadline versus a page's cache
-	// lifetime), a negative value in any of these eight fields is the same failure mode —
-	// "you passed a negative duration" — differing only in which field tripped. New
-	// names the offending field in the wrapped message (%w: %s); callers that need to
-	// distinguish which field failed should inspect that message rather than expect a
-	// per-field sentinel.
+	// Server.IdleTimeout, Server.ShutdownTimeout, Server.DrainDelay,
+	// Template.Timeout, Cache.DefaultTTL): unlike ErrInvalidTimeout and
+	// ErrInvalidTTL, which mean genuinely different things to a caller (a
+	// fragment's data-fetch deadline versus a page's cache lifetime), a negative
+	// value in any of these eight fields is the same failure mode — "you passed a
+	// negative duration" — differing only in which field tripped. New names the
+	// offending field in the wrapped message (%w: %s); callers that need to
+	// distinguish which field failed should inspect that message rather than expect
+	// a per-field sentinel.
 	ErrNegativeDuration = errors.New("collage: negative duration")
 	// ErrInvalidOrigin is returned for an origin that is not scheme://host[:port]
 	// with no path, query or fragment.
@@ -124,20 +51,24 @@ var (
 	// does not exist or is not a directory. It is the most common startup failure there
 	// is, and it is worth telling apart from a template that exists but does not parse.
 	ErrTemplateRootMissing = template.ErrTemplateRootMissing
+	// ErrTemplateEscapesRoot is returned by New for a template path that resolves
+	// outside Template.Root.
+	ErrTemplateEscapesRoot = template.ErrTemplateEscapesRoot
 	// ErrNilApp is returned by Build and DispatchCommands when passed a nil *App, or
 	// one New did not return. There is nothing to build or dispatch against, and
 	// inventing an application would run a program the caller never built.
 	ErrNilApp = errors.New("collage: nil app")
+)
+
+// Registration: pages, fragments, commands, mounts and handlers, and what their
+// builders record.
+var (
+	// ErrNilRegistrable is returned by Register for a nil item, where a page, a
+	// document or an action was expected.
+	ErrNilRegistrable = core.ErrNilRegistrable
 	// ErrAppStarted is returned by the registration methods once the application has
 	// started.
 	ErrAppStarted = core.ErrAppStarted
-	// ErrConfigurerRegisteredLate is returned by RegisterPlugin for a plugin
-	// implementing Configurer, which must be supplied in Config.Plugins instead.
-	ErrConfigurerRegisteredLate = core.ErrConfigurerRegisteredLate
-)
-
-// Registration: pages, fragments, commands, mounts and handlers.
-var (
 	// ErrDuplicatePage is returned when a page is registered under a name another page
 	// already holds.
 	ErrDuplicatePage = core.ErrDuplicatePage
@@ -172,6 +103,9 @@ var (
 	// ErrConflictingTemplate is returned when a fragment names both a template file
 	// and an inline template.
 	ErrConflictingTemplate = types.ErrConflictingTemplate
+	// ErrSourceConflict is returned at registration for an inline template that
+	// defines a template of its own, which would replace a file template of that name.
+	ErrSourceConflict = template.ErrSourceConflict
 	// ErrConflictingLayout is recorded when WithLayouts is called a second time on
 	// one builder.
 	ErrConflictingLayout = types.ErrConflictingLayout
@@ -195,12 +129,6 @@ var (
 	// unregistered error page never has its content bound into its layout, so it would
 	// silently render empty at the moment it was needed.
 	ErrUnregisteredErrorPage = core.ErrUnregisteredErrorPage
-	// ErrUnregisteredPage is reported when an action answers with a page that was never
-	// registered: register the page with RegisterPage, and answer with that same value.
-	ErrUnregisteredPage = httpx.ErrUnregisteredPage
-	// ErrInvalidGuardDecision is returned when a guard's decision cannot be
-	// written as an answer.
-	ErrInvalidGuardDecision = types.ErrInvalidGuardDecision
 	// ErrDuplicateSlot is returned when FragmentBuilder.WithSlot is called twice with the
 	// same slot name on the same fragment.
 	ErrDuplicateSlot = errors.New("collage: slot already declared")
@@ -213,12 +141,23 @@ var (
 	// ErrSlotOccupied is returned when binding a fragment to a slot that already has a
 	// fill and does not allow multiple.
 	ErrSlotOccupied = types.ErrSlotOccupied
+	// ErrSlotResolved is recorded when one slot is given both a resolver and bound
+	// fragments.
+	ErrSlotResolved = types.ErrSlotResolved
+	// ErrRequiredSlotUnfilled is returned when a fragment declares a slot as Required
+	// but the slot has no fill.
+	ErrRequiredSlotUnfilled = types.ErrRequiredSlotUnfilled
+	// ErrFragmentCycle is returned when a fragment tree contains a fragment reachable
+	// from itself.
+	ErrFragmentCycle = types.ErrFragmentCycle
 	// ErrDuplicateLocalePath is recorded when WithPath names a locale the page,
 	// document or action already has a path in. The first path is kept.
 	ErrDuplicateLocalePath = errors.New("collage: locale already has a path")
 	// ErrInvalidLocale is recorded when WithPath is given an empty locale, and
 	// nothing is written. A document that belongs outside every locale says AtRoot.
 	ErrInvalidLocale = errors.New("collage: invalid locale")
+	// ErrNilFragmentPath is returned for a WithFragmentPath given no fragment.
+	ErrNilFragmentPath = core.ErrNilFragmentPath
 )
 
 // Routing and URLs.
@@ -294,21 +233,14 @@ var (
 	// asking why needs to tell an unmatched URL (a routing or link problem) from a
 	// missing record (a content one).
 	ErrNoRoute = httpx.ErrNoRoute
-	// ErrNotFound reports that a fragment's data does not exist, as distinct from a
-	// failure to fetch it. It is the one sentinel here that application code returns
-	// rather than receives: a data handler that wraps it — fmt.Errorf("...: %w",
-	// collage.ErrNotFound) — makes a Required fragment's failure render the page's
-	// NotFoundPage with a 404 instead of its ErrorPage with a 500. Without wrapping
-	// it, every missing record is a 500 and a page-specific 404 page is unreachable.
-	ErrNotFound = types.ErrNotFound
+	// ErrMethodNotAllowed is reported for a request whose path exists but answers no
+	// such method: a 405, with an Allow header naming what it does answer.
+	ErrMethodNotAllowed = httpx.ErrMethodNotAllowed
 	// ErrPageNotFound is returned by App.RenderPath when a path resolves to no page.
 	ErrPageNotFound = core.ErrPageNotFound
-	// ErrGuardRefused is returned by RenderFragment when the fragment's guard
-	// refuses the reader: the plugin sends that reader nothing.
-	ErrGuardRefused = types.ErrGuardRefused
 )
 
-// Rendering.
+// Rendering and serving a request.
 var (
 	// ErrTemplateNotFound is returned when a page's fragment names a template the engine
 	// has not loaded — at registration, and again at render time if one is somehow
@@ -325,15 +257,19 @@ var (
 	// ErrRequiredSlotUnfilled, which reports the same condition at validation time: this
 	// one is a per-render failure subject to the fragment failure policy.
 	ErrRequiredSlotEmpty = render.ErrRequiredSlotEmpty
-	// ErrRequiredSlotUnfilled is returned when a fragment declares a slot as Required
-	// but the slot has no fill.
-	ErrRequiredSlotUnfilled = types.ErrRequiredSlotUnfilled
-	// ErrSlotResolved is recorded when one slot is given both a resolver and bound
-	// fragments.
-	ErrSlotResolved = types.ErrSlotResolved
-	// ErrFragmentCycle is returned when a fragment tree contains a fragment reachable
-	// from itself.
-	ErrFragmentCycle = types.ErrFragmentCycle
+	// ErrNotFound reports that a fragment's data does not exist, as distinct from a
+	// failure to fetch it. It is the one sentinel here that application code returns
+	// rather than receives: a data handler that wraps it — fmt.Errorf("...: %w",
+	// collage.ErrNotFound) — makes a Required fragment's failure render the page's
+	// NotFoundPage with a 404 instead of its ErrorPage with a 500. Without wrapping
+	// it, every missing record is a 500 and a page-specific 404 page is unreachable.
+	ErrNotFound = types.ErrNotFound
+	// ErrGuardRefused is returned by RenderFragment when the fragment's guard
+	// refuses the reader: the plugin sends that reader nothing.
+	ErrGuardRefused = types.ErrGuardRefused
+	// ErrInvalidGuardDecision is returned when a guard's decision cannot be
+	// written as an answer.
+	ErrInvalidGuardDecision = types.ErrInvalidGuardDecision
 	// ErrEmptyErrorPage is the error a plugin's ErrorHook receives, under the stage
 	// "error_page", when a registered error page rendered successfully but produced no
 	// markup. It is the failure nobody finds out about otherwise, because the client
@@ -369,6 +305,67 @@ var (
 	// told when that fetch panicked. The panic goes to the render whose fetch it
 	// was, and the key is free: the next call fetches again.
 	ErrCachedFetchPanicked = datacache.ErrFetchPanicked
+)
+
+// Actions: registering one, and answering with its result.
+var (
+	// ErrNilAction is returned by RegisterAction for a nil action.
+	ErrNilAction = core.ErrNilAction
+	// ErrDuplicateAction is returned for a second action registered under a name
+	// already taken.
+	ErrDuplicateAction = core.ErrDuplicateAction
+	// ErrEmptyActionName is returned for an action with no name.
+	ErrEmptyActionName = core.ErrEmptyActionName
+	// ErrNoActionPaths is returned for a standalone action with no path.
+	ErrNoActionPaths = core.ErrNoActionPaths
+	// ErrNoActionHandler is returned for an action with no handler.
+	ErrNoActionHandler = core.ErrNoActionHandler
+	// ErrNoActionMethods is returned for an action that answers no method.
+	ErrNoActionMethods = router.ErrNoMethods
+	// ErrInvalidActionMethod is returned for an action that declares OPTIONS,
+	// TRACE or CONNECT. The router answers OPTIONS itself, and an action
+	// claiming it would skip the forgery check.
+	ErrInvalidActionMethod = router.ErrInvalidActionMethod
+	// ErrStreamingBodyMethod is returned for an action that declares
+	// WithStreamingBody but answers none of POST, PUT or PATCH.
+	ErrStreamingBodyMethod = router.ErrStreamingBodyMethod
+	// ErrNegativeBodyTimeout is returned for an action given a negative
+	// WithBodyTimeout.
+	ErrNegativeBodyTimeout = router.ErrNegativeBodyTimeout
+	// ErrStreamingBody is returned by BeforeActionEvent.Form for an action
+	// declared WithStreamingBody, without reading the body: such an action has
+	// no form for a plugin to check.
+	ErrStreamingBody = plugin.ErrStreamingBody
+	// ErrAmbiguousActionResult is the error an action's response is refused with,
+	// answered as a 500 and reported to ErrorHook, when its ActionResult sets more
+	// than one of Location, Fragment, Page and Body. The message names the fields
+	// that were set.
+	ErrAmbiguousActionResult = types.ErrAmbiguousActionResult
+	// ErrUnregisteredPage is reported when an action answers with a page that was never
+	// registered: register the page with RegisterPage, and answer with that same value.
+	ErrUnregisteredPage = httpx.ErrUnregisteredPage
+)
+
+// Actions: request-forgery refusals, reported to error hooks when a submission is
+// refused with a 403.
+var (
+	// ErrCSRFMissing reports a submission that carried no token, or no cookie.
+	ErrCSRFMissing = csrf.ErrMissing
+	// ErrCSRFMismatch reports a token that is not the one in the cookie.
+	ErrCSRFMismatch = csrf.ErrMismatch
+	// ErrCSRFInvalid reports a token this application did not sign.
+	ErrCSRFInvalid = csrf.ErrInvalid
+	// ErrCSRFCrossOrigin reports a submission the browser marked as sent from
+	// another origin — by Sec-Fetch-Site, or by an Origin that is not the Host —
+	// refused whatever token it carried. An origin whose forms may post here is
+	// named in Security.CSRFTrustedOrigins.
+	ErrCSRFCrossOrigin = csrf.ErrCrossOrigin
+	// ErrCSRFHeaderRequired reports a submission to a WithStreamingBody action
+	// that did not carry its token in the header — the only place such an action
+	// looks. It wraps ErrCSRFMissing.
+	ErrCSRFHeaderRequired = csrf.ErrHeaderRequired
+	// ErrCSRFDisabled is returned by {{csrfToken}} when forgery protection is off.
+	ErrCSRFDisabled = core.ErrCSRFDisabled
 )
 
 // Documents.
@@ -416,11 +413,6 @@ var (
 	// twice. It is no skip: nothing is built. It is reported before anything renders, so
 	// a collision costs no work and leaves no half-built output directory.
 	ErrOutputPathCollision = build.ErrOutputPathCollision
-	// ErrAmbiguousActionResult is the error an action's response is refused with,
-	// answered as a 500 and reported to ErrorHook, when its ActionResult sets more
-	// than one of Location, Fragment, Page and Body. The message names the fields
-	// that were set.
-	ErrAmbiguousActionResult = types.ErrAmbiguousActionResult
 	// ErrEmptyOutDir is returned by Build when BuildOptions.OutDir is empty.
 	ErrEmptyOutDir = build.ErrInvalidOutDir
 	// ErrDangerousOutDir is returned by Build when BuildOptions.OutDir
@@ -477,4 +469,7 @@ var (
 	// matching no registered plugin — the typo case, which would otherwise leave a
 	// plugin running on defaults and an operator certain it was configured.
 	ErrUnknownPluginConfig = plugin.ErrUnknownPluginConfig
+	// ErrConfigurerRegisteredLate is returned by RegisterPlugin for a plugin
+	// implementing Configurer, which must be supplied in Config.Plugins instead.
+	ErrConfigurerRegisteredLate = core.ErrConfigurerRegisteredLate
 )

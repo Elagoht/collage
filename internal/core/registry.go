@@ -166,35 +166,36 @@ func (a *App) remember(p *types.Page) {
 	a.order = append(a.order, p.Name)
 }
 
-// bindContent folds p's layout chain into the page's layout fragment: each layout gets
-// its own per-page copy of its slot table, the content fragment is bound into
+// bindContent folds p's layout chain into the page's layout fragment: each layout
+// gets its own per-page copy of its slot table, the content fragment is bound into
 // the innermost copy's content slot, and each copy is bound into the next outer
-// copy's content slot. the layout fragment ends as the outermost copy — the folded
-// tree's root — and p.LayoutChain keeps pointing at the originals.
+// copy's content slot. The page's layout fragment (types.LayoutFragment) ends as
+// the outermost copy — the folded tree's root — and p.LayoutChain keeps pointing at
+// the originals.
 //
 // The per-page copies are what make layouts shareable, and a layout is the most
-// reusable object a component framework has — a typical blog uses one layout for
-// a post page and its 404 and 500 pages. types.Fragment.Bind appends to the
-// SlotDefinition's Fill, and a SlotDefinition reached through a shared layout is
-// one object: binding three pages' content into it would leave three fills in
-// one slot and render all three pages' content on every one of them. Copying
-// each layout's slot table per page makes each page's bindings private.
+// reusable object a component framework has — a typical blog uses one layout for a
+// post page and its 404 and 500 pages. types.Bind appends to the SlotDefinition's
+// Fill, and a SlotDefinition reached through a shared layout is one object: binding
+// three pages' content into it would leave three fills in one slot and render all
+// three pages' content on every one of them. Copying each layout's slot table per
+// page makes each page's bindings private.
 //
 // Only each layout's own slot table is copied — a fresh Slots map holding fresh
 // SlotDefinition values with copied Fill slices. Everything else stays shared by
 // pointer: the template path, the data handler, the fallback, and every child
-// fragment already bound into a slot. Registration therefore snapshots the
-// chain's bindings: a fragment bound into a shared layout after a page was
-// registered does not appear on that page.
+// fragment already bound into a slot. Registration therefore snapshots the chain's
+// bindings: a fragment bound into a shared layout after a page was registered does
+// not appear on that page.
 //
-// The innermost layout may arrive with its content slot already holding the
-// content fragment — the hand-bound escape hatch — and no layout may arrive
-// with any other fill in its content slot: registration fills every content
-// slot in the chain itself, so one that is already filled is a page whose
-// author and whose registration disagree about what it wraps.
+// The innermost layout may arrive with its content slot already holding the content
+// fragment — the hand-bound escape hatch — and no layout may arrive with any other
+// fill in its content slot: registration fills every content slot in the chain
+// itself, so one that is already filled is a page whose author and whose
+// registration disagree about what it wraps.
 //
-// Binding also happens exactly once per page; the "already done" test is
-// a.bound, as it has always been. It must be called with a.mu held.
+// Binding also happens exactly once per page; the "already done" test is a.bound,
+// as it has always been. It must be called with a.mu held.
 func (a *App) bindContent(p *types.Page) error {
 	if a.bound[p] {
 		return nil
@@ -243,12 +244,13 @@ func (a *App) bindContent(p *types.Page) error {
 	return nil
 }
 
-// normalizeChain reconciles the two layout fields of a page that did not come
-// from the builder — a Page literal — before folding reads them. The builder
-// keeps them agreeing: LayoutChain is the chain and LayoutFragment its outermost
-// entry. A page with only LayoutFragment is the one-layout chain it looks like; one whose LayoutFragment is some other
-// fragment says two things about what wraps it, and a nil chain entry is a
-// fragment that is not there — both are refused rather than guessed at.
+// normalizeChain reconciles the two layout fields of a page that did not come from
+// the builder — a Page literal — before folding reads them. The builder keeps them
+// agreeing: LayoutChain is the chain and the layout fragment (types.LayoutFragment)
+// its outermost entry. A page with only a layout fragment is the one-layout chain
+// it looks like; one whose layout fragment is some other fragment says two things
+// about what wraps it, and a nil chain entry is a fragment that is not there — both
+// are refused rather than guessed at.
 func normalizeChain(p *types.Page) error {
 	if len(p.LayoutChain) == 0 {
 		if types.LayoutFragment(p) != nil {
@@ -328,14 +330,15 @@ func describeTemplate(f *types.Fragment) string {
 // TemplatePath the engine has not loaded, naming the page, the fragment, and the
 // path — and types.ErrUnknownSlot for the first with something bound into a slot
 // its template never calls. When neither occurs, it reports, joined, every
-// types.TemplateTypeError found by checking each fragment's template against
-// the type of its data, in the fixed order joinTypeErrors gives them.
+// types.TemplateTypeError found by checking each fragment's template against the
+// type of its data, in the fixed order joinTypeErrors gives them.
 //
-// It walks the layout tree and the content tree separately rather than just
-// the page's root fragment: p is not always a page being registered in its own right — it may be
-// another page's NotFoundPage or ErrorPage, which has not been through binding yet,
-// so its content fragment is not in its layout's slot and Root alone would miss it.
-// The shared visited set means a fragment reachable both ways is still checked once.
+// It walks the layout tree and the content tree separately rather than just the
+// page's root fragment: p is not always a page being registered in its own right —
+// it may be another page's NotFoundPage or ErrorPage, which has not been through
+// binding yet, so its content fragment is not in its layout's slot and Root alone
+// would miss it. The shared visited set means a fragment reachable both ways is
+// still checked once.
 func (a *App) checkTemplates(p *types.Page) error {
 	visited := make(map[*types.Fragment]bool)
 	var findings []*types.TemplateTypeError
@@ -378,12 +381,13 @@ func (a *App) checkTemplates(p *types.Page) error {
 		return nil
 	}
 
-	// LayoutFragment first: for a page registration has folded it is the bound
-	// tree, fills and all, which is what the unknown-slot check needs to see.
-	// The chain after it: a page handed to registration as another's NotFoundPage
-	// or ErrorPage is checked before it is registered — and folded — in its own
-	// right, so its layouts are reachable only through the chain. The visited
-	// set keeps the double walk of an already-folded page harmless.
+	// The layout fragment (types.LayoutFragment) first: for a page registration has
+	// folded it is the bound tree, fills and all, which is what the unknown-slot
+	// check needs to see. The chain after it: a page handed to registration as
+	// another's NotFoundPage or ErrorPage is checked before it is registered — and
+	// folded — in its own right, so its layouts are reachable only through the
+	// chain. The visited set keeps the double walk of an already-folded page
+	// harmless.
 	if err := walkFragments(types.LayoutFragment(p), visited, visit); err != nil {
 		return err
 	}
@@ -428,12 +432,12 @@ func (a *App) typeFindings(p *types.Page, f *types.Fragment, name string) []*typ
 }
 
 // joinTypeErrors joins a page's findings into one error in a fixed order —
-// template, line, column, fragment — whatever order the fragments were
-// visited in, each once. Nil when there are none.
+// template, line, column, fragment — whatever order the fragments were visited in,
+// each once. Nil when there are none.
 //
-// A finding can arrive twice: checkTemplates visits a registered page's
-// layouts both as their per-page copies in LayoutFragment and as the
-// originals in LayoutChain, which are different fragments with the same name
+// A finding can arrive twice: checkTemplates visits a registered page's layouts
+// both as their per-page copies in its layout fragment (types.LayoutFragment) and
+// as the originals in LayoutChain, which are different fragments with the same name
 // and template.
 func joinTypeErrors(found []*types.TemplateTypeError) error {
 	seen := make(map[types.TemplateTypeError]bool, len(found))
@@ -500,23 +504,22 @@ func walkFragments(f *types.Fragment, visited map[*types.Fragment]bool, visit fu
 // any fragment it renders — its layout, its content, whatever is bound into their
 // slots, their fallbacks, the fragments it opens at URLs of their own — has a data
 // handler its fragment does not declare Static, or a slot resolver, and
-// StrategyStatic when none does. A page that
-// declared a strategy keeps it.
+// StrategyStatic when none does. A page that declared a strategy keeps it.
 //
 // It is a guess about code it cannot see into, so it guesses in the direction that
-// costs a render rather than one that serves a reader someone else's page: a handler
-// may read the request, a cookie, the clock, so a handler means dynamic. What a page
-// renders from fixed values — a fragment's fixed data, Fragment.Title — cannot, which is what
-// lets a site of pages without handlers be static, and exported, without saying so
-// on every one of them. A fragment marked Static has made that promise for its own
-// handler, so its handler does not count.
+// costs a render rather than one that serves a reader someone else's page: a
+// handler may read the request, a cookie, the clock, so a handler means dynamic.
+// What a page renders from fixed values — a fragment's fixed data, Fragment.Title —
+// cannot, which is what lets a site of pages without handlers be static, and
+// exported, without saying so on every one of them. A fragment marked Static has
+// made that promise for its own handler, so its handler does not count.
 func resolveStrategy(p *types.Page) {
 	if p.Strategy != types.StrategyAuto {
 		return
 	}
-	// The chain originals, not the folded LayoutFragment: the two walk the same
-	// fragments once a page is folded, and a page resolved before it is folded
-	// — see checkTemplates — has its layouts only in the chain.
+	// The chain originals, not the folded layout fragment (types.LayoutFragment):
+	// the two walk the same fragments once a page is folded, and a page resolved
+	// before it is folded — see checkTemplates — has its layouts only in the chain.
 	roots := append(append([]*types.Fragment(nil), p.LayoutChain...), p.ContentFragment)
 	roots = append(roots, types.PagePathFragments(p)...)
 	for _, root := range roots {
@@ -676,22 +679,24 @@ func (a *App) Page(name string) (*types.Page, bool) {
 	return copyPage(page), true
 }
 
-// copyPage returns a defensive copy of p, as plugin.Host requires of Pages and Page.
-// Without it a plugin holding a returned *types.Page could write straight through it
-// into the framework's live state: types.Page is a plain struct of exported fields.
+// copyPage returns a defensive copy of p, as plugin.Host requires of Pages and
+// Page. Without it a plugin holding a returned *types.Page could write straight
+// through it into the framework's live state: types.Page is a plain struct of
+// exported fields.
 //
-// What is copied: the Page struct itself, its Paths map, its DependencyTags
-// slice, and its Redirects — both the slice and the *types.Redirect values it points
-// at. Copying only the slice would stop a plugin adding, removing, or reordering
-// redirects but not mutating one through a shared element pointer, so the values are
-// copied too.
+// What is copied: the Page struct itself, its Paths map, its DependencyTags slice,
+// and its Redirects — both the slice and the *types.Redirect values it points at.
+// Copying only the slice would stop a plugin adding, removing, or reordering
+// redirects but not mutating one through a shared element pointer, so the values
+// are copied too.
 //
-// What stays shared, deliberately: LayoutFragment, ContentFragment, NotFoundPage,
-// and ErrorPage. Fragment trees are not deep-copied — a plugin that mutates a
-// fragment reached through one of these pointers is mutating live framework state,
-// which plugin.Host documents as out of scope for this copy and which the package
-// doc there calls undefined behaviour. NotFoundPage and ErrorPage are pages in their
-// own right and are returned copied when they are asked for by name.
+// What stays shared, deliberately: the layout fragment (types.LayoutFragment),
+// ContentFragment, NotFoundPage, and ErrorPage. Fragment trees are not deep-copied
+// — a plugin that mutates a fragment reached through one of these pointers is
+// mutating live framework state, which plugin.Host documents as out of scope for
+// this copy and which the package doc there calls undefined behaviour. NotFoundPage
+// and ErrorPage are pages in their own right and are returned copied when they are
+// asked for by name.
 func copyPage(p *types.Page) *types.Page {
 	if p == nil {
 		return nil

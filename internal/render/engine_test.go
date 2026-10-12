@@ -255,7 +255,14 @@ func TestRender_MetadataTimings(t *testing.T) {
 
 	// The child sleeps far longer than a template takes to run, even under -race,
 	// so a template time that absorbed the sleep cannot be mistaken for a slow one.
-	const sleep = 50 * time.Millisecond
+	//
+	// It used to be 50ms, and the check below flaked once under load: the child's
+	// handler is prefetched, so it sleeps while the parent's template runs, and a
+	// parent descheduled for half the sleep before reaching the slot looked like
+	// double counting. A longer sleep is the same check with a margin a stalled
+	// scheduler does not reach; asserting a ratio would not help, since the stall
+	// eats into the very wait the template time is compared with.
+	const sleep = 200 * time.Millisecond
 	layout := declare(fragment("layout", "layout.html"), &types.SlotDefinition{Name: "content"})
 	child := fragment("child", "leaf.html")
 	types.SetFragmentDataSource(child, types.FetchedData(func(context.Context, *types.RenderContext) (any, []string, error) { // any: matches types.DataHandlerFunc

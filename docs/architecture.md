@@ -49,11 +49,13 @@ returns `any`, which is `html/template`'s own parameter type.
 The HTTP layer lives in `internal/httpx` rather than `internal/http` because a
 package named `http` would shadow `net/http` at every call site that imports both.
 
-The one place a struct is mirrored rather than aliased is `Config`:
-`pkg/collage.Config` owns the defaults and the validation, then converts field by
-field into `internal/core.Config`. That conversion is written out by hand
-(`toCoreConfig`) precisely so that adding a field to one and forgetting the other
-is visible in a diff.
+Two kinds of struct are mirrored rather than aliased. `pkg/collage.Config` owns
+the defaults and the validation, then converts field by field into
+`internal/core.Config` in `toCoreConfig`, written out by hand precisely so that
+adding a field to one and forgetting the other is visible in a diff. And the
+static build's `BuildOptions`, `BuildReport`, `SkipRecord` and `WarningRecord`
+are declared in `pkg/collage` and converted to and from `internal/build`'s own;
+`TestBuildTypes_MirrorTheEngine` fails when the two sides' fields differ.
 
 Boolean options that default to on are spelled in `Disable*` form, such as
 `DisableNoSniff`. A bool documented "default true" could never be turned off:
@@ -119,8 +121,8 @@ and `OnDocumentRendered` in place of 3, 4 and 5:
    expanding `{{slot "name"}}` into the rendered children.
 5. **`OnAfterRender`.** Plugins may replace the HTML. The replacement is what is
    served *and* what is cached.
-6. **Cache write.** Skipped for a degraded render or a `HEAD`. The key's dependency tags are recorded with
-   the tracker.
+6. **Cache write.** Skipped for a degraded render or a `HEAD`. The key's
+   dependency tags are recorded with the tracker.
 7. **Respond.** `Content-Type`, `ETag`, `Cache-Control`, and — on a publicly
    cacheable response — `Vary`.
 

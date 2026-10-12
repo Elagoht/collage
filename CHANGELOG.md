@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.60.1
+
+### Fixed
+
+- **A static build refuses a dangerous `OutDir` before running any of your code.**
+  A filesystem root, or a repository root with `Clean`, used to be refused only
+  after the application started and every `StaticParams` ran. It is now refused
+  first, and checked again, where it then points, just before `OutDir` is
+  cleaned or created.
+- **A build that stops before rendering reports why in `BuildReport.Errors`.**
+  The returned error is still that failure alone; `BuildReport.Errors` now holds
+  it at every early stop (start failure, refused `OutDir`, collision, `OutDir`
+  not cleaned or created), after the `StaticParams` failures when they had run.
+- **A document whose file is a directory another output needs collides up front.**
+  A document at `/feed.xml` beside a page or document under `/feed.xml/` stops the
+  build with `ErrOutputPathCollision` before `OutDir` is touched, instead of
+  failing at write time.
+- **An ambiguous `ActionResult` invalidates nothing.** Its `InvalidateTags` used to
+  run before the result was refused with a 500.
+- **`WithSlot`'s unknown-rule error names the slot and the fragment.**
+
+The rest is tests, comments and documentation: `pkg/collage/errors.go` groups
+every sentinel by area, and a regression test pins `ErrInvalidTTL` being reported
+once at registration.
+
 ## v0.60.0
 
 The public API is sealed for v1.0. `pkg/collage` now exports what an application

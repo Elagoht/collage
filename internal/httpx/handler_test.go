@@ -209,7 +209,7 @@ func (c *plainCache) InvalidateKey(ctx context.Context, key string) error {
 func (c *plainCache) Clear(ctx context.Context) error { return c.inner.Clear(ctx) }
 
 // recordingPlugin records every hook it receives, in dispatch order, and can be told
-// to replace the rendered HTML or to suppress the cache write.
+// to replace the rendered HTML.
 type recordingPlugin struct {
 	mu          sync.Mutex
 	events      []string
