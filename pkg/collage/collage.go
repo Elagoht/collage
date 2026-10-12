@@ -332,7 +332,10 @@ type ConfigReader = plugin.ConfigReader
 //
 //	cfg, err := collage.PluginConfig(host, Config{Limit: 10, Window: time.Minute})
 //
-// No section leaves defaults as they are; a malformed one is an error.
+// No section leaves defaults as they are; a malformed one is an error, and so is
+// a key T does not have — a misspelt or renamed key stops the application at
+// Configure or Init with an error naming the plugin and the key, instead of
+// leaving the option at its default without a word.
 func PluginConfig[T any](host ConfigReader, defaults T) (T, error) {
 	return plugin.PluginConfig(host, defaults)
 }
