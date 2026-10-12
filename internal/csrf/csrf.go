@@ -161,21 +161,6 @@ func New(cfg Config) (*Guard, error) {
 	return g, nil
 }
 
-// forwardedHTTPS reports whether the proxy in front says r arrived over TLS. A
-// proxy that appends rather than replaces sends a list, "https, http", whose
-// first entry is the one the reader's own connection used.
-//
-// With trusted proxies configured, the header is believed only from one of
-// them: anything else that sends it is a client choosing what the server
-// thinks of its own connection.
-func (g *Guard) forwardedHTTPS(r *http.Request) bool {
-	if len(g.trusted) > 0 && !netaddr.FromTrusted(g.trusted, r.RemoteAddr) {
-		return false
-	}
-	first, _, _ := strings.Cut(r.Header.Get("X-Forwarded-Proto"), ",")
-	return ascii.EqualFold(strings.TrimSpace(first), "https")
-}
-
 // canonicalOrigin returns origin spelled as a browser sends it in the Origin
 // header, which is what a trusted origin is compared with, byte for byte: scheme
 // and host in lower case, no default port. "https://Admin.Example.com:443"
@@ -293,7 +278,7 @@ func (g *Guard) Cookie(r *http.Request, token string) *http.Cookie {
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   r.TLS != nil || g.forwardedHTTPS(r),
+		Secure:   netaddr.HTTPS(g.trusted, r),
 	}
 }
 

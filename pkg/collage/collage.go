@@ -238,6 +238,16 @@ func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
 // should use it rather than RemoteAddr.
 func ClientIP(r *http.Request) netip.Addr { return httpx.ClientIP(r) }
 
+// IsHTTPS reports whether r arrived over TLS: on its own connection, or at a
+// proxy that says so in X-Forwarded-Proto — whose first entry counts, when a
+// proxy appends to a list. With ServerConfig.TrustedProxies listed the header
+// is believed only from one of them, so a client cannot claim a TLS connection
+// it does not have; with none listed it is believed from anyone, as for a
+// request outside an application. It is the decision the forgery guard makes
+// for its cookie's Secure flag; a plugin setting a cookie's Secure flag, or
+// sending Strict-Transport-Security, should use it rather than read the header.
+func IsHTTPS(r *http.Request) bool { return httpx.IsHTTPS(r) }
+
 // StreamCloser is implemented by a plugin serving connections that never end by
 // themselves — an event stream, a WebSocket. CloseStreams runs when shutdown
 // begins, before the server waits for open requests, which a stream never ends.
