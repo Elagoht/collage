@@ -22,7 +22,7 @@ go get github.com/Elagoht/collage-minimizer
 import minimizer "github.com/Elagoht/collage-minimizer"
 
 app, err := collage.New(&collage.Config{
-	Plugins: []collage.Plugin{minimizer.New()},
+	Plugins: []collage.Plugin{minimizer.New(minimizer.Options{})},
 })
 ```
 
@@ -656,7 +656,7 @@ otherwise leave you wondering why no template can call it.
 
 ```go
 app, err := collage.New(&collage.Config{
-	Plugins: []collage.Plugin{minimizer.New()},
+	Plugins: []collage.Plugin{minimizer.New(minimizer.Options{})},
 })
 ```
 
@@ -779,7 +779,7 @@ it last wins. The prefix keeps a plugin's keys its own.
 
 ```go
 app, err := collage.New(&collage.Config{
-	Plugins:      []collage.Plugin{minimizer.New()},
+	Plugins:      []collage.Plugin{minimizer.New(minimizer.Options{})},
 	PluginConfig: pluginConfig,
 })
 ```
@@ -966,7 +966,7 @@ third-party plugin is an ordinary Go module:
 import optimage "github.com/Elagoht/collage-opti-image"
 
 app, err := collage.New(&collage.Config{
-	Plugins: []collage.Plugin{optimage.New()},
+	Plugins: []collage.Plugin{optimage.New(optimage.Options{})},
 })
 ```
 

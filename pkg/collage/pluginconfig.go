@@ -10,8 +10,8 @@ import (
 // name, ready to hand to Config.PluginConfig:
 //
 //	{
-//	  "elagoht/minimizer": {"html": true, "css": true, "js": true, "json": false},
-//	  "elagoht/opti-image": {"allowedOrigins": [{"scheme": "https", "host": "images.example.com"}]}
+//	  "elagoht/minimizer": {"js": true, "noJSON": true},
+//	  "elagoht/robots": {"disallow": ["/admin"]}
 //	}
 //
 // It is a convenience, not a requirement, and the framework never calls it. Nothing
