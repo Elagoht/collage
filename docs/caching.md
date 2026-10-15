@@ -324,23 +324,29 @@ Tags stay plain strings — `"author:" + id` here — because they are what
 
 - **One set of tags for both caches.** The tags are added to the page's own, so
   `InvalidateTags("author:" + id)` marks the stored author stale *and* drops every
-  cached page that showed them, together. There is no second cache to keep in step by hand — the
-  thing that goes wrong when an application memoises in its own API client and then
-  invalidates only the pages.
+  cached page that showed them, together. There is no second cache to keep in step
+  by hand — the thing that goes wrong when an application memoises in its own API
+  client and then invalidates only the pages.
 - **One fetch per key at a time.** Requests that need the same key while it is being
   fetched wait for that fetch rather than starting their own.
 - **Invalidation keeps the old value, to serve until a new one arrives.**
   `InvalidateTags` and a passed `ttl` mark a value stale rather than removing it.
   The next render is served the stale value at once, and one fetch in the
   background replaces it, so a request after that fetch has finished sees the
-  change. If that fetch fails, the stale value stays and keeps being served,
-  however long the upstream is down. A render built from a stale value is served with
-  `Cache-Control: no-store` and is not cached, so the page is rendered again once
-  the value is fresh. Each stale value served is reported as the `CacheStale`
-  metrics event, and each failed refresh is logged at warn with its error. A fetch
-  that was still running when its tags were invalidated hands its result to whoever
-  was waiting and is kept, but as stale; one overtaken by `PurgeTags` is not kept at
-  all.
+  change. A fetch that was still running when its tags were invalidated hands its
+  result to whoever was waiting and is kept, but as stale; one overtaken by
+  `PurgeTags` is not kept at all. If the background fetch fails, the stale value
+  stays and keeps being served, however long the upstream is down, and the key
+  cools down: no new fetch starts for it for a second, then two, four, and so on
+  up to a minute after each further failure, so a down upstream is not asked once
+  per request. A successful fetch ends the cooldown. A render built from a stale
+  value is served with `Cache-Control: no-store` and is not cached, so the page is
+  rendered again once the value is fresh, and plugins see it as degraded
+  (`AfterRenderEvent.Degraded`).
+- **Stale serves are reported.** Each stale value served is reported as the
+  `CacheStale` metrics event, cooldown or not. Each failed refresh is logged at
+  warn with its error, and the first success after failures at info, with how
+  many there were.
 - **Not found is the exception.** A fetch whose error wraps `collage.ErrNotFound`
   drops the value, so a record deleted upstream disappears from the site and its
   page answers 404.
@@ -349,16 +355,27 @@ Tags stay plain strings — `"author:" + id` here — because they are what
 - **`PurgeTags` removes outright.** It drops pages and values with nothing left
   to serve stale, for data that must not be shown again even once.
 - **A static export never uses stale data.** `collage.Build` waits for the
-  upstream, and fails if the upstream fails.
+  upstream, and fails if the upstream fails. So does `App.RenderFragment`, which
+  a plugin calls to push a re-rendered fragment after an invalidation: what it
+  pushes is not asked for again, so it must be the new value.
 - **Bounded, and on disk beside a disk cache.** Values are kept in memory, up to
   `Cache.MaxEntries`, least recently used first to go — unlike the page memory
   cache, which evicts in insertion order (see [below](#the-built-in-memory-cache)).
   With `Cache.Type` `"disk"`, they are also written to `<Cache.Dir>/data/` as
-  JSON and read back at startup, so a restart comes up warm. That directory is
-  not namespaced by build, so a new deploy with its upstream down renders from
-  the last one's data. A value whose type changed shape is not read back, and an
-  interface-typed key is kept in memory only. Each instance of a multi-instance
-  deployment keeps its own store.
+  JSON, by a background writer that `App.Shutdown` waits for, and read back at
+  startup, so a restart comes up warm: it serves the persisted values at once,
+  without waiting on the upstream, and refreshes each in the background on its
+  first use, since nothing says what changed while the process was down. That
+  directory is not namespaced by build, so a new deploy with its upstream down
+  renders from the last one's data. A value whose type changed shape is not read
+  back. A type JSON would not bring back as it was is kept in memory only: one
+  with an unexported field, a field tagged `json:"-"`, or an interface anywhere
+  in it — unless that part of it implements both `json.Marshaler` and
+  `json.Unmarshaler`, as `time.Time` does. The files are not encrypted, so
+  personal data should not go through `Cached` with a disk cache. Each instance
+  of a multi-instance deployment keeps its own store in memory, but instances
+  sharing one `Cache.Dir` share one data directory, and each prunes it to its
+  own `MaxEntries` at startup.
 - **Where it keeps nothing.** With `Cache.Enabled` false, in development, for a
   request that called `SkipCache`, and in an action's own handler, `Cached` behaves
   as `Once`: shared within the render, fetched fresh by the next. A preview therefore

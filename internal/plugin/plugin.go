@@ -181,7 +181,9 @@ type Host = interface {
 	// owns. A fragment the page did not open is ErrUnknownFragmentPath: nothing is
 	// reachable here that is not reachable over HTTP. The fragment's guard runs
 	// for r as it would for a request to that URL, and a refusal is
-	// ErrGuardRefused: send that reader nothing.
+	// ErrGuardRefused: send that reader nothing. Unlike a request, it never
+	// renders from a stale collage.Cached value: it waits for the upstream, and
+	// an upstream that fails is an error.
 	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
 	// ServeStatus answers r with status and the page the application shows for
 	// it — its not-found page for 404 and 410, its error page otherwise — for a

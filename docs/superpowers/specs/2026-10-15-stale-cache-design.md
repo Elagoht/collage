@@ -55,7 +55,7 @@ invalidated or when its TTL passes. Expiry no longer removes it.
 - **Fresh hit:** return the value, as today.
 - **Stale hit:** return the stale value with a nil error, and tell the caller it
   was stale (see "Degraded render" below). If no refresh is running for the
-  key, start one:
+  key, and the key is not cooling down after a failed refresh, start one:
   - single-flight, one per key;
   - detached from the request: `context.WithoutCancel(ctx)` with its own fixed
     timeout of 30s (`refreshTimeout`, not configurable);
@@ -66,7 +66,14 @@ invalidated or when its TTL passes. Expiry no longer removes it.
     404;
   - on any other error, or a panic: keep the stale entry, emit
     `observability.CacheStale`, and log at warn with the key name, how long the
-    entry has been stale, and the error;
+    entry has been stale, and the error. The key then cools down: no refresh
+    starts for it until `retryAt`, 1s after the first consecutive failure and
+    doubling with each further one, capped at 60s. Stale hits inside the
+    cooldown are still served and still emit `CacheStale`. A success replaces
+    the entry, which ends the cooldown, and logs one info line with the failure
+    count. A fresh-data load (`types.WantsFreshData`) ignores the cooldown. If
+    the entry is gone when the refresh fails (purged or evicted), nothing is
+    served stale and the failure is logged at debug only;
   - Emit `CacheStale` once for each stale value served.
 - **Miss (no entry):** fetch and block, as today, including today's
   abandoned-starter retry and panic handling. There is nothing to fall back to,
@@ -122,7 +129,10 @@ the old entries simply stop matching and are treated as misses.
   small header (format version, store key, tags, expiry, stale flag, write
   time) followed by the encoded value. Writes are atomic (temp file + rename),
   using the same pattern as `internal/cache/disk.go`.
-- **Writes:** these happen outside `s.mu`.
+- **Writes:** these happen outside `s.mu`, on one background writer goroutine
+  per store, so a caller such as `Invalidate` returns without waiting on the
+  disk. `Store.Close(ctx)` waits for running refreshes and the write queue,
+  then stops the writer; `App.Shutdown` calls it before the plugins shut down.
   - Every successful store (fresh or stale) writes the file.
   - `Invalidate` rewrites each marked entry's file with the stale flag set, so
     staleness survives a restart.
@@ -130,12 +140,20 @@ the old entries simply stop matching and are treated as misses.
   - Writes to one key must not reorder. Use a per-entry generation number and
     skip a write whose generation has been superseded.
 - **Failures:** a disk failure never fails a load or a request. It is logged.
-  A value whose `Encode` fails stays memory-only, logged once per key name.
+  A value whose `Encode` fails stays memory-only, logged once per type. `Encode`
+  fails for a type JSON would not restore exactly: an unexported or `json:"-"`
+  field, or an interface, anywhere in it, unless that part implements both
+  `json.Marshaler` and `json.Unmarshaler`.
 - **Startup:** `datacache.Open(dir, opts)` reads the directory. It loads entries
   newest first, up to `MaxEntries`, as raw bytes with their tags, expiry and
-  stale flag, and deletes files beyond that limit. Unreadable or corrupt files,
-  or files with an unknown format version, are deleted. Values are decoded
-  lazily on first read.
+  stale flag, and deletes files beyond that limit. Unreadable or corrupt entry
+  files, or files with an unknown format version, are deleted, as are leftover
+  `.tmp-` files; files whose name is not 64 lowercase hex characters are not
+  the store's and are left alone. Every entry loads **stale** (stale since its
+  stale time, or else its write time): what changed upstream while the process
+  was down is unknown. The site still starts warm and never blocks: the first
+  load serves the persisted value at once and refreshes it in the background.
+  Values are decoded lazily on first read.
 - **Decode failure:** this happens when the type changed between builds. The
   entry and its file are removed and the load proceeds as a miss. It is never an
   error to the page.
@@ -202,8 +220,8 @@ Framework (`internal/core`, `internal/httpx`, `pkg/collage`):
     The next render, with the refresh finished, is stored.
 13. Warm page, then `InvalidateTags`, then the upstream is down: 200, built from
     stale data (layout present, no `ErrEmptyRender`).
-14. Restart (new app, same `Cache.Dir`): the first render makes no upstream
-    call.
+14. Restart (new app, same `Cache.Dir`): entries load stale; the first render
+    makes no blocking upstream call and serves the persisted value.
 15. A disk write failure never fails the request.
 
 All tests run with `go test -race -count=1 ./...`.
