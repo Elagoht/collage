@@ -23,7 +23,10 @@
 - **`AfterRenderEvent.Degraded` is also true for a render built from stale
   cached data**, so plugins see such renders as degraded.
 - **`App.Shutdown` waits for the data store**: its running refreshes and its
-  disk writes, before the plugins are shut down.
+  disk writes, before the plugins are shut down. Disk writes are now made in the
+  background, so a test that points a disk cache at `t.TempDir()` should shut
+  the application down in a `t.Cleanup`, as the demo project's `main_test.go`
+  now does; otherwise a late write can make the directory's removal fail.
 
 ### Added
 
