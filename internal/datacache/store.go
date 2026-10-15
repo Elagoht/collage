@@ -35,6 +35,23 @@ const DefaultMaxEntries = 10000
 // still answer in time for the next one.
 const RefreshTimeout = 30 * time.Second
 
+// After a refresh fails, the key cools down before another is started: an
+// upstream that is down is asked once a second, then every two, four, … up to
+// once a minute, not once for every request that serves the stale value.
+const (
+	retryBackoffMin = time.Second
+	retryBackoffMax = time.Minute
+)
+
+// retryBackoff is the cooldown after failures consecutive failed refreshes.
+func retryBackoff(failures int) time.Duration {
+	backoff := retryBackoffMin
+	for i := 1; i < failures && backoff < retryBackoffMax; i++ {
+		backoff *= 2
+	}
+	return min(backoff, retryBackoffMax)
+}
+
 // Options configures a Store.
 type Options struct {
 	// MaxEntries bounds the store: 0 means DefaultMaxEntries and a negative
@@ -111,6 +128,10 @@ type entry struct {
 	// stale is set by an invalidation; an entry past expires is stale as well.
 	stale      bool
 	staleSince time.Time
+	// failures counts the refreshes that failed in a row, and retryAt is when
+	// the next may start. A success replaces the entry, and so clears both.
+	failures int
+	retryAt  time.Time
 }
 
 type call struct {
@@ -153,13 +174,16 @@ func New(opts Options) *Store {
 // returns it at once with stale true, and starts one fetch in the background to
 // replace it. That fetch is not the caller's: it runs detached from ctx, under
 // RefreshTimeout, so a reader who leaves does not cancel it. If it fails the
-// stale value stays and is served again; if it reports types.ErrNotFound the
-// value is dropped, so the next Load fetches and returns that error.
+// stale value stays and is served again, and the key cools down: no refresh
+// starts for it for a second, doubling with each further failure up to a
+// minute, and a success ends it. If it reports types.ErrNotFound the value is
+// dropped, so the next Load fetches and returns that error.
 //
 // With no value at all there is nothing to serve meanwhile, and Load waits for
 // the fetch, whose error, if any, goes to every caller waiting on it and is
 // never stored. A ctx marked with types.WantsFreshData waits the same way on a
-// stale value, and gets the upstream's error rather than the value.
+// stale value, cooling down or not, and gets the upstream's error rather than
+// the value.
 //
 // decode is not used by a store kept in memory.
 func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), decode func([]byte) (types.CacheValue, error)) (types.CacheValue, bool, error) {
@@ -203,7 +227,9 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 		}
 		if !types.WantsFreshData(ctx) {
 			s.order.MoveToFront(element)
-			s.refreshLocked(ctx, key, ttl, tags, fetch)
+			if !s.now().Before(stored.retryAt) {
+				s.refreshLocked(ctx, key, ttl, tags, fetch, stored)
+			}
 			value := stored.value
 			s.mu.Unlock()
 			s.metrics.CacheEvent(ctx, observability.CacheStale, keyName(key))
@@ -258,9 +284,9 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 	return value, false, err, false
 }
 
-// refreshLocked starts the background fetch replacing key's stale value,
-// unless one is already running. It must be called with s.mu held.
-func (s *Store) refreshLocked(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error)) {
+// refreshLocked starts the background fetch replacing target, key's stale
+// entry, unless one is already running. It must be called with s.mu held.
+func (s *Store) refreshLocked(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), target *entry) {
 	if _, running := s.inflight[key]; running || s.closing {
 		return
 	}
@@ -268,10 +294,10 @@ func (s *Store) refreshLocked(ctx context.Context, key string, ttl time.Duration
 	s.inflight[key] = started
 	epoch, purges := s.epoch, s.purges
 	s.refreshes.Add(1)
-	go s.refresh(context.WithoutCancel(ctx), key, ttl, tags, fetch, started, epoch, purges)
+	go s.refresh(context.WithoutCancel(ctx), key, ttl, tags, fetch, started, epoch, purges, target)
 }
 
-func (s *Store) refresh(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), started *call, epoch, purges uint64) {
+func (s *Store) refresh(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), started *call, epoch, purges uint64, target *entry) {
 	defer s.refreshes.Done()
 	ctx, cancel := context.WithTimeout(ctx, s.refreshTimeout)
 	defer cancel()
@@ -280,17 +306,39 @@ func (s *Store) refresh(ctx context.Context, key string, ttl time.Duration, tags
 
 	s.mu.Lock()
 	delete(s.inflight, key)
+	// Only the entry this refresh set out to replace cools down or counts as
+	// recovered: one a purge removed, or another fetch replaced, meanwhile is
+	// not this refresh's to judge.
+	element, ok := s.entries[key]
+	serving := ok && element.Value.(*entry) == target
+	failures := 0
+	if serving {
+		failures = target.failures
+	}
 	var staleFor time.Duration
-	if element, ok := s.entries[key]; ok && err != nil {
-		staleFor = s.now().Sub(s.staleSinceLocked(element.Value.(*entry)))
+	if serving && err != nil && !errors.Is(err, types.ErrNotFound) {
+		now := s.now()
+		staleFor = now.Sub(s.staleSinceLocked(target))
+		target.failures++
+		target.retryAt = now.Add(retryBackoff(target.failures))
 	}
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
 	s.mu.Unlock()
 	close(started.done)
 
-	if err != nil && !errors.Is(err, types.ErrNotFound) {
+	switch {
+	case err == nil:
+		if failures > 0 {
+			s.logger.Info("collage: data refreshed after failures", "key", keyName(key), "failures", failures)
+		}
+	case errors.Is(err, types.ErrNotFound):
+	case serving:
 		s.logger.Warn("collage: serving stale data, its refresh failed",
 			"key", keyName(key), "stale_for", staleFor, "err", err)
+	default:
+		// The value is gone — purged or evicted — so nothing is served stale,
+		// and the next load fetches and meets the error itself.
+		s.logger.Debug("collage: data refresh failed for a value no longer stored", "key", keyName(key), "err", err)
 	}
 }
 

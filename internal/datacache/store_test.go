@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,6 +36,31 @@ func counting(calls *atomic.Int32, value string) func(context.Context) (types.Ca
 
 func failing(err error) func(context.Context) (types.CacheValue, error) {
 	return func(context.Context) (types.CacheValue, error) { return nil, err }
+}
+
+// clock is a test's time, safe to read from a refresh's goroutine while the
+// test moves it.
+type clock struct {
+	mu sync.Mutex
+	at time.Time
+}
+
+func newClock(s *Store) *clock {
+	c := &clock{at: time.Now()}
+	s.now = c.now
+	return c
+}
+
+func (c *clock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.at
+}
+
+func (c *clock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.at = c.at.Add(d)
 }
 
 func TestStore_LoadsOnceAndServesAfter(t *testing.T) {
@@ -78,13 +105,12 @@ func TestStore_ConcurrentLoadsShareOneFetch(t *testing.T) {
 
 func TestStore_Expires(t *testing.T) {
 	s := New(Options{})
-	now := time.Now()
-	s.now = func() time.Time { return now }
+	clk := newClock(s)
 	var calls atomic.Int32
 	s.Load(context.Background(), "k", time.Minute, nil, counting(&calls, "v"), decodeStr)
-	now = now.Add(59 * time.Second)
+	clk.advance(59 * time.Second)
 	s.Load(context.Background(), "k", time.Minute, nil, counting(&calls, "v"), decodeStr)
-	now = now.Add(2 * time.Second)
+	clk.advance(2 * time.Second)
 	s.Load(context.Background(), "k", time.Minute, nil, counting(&calls, "v"), decodeStr)
 	s.refreshes.Wait()
 	if calls.Load() != 2 {
@@ -281,11 +307,10 @@ func TestStore_NotFoundDropsTheStaleValue(t *testing.T) {
 // Past its ttl a value is stale, not gone.
 func TestStore_AnExpiredValueIsServedWhenTheRefreshFails(t *testing.T) {
 	s := New(Options{})
-	now := time.Now()
-	s.now = func() time.Time { return now }
+	clk := newClock(s)
 	var calls atomic.Int32
 	s.Load(bg, "k", time.Minute, nil, counting(&calls, "old"), decodeStr)
-	now = now.Add(2 * time.Minute)
+	clk.advance(2 * time.Minute)
 	v, stale, err := s.Load(bg, "k", time.Minute, nil, failing(errors.New("down")), decodeStr)
 	if err != nil || v != str("old") || !stale {
 		t.Fatalf("Load = %v, %v, %v; want the expired value, stale", v, stale, err)
@@ -393,11 +418,13 @@ func TestStore_ARefreshOutlivesTheRequestThatStartedIt(t *testing.T) {
 // down, and must not hold the key.
 func TestStore_APanickingRefreshKeepsTheStaleValue(t *testing.T) {
 	s := New(Options{})
+	clk := newClock(s)
 	var calls atomic.Int32
 	s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "old"), decodeStr)
 	s.Invalidate([]string{"t"})
 	s.Load(bg, "k", 0, nil, func(context.Context) (types.CacheValue, error) { panic("upstream") }, decodeStr)
 	s.refreshes.Wait()
+	clk.advance(time.Second) // past the failed refresh's cooldown
 	v, stale, err := s.Load(bg, "k", 0, nil, counting(&calls, "new"), decodeStr)
 	if v != str("old") || !stale || err != nil {
 		t.Fatalf("Load = %v, %v, %v; want old, stale", v, stale, err)
@@ -475,5 +502,124 @@ func TestStore_StaleServesAreReported(t *testing.T) {
 	}
 	if stale != 1 {
 		t.Errorf("CacheStale events = %d, want 1", stale)
+	}
+}
+
+// A failed refresh is not retried by every request that serves the stale
+// value: the key cools down, 1s after one failure and twice as long after each
+// further one, up to a minute. A success ends it; fresh data ignores it.
+func TestStore_AFailedRefreshCoolsDown(t *testing.T) {
+	metrics := observability.NewRecordingMetrics()
+	s := New(Options{Metrics: metrics})
+	clk := newClock(s)
+	var calls atomic.Int32
+	s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "old"), decodeStr)
+	s.Invalidate([]string{"t"})
+
+	var attempts atomic.Int32
+	down := func(context.Context) (types.CacheValue, error) {
+		attempts.Add(1)
+		return nil, errors.New("down")
+	}
+	load := func() {
+		t.Helper()
+		if v, stale, err := s.Load(bg, "k", 0, []string{"t"}, down, decodeStr); v != str("old") || !stale || err != nil {
+			t.Fatalf("Load = %v, %v, %v; want the stale value", v, stale, err)
+		}
+		s.refreshes.Wait()
+	}
+	load()
+	if attempts.Load() != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts.Load())
+	}
+	for i, delay := range []time.Duration{1, 2, 4, 8, 16, 32, 60, 60} {
+		delay *= time.Second
+		load()
+		clk.advance(delay - time.Millisecond)
+		load()
+		if got := attempts.Load(); got != int32(i+1) {
+			t.Fatalf("failure %d: attempts = %d within the %v cooldown, want %d", i+1, got, delay, i+1)
+		}
+		clk.advance(time.Millisecond)
+		load()
+		if got := attempts.Load(); got != int32(i+2) {
+			t.Fatalf("failure %d: attempts = %d after the %v cooldown, want %d", i+1, got, delay, i+2)
+		}
+	}
+	stale := 0
+	for _, event := range metrics.Snapshot().CacheEvents {
+		if event.Event == observability.CacheStale {
+			stale++
+		}
+	}
+	if want := 1 + 8*3; stale != want {
+		t.Errorf("CacheStale events = %d, want %d: one per stale serve, cooling or not", stale, want)
+	}
+
+	// Fresh data waits on the upstream whatever the cooldown says.
+	if _, _, err := s.Load(types.WithFreshData(bg), "k", 0, []string{"t"}, down, decodeStr); err == nil {
+		t.Error("a fresh-data load in the cooldown did not reach the upstream")
+	}
+	if got := attempts.Load(); got != 10 {
+		t.Fatalf("attempts = %d after a fresh-data load, want 10", got)
+	}
+
+	// A success replaces the entry, and with it the cooldown.
+	clk.advance(time.Minute)
+	s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "new"), decodeStr)
+	s.refreshes.Wait()
+	s.Invalidate([]string{"t"})
+	if v, stale, _ := s.Load(bg, "k", 0, []string{"t"}, down, decodeStr); v != str("new") || !stale {
+		t.Fatalf("Load = %v, stale=%v; want the refreshed value, invalidated", v, stale)
+	}
+	s.refreshes.Wait()
+	if got := attempts.Load(); got != 11 {
+		t.Errorf("attempts = %d after a success, want 11: the cooldown outlived it", got)
+	}
+}
+
+// The logs say what happened: a failure while a value is still served says so,
+// a failure for a value purged meanwhile does not claim to serve it, and the
+// first success after failures says how many there were.
+func TestStore_RefreshLogs(t *testing.T) {
+	var logs strings.Builder
+	var logsMu sync.Mutex
+	s := New(Options{Logger: slog.New(slog.NewTextHandler(lockedWriter{&logsMu, &logs}, &slog.HandlerOptions{Level: slog.LevelInfo}))})
+	clk := newClock(s)
+	read := func() string {
+		logsMu.Lock()
+		defer logsMu.Unlock()
+		out := logs.String()
+		logs.Reset()
+		return out
+	}
+	var calls atomic.Int32
+	s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "old"), decodeStr)
+	s.Invalidate([]string{"t"})
+	for range 2 {
+		s.Load(bg, "k", 0, nil, failing(errors.New("down")), decodeStr)
+		s.refreshes.Wait()
+		clk.advance(time.Minute)
+	}
+	if out := read(); strings.Count(out, "serving stale") != 2 {
+		t.Errorf("want two failure warnings, got:\n%s", out)
+	}
+	s.Load(bg, "k", 0, nil, counting(&calls, "new"), decodeStr)
+	s.refreshes.Wait()
+	if out := read(); !strings.Contains(out, "refreshed after failures") || !strings.Contains(out, "failures=2") {
+		t.Errorf("want one recovery line with failures=2, got:\n%s", out)
+	}
+
+	s.Invalidate([]string{"t"})
+	gate := make(chan struct{})
+	s.Load(bg, "k", 0, nil, func(context.Context) (types.CacheValue, error) {
+		<-gate
+		return nil, errors.New("down")
+	}, decodeStr)
+	s.Purge([]string{"t"})
+	close(gate)
+	s.refreshes.Wait()
+	if out := read(); strings.Contains(out, "serving stale") {
+		t.Errorf("a refresh of a purged value claimed to serve it stale:\n%s", out)
 	}
 }
