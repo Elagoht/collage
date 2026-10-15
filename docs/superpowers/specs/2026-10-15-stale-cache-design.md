@@ -144,10 +144,11 @@ the old entries simply stop matching and are treated as misses.
 
 ### Degraded render
 
-`Cached` records on the render state that it served a stale value. The render
-engine and handler treat such a render as degraded: it is served, never written
-to the page cache, and it carries the short `Cache-Control` a degraded render
-already gets. The next request renders again, by which time the background
+`Cached` records on the render state that it served a stale value, and the
+render result reports it (`render.Result.Degraded()` becomes true; today it
+looks only at failed fragments). The handler then treats the render like any
+other degraded render: it is served, never written to the page cache, and sent
+with `Cache-Control: no-store`, so no CDN pins it either. The next request renders again, by which time the background
 refresh has usually finished, and that render is cached. Without this rule, a
 render built from stale data would be stored as fresh for a full page TTL right
 after an invalidation, and editors would not see their change.
