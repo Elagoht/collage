@@ -441,3 +441,52 @@ func TestCached_AnExportAfterAnInvalidationIsFresh(t *testing.T) {
 		t.Errorf("exported page = %q, want the new name", data)
 	}
 }
+
+func diskCache(dir, version string) collage.CacheConfig {
+	return collage.CacheConfig{Enabled: true, Type: "disk", Dir: dir, Version: version, DefaultTTL: time.Hour}
+}
+
+// A new deploy — a new build, so a cold page cache — with its upstream down
+// still renders, from the data the last one fetched.
+func TestCached_ARestartRendersFromPersistedData(t *testing.T) {
+	dir := t.TempDir()
+	first := newAuthorSiteWith(t, false, diskCache(dir, "build-1"))
+	first.get(t, 3, false)
+
+	second := newAuthorSiteWith(t, false, diskCache(dir, "build-2"))
+	second.fail(errors.New("cms down"))
+	rec := second.serve(t, 3)
+	if rec.Code != http.StatusOK || rec.Body.String() != "<article><p>Ada</p></article>" {
+		t.Fatalf("after restart = %d %q", rec.Code, rec.Body.String())
+	}
+	if got := second.fetched(); got["A"] != 0 {
+		t.Errorf("fetched %v after restart, want nothing", got)
+	}
+}
+
+// A data directory that cannot be made costs persistence, not the site.
+func TestCached_AnUnusableDataDirectoryFallsBackToMemory(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "data"), []byte("a file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	site := newAuthorSiteWith(t, false, diskCache(dir, "b"))
+	if rec := site.serve(t, 3); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+}
+
+// PurgeTags is the hard delete: nothing stale is left to serve.
+func TestPurgeTags_LeavesNothingToServe(t *testing.T) {
+	site := newAuthorSite(t, false)
+	site.get(t, 3, false)
+	site.mu.Lock()
+	site.names["A"] = "Ada Lovelace"
+	site.mu.Unlock()
+	if err := site.app.PurgeTags(context.Background(), "author:A"); err != nil {
+		t.Fatal(err)
+	}
+	if body := site.get(t, 3, false); body != "<article><p>Ada Lovelace</p></article>" {
+		t.Errorf("after PurgeTags = %q, want the new name at once", body)
+	}
+}

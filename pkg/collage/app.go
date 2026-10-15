@@ -149,17 +149,26 @@ func (a *App) FragmentURL(page, fragment, locale string, params map[string]strin
 	return a.c.FragmentURL(page, fragment, locale, params)
 }
 
-// InvalidateTags removes every cached render that depended on any of tags. It is
-// InvalidateTagsN without the count.
+// InvalidateTags removes every cached render that depended on any of tags and
+// marks every collage.Cached value under them stale: the next render is served
+// the stale value at once while one fetch replaces it, and keeps being served
+// it while the upstream is down. It is InvalidateTagsN without the count.
 func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 	return a.c.InvalidateTags(ctx, tags...)
 }
 
-// InvalidateTagsN removes every cached render that depended on any of tags and
-// returns how many entries it removed. A failure to remove one entry does not stop
+// InvalidateTagsN is InvalidateTags returning how many cached renders it removed. A failure to remove one entry does not stop
 // the rest; the failures are joined into the returned error.
 func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) {
 	return a.c.InvalidateTagsN(ctx, tags...)
+}
+
+// PurgeTags removes every cached render and every collage.Cached value under
+// any of tags, from disk too. Unlike InvalidateTags nothing is left to serve
+// stale: the next render waits for the upstream, and fails if it is down. For
+// data that must not be shown again, once; InvalidateTags is the everyday call.
+func (a *App) PurgeTags(ctx context.Context, tags ...string) error {
+	return a.c.PurgeTags(ctx, tags...)
 }
 
 // RenderPath renders the page path reaches, for locale, bypassing the render
