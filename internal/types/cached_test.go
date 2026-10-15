@@ -10,17 +10,17 @@ import (
 )
 
 // mapCache is a DataCache that keeps everything forever.
-type mapCache map[string]any // any: mirrors DataCache's own
+type mapCache map[string]CacheValue
 
-func (m mapCache) Load(ctx context.Context, key string, _ time.Duration, _ []string, fetch func(context.Context) (any, error)) (any, error) { // any: see DataCache
+func (m mapCache) Load(ctx context.Context, key string, _ time.Duration, _ []string, fetch func(context.Context) (CacheValue, error), _ func([]byte) (CacheValue, error)) (CacheValue, bool, error) {
 	if v, ok := m[key]; ok {
-		return v, nil
+		return v, false, nil
 	}
 	v, err := fetch(ctx)
 	if err == nil {
 		m[key] = v
 	}
-	return v, err
+	return v, false, err
 }
 
 // A key is its name and its type: one name asked for as two types is two
@@ -68,17 +68,21 @@ func TestCached_NilUnderAnInterfaceKey(t *testing.T) {
 }
 
 // wrongStore answers every Load with a value of its own choosing.
-type wrongStore struct{ value any } // any: mirrors DataCache's own
+type wrongStore struct{ value CacheValue }
 
-func (w wrongStore) Load(context.Context, string, time.Duration, []string, func(context.Context) (any, error)) (any, error) { // any: see DataCache
-	return w.value, nil
+func (w wrongStore) Load(context.Context, string, time.Duration, []string, func(context.Context) (CacheValue, error), func([]byte) (CacheValue, error)) (CacheValue, bool, error) {
+	return w.value, false, nil
 }
+
+type rawString string
+
+func (r rawString) Encode() ([]byte, error) { return []byte(r), nil }
 
 // A store handing back a value of another type is a bug in the store; Cached
 // says so rather than returning an empty value as if all were well.
 func TestCached_AStoreReturningAnotherTypeIsAnError(t *testing.T) {
 	rc := NewRenderContext(context.Background(), nil, nil, "en", nil)
-	BindDataCache(rc, wrongStore{value: "not an int"})
+	BindDataCache(rc, wrongStore{value: rawString("not an int")})
 	v, err := Cached(rc, NewKey[int]("k"), 0, nil, func(context.Context) (int, error) { return 7, nil })
 	if err == nil {
 		t.Fatalf("Cached = %d, nil; want an error naming the store's mistake", v)
@@ -107,5 +111,76 @@ func TestCached_WithoutAStoreIsOnce(t *testing.T) {
 		if len(store) != 0 {
 			t.Errorf("skip=%v: the store was written", skip)
 		}
+	}
+}
+
+// A store key names its type the same way in every process, so a value written
+// by one run is found by the next; and differently once the type's shape
+// changes, so a value written for the old shape is not decoded into the new.
+func TestStoreKey_StableAndShapeSensitive(t *testing.T) {
+	type post struct{ Title string }
+	a := storeKey(NewKey[post]("p").id())
+	if b := storeKey(NewKey[post]("p").id()); a != b {
+		t.Fatalf("one key, two store keys: %q / %q", a, b)
+	}
+	if strings.Contains(a, "0x") {
+		t.Errorf("store key %q carries a pointer, which no other process shares", a)
+	}
+	changed := func() string {
+		type post struct {
+			Title string
+			Body  string
+		}
+		return storeKey(NewKey[post]("p").id())
+	}()
+	if changed == a {
+		t.Errorf("a post with a new field has the old post's store key %q", a)
+	}
+	tagged := func() string {
+		type post struct {
+			Title string `json:"headline"`
+		}
+		return storeKey(NewKey[post]("p").id())
+	}()
+	if tagged == a {
+		t.Errorf("a renamed json field kept the store key %q", a)
+	}
+}
+
+// A self-referencing type has a finite identity.
+func TestStoreKey_RecursiveType(t *testing.T) {
+	type node struct {
+		Name     string
+		Children []*node
+	}
+	if key := storeKey(NewKey[node]("n").id()); key == "" {
+		t.Fatal("empty store key")
+	}
+}
+
+// What Cached stores encodes as JSON and decodes back into the key's type.
+func TestCached_ValuesRoundTripThroughJSON(t *testing.T) {
+	type post struct{ Title string }
+	encoded, err := cachedValue[post]{value: post{Title: "hi"}}.Encode()
+	if err != nil || string(encoded) != `{"Title":"hi"}` {
+		t.Fatalf("Encode = %s, %v", encoded, err)
+	}
+	decoded, err := decodeCached[post](encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decoded.(cachedValue[post]).value; got.Title != "hi" {
+		t.Errorf("decoded %+v", got)
+	}
+}
+
+// An interface-typed value cannot be decoded from JSON — nothing says which
+// concrete type to make — so it is not encoded either: kept in memory only.
+func TestCached_InterfaceKeysAreNotPersisted(t *testing.T) {
+	if _, err := (cachedValue[fmt.Stringer]{}).Encode(); err == nil {
+		t.Error("an interface-typed value encoded")
+	}
+	if _, err := decodeCached[fmt.Stringer]([]byte(`null`)); err == nil {
+		t.Error("an interface-typed value decoded")
 	}
 }

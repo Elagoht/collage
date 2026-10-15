@@ -2,26 +2,44 @@ package datacache
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
-func counting(calls *atomic.Int32, value string) func(context.Context) (any, error) {
-	return func(context.Context) (any, error) {
+// str is a string as the store holds it.
+type str string
+
+func (s str) Encode() ([]byte, error) { return json.Marshal(string(s)) }
+
+func decodeStr(data []byte) (types.CacheValue, error) {
+	var v string
+	err := json.Unmarshal(data, &v)
+	return str(v), err
+}
+
+func counting(calls *atomic.Int32, value string) func(context.Context) (types.CacheValue, error) {
+	return func(context.Context) (types.CacheValue, error) {
 		calls.Add(1)
-		return value, nil
+		return str(value), nil
 	}
+}
+
+func failing(err error) func(context.Context) (types.CacheValue, error) {
+	return func(context.Context) (types.CacheValue, error) { return nil, err }
 }
 
 func TestStore_LoadsOnceAndServesAfter(t *testing.T) {
 	s := New(0)
 	var calls atomic.Int32
 	for range 5 {
-		v, err := s.Load(context.Background(), "author:A", 0, nil, counting(&calls, "A"))
-		if err != nil || v != "A" {
+		v, _, err := s.Load(context.Background(), "author:A", 0, nil, counting(&calls, "A"), decodeStr)
+		if err != nil || v != str("A") {
 			t.Fatalf("Load = %v, %v", v, err)
 		}
 	}
@@ -35,15 +53,15 @@ func TestStore_ConcurrentLoadsShareOneFetch(t *testing.T) {
 	s := New(0)
 	var calls atomic.Int32
 	release := make(chan struct{})
-	fetch := func(context.Context) (any, error) {
+	fetch := func(context.Context) (types.CacheValue, error) {
 		calls.Add(1)
 		<-release
-		return "A", nil
+		return str("A"), nil
 	}
 	var wg sync.WaitGroup
 	for range 20 {
 		wg.Go(func() {
-			if v, err := s.Load(context.Background(), "k", 0, nil, fetch); err != nil || v != "A" {
+			if v, _, err := s.Load(context.Background(), "k", 0, nil, fetch, decodeStr); err != nil || v != str("A") {
 				t.Errorf("Load = %v, %v", v, err)
 			}
 		})
@@ -61,11 +79,11 @@ func TestStore_Expires(t *testing.T) {
 	now := time.Now()
 	s.now = func() time.Time { return now }
 	var calls atomic.Int32
-	s.Load(context.Background(), "k", time.Minute, nil, counting(&calls, "v"))
+	s.Load(context.Background(), "k", time.Minute, nil, counting(&calls, "v"), decodeStr)
 	now = now.Add(59 * time.Second)
-	s.Load(context.Background(), "k", time.Minute, nil, counting(&calls, "v"))
+	s.Load(context.Background(), "k", time.Minute, nil, counting(&calls, "v"), decodeStr)
 	now = now.Add(2 * time.Second)
-	s.Load(context.Background(), "k", time.Minute, nil, counting(&calls, "v"))
+	s.Load(context.Background(), "k", time.Minute, nil, counting(&calls, "v"), decodeStr)
 	if calls.Load() != 2 {
 		t.Errorf("fetches = %d, want 2: one, then one after the minute", calls.Load())
 	}
@@ -74,14 +92,14 @@ func TestStore_Expires(t *testing.T) {
 func TestStore_InvalidateByTag(t *testing.T) {
 	s := New(0)
 	var calls atomic.Int32
-	s.Load(context.Background(), "author:A", 0, []string{"author:A"}, counting(&calls, "A"))
-	s.Load(context.Background(), "author:B", 0, []string{"author:B"}, counting(&calls, "B"))
+	s.Load(context.Background(), "author:A", 0, []string{"author:A"}, counting(&calls, "A"), decodeStr)
+	s.Load(context.Background(), "author:B", 0, []string{"author:B"}, counting(&calls, "B"), decodeStr)
 
 	if dropped := s.Invalidate([]string{"author:A"}); dropped != 1 {
 		t.Errorf("dropped = %d, want 1", dropped)
 	}
-	s.Load(context.Background(), "author:A", 0, []string{"author:A"}, counting(&calls, "A"))
-	s.Load(context.Background(), "author:B", 0, []string{"author:B"}, counting(&calls, "B"))
+	s.Load(context.Background(), "author:A", 0, []string{"author:A"}, counting(&calls, "A"), decodeStr)
+	s.Load(context.Background(), "author:B", 0, []string{"author:B"}, counting(&calls, "B"), decodeStr)
 	if calls.Load() != 3 {
 		t.Errorf("fetches = %d, want 3: A again, B still stored", calls.Load())
 	}
@@ -95,10 +113,10 @@ func TestStore_AFetchOverlappingAnInvalidationIsNotStored(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.Load(context.Background(), "k", 0, []string{"t"}, func(context.Context) (any, error) {
+		s.Load(context.Background(), "k", 0, []string{"t"}, func(context.Context) (types.CacheValue, error) {
 			<-release
-			return "old", nil
-		})
+			return str("old"), nil
+		}, decodeStr)
 	}()
 	time.Sleep(10 * time.Millisecond)
 	s.Invalidate([]string{"t"})
@@ -112,11 +130,11 @@ func TestStore_AFetchOverlappingAnInvalidationIsNotStored(t *testing.T) {
 func TestStore_ErrorsAreNotStored(t *testing.T) {
 	s := New(0)
 	failure := errors.New("upstream down")
-	if _, err := s.Load(context.Background(), "k", 0, nil, func(context.Context) (any, error) { return nil, failure }); !errors.Is(err, failure) {
+	if _, _, err := s.Load(context.Background(), "k", 0, nil, failing(failure), decodeStr); !errors.Is(err, failure) {
 		t.Fatalf("Load error = %v", err)
 	}
 	var calls atomic.Int32
-	s.Load(context.Background(), "k", 0, nil, counting(&calls, "v"))
+	s.Load(context.Background(), "k", 0, nil, counting(&calls, "v"), decodeStr)
 	if calls.Load() != 1 {
 		t.Error("a failed fetch was stored")
 	}
@@ -125,12 +143,12 @@ func TestStore_ErrorsAreNotStored(t *testing.T) {
 func TestStore_EvictsTheLeastRecentlyUsed(t *testing.T) {
 	s := New(2)
 	var calls atomic.Int32
-	s.Load(context.Background(), "a", 0, nil, counting(&calls, "a"))
-	s.Load(context.Background(), "b", 0, nil, counting(&calls, "b"))
-	s.Load(context.Background(), "a", 0, nil, counting(&calls, "a")) // a is now the most recent
-	s.Load(context.Background(), "c", 0, nil, counting(&calls, "c")) // evicts b
-	s.Load(context.Background(), "a", 0, nil, counting(&calls, "a"))
-	s.Load(context.Background(), "b", 0, nil, counting(&calls, "b"))
+	s.Load(context.Background(), "a", 0, nil, counting(&calls, "a"), decodeStr)
+	s.Load(context.Background(), "b", 0, nil, counting(&calls, "b"), decodeStr)
+	s.Load(context.Background(), "a", 0, nil, counting(&calls, "a"), decodeStr) // a is now the most recent
+	s.Load(context.Background(), "c", 0, nil, counting(&calls, "c"), decodeStr) // evicts b
+	s.Load(context.Background(), "a", 0, nil, counting(&calls, "a"), decodeStr)
+	s.Load(context.Background(), "b", 0, nil, counting(&calls, "b"), decodeStr)
 	if calls.Load() != 4 {
 		t.Errorf("fetches = %d, want 4: a, b, c, then b again", calls.Load())
 	}
@@ -146,13 +164,13 @@ func TestStore_APanickingFetchDoesNotHoldTheKey(t *testing.T) {
 				t.Error("the panic did not reach the caller whose fetch it was")
 			}
 		}()
-		_, _ = s.Load(context.Background(), "k", 0, nil, func(context.Context) (any, error) { panic("upstream") })
+		_, _, _ = s.Load(context.Background(), "k", 0, nil, func(context.Context) (types.CacheValue, error) { panic("upstream") }, decodeStr)
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	got, err := s.Load(ctx, "k", 0, nil, func(context.Context) (any, error) { return "ok", nil })
-	if err != nil || got != "ok" {
+	got, _, err := s.Load(ctx, "k", 0, nil, func(context.Context) (types.CacheValue, error) { return str("ok"), nil }, decodeStr)
+	if err != nil || got != str("ok") {
 		t.Fatalf("Load() after a panic = %v, %v; want a fresh fetch", got, err)
 	}
 }
@@ -163,16 +181,16 @@ func TestStore_AWaiterOnAPanickingFetchIsAnswered(t *testing.T) {
 	release := make(chan struct{})
 	go func() {
 		defer func() { _ = recover() }()
-		_, _ = s.Load(context.Background(), "k", 0, nil, func(context.Context) (any, error) {
+		_, _, _ = s.Load(context.Background(), "k", 0, nil, func(context.Context) (types.CacheValue, error) {
 			<-release
 			panic("upstream")
-		})
+		}, decodeStr)
 	}()
 	waitInflight(t, s, "k")
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := s.Load(context.Background(), "k", 0, nil, func(context.Context) (any, error) { return "second", nil })
+		_, _, err := s.Load(context.Background(), "k", 0, nil, func(context.Context) (types.CacheValue, error) { return str("second"), nil }, decodeStr)
 		done <- err
 	}()
 	time.Sleep(20 * time.Millisecond) // the waiter joins the running fetch
@@ -195,10 +213,10 @@ func TestStore_AWaiterOutlivesTheCallerThatStartedTheFetch(t *testing.T) {
 	s := New(0)
 	first, cancel := context.WithCancel(context.Background())
 	go func() {
-		_, _ = s.Load(first, "k", 0, nil, func(ctx context.Context) (any, error) {
+		_, _, _ = s.Load(first, "k", 0, nil, func(ctx context.Context) (types.CacheValue, error) {
 			<-ctx.Done()
 			return nil, ctx.Err()
-		})
+		}, decodeStr)
 	}()
 	waitInflight(t, s, "k")
 
@@ -207,9 +225,11 @@ func TestStore_AWaiterOutlivesTheCallerThatStartedTheFetch(t *testing.T) {
 	var err error
 	go func() {
 		defer close(done)
-		var value any // any: Load's own return type
-		value, err = s.Load(context.Background(), "k", 0, nil, func(context.Context) (any, error) { return "mine", nil })
-		got, _ = value.(string)
+		var value types.CacheValue
+		value, _, err = s.Load(context.Background(), "k", 0, nil, func(context.Context) (types.CacheValue, error) { return str("mine"), nil }, decodeStr)
+		if value != nil {
+			got = string(value.(str))
+		}
 	}()
 	time.Sleep(20 * time.Millisecond)
 	cancel()

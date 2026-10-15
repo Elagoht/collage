@@ -13,6 +13,8 @@ import (
 	"errors"
 	"sync"
 	"time"
+
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // ErrFetchPanicked is what a caller waiting on a fetch is told when the fetch
@@ -40,14 +42,14 @@ type Store struct {
 
 type entry struct {
 	key     string
-	value   any // any: the store holds every caller's type; Cached asserts it back
+	value   types.CacheValue
 	expires time.Time
 	tags    []string
 }
 
 type call struct {
 	done  chan struct{}
-	value any // any: see entry.value
+	value types.CacheValue
 	err   error
 	// abandoned reports a fetch that failed because the caller that started it
 	// went away: an answer about that caller, not about the key.
@@ -78,18 +80,18 @@ func New(maxEntries int) *Store {
 // The fetch runs under the context of the caller that started it. A caller whose own
 // context ends while it waits stops waiting; one whose context outlives the
 // starter's, when the fetch failed because the starter went away, fetches again.
-func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (any, error)) (any, error) { // any: see entry.value
+func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), decode func([]byte) (types.CacheValue, error)) (types.CacheValue, bool, error) {
 	for {
 		value, err, again := s.load(ctx, key, ttl, tags, fetch)
 		if !again {
-			return value, err
+			return value, false, err
 		}
 	}
 }
 
 // load is one attempt at Load. again reports that it waited on a fetch its
 // starter abandoned, and the caller should try once more.
-func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (any, error)) (value any, err error, again bool) { // any: see entry.value
+func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error)) (value types.CacheValue, err error, again bool) {
 	s.mu.Lock()
 	if element, ok := s.entries[key]; ok {
 		stored := element.Value.(*entry)
@@ -174,7 +176,7 @@ func (s *Store) Len() int {
 }
 
 // store must be called with s.mu held.
-func (s *Store) store(key string, value any, ttl time.Duration, tags []string) { // any: see entry.value
+func (s *Store) store(key string, value types.CacheValue, ttl time.Duration, tags []string) {
 	if element, ok := s.entries[key]; ok {
 		s.remove(element)
 	}
