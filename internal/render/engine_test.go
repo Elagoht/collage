@@ -457,3 +457,13 @@ func TestRender_SuccessfulRenderCanProduceNoHTML(t *testing.T) {
 		t.Error("Degraded() = false, want true: nil HTML with no error is only meaningful alongside Degraded")
 	}
 }
+
+// A stale result is degraded even without metadata; a zero one is not.
+func TestResult_DegradedWhenStale(t *testing.T) {
+	if !(&Result{Stale: true}).Degraded() {
+		t.Error("a stale result with no metadata is not Degraded")
+	}
+	if (&Result{}).Degraded() {
+		t.Error("a zero result is Degraded")
+	}
+}

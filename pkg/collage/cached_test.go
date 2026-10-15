@@ -260,6 +260,55 @@ func TestCached_InADocument(t *testing.T) {
 	}
 }
 
+// A document built from stale data is served with no-store and not cached, so
+// the next request shows the refreshed name rather than the old one for its TTL.
+func TestCached_AStaleDocumentIsNotCached(t *testing.T) {
+	site := newAuthorSite(t, false)
+	doc := collage.NewDocument("authors", "text/plain").WithPath("en", "/authors.txt").Incremental(time.Hour).
+		WithHandler(func(ctx context.Context, rc *collage.RenderContext) ([]byte, []string, error) {
+			a, err := collage.Cached(rc, authorKey.With("A"), time.Hour, []string{"author:A"}, func(context.Context) (author, error) {
+				site.mu.Lock()
+				defer site.mu.Unlock()
+				return author{Name: site.names["A"]}, nil
+			})
+			return []byte(a.Name), nil, err
+		}).Build()
+	if err := site.app.RegisterDocument(doc); err != nil {
+		t.Fatal(err)
+	}
+	serveDoc := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		site.app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/authors.txt", nil))
+		return rec
+	}
+	if rec := serveDoc(); rec.Body.String() != "Ada" {
+		t.Fatalf("warm document = %q", rec.Body.String())
+	}
+	site.mu.Lock()
+	site.names["A"] = "Ada Lovelace"
+	site.mu.Unlock()
+	site.app.InvalidateTags(context.Background(), "author:A")
+
+	rec := serveDoc()
+	if rec.Body.String() != "Ada" {
+		t.Fatalf("stale document = %q, want the stale name", rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control on a stale document = %q, want no-store", cc)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rec = serveDoc()
+		if rec.Body.String() == "Ada Lovelace" {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("document never showed the new name; last: %q", rec.Body.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // A method a document does not answer is a 405 in the document's own kind: plain
 // text, not the site's HTML error page.
 func TestDocument_A405IsPlainText(t *testing.T) {

@@ -98,11 +98,14 @@ func FragmentReports(r *Result) []types.FragmentReport {
 // not be cached: caching it would pin one request's transient failure in front of
 // every later request. It is nil-safe.
 func (r *Result) Degraded() bool {
-	if r == nil || r.Metadata == nil {
+	if r == nil {
 		return false
 	}
 	if r.Stale {
 		return true
+	}
+	if r.Metadata == nil {
+		return false
 	}
 	for i := range r.Metadata.Fragments {
 		if r.Metadata.Fragments[i].Failed {
