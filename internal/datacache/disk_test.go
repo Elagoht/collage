@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -89,16 +90,24 @@ func TestOpen_AValueThatNoLongerDecodesIsAMiss(t *testing.T) {
 	}
 }
 
-// Files that are not entries — torn writes, leftovers, garbage — are removed
-// at startup rather than tripped over.
-func TestOpen_CorruptFilesAreRemoved(t *testing.T) {
+// What looks like the store's own leftovers — a torn temporary file, an entry
+// file that no longer parses — is removed at startup rather than tripped over.
+// Anything else in the directory is not the store's, and is left alone.
+func TestOpen_RemovesOnlyItsOwnBrokenFiles(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "garbage"), []byte("not an entry"), 0o644)
+	corrupt := strings.Repeat("ab", 32)
+	os.WriteFile(filepath.Join(dir, corrupt), []byte("not an entry"), 0o644)
 	os.WriteFile(filepath.Join(dir, ".tmp-123"), []byte("{"), 0o644)
+	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("mine"), 0o644)
+	os.WriteFile(filepath.Join(dir, strings.Repeat("CD", 32)), []byte("not hex we write"), 0o644)
 	open(t, dir, Options{})
 	entries, _ := os.ReadDir(dir)
-	if len(entries) != 0 {
-		t.Errorf("left %d files, want none", len(entries))
+	var left []string
+	for _, e := range entries {
+		left = append(left, e.Name())
+	}
+	if len(left) != 2 || !slices.Contains(left, "notes.txt") || !slices.Contains(left, strings.Repeat("CD", 32)) {
+		t.Errorf("left %v, want only notes.txt and the upper-case file", left)
 	}
 }
 

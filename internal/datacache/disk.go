@@ -80,7 +80,9 @@ func (d *disk) remove(key string) error {
 }
 
 // load reads every entry in the directory, newest first. Leftover temporary
-// files and files that are not entries are removed.
+// files and entry files that do not parse are removed. Only those: the
+// directory sits inside the application's Cache.Dir, where anything else is
+// someone else's, and a cache has no business deleting it.
 func (d *disk) load() ([]record, error) {
 	dirEntries, err := os.ReadDir(d.dir)
 	if err != nil {
@@ -91,9 +93,13 @@ func (d *disk) load() ([]record, error) {
 		if dirEntry.IsDir() {
 			continue
 		}
-		path := filepath.Join(d.dir, dirEntry.Name())
-		if strings.HasPrefix(dirEntry.Name(), ".tmp-") {
+		name := dirEntry.Name()
+		path := filepath.Join(d.dir, name)
+		if strings.HasPrefix(name, ".tmp-") {
 			_ = os.Remove(path)
+			continue
+		}
+		if !isEntryName(name) {
 			continue
 		}
 		rec, err := readRecord(path)
@@ -105,6 +111,20 @@ func (d *disk) load() ([]record, error) {
 	}
 	slices.SortFunc(records, func(a, b record) int { return b.header.Written.Compare(a.header.Written) })
 	return records, nil
+}
+
+// isEntryName reports whether name is one path gives an entry: a SHA-256 in
+// lower-case hex.
+func isEntryName(name string) bool {
+	if len(name) != sha256.Size*2 {
+		return false
+	}
+	for _, c := range name {
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func readRecord(path string) (record, error) {
