@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -67,11 +68,30 @@ type Store struct {
 	refreshTimeout time.Duration
 	// refreshes counts background refreshes still running.
 	refreshes sync.WaitGroup
+	// disk is nil for a store kept in memory only.
+	disk *disk
+	// pending holds the disk writes the current critical section made; unlock
+	// performs them after releasing mu.
+	pending []diskOp
+	// gens holds each key's latest change, numbered from seq. A disk write
+	// carries the number of the change it records and is skipped once a later
+	// change exists, so writes that finish out of order cannot leave an older
+	// value on disk.
+	gens map[string]uint64
+	seq  uint64
+	// diskMu orders disk writes. It is never taken while mu is held.
+	diskMu sync.Mutex
+	// unencodable remembers the key names already logged as not persistable;
+	// guarded by diskMu.
+	unencodable map[string]bool
 }
 
 type entry struct {
-	key     string
-	value   types.CacheValue
+	key   string
+	value types.CacheValue
+	// raw is the encoded value as read from disk, decoded on first load. While
+	// it is set, value is nil.
+	raw     []byte
 	expires time.Time
 	tags    []string
 	// stale is set by an invalidation; an entry past expires is stale as well.
@@ -130,7 +150,7 @@ func New(opts Options) *Store {
 // decode is not used by a store kept in memory.
 func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), decode func([]byte) (types.CacheValue, error)) (types.CacheValue, bool, error) {
 	for {
-		value, stale, err, again := s.load(ctx, key, ttl, tags, fetch)
+		value, stale, err, again := s.load(ctx, key, ttl, tags, fetch, decode)
 		if !again {
 			return value, stale, err
 		}
@@ -139,8 +159,29 @@ func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []
 
 // load is one attempt at Load. again reports that it waited on a fetch its
 // starter abandoned, and the caller should try once more.
-func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error)) (value types.CacheValue, stale bool, err error, again bool) {
+func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), decode func([]byte) (types.CacheValue, error)) (value types.CacheValue, stale bool, err error, again bool) {
 	s.mu.Lock()
+	if element, ok := s.entries[key]; ok && element.Value.(*entry).raw != nil {
+		// Decoded outside the lock: a large value must not stall every other
+		// key. Whoever finishes first installs it.
+		stored := element.Value.(*entry)
+		raw := stored.raw
+		s.mu.Unlock()
+		decoded, decodeErr := decode(raw)
+		s.mu.Lock()
+		if current, still := s.entries[key]; still && current == element && stored.raw != nil {
+			if decodeErr != nil {
+				// The type changed between builds in a way its identity
+				// did not catch. A miss, never the page's error.
+				s.logger.Warn("collage: dropping a stored value that no longer decodes", "key", keyName(key), "err", decodeErr)
+				s.removeLocked(element)
+				s.unlock()
+				s.mu.Lock()
+			} else {
+				stored.value, stored.raw = decoded, nil
+			}
+		}
+	}
 	if element, ok := s.entries[key]; ok {
 		stored := element.Value.(*entry)
 		if !s.staleLocked(stored) {
@@ -200,7 +241,7 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 	s.mu.Lock()
 	delete(s.inflight, key)
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
-	s.mu.Unlock()
+	s.unlock()
 	close(started.done)
 	return value, false, err, false
 }
@@ -232,7 +273,7 @@ func (s *Store) refresh(ctx context.Context, key string, ttl time.Duration, tags
 		staleFor = s.now().Sub(s.staleSinceLocked(element.Value.(*entry)))
 	}
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
-	s.mu.Unlock()
+	s.unlock()
 	close(started.done)
 
 	if err != nil && !errors.Is(err, types.ErrNotFound) {
@@ -274,7 +315,7 @@ func guarded(ctx context.Context, fetch func(context.Context) (types.CacheValue,
 // running when it is called stores what it brings back as stale.
 func (s *Store) Invalidate(tags []string) int {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	s.epoch++
 	now := s.now()
 	marked := 0
@@ -293,7 +334,7 @@ func (s *Store) Invalidate(tags []string) int {
 // removed. A fetch running when it is called stores nothing.
 func (s *Store) Purge(tags []string) int {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	s.epoch++
 	s.purges++
 	removed := 0
@@ -329,6 +370,7 @@ func (s *Store) staleSinceLocked(e *entry) time.Time {
 func (s *Store) markStaleLocked(e *entry, now time.Time) {
 	if !e.stale {
 		e.stale, e.staleSince = true, now
+		s.changedLocked(e.key, e)
 	}
 }
 
@@ -347,6 +389,7 @@ func (s *Store) storeLocked(key string, value types.CacheValue, ttl time.Duratio
 	}
 	s.entries[key] = s.order.PushFront(stored)
 	s.indexLocked(stored)
+	s.changedLocked(key, stored)
 	for s.max > 0 && len(s.entries) > s.max {
 		s.removeLocked(s.order.Back())
 	}
@@ -377,6 +420,7 @@ func (s *Store) removeLocked(element *list.Element) {
 			}
 		}
 	}
+	s.changedLocked(stored.key, nil)
 }
 
 // keyName is the part of a store key the application chose, for logs and
@@ -384,4 +428,126 @@ func (s *Store) removeLocked(element *list.Element) {
 func keyName(key string) string {
 	name, _, _ := strings.Cut(key, "\x00")
 	return name
+}
+
+// diskOp records one change to an entry for the disk: its whole current state,
+// or its removal.
+type diskOp struct {
+	key    string
+	gen    uint64
+	remove bool
+	header header
+	value  types.CacheValue
+	raw    []byte
+}
+
+// changedLocked records that key changed and, for a store on disk, queues the
+// write that records it. e is nil when the entry was removed. It must be called
+// with s.mu held.
+func (s *Store) changedLocked(key string, e *entry) {
+	if s.disk == nil {
+		return
+	}
+	s.seq++
+	s.gens[key] = s.seq
+	op := diskOp{key: key, gen: s.seq, remove: e == nil}
+	if e != nil {
+		op.header = header{
+			Version: formatVersion, Key: key, Tags: e.tags, Expires: e.expires,
+			Stale: e.stale, StaleSince: e.staleSince, Written: s.now(),
+		}
+		op.value, op.raw = e.value, e.raw
+	}
+	s.pending = append(s.pending, op)
+}
+
+// unlock releases s.mu and writes what the critical section changed to disk.
+func (s *Store) unlock() {
+	ops := s.pending
+	s.pending = nil
+	s.mu.Unlock()
+	s.flush(ops)
+}
+
+func (s *Store) flush(ops []diskOp) {
+	if len(ops) == 0 {
+		return
+	}
+	s.diskMu.Lock()
+	defer s.diskMu.Unlock()
+	for _, op := range ops {
+		s.mu.Lock()
+		current := s.gens[op.key] == op.gen
+		s.mu.Unlock()
+		if !current {
+			continue
+		}
+		var err error
+		if op.remove {
+			err = s.disk.remove(op.key)
+			s.mu.Lock()
+			if s.gens[op.key] == op.gen {
+				delete(s.gens, op.key)
+			}
+			s.mu.Unlock()
+		} else {
+			err = s.writeOp(op)
+		}
+		if err != nil {
+			s.logger.Warn("collage: data cache disk write failed", "key", keyName(op.key), "err", err)
+		}
+	}
+}
+
+// writeOp writes op's entry. A value that cannot be encoded is kept in memory
+// only, and an older copy of it on disk is removed so a restart does not
+// bring it back.
+func (s *Store) writeOp(op diskOp) error {
+	payload := op.raw
+	if payload == nil {
+		encoded, err := op.value.Encode()
+		if err != nil {
+			if name := keyName(op.key); !s.unencodable[name] {
+				s.unencodable[name] = true
+				s.logger.Warn("collage: data cache value kept in memory only", "key", name, "err", err)
+			}
+			return s.disk.remove(op.key)
+		}
+		payload = encoded
+	}
+	return s.disk.write(op.header, payload)
+}
+
+// Open returns a store that keeps its values in dir as well as in memory, and
+// starts with what dir already holds: the newest entries, up to the bound, the
+// rest removed. Their values are decoded on first load.
+func Open(dir string, opts Options) (*Store, error) {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, fmt.Errorf("collage: data cache directory: %w", err)
+	}
+	s := New(opts)
+	s.disk = &disk{dir: dir}
+	s.gens = make(map[string]uint64)
+	s.unencodable = make(map[string]bool)
+	records, err := s.disk.load()
+	if err != nil {
+		return nil, fmt.Errorf("collage: data cache directory: %w", err)
+	}
+	for _, rec := range records {
+		if s.max > 0 && len(s.entries) >= s.max {
+			_ = s.disk.remove(rec.header.Key)
+			continue
+		}
+		raw := rec.payload
+		if raw == nil {
+			raw = []byte{}
+		}
+		stored := &entry{
+			key: rec.header.Key, raw: raw, expires: rec.header.Expires, tags: rec.header.Tags,
+			stale: rec.header.Stale, staleSince: rec.header.StaleSince,
+		}
+		s.entries[stored.key] = s.order.PushBack(stored)
+		s.indexLocked(stored)
+	}
+	return s, nil
 }
