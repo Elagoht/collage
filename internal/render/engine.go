@@ -53,6 +53,9 @@ type Result struct {
 	// failing it. A nil HTML therefore means "no markup", not "error"; Degraded
 	// reports whether anything went wrong.
 	HTML []byte
+	// Stale reports that the render read a value collage.Cached kept past an
+	// invalidation or its ttl. It makes the result Degraded.
+	Stale bool
 	// DependencyTags holds every tag the render depended on: the tags returned by
 	// each fragment's data handler plus the page's own, de-duplicated and sorted so
 	// the same render always reports the same slice. Empty tags are dropped, as
@@ -91,12 +94,15 @@ func FragmentReports(r *Result) []types.FragmentReport {
 }
 
 // Degraded reports whether any fragment in the render failed, whether or not a
-// fallback covered for it. A degraded result is complete enough to serve but must
+// fallback covered for it, or the render was built from stale cached data. A degraded result is complete enough to serve but must
 // not be cached: caching it would pin one request's transient failure in front of
 // every later request. It is nil-safe.
 func (r *Result) Degraded() bool {
 	if r == nil || r.Metadata == nil {
 		return false
+	}
+	if r.Stale {
+		return true
 	}
 	for i := range r.Metadata.Fragments {
 		if r.Metadata.Fragments[i].Failed {
@@ -322,6 +328,7 @@ func (e *SlotEngine) Render(ctx context.Context, rc *types.RenderContext) (*Resu
 		DependencyTags: state.sortedTags(rc.Page.DependencyTags),
 		Metadata:       metadata,
 		NotFound:       state.notFound,
+		Stale:          types.ServedStale(rc),
 	}
 
 	if err != nil {

@@ -16,6 +16,9 @@ type DocumentResult struct {
 	// Body is the bytes to serve. It is nil whenever ExecuteDocument returned an
 	// error.
 	Body []byte
+	// Stale reports that the render read a value collage.Cached kept past an
+	// invalidation or its ttl. It makes the result Degraded.
+	Stale bool
 	// ContentType is copied from the document, for the caller to write verbatim.
 	ContentType string
 	// Tags are the dependency tags this response was derived from, deduplicated,
@@ -68,6 +71,7 @@ func (e *SlotEngine) ExecuteDocument(ctx context.Context, doc *types.Document, r
 	// rationale attempt() in fragment.go applies to a data handler's tags.
 	result.Tags = sortedTags(append(append(append([]string(nil), tags...), doc.DependencyTags...), types.DeclaredTags(rc)...))
 
+	result.Stale = types.ServedStale(rc)
 	if err != nil {
 		result.NotFound = errors.Is(err, types.ErrNotFound)
 		return result, err

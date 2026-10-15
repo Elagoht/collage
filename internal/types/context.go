@@ -63,6 +63,9 @@ type renderShared struct {
 	// uncached is set for a request that skips the caches — a preview — so
 	// Cached fetches fresh rather than serving or storing a value.
 	uncached bool
+	// stale is set when Cached served a value kept past an invalidation or its
+	// ttl. A render built from one is degraded: served, never cached.
+	stale bool
 	// tags are the dependency tags declared through Cached, merged into the
 	// render's own when it finishes.
 	tags []string

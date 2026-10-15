@@ -118,7 +118,7 @@ func Cached[T any](rc *RenderContext, key Key[T], ttl time.Duration, tags []stri
 		return Once(rc, Key[T]{name: "collage:cached:" + key.name}, fetch)
 	}
 
-	value, _, err := store.Load(rc.Context(), storeKey(id), ttl, tags, func(ctx context.Context) (CacheValue, error) {
+	value, stale, err := store.Load(rc.Context(), storeKey(id), ttl, tags, func(ctx context.Context) (CacheValue, error) {
 		fetched, err := fetch(ctx)
 		if err != nil {
 			return nil, err
@@ -127,6 +127,11 @@ func Cached[T any](rc *RenderContext, key Key[T], ttl time.Duration, tags []stri
 	}, decodeCached[T])
 	if err != nil {
 		return zero, err
+	}
+	if stale {
+		rc.state.mu.Lock()
+		rc.state.stale = true
+		rc.state.mu.Unlock()
 	}
 	typed, ok := value.(cachedValue[T])
 	if !ok {
@@ -188,4 +193,15 @@ func writeShape(w io.Writer, t reflect.Type, seen map[reflect.Type]bool) {
 	case reflect.Pointer, reflect.Slice, reflect.Array:
 		writeShape(w, t.Elem(), seen)
 	}
+}
+
+// ServedStale reports whether any Cached call in this render was served a
+// stale value.
+func ServedStale(rc *RenderContext) bool {
+	if rc == nil || rc.state == nil {
+		return false
+	}
+	rc.state.mu.Lock()
+	defer rc.state.mu.Unlock()
+	return rc.state.stale
 }

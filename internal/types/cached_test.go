@@ -184,3 +184,27 @@ func TestCached_InterfaceKeysAreNotPersisted(t *testing.T) {
 		t.Error("an interface-typed value decoded")
 	}
 }
+
+// staleCache serves every key as a stale "old".
+type staleCache struct{}
+
+func (staleCache) Load(context.Context, string, time.Duration, []string, func(context.Context) (CacheValue, error), func([]byte) (CacheValue, error)) (CacheValue, bool, error) {
+	return cachedValue[string]{value: "old"}, true, nil
+}
+
+// A render that read a stale value says so, so it is not cached as if fresh.
+func TestCached_RecordsAStaleRead(t *testing.T) {
+	rc := NewRenderContext(context.Background(), nil, nil, "en", nil)
+	BindDataCache(rc, mapCache{})
+	Cached(rc, NewKey[string]("a"), 0, nil, func(context.Context) (string, error) { return "a", nil })
+	if ServedStale(rc) {
+		t.Fatal("a fresh read was recorded as stale")
+	}
+	BindDataCache(rc, staleCache{})
+	if v, err := Cached(rc, NewKey[string]("b"), 0, nil, func(context.Context) (string, error) { return "new", nil }); v != "old" || err != nil {
+		t.Fatalf("Cached = %q, %v", v, err)
+	}
+	if !ServedStale(rc) {
+		t.Error("a stale read was not recorded")
+	}
+}

@@ -2,9 +2,12 @@ package collage_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,9 +33,16 @@ type authorSite struct {
 	mu    sync.Mutex
 	calls map[string]int
 	names map[string]string
+	// failure, when set, is what the author fetch returns instead of a name.
+	failure error
 }
 
 func newAuthorSite(t *testing.T, devMode bool) *authorSite {
+	t.Helper()
+	return newAuthorSiteWith(t, devMode, collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour})
+}
+
+func newAuthorSiteWith(t *testing.T, devMode bool, cacheConfig collage.CacheConfig) *authorSite {
 	t.Helper()
 	site := &authorSite{calls: map[string]int{}, names: map[string]string{"A": "Ada", "B": "Bo"}}
 	app, err := collage.New(&collage.Config{
@@ -42,7 +52,7 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 			"t/post.html":   {Data: []byte(`<article>{{slot "author"}}</article>`)},
 			"t/author.html": {Data: []byte(`<p>{{.Name}}</p>`)},
 		}, Root: "t"},
-		Cache: collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour},
+		Cache: cacheConfig,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -54,12 +64,15 @@ func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 				func(context.Context) (author, error) {
 					site.mu.Lock()
 					defer site.mu.Unlock()
+					if site.failure != nil {
+						return author{}, site.failure
+					}
 					site.calls[id]++
 					return author{Name: site.names[id]}, nil
 				})
 			return a, nil, err
 		})).
-		Build()
+		Required().Build()
 	for i := range 30 {
 		id := "A"
 		if i >= 20 {
@@ -86,6 +99,36 @@ func (s *authorSite) fetched() map[string]int {
 		out[k] = v
 	}
 	return out
+}
+
+func (s *authorSite) fail(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failure = err
+}
+
+func (s *authorSite) serve(t *testing.T, i int) *httptest.ResponseRecorder {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	s.app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, fmt.Sprintf("/p/%d", i), nil))
+	return rec
+}
+
+// eventually re-requests page i until check passes, for what a background
+// refresh changes; it fails after two seconds.
+func (s *authorSite) eventually(t *testing.T, i int, what string, check func(*httptest.ResponseRecorder) bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		rec := s.serve(t, i)
+		if check(rec) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("page %d never showed %s; last: %d %q", i, what, rec.Code, rec.Body.String())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func (s *authorSite) get(t *testing.T, i int, preview bool) string {
@@ -133,9 +176,14 @@ func TestCached_InvalidatesWithThePages(t *testing.T) {
 	if err != nil || dropped != 20 {
 		t.Fatalf("InvalidateTagsN = %d, %v; want A's twenty pages dropped", dropped, err)
 	}
-	if body := site.get(t, 3, false); body != "<article><p>Ada Lovelace</p></article>" {
-		t.Errorf("A's page after the invalidation = %q, want the new name", body)
+	// The first request after the invalidation is served the stale author at
+	// once, and starts the refresh; a later one shows the new name.
+	if body := site.get(t, 3, false); body != "<article><p>Ada</p></article>" {
+		t.Errorf("A's page right after the invalidation = %q, want the stale name", body)
 	}
+	site.eventually(t, 3, "the new name", func(rec *httptest.ResponseRecorder) bool {
+		return rec.Body.String() == "<article><p>Ada Lovelace</p></article>"
+	})
 	if body := site.get(t, 25, false); body != "<article><p>Bo</p></article>" {
 		t.Errorf("B's page = %q", body)
 	}
@@ -267,5 +315,80 @@ func TestDocument_ConcurrentMissesAreCoalesced(t *testing.T) {
 	wg.Wait()
 	if runs.Load() != 1 {
 		t.Errorf("handler runs = %d, want 1 for ten concurrent misses", runs.Load())
+	}
+}
+
+// A page built from stale data is served, but neither cached here nor at a CDN:
+// otherwise the old name would be pinned for the page's whole TTL.
+func TestCached_TheRequestAfterAStaleOneIsFresh(t *testing.T) {
+	site := newAuthorSite(t, false)
+	site.get(t, 3, false)
+	site.mu.Lock()
+	site.names["A"] = "Ada Lovelace"
+	site.mu.Unlock()
+	site.app.InvalidateTags(context.Background(), "author:A")
+
+	rec := site.serve(t, 3)
+	if rec.Body.String() != "<article><p>Ada</p></article>" {
+		t.Fatalf("stale render = %q", rec.Body.String())
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Errorf("Cache-Control on a stale render = %q, want no-store", cc)
+	}
+	site.eventually(t, 3, "the new name", func(rec *httptest.ResponseRecorder) bool {
+		return rec.Body.String() == "<article><p>Ada Lovelace</p></article>"
+	})
+}
+
+// The point of it all: invalidated, upstream down, the site still answers.
+func TestCached_AnInvalidatedPageRendersWhileTheUpstreamIsDown(t *testing.T) {
+	site := newAuthorSite(t, false)
+	for i := range 30 {
+		site.get(t, i, false)
+	}
+	site.fail(errors.New("cms down"))
+	site.app.InvalidateTags(context.Background(), "author:A", "author:B")
+	for i := range 30 {
+		rec := site.serve(t, i)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "<p>") {
+			t.Fatalf("page %d with the upstream down = %d %q", i, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// Content removed upstream leaves the site: not found never falls back. The
+// author card sits in a required slot, so its data's not found is the page's
+// 404 (see pkg/collage/fragmentpath_test.go for the rule this relies on; if the
+// card's failure is a 500 here instead, make the card's slot hold a Required
+// fragment as that test does - the point under test is that the page stops
+// showing the stale author, not which status the slot policy picks).
+func TestCached_NotFoundUpstreamBecomesA404(t *testing.T) {
+	site := newAuthorSite(t, false)
+	site.get(t, 3, false)
+	site.fail(fmt.Errorf("author A: %w", collage.ErrNotFound))
+	site.app.InvalidateTags(context.Background(), "author:A")
+	site.eventually(t, 3, "a 404", func(rec *httptest.ResponseRecorder) bool {
+		return rec.Code == http.StatusNotFound
+	})
+}
+
+// An export writes files nobody re-renders, so it waits for fresh data.
+func TestCached_AnExportAfterAnInvalidationIsFresh(t *testing.T) {
+	site := newAuthorSite(t, false)
+	site.get(t, 3, false)
+	site.mu.Lock()
+	site.names["A"] = "Ada Lovelace"
+	site.mu.Unlock()
+	site.app.InvalidateTags(context.Background(), "author:A")
+	out := t.TempDir()
+	if _, err := collage.Build(context.Background(), site.app, collage.BuildOptions{OutDir: out, Concurrency: 4}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(out, "p", "3", "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Ada Lovelace") {
+		t.Errorf("exported page = %q, want the new name", data)
 	}
 }
