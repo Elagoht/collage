@@ -61,14 +61,27 @@ func never(t *testing.T) func(context.Context) (types.CacheValue, error) {
 	}
 }
 
-// A restart comes up warm: the new store serves what the old one fetched.
+// A restart comes up warm: the new store serves what the old one fetched at
+// once, without waiting on the upstream. Nothing says what changed while the
+// process was down, so the value is stale, and its first load refreshes it.
 func TestOpen_ARestartServesWhatWasPersisted(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "k", []string{"t"}, "v")
 
-	v, stale, err := open(t, dir, Options{}).Load(bg, "k", 0, []string{"t"}, never(t), decodeStr)
-	if v != str("v") || stale || err != nil {
-		t.Fatalf("after reopening Load = %v, %v, %v", v, stale, err)
+	s := open(t, dir, Options{})
+	gate := make(chan struct{})
+	held := func(context.Context) (types.CacheValue, error) {
+		<-gate
+		return str("new"), nil
+	}
+	v, stale, err := s.Load(bg, "k", 0, []string{"t"}, held, decodeStr)
+	if v != str("v") || !stale || err != nil {
+		t.Fatalf("after reopening Load = %v, %v, %v; want the persisted value, stale", v, stale, err)
+	}
+	close(gate)
+	s.refreshes.Wait()
+	if v, stale, _ := s.Load(bg, "k", 0, nil, never(t), decodeStr); v != str("new") || stale {
+		t.Errorf("after the refresh Load = %v, stale=%v; want the refreshed value", v, stale)
 	}
 }
 
@@ -178,7 +191,7 @@ func TestOpen_KeepsTheNewestWithinMaxEntries(t *testing.T) {
 	if small.Len() != 2 || len(files(t, dir)) != 2 {
 		t.Fatalf("Len = %d, files = %d; want 2, 2", small.Len(), len(files(t, dir)))
 	}
-	if v, _, _ := small.Load(bg, "c", 0, nil, never(t), decodeStr); v != str("c") {
+	if v, _, _ := small.Load(bg, "c", 0, nil, failing(errors.New("down")), decodeStr); v != str("c") {
 		t.Errorf("newest entry lost: %v", v)
 	}
 }
@@ -276,7 +289,7 @@ func TestOpen_ADecodeThatPanicsOrReturnsNothingIsAMiss(t *testing.T) {
 				t.Fatalf("Load = %v, %v, %v; want a fresh fetch", v, stale, err)
 			}
 			second.Close(bg)
-			if v, _, _ := open(t, dir, Options{}).Load(bg, "k", 0, nil, never(t), decodeStr); v != str("fresh") {
+			if v, _, _ := open(t, dir, Options{}).Load(bg, "k", 0, nil, failing(errors.New("down")), decodeStr); v != str("fresh") {
 				t.Errorf("after reopening Load = %v, want the fresh value, not the old file", v)
 			}
 		})

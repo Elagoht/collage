@@ -37,6 +37,8 @@ type authorSite struct {
 	failure error
 	// gate, when set, holds every author fetch until it is closed.
 	gate chan struct{}
+	// attempts counts author fetches, failed ones included.
+	attempts atomic.Int32
 }
 
 func newAuthorSite(t *testing.T, devMode bool) *authorSite {
@@ -64,6 +66,7 @@ func newAuthorSiteWith(t *testing.T, devMode bool, cacheConfig collage.CacheConf
 			id, _ := authorIDKey.Get(rc)
 			a, err := collage.Cached(rc, authorKey.With(id), time.Hour, []string{"author:" + id},
 				func(context.Context) (author, error) {
+					site.attempts.Add(1)
 					site.mu.Lock()
 					gate := site.gate
 					site.mu.Unlock()
@@ -472,14 +475,23 @@ func TestCached_ARestartRendersFromPersistedData(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The upstream is down, and its fetches hang until released: a render that
+	// waited on one would never come back.
 	second := newAuthorSiteWith(t, false, diskCache(dir, "build-2"))
 	second.fail(errors.New("cms down"))
+	gate := second.hold()
 	rec := second.serve(t, 3)
+	close(gate)
 	if rec.Code != http.StatusOK || rec.Body.String() != "<article><p>Ada</p></article>" {
 		t.Fatalf("after restart = %d %q", rec.Code, rec.Body.String())
 	}
-	if got := second.fetched(); got["A"] != 0 {
-		t.Errorf("fetched %v after restart, want nothing", got)
+	// Served stale: the value is refreshed in the background, and that fetch
+	// fails there, not in the page.
+	if err := second.app.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if second.attempts.Load() == 0 {
+		t.Error("a restored value was not refreshed; it would be served unchanged for good")
 	}
 }
 

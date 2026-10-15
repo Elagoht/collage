@@ -653,7 +653,8 @@ func guardedDecode(decode func([]byte) (types.CacheValue, error), raw []byte) (d
 
 // Open returns a store that keeps its values in dir as well as in memory, and
 // starts with what dir already holds: the newest entries, up to the bound, the
-// rest removed. Their values are decoded on first load.
+// rest removed. Their values are decoded on first load, and are stale: served
+// at once, and refreshed in the background.
 func Open(dir string, opts Options) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("collage: data cache directory: %w", err)
@@ -679,9 +680,19 @@ func Open(dir string, opts Options) (*Store, error) {
 		if raw == nil {
 			raw = []byte{}
 		}
+		// Every restored value is stale: whatever changed upstream while no
+		// process was here to be told is unknown. It is still served at once,
+		// and its first load refreshes it.
+		staleSince := rec.header.StaleSince
+		if !rec.header.Stale {
+			staleSince = rec.header.Written
+		}
+		if staleSince.IsZero() {
+			staleSince = s.now()
+		}
 		stored := &entry{
 			key: rec.header.Key, raw: raw, expires: rec.header.Expires, tags: rec.header.Tags,
-			stale: rec.header.Stale, staleSince: rec.header.StaleSince,
+			stale: true, staleSince: staleSince,
 		}
 		s.entries[stored.key] = s.order.PushBack(stored)
 		s.indexLocked(stored)
