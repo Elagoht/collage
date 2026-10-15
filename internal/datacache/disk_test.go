@@ -229,3 +229,27 @@ func TestOpen_AnEncodeThatPanicsIsServedButNotWritten(t *testing.T) {
 type panicking struct{}
 
 func (panicking) Encode() ([]byte, error) { panic("encoder bug") }
+
+// A decode that panics, or that returns no value, is a miss like one that
+// fails: the entry and its file are dropped, so the key does not fail on every
+// request and after every restart.
+func TestOpen_ADecodeThatPanicsOrReturnsNothingIsAMiss(t *testing.T) {
+	for name, decode := range map[string]func([]byte) (types.CacheValue, error){
+		"panics":  func([]byte) (types.CacheValue, error) { panic("decoder bug") },
+		"nothing": func([]byte) (types.CacheValue, error) { return nil, nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			var calls atomic.Int32
+			open(t, dir, Options{}).Load(bg, "k", 0, nil, counting(&calls, "v"), decodeStr)
+
+			v, stale, err := open(t, dir, Options{}).Load(bg, "k", 0, nil, counting(&calls, "fresh"), decode)
+			if v != str("fresh") || stale || err != nil {
+				t.Fatalf("Load = %v, %v, %v; want a fresh fetch", v, stale, err)
+			}
+			if v, _, _ := open(t, dir, Options{}).Load(bg, "k", 0, nil, never(t), decodeStr); v != str("fresh") {
+				t.Errorf("after reopening Load = %v, want the fresh value, not the old file", v)
+			}
+		})
+	}
+}

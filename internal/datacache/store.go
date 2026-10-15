@@ -167,7 +167,7 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 		stored := element.Value.(*entry)
 		raw := stored.raw
 		s.mu.Unlock()
-		decoded, decodeErr := decode(raw)
+		decoded, decodeErr := guardedDecode(decode, raw)
 		s.mu.Lock()
 		if current, still := s.entries[key]; still && current == element && stored.raw != nil {
 			if decodeErr != nil {
@@ -542,6 +542,22 @@ func encode(value types.CacheValue) (encoded []byte, err error) {
 		}
 	}()
 	return value.Encode()
+}
+
+// guardedDecode runs decode, turning a panic, or a value it does not return,
+// into an error: either way what is on disk cannot be served, and the caller
+// drops it and fetches rather than failing that key on every load.
+func guardedDecode(decode func([]byte) (types.CacheValue, error), raw []byte) (decoded types.CacheValue, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			decoded, err = nil, fmt.Errorf("decode panicked: %v", r)
+		}
+	}()
+	decoded, err = decode(raw)
+	if err == nil && decoded == nil {
+		err = errors.New("decode returned no value")
+	}
+	return decoded, err
 }
 
 // Open returns a store that keeps its values in dir as well as in memory, and
