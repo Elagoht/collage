@@ -1185,13 +1185,14 @@ func cleanStop(err error) error {
 	return err
 }
 
-// Shutdown drains, then stops the running server, then the plugin registry,
-// joining whatever errors either produced. The drain cancels the ServeHook ctx,
+// Shutdown drains, then stops the running server, then waits for the data
+// cache's background refreshes and disk writes, then stops the plugin registry,
+// joining whatever errors any produced. The drain cancels the ServeHook ctx,
 // tells DrainHook plugins, turns keep-alives off and, with a server serving, a
 // ServerConfig.DrainDelay and not in development mode, keeps serving for
 // DrainDelay. ctx bounds the drain's wait and the server's wait for in-flight
-// requests together; ListenAndServe's own signal handler drains first and then
-// bounds the rest with ServerConfig.ShutdownTimeout.
+// requests and the data cache's wait together; ListenAndServe's own signal
+// handler drains first and then bounds the rest with ServerConfig.ShutdownTimeout.
 //
 // It is idempotent: the work runs exactly once and every caller — including one
 // racing another — observes the same result. Calling it before ListenAndServe has
@@ -1238,6 +1239,14 @@ func (a *App) shutdown(ctx context.Context) error {
 	if server != nil {
 		if serverErr := server.Shutdown(ctx); serverErr != nil {
 			err = errors.Join(err, fmt.Errorf("collage: server shutdown: %w", serverErr))
+		}
+	}
+	// The data cache's refreshes outlive the requests that started them, and
+	// fetch through what plugins provide: they are waited for, and their writes
+	// to disk made, before the plugins stop.
+	if a.data != nil {
+		if dataErr := a.data.Close(ctx); dataErr != nil {
+			err = errors.Join(err, fmt.Errorf("collage: data cache shutdown: %w", dataErr))
 		}
 	}
 	// Plugins stop after the server, not before: a plugin released while requests

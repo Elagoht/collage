@@ -68,11 +68,24 @@ type Store struct {
 	refreshTimeout time.Duration
 	// refreshes counts background refreshes still running.
 	refreshes sync.WaitGroup
+	// closing is set by Close: no refresh starts after it, so the wait for
+	// the running ones ends.
+	closing   bool
+	closeOnce sync.Once
+	closeErr  error
 	// disk is nil for a store kept in memory only.
 	disk *disk
-	// pending holds the disk writes the current critical section made; unlock
-	// performs them after releasing mu.
-	pending []diskOp
+	// queue holds the disk writes not yet made. One writer goroutine makes
+	// them, so a caller that changed many entries — an invalidation marking
+	// hundreds stale — returns at memory speed. changed wakes the writer, and
+	// whoever waits for the queue to drain; both use mu.
+	queue   []diskOp
+	writing bool
+	changed *sync.Cond
+	// stopped is set once the writer is told to stop; changes made after it
+	// are kept in memory only.
+	stopped    bool
+	writerDone chan struct{}
 	// gens holds each key's latest change, numbered from seq. A disk write
 	// carries the number of the change it records and is skipped once a later
 	// change exists, so writes that finish out of order cannot leave an older
@@ -176,8 +189,6 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 				// did not catch. A miss, never the page's error.
 				s.logger.Warn("collage: dropping a stored value that no longer decodes", "key", keyName(key), "err", decodeErr)
 				s.removeLocked(element)
-				s.unlock()
-				s.mu.Lock()
 			} else {
 				stored.value, stored.raw = decoded, nil
 			}
@@ -242,18 +253,15 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 	s.mu.Lock()
 	delete(s.inflight, key)
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
-	// Waiters are answered before the disk is written: memory is settled, and
-	// a slow disk should cost only the caller that fetched.
-	ops := s.release()
+	s.mu.Unlock()
 	close(started.done)
-	s.flush(ops)
 	return value, false, err, false
 }
 
 // refreshLocked starts the background fetch replacing key's stale value,
 // unless one is already running. It must be called with s.mu held.
 func (s *Store) refreshLocked(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error)) {
-	if _, running := s.inflight[key]; running {
+	if _, running := s.inflight[key]; running || s.closing {
 		return
 	}
 	started := &call{done: make(chan struct{})}
@@ -277,9 +285,8 @@ func (s *Store) refresh(ctx context.Context, key string, ttl time.Duration, tags
 		staleFor = s.now().Sub(s.staleSinceLocked(element.Value.(*entry)))
 	}
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
-	ops := s.release()
+	s.mu.Unlock()
 	close(started.done)
-	s.flush(ops)
 
 	if err != nil && !errors.Is(err, types.ErrNotFound) {
 		s.logger.Warn("collage: serving stale data, its refresh failed",
@@ -320,7 +327,7 @@ func guarded(ctx context.Context, fetch func(context.Context) (types.CacheValue,
 // running when it is called stores what it brings back as stale.
 func (s *Store) Invalidate(tags []string) int {
 	s.mu.Lock()
-	defer s.unlock()
+	defer s.mu.Unlock()
 	s.epoch++
 	now := s.now()
 	marked := 0
@@ -339,7 +346,7 @@ func (s *Store) Invalidate(tags []string) int {
 // removed. A fetch running when it is called stores nothing.
 func (s *Store) Purge(tags []string) int {
 	s.mu.Lock()
-	defer s.unlock()
+	defer s.mu.Unlock()
 	s.epoch++
 	s.purges++
 	removed := 0
@@ -453,10 +460,10 @@ type diskOp struct {
 }
 
 // changedLocked records that key changed and, for a store on disk, queues the
-// write that records it. e is nil when the entry was removed. It must be called
-// with s.mu held.
+// write that records it for the writer. e is nil when the entry was removed. It
+// must be called with s.mu held.
 func (s *Store) changedLocked(key string, e *entry) {
-	if s.disk == nil {
+	if s.disk == nil || s.stopped {
 		return
 	}
 	s.seq++
@@ -469,32 +476,109 @@ func (s *Store) changedLocked(key string, e *entry) {
 		}
 		op.value, op.raw = e.value, e.raw
 	}
-	s.pending = append(s.pending, op)
+	s.queue = append(s.queue, op)
+	s.changed.Broadcast()
 }
 
-// unlock releases s.mu and writes what the critical section changed to disk.
-func (s *Store) unlock() {
-	s.flush(s.release())
-}
-
-// release releases s.mu and returns the disk writes the critical section
-// queued, for a caller with something to do between the two.
-func (s *Store) release() []diskOp {
-	ops := s.pending
-	s.pending = nil
-	s.mu.Unlock()
-	return ops
-}
-
-func (s *Store) flush(ops []diskOp) {
-	if len(ops) == 0 {
-		return
+// write is the writer: it takes what is queued, makes the writes with mu
+// released, and sleeps until there is more or Close stops it.
+func (s *Store) write() {
+	defer close(s.writerDone)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for {
+		for len(s.queue) == 0 && !s.stopped {
+			s.changed.Wait()
+		}
+		if s.stopped {
+			return
+		}
+		ops := s.queue
+		s.queue, s.writing = nil, true
+		s.mu.Unlock()
+		s.flush(ops)
+		s.mu.Lock()
+		s.writing = false
+		s.changed.Broadcast()
 	}
+}
+
+// drainUntil waits until the writer has made every queued write, or ctx ends.
+func (s *Store) drainUntil(ctx context.Context) error {
+	if s.disk == nil {
+		return nil
+	}
+	// A cond is not a channel: ctx ending wakes the wait by broadcasting.
+	stop := context.AfterFunc(ctx, func() {
+		s.mu.Lock()
+		s.changed.Broadcast()
+		s.mu.Unlock()
+	})
+	defer stop()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for (len(s.queue) > 0 || s.writing) && !s.stopped {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		s.changed.Wait()
+	}
+	return nil
+}
+
+// Close waits for the running refreshes and for the disk writes they and
+// everything before them queued, then stops the writer. A ctx that ends first
+// ends the wait, and what is not written by then is not written. No refresh
+// starts once Close is called, and later changes stay in memory. It is
+// idempotent, and safe on a store kept in memory only.
+func (s *Store) Close(ctx context.Context) error {
+	s.closeOnce.Do(func() { s.closeErr = s.close(ctx) })
+	return s.closeErr
+}
+
+func (s *Store) close(ctx context.Context) error {
+	s.mu.Lock()
+	s.closing = true
+	s.mu.Unlock()
+
+	// Wait cannot be told to stop, so it runs on its own goroutine, which
+	// outlives an abandoned wait only until the refreshes end: each is bounded
+	// by refreshTimeout.
+	refreshed := make(chan struct{})
+	go func() {
+		s.refreshes.Wait()
+		close(refreshed)
+	}()
+	var err error
+	select {
+	case <-refreshed:
+	case <-ctx.Done():
+		err = ctx.Err()
+	}
+	if s.disk == nil {
+		return err
+	}
+	if err == nil {
+		err = s.drainUntil(ctx)
+	}
+	s.mu.Lock()
+	s.stopped, s.queue = true, nil
+	s.changed.Broadcast()
+	s.mu.Unlock()
+	if err == nil {
+		<-s.writerDone
+	}
+	return err
+}
+
+// flush makes ops' writes in order. It takes diskMu, and mu only briefly
+// inside it: mu is never held while diskMu is taken.
+func (s *Store) flush(ops []diskOp) {
 	s.diskMu.Lock()
 	defer s.diskMu.Unlock()
 	for _, op := range ops {
 		s.mu.Lock()
-		current := s.gens[op.key] == op.gen
+		current := s.gens[op.key] == op.gen && !s.stopped
 		s.mu.Unlock()
 		if !current {
 			continue
@@ -535,9 +619,9 @@ func (s *Store) writeOp(op diskOp) error {
 	return s.disk.write(op.header, payload)
 }
 
-// encode runs value's Encode, turning a panic into an error: it runs after a
-// fetch has settled, on a refresh's goroutine or before a fetch's caller
-// returns, where a panic would crash the process or lose the rest of a flush.
+// encode runs value's Encode, turning a panic into an error: it runs on the
+// writer's goroutine, where a panic would crash the process, or, recovered
+// higher up, stop every write after it.
 // A nil value has nothing to write and is reported the same way.
 func encode(value types.CacheValue) (encoded []byte, err error) {
 	if value == nil {
@@ -578,6 +662,8 @@ func Open(dir string, opts Options) (*Store, error) {
 	s.disk = &disk{dir: dir}
 	s.gens = make(map[string]uint64)
 	s.unencodable = make(map[string]bool)
+	s.changed = sync.NewCond(&s.mu)
+	s.writerDone = make(chan struct{})
 	records, err := s.disk.load()
 	if err != nil {
 		return nil, fmt.Errorf("collage: data cache directory: %w", err)
@@ -600,8 +686,6 @@ func Open(dir string, opts Options) (*Store, error) {
 		s.entries[stored.key] = s.order.PushBack(stored)
 		s.indexLocked(stored)
 	}
+	go s.write()
 	return s, nil
 }
-
-// drain waits for queued disk writes; a stand-in until the writer exists.
-func (s *Store) drain() {}

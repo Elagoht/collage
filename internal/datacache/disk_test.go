@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -22,7 +23,20 @@ func open(t *testing.T, dir string, opts Options) *Store {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	t.Cleanup(func() { s.Close(context.Background()) })
 	return s
+}
+
+// write loads key into a store on dir, fetching value, and waits for it to be
+// on disk: a store about to be reopened.
+func write(t *testing.T, dir, key string, tags []string, value string) {
+	t.Helper()
+	s := open(t, dir, Options{})
+	var calls atomic.Int32
+	s.Load(bg, key, 0, tags, counting(&calls, value), decodeStr)
+	if err := s.Close(bg); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func files(t *testing.T, dir string) []string {
@@ -50,8 +64,7 @@ func never(t *testing.T) func(context.Context) (types.CacheValue, error) {
 // A restart comes up warm: the new store serves what the old one fetched.
 func TestOpen_ARestartServesWhatWasPersisted(t *testing.T) {
 	dir := t.TempDir()
-	var calls atomic.Int32
-	open(t, dir, Options{}).Load(bg, "k", 0, []string{"t"}, counting(&calls, "v"), decodeStr)
+	write(t, dir, "k", []string{"t"}, "v")
 
 	v, stale, err := open(t, dir, Options{}).Load(bg, "k", 0, []string{"t"}, never(t), decodeStr)
 	if v != str("v") || stale || err != nil {
@@ -66,12 +79,13 @@ func TestOpen_StaleAndTagsSurviveARestart(t *testing.T) {
 	first := open(t, dir, Options{})
 	first.Load(bg, "k", 0, []string{"t"}, counting(&calls, "v"), decodeStr)
 	first.Invalidate([]string{"t"})
+	first.Close(bg)
 
 	second := open(t, dir, Options{})
 	if v, stale, _ := second.Load(bg, "k", 0, nil, failing(errors.New("down")), decodeStr); v != str("v") || !stale {
 		t.Fatalf("Load = %v, stale=%v; want the persisted value, still stale", v, stale)
 	}
-	second.refreshes.Wait()
+	second.Close(bg)
 	third := open(t, dir, Options{})
 	if n := third.Invalidate([]string{"t"}); n != 1 {
 		t.Errorf("Invalidate after reopening marked %d, want 1: the tags were not persisted", n)
@@ -82,7 +96,7 @@ func TestOpen_StaleAndTagsSurviveARestart(t *testing.T) {
 func TestOpen_AValueThatNoLongerDecodesIsAMiss(t *testing.T) {
 	dir := t.TempDir()
 	var calls atomic.Int32
-	open(t, dir, Options{}).Load(bg, "k", 0, nil, counting(&calls, "v"), decodeStr)
+	write(t, dir, "k", nil, "v")
 
 	broken := func([]byte) (types.CacheValue, error) { return nil, errors.New("shape changed") }
 	v, stale, err := open(t, dir, Options{}).Load(bg, "k", 0, nil, counting(&calls, "fresh"), broken)
@@ -122,6 +136,7 @@ func TestOpen_AnUnencodableValueIsServedButNotWritten(t *testing.T) {
 	s.Invalidate([]string{"t"})
 	s.Load(bg, "k", 0, []string{"t"}, func(context.Context) (types.CacheValue, error) { return unencodable{}, nil }, decodeStr)
 	s.refreshes.Wait()
+	s.drain()
 	if v, _, _ := s.Load(bg, "k", 0, nil, never(t), decodeStr); v != (unencodable{}) {
 		t.Fatalf("Load = %v, want the unencodable value from memory", v)
 	}
@@ -144,7 +159,7 @@ func TestOpen_PurgeAndNotFoundRemoveFiles(t *testing.T) {
 	s.Purge([]string{"a"})
 	s.Invalidate([]string{"b"})
 	s.Load(bg, "b", 0, nil, failing(fmt.Errorf("gone: %w", types.ErrNotFound)), decodeStr)
-	s.refreshes.Wait()
+	s.Close(bg)
 	if names := files(t, dir); len(names) != 0 {
 		t.Errorf("files = %v, want none", names)
 	}
@@ -158,6 +173,7 @@ func TestOpen_KeepsTheNewestWithinMaxEntries(t *testing.T) {
 	for _, k := range []string{"a", "b", "c"} {
 		s.Load(bg, k, 0, nil, counting(&calls, k), decodeStr)
 	}
+	s.Close(bg)
 	small := open(t, dir, Options{MaxEntries: 2})
 	if small.Len() != 2 || len(files(t, dir)) != 2 {
 		t.Fatalf("Len = %d, files = %d; want 2, 2", small.Len(), len(files(t, dir)))
@@ -208,7 +224,7 @@ func TestOpen_ConcurrentChangesLeaveDiskMatchingMemory(t *testing.T) {
 		key := fmt.Sprintf("k%d", i)
 		want[key], _, _ = s.Load(bg, key, 0, nil, down, decodeStr)
 	}
-	s.refreshes.Wait()
+	s.Close(bg)
 	reopened := open(t, dir, Options{})
 	for key, value := range want {
 		if got, _, _ := reopened.Load(bg, key, 0, nil, down, decodeStr); got != value {
@@ -228,6 +244,7 @@ func TestOpen_AnEncodeThatPanicsIsServedButNotWritten(t *testing.T) {
 	s.Invalidate([]string{"t"})
 	s.Load(bg, "k", 0, []string{"t"}, func(context.Context) (types.CacheValue, error) { return panicking{}, nil }, decodeStr)
 	s.refreshes.Wait()
+	s.drain()
 	if v, _, _ := s.Load(bg, "k", 0, nil, never(t), decodeStr); v != (panicking{}) {
 		t.Fatalf("Load = %v, want the value from memory", v)
 	}
@@ -251,12 +268,14 @@ func TestOpen_ADecodeThatPanicsOrReturnsNothingIsAMiss(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			var calls atomic.Int32
-			open(t, dir, Options{}).Load(bg, "k", 0, nil, counting(&calls, "v"), decodeStr)
+			write(t, dir, "k", nil, "v")
 
-			v, stale, err := open(t, dir, Options{}).Load(bg, "k", 0, nil, counting(&calls, "fresh"), decode)
+			second := open(t, dir, Options{})
+			v, stale, err := second.Load(bg, "k", 0, nil, counting(&calls, "fresh"), decode)
 			if v != str("fresh") || stale || err != nil {
 				t.Fatalf("Load = %v, %v, %v; want a fresh fetch", v, stale, err)
 			}
+			second.Close(bg)
 			if v, _, _ := open(t, dir, Options{}).Load(bg, "k", 0, nil, never(t), decodeStr); v != str("fresh") {
 				t.Errorf("after reopening Load = %v, want the fresh value, not the old file", v)
 			}
@@ -294,4 +313,109 @@ func (l lockedWriter) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.w.Write(p)
+}
+
+// Invalidate marks values in memory and returns; their files are rewritten by
+// the store's writer, not by the caller. With the disk held, it still returns.
+func TestOpen_InvalidateDoesNotWaitOnTheDisk(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir, Options{})
+	var calls atomic.Int32
+	for i := range 200 {
+		s.Load(bg, fmt.Sprintf("k%d", i), 0, []string{"t"}, counting(&calls, "v"), decodeStr)
+	}
+	s.drain()
+
+	s.diskMu.Lock()
+	returned := make(chan int)
+	go func() { returned <- s.Invalidate([]string{"t"}) }()
+	select {
+	case n := <-returned:
+		if n != 200 {
+			t.Errorf("Invalidate marked %d, want 200", n)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("Invalidate waited on the disk")
+		s.diskMu.Unlock()
+		<-returned
+		s.diskMu.Lock()
+	}
+	s.diskMu.Unlock()
+
+	if err := s.Close(bg); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	for _, name := range files(t, dir) {
+		rec, err := readRecord(filepath.Join(dir, name))
+		if err != nil || !rec.header.Stale {
+			t.Fatalf("%s: stale=%v err=%v; Close did not drain the writer", name, rec.header.Stale, err)
+		}
+	}
+	if n := len(files(t, dir)); n != 200 {
+		t.Errorf("files = %d, want 200", n)
+	}
+}
+
+// Close waits for a running refresh, ends the wait when ctx does, and is
+// idempotent. A store kept in memory has no writer, and closes all the same.
+func TestStore_CloseWaitsForRefreshes(t *testing.T) {
+	for name, s := range map[string]*Store{"memory": New(Options{}), "disk": open(t, t.TempDir(), Options{})} {
+		t.Run(name, func(t *testing.T) {
+			var calls atomic.Int32
+			s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "v"), decodeStr)
+			s.Invalidate([]string{"t"})
+			gate := make(chan struct{})
+			s.Load(bg, "k", 0, nil, func(context.Context) (types.CacheValue, error) {
+				<-gate
+				return str("new"), nil
+			}, decodeStr)
+
+			expired, cancel := context.WithCancel(bg)
+			cancel()
+			closed := make(chan error, 1)
+			go func() { closed <- s.Close(bg) }()
+			select {
+			case err := <-closed:
+				t.Fatalf("Close returned %v with a refresh running", err)
+			case <-time.After(50 * time.Millisecond):
+			}
+			close(gate)
+			if err := <-closed; err != nil {
+				t.Fatalf("Close: %v", err)
+			}
+			if err := s.Close(expired); err != nil {
+				t.Errorf("second Close = %v, want the first's nil", err)
+			}
+			if v, _, _ := s.Load(bg, "k", 0, nil, never(t), decodeStr); v != str("new") {
+				t.Errorf("Load after Close = %v, want the refreshed value", v)
+			}
+		})
+	}
+}
+
+// A ctx that ends first ends Close's wait, and Close says so.
+func TestStore_CloseGivesUpWithItsContext(t *testing.T) {
+	s := open(t, t.TempDir(), Options{})
+	var calls atomic.Int32
+	s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "v"), decodeStr)
+	s.Invalidate([]string{"t"})
+	gate := make(chan struct{})
+	defer close(gate)
+	s.Load(bg, "k", 0, nil, func(context.Context) (types.CacheValue, error) {
+		<-gate
+		return str("new"), nil
+	}, decodeStr)
+	ctx, cancel := context.WithTimeout(bg, 20*time.Millisecond)
+	defer cancel()
+	if err := s.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("Close = %v, want the deadline", err)
+	}
+}
+
+// drain waits for the writer to make every queued write, for tests that read
+// the directory or reopen it.
+func (s *Store) drain() {
+	if err := s.drainUntil(context.Background()); err != nil {
+		panic(err)
+	}
 }

@@ -35,6 +35,8 @@ type authorSite struct {
 	names map[string]string
 	// failure, when set, is what the author fetch returns instead of a name.
 	failure error
+	// gate, when set, holds every author fetch until it is closed.
+	gate chan struct{}
 }
 
 func newAuthorSite(t *testing.T, devMode bool) *authorSite {
@@ -62,6 +64,12 @@ func newAuthorSiteWith(t *testing.T, devMode bool, cacheConfig collage.CacheConf
 			id, _ := authorIDKey.Get(rc)
 			a, err := collage.Cached(rc, authorKey.With(id), time.Hour, []string{"author:" + id},
 				func(context.Context) (author, error) {
+					site.mu.Lock()
+					gate := site.gate
+					site.mu.Unlock()
+					if gate != nil {
+						<-gate
+					}
 					site.mu.Lock()
 					defer site.mu.Unlock()
 					if site.failure != nil {
@@ -99,6 +107,14 @@ func (s *authorSite) fetched() map[string]int {
 		out[k] = v
 	}
 	return out
+}
+
+// hold makes every author fetch wait until the returned gate is closed.
+func (s *authorSite) hold() chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.gate = make(chan struct{})
+	return s.gate
 }
 
 func (s *authorSite) fail(err error) {
@@ -452,6 +468,9 @@ func TestCached_ARestartRendersFromPersistedData(t *testing.T) {
 	dir := t.TempDir()
 	first := newAuthorSiteWith(t, false, diskCache(dir, "build-1"))
 	first.get(t, 3, false)
+	if err := first.app.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 
 	second := newAuthorSiteWith(t, false, diskCache(dir, "build-2"))
 	second.fail(errors.New("cms down"))
@@ -488,5 +507,32 @@ func TestPurgeTags_LeavesNothingToServe(t *testing.T) {
 	}
 	if body := site.get(t, 3, false); body != "<article><p>Ada Lovelace</p></article>" {
 		t.Errorf("after PurgeTags = %q, want the new name at once", body)
+	}
+}
+
+// Shutdown waits for a background refresh before the plugins stop, so the
+// refresh never runs against a resource a plugin has released.
+func TestCached_ShutdownWaitsForARunningRefresh(t *testing.T) {
+	site := newAuthorSite(t, false)
+	site.get(t, 3, false)
+	gate := site.hold()
+	if err := site.app.InvalidateTags(context.Background(), "author:A"); err != nil {
+		t.Fatal(err)
+	}
+	if rec := site.serve(t, 3); rec.Code != http.StatusOK {
+		t.Fatalf("stale render = %d", rec.Code)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- site.app.Shutdown(context.Background()) }()
+	select {
+	case err := <-done:
+		close(gate)
+		t.Fatalf("Shutdown returned %v with a refresh running", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(gate)
+	if err := <-done; err != nil {
+		t.Fatalf("Shutdown: %v", err)
 	}
 }
