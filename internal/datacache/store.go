@@ -241,8 +241,11 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 	s.mu.Lock()
 	delete(s.inflight, key)
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
-	s.unlock()
+	// Waiters are answered before the disk is written: memory is settled, and
+	// a slow disk should cost only the caller that fetched.
+	ops := s.release()
 	close(started.done)
+	s.flush(ops)
 	return value, false, err, false
 }
 
@@ -273,8 +276,9 @@ func (s *Store) refresh(ctx context.Context, key string, ttl time.Duration, tags
 		staleFor = s.now().Sub(s.staleSinceLocked(element.Value.(*entry)))
 	}
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
-	s.unlock()
+	ops := s.release()
 	close(started.done)
+	s.flush(ops)
 
 	if err != nil && !errors.Is(err, types.ErrNotFound) {
 		s.logger.Warn("collage: serving stale data, its refresh failed",
@@ -463,10 +467,16 @@ func (s *Store) changedLocked(key string, e *entry) {
 
 // unlock releases s.mu and writes what the critical section changed to disk.
 func (s *Store) unlock() {
+	s.flush(s.release())
+}
+
+// release releases s.mu and returns the disk writes the critical section
+// queued, for a caller with something to do between the two.
+func (s *Store) release() []diskOp {
 	ops := s.pending
 	s.pending = nil
 	s.mu.Unlock()
-	s.flush(ops)
+	return ops
 }
 
 func (s *Store) flush(ops []diskOp) {
@@ -505,7 +515,7 @@ func (s *Store) flush(ops []diskOp) {
 func (s *Store) writeOp(op diskOp) error {
 	payload := op.raw
 	if payload == nil {
-		encoded, err := op.value.Encode()
+		encoded, err := encode(op.value)
 		if err != nil {
 			if name := keyName(op.key); !s.unencodable[name] {
 				s.unencodable[name] = true
@@ -516,6 +526,22 @@ func (s *Store) writeOp(op diskOp) error {
 		payload = encoded
 	}
 	return s.disk.write(op.header, payload)
+}
+
+// encode runs value's Encode, turning a panic into an error: it runs after a
+// fetch has settled, on a refresh's goroutine or before a fetch's caller
+// returns, where a panic would crash the process or lose the rest of a flush.
+// A nil value has nothing to write and is reported the same way.
+func encode(value types.CacheValue) (encoded []byte, err error) {
+	if value == nil {
+		return nil, errors.New("nil value")
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			encoded, err = nil, fmt.Errorf("encode panicked: %v", r)
+		}
+	}()
+	return value.Encode()
 }
 
 // Open returns a store that keeps its values in dir as well as in memory, and
@@ -535,7 +561,9 @@ func Open(dir string, opts Options) (*Store, error) {
 	}
 	for _, rec := range records {
 		if s.max > 0 && len(s.entries) >= s.max {
-			_ = s.disk.remove(rec.header.Key)
+			if err := s.disk.remove(rec.header.Key); err != nil {
+				s.logger.Warn("collage: data cache disk write failed", "key", keyName(rec.header.Key), "err", err)
+			}
 			continue
 		}
 		raw := rec.payload

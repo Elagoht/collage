@@ -207,3 +207,25 @@ func TestOpen_ConcurrentChangesLeaveDiskMatchingMemory(t *testing.T) {
 	}
 	reopened.refreshes.Wait()
 }
+
+// An Encode that panics is a value kept in memory only, not a crashed process:
+// it runs on a refresh's goroutine, where nothing above would recover it.
+func TestOpen_AnEncodeThatPanicsIsServedButNotWritten(t *testing.T) {
+	dir := t.TempDir()
+	var calls atomic.Int32
+	s := open(t, dir, Options{})
+	s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "v"), decodeStr)
+	s.Invalidate([]string{"t"})
+	s.Load(bg, "k", 0, []string{"t"}, func(context.Context) (types.CacheValue, error) { return panicking{}, nil }, decodeStr)
+	s.refreshes.Wait()
+	if v, _, _ := s.Load(bg, "k", 0, nil, never(t), decodeStr); v != (panicking{}) {
+		t.Fatalf("Load = %v, want the value from memory", v)
+	}
+	if names := files(t, dir); len(names) != 0 {
+		t.Errorf("files = %v, want none", names)
+	}
+}
+
+type panicking struct{}
+
+func (panicking) Encode() ([]byte, error) { panic("encoder bug") }
