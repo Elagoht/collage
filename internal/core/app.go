@@ -595,7 +595,7 @@ func New(cfg Config) (*App, error) {
 	// is not read either, because what a developer is changing must show on the
 	// next request.
 	if cfg.Cache.Enabled && !devMode {
-		app.data = datacache.New(cfg.Cache.MaxEntries)
+		app.data = datacache.New(datacache.Options{MaxEntries: cfg.Cache.MaxEntries, Logger: logger, Metrics: metrics})
 	}
 
 	app.renderer = render.New(tmpl, render.Options{

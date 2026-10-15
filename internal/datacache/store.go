@@ -2,18 +2,23 @@
 // pages showing one author ask the upstream for that author once.
 //
 // The page cache stores what a render produced; this stores what renders are made
-// from. It is in-process and bounded, keyed by the application's own keys, and
-// invalidated by the same dependency tags the page cache is, so one
-// InvalidateTags drops a record and every page built from it together.
+// from. It is bounded, keyed by the application's own keys, and marked stale by the
+// same dependency tags the page cache is invalidated by. A stale value is still
+// served while one fetch in the background replaces it: an upstream that is down
+// or slow costs freshness, never the page.
 package datacache
 
 import (
 	"container/list"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -24,6 +29,23 @@ var ErrFetchPanicked = errors.New("collage: data fetch panicked")
 // DefaultMaxEntries bounds a store given no bound of its own.
 const DefaultMaxEntries = 10000
 
+// RefreshTimeout bounds a background refresh. It is not a request's timeout:
+// nobody waits on a refresh, and an upstream slower than a page's patience may
+// still answer in time for the next one.
+const RefreshTimeout = 30 * time.Second
+
+// Options configures a Store.
+type Options struct {
+	// MaxEntries bounds the store: 0 means DefaultMaxEntries and a negative
+	// value means unbounded.
+	MaxEntries int
+	// Logger receives failed refreshes. Nil means slog.Default().
+	Logger *slog.Logger
+	// Metrics receives a CacheStale event for each stale value served. Nil
+	// means none.
+	Metrics observability.Metrics
+}
+
 // Store is a bounded, tag-invalidated cache of fetched values. It is safe for
 // concurrent use.
 type Store struct {
@@ -33,11 +55,18 @@ type Store struct {
 	order    *list.List // front is most recently used
 	byTag    map[string]map[string]struct{}
 	inflight map[string]*call
-	// epoch counts invalidations. A fetch that started before one finished
-	// with data the invalidation was meant to replace, so it is handed to its
-	// callers and not stored.
+	// epoch counts invalidations and purges. A fetch that started before one
+	// brought back what it was meant to replace: it is stored, but stale.
 	epoch uint64
-	now   func() time.Time
+	// purges counts purges. A fetch that started before one stores nothing,
+	// since the application asked for the value to be gone.
+	purges         uint64
+	now            func() time.Time
+	logger         *slog.Logger
+	metrics        observability.Metrics
+	refreshTimeout time.Duration
+	// refreshes counts background refreshes still running.
+	refreshes sync.WaitGroup
 }
 
 type entry struct {
@@ -45,6 +74,9 @@ type entry struct {
 	value   types.CacheValue
 	expires time.Time
 	tags    []string
+	// stale is set by an invalidation; an entry past expires is stale as well.
+	stale      bool
+	staleSince time.Time
 }
 
 type call struct {
@@ -56,51 +88,76 @@ type call struct {
 	abandoned bool
 }
 
-// New returns a store holding at most maxEntries values: 0 means DefaultMaxEntries
-// and a negative value means unbounded.
-func New(maxEntries int) *Store {
+// New returns an empty store kept in memory only.
+func New(opts Options) *Store {
+	maxEntries := opts.MaxEntries
 	if maxEntries == 0 {
 		maxEntries = DefaultMaxEntries
 	}
+	logger := opts.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Store{
-		max:      maxEntries,
-		entries:  make(map[string]*list.Element),
-		order:    list.New(),
-		byTag:    make(map[string]map[string]struct{}),
-		inflight: make(map[string]*call),
-		now:      time.Now,
+		max:            maxEntries,
+		entries:        make(map[string]*list.Element),
+		order:          list.New(),
+		byTag:          make(map[string]map[string]struct{}),
+		inflight:       make(map[string]*call),
+		now:            time.Now,
+		logger:         logger,
+		metrics:        observability.MetricsOrNoop(opts.Metrics),
+		refreshTimeout: RefreshTimeout,
 	}
 }
 
-// Load returns the value stored under key, fetching it when there is none or it has
-// expired. Concurrent loads of one key share one fetch. A ttl of zero or less keeps
-// the value until its tags are invalidated or it is evicted; an error is returned to
-// every caller waiting on that fetch and never stored.
+// Load returns the value stored under key, fetching it when there is none.
+// Concurrent loads of one key share one fetch. A ttl of zero or less keeps the
+// value fresh until its tags are invalidated.
 //
-// The fetch runs under the context of the caller that started it. A caller whose own
-// context ends while it waits stops waiting; one whose context outlives the
-// starter's, when the fetch failed because the starter went away, fetches again.
+// A value past its ttl, or one whose tags were invalidated, is stale: Load
+// returns it at once with stale true, and starts one fetch in the background to
+// replace it. That fetch is not the caller's: it runs detached from ctx, under
+// RefreshTimeout, so a reader who leaves does not cancel it. If it fails the
+// stale value stays and is served again; if it reports types.ErrNotFound the
+// value is dropped, so the next Load fetches and returns that error.
+//
+// With no value at all there is nothing to serve meanwhile, and Load waits for
+// the fetch, whose error, if any, goes to every caller waiting on it and is
+// never stored. A ctx marked with types.WantsFreshData waits the same way on a
+// stale value, and gets the upstream's error rather than the value.
+//
+// decode is not used by a store kept in memory.
 func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), decode func([]byte) (types.CacheValue, error)) (types.CacheValue, bool, error) {
 	for {
-		value, err, again := s.load(ctx, key, ttl, tags, fetch)
+		value, stale, err, again := s.load(ctx, key, ttl, tags, fetch)
 		if !again {
-			return value, false, err
+			return value, stale, err
 		}
 	}
 }
 
 // load is one attempt at Load. again reports that it waited on a fetch its
 // starter abandoned, and the caller should try once more.
-func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error)) (value types.CacheValue, err error, again bool) {
+func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error)) (value types.CacheValue, stale bool, err error, again bool) {
 	s.mu.Lock()
 	if element, ok := s.entries[key]; ok {
 		stored := element.Value.(*entry)
-		if stored.expires.IsZero() || s.now().Before(stored.expires) {
+		if !s.staleLocked(stored) {
 			s.order.MoveToFront(element)
 			s.mu.Unlock()
-			return stored.value, nil, false
+			return stored.value, false, nil, false
 		}
-		s.remove(element)
+		if !types.WantsFreshData(ctx) {
+			s.order.MoveToFront(element)
+			s.refreshLocked(ctx, key, ttl, tags, fetch)
+			value := stored.value
+			s.mu.Unlock()
+			s.metrics.CacheEvent(ctx, observability.CacheStale, keyName(key))
+			return value, true, nil, false
+		}
+		// Fresh data wanted: wait below like a miss. The stale value stays
+		// until a successful fetch replaces it.
 	}
 	if running, ok := s.inflight[key]; ok {
 		s.mu.Unlock()
@@ -109,16 +166,16 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 			// Not the starter's cancellation: one reader disconnecting, on
 			// purpose or not, would fail every reader who shared its fetch.
 			if running.abandoned && ctx.Err() == nil {
-				return nil, nil, true
+				return nil, false, nil, true
 			}
-			return running.value, running.err, false
+			return running.value, false, running.err, false
 		case <-ctx.Done():
-			return nil, ctx.Err(), false
+			return nil, false, ctx.Err(), false
 		}
 	}
 	started := &call{done: make(chan struct{})}
 	s.inflight[key] = started
-	epoch := s.epoch
+	epoch, purges := s.epoch, s.purges
 	s.mu.Unlock()
 
 	// A fetch that panics still gives the key up and answers its waiters. The
@@ -142,64 +199,173 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 
 	s.mu.Lock()
 	delete(s.inflight, key)
-	if err == nil && epoch == s.epoch {
-		s.store(key, value, ttl, tags)
-	}
+	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
 	s.mu.Unlock()
 	close(started.done)
-	return value, err, false
+	return value, false, err, false
 }
 
-// Invalidate drops every value stored under any of tags and returns how many it
-// dropped. A fetch still running when it is called is not stored when it finishes.
+// refreshLocked starts the background fetch replacing key's stale value,
+// unless one is already running. It must be called with s.mu held.
+func (s *Store) refreshLocked(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error)) {
+	if _, running := s.inflight[key]; running {
+		return
+	}
+	started := &call{done: make(chan struct{})}
+	s.inflight[key] = started
+	epoch, purges := s.epoch, s.purges
+	s.refreshes.Add(1)
+	go s.refresh(context.WithoutCancel(ctx), key, ttl, tags, fetch, started, epoch, purges)
+}
+
+func (s *Store) refresh(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), started *call, epoch, purges uint64) {
+	defer s.refreshes.Done()
+	ctx, cancel := context.WithTimeout(ctx, s.refreshTimeout)
+	defer cancel()
+	value, err := guarded(ctx, fetch)
+	started.value, started.err = value, err
+
+	s.mu.Lock()
+	delete(s.inflight, key)
+	var staleFor time.Duration
+	if element, ok := s.entries[key]; ok && err != nil {
+		staleFor = s.now().Sub(s.staleSinceLocked(element.Value.(*entry)))
+	}
+	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
+	s.mu.Unlock()
+	close(started.done)
+
+	if err != nil && !errors.Is(err, types.ErrNotFound) {
+		s.logger.Warn("collage: serving stale data, its refresh failed",
+			"key", keyName(key), "stale_for", staleFor, "err", err)
+	}
+}
+
+// settleLocked records what a fetch brought back: a value is stored, stale if
+// an invalidation overtook the fetch and not at all if a purge did; not found
+// drops what was there; any other error leaves it. It must be called with s.mu
+// held.
+func (s *Store) settleLocked(key string, value types.CacheValue, err error, ttl time.Duration, tags []string, epoch, purges uint64) {
+	switch {
+	case err == nil:
+		if purges == s.purges {
+			s.storeLocked(key, value, ttl, tags, epoch != s.epoch)
+		}
+	case errors.Is(err, types.ErrNotFound):
+		if element, ok := s.entries[key]; ok {
+			s.removeLocked(element)
+		}
+	}
+}
+
+// guarded runs fetch, turning a panic into ErrFetchPanicked: a refresh runs on
+// its own goroutine, where nothing above it would recover one.
+func guarded(ctx context.Context, fetch func(context.Context) (types.CacheValue, error)) (value types.CacheValue, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			value, err = nil, fmt.Errorf("%w: %v", ErrFetchPanicked, r)
+		}
+	}()
+	return fetch(ctx)
+}
+
+// Invalidate marks every value stored under any of tags stale and returns how
+// many it marked. They are still served until a fetch replaces them. A fetch
+// running when it is called stores what it brings back as stale.
 func (s *Store) Invalidate(tags []string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.epoch++
-	dropped := 0
+	now := s.now()
+	marked := 0
 	for _, tag := range tags {
 		for key := range s.byTag[tag] {
 			if element, ok := s.entries[key]; ok {
-				s.remove(element)
-				dropped++
+				s.markStaleLocked(element.Value.(*entry), now)
+				marked++
 			}
 		}
 	}
-	return dropped
+	return marked
 }
 
-// Len reports how many values are stored.
+// Purge removes every value stored under any of tags and returns how many it
+// removed. A fetch running when it is called stores nothing.
+func (s *Store) Purge(tags []string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.epoch++
+	s.purges++
+	removed := 0
+	for _, tag := range tags {
+		for key := range s.byTag[tag] {
+			if element, ok := s.entries[key]; ok {
+				s.removeLocked(element)
+				removed++
+			}
+		}
+	}
+	return removed
+}
+
+// Len reports how many values are stored, stale ones included.
 func (s *Store) Len() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return len(s.entries)
 }
 
-// store must be called with s.mu held.
-func (s *Store) store(key string, value types.CacheValue, ttl time.Duration, tags []string) {
+func (s *Store) staleLocked(e *entry) bool {
+	return e.stale || (!e.expires.IsZero() && !s.now().Before(e.expires))
+}
+
+func (s *Store) staleSinceLocked(e *entry) time.Time {
+	if e.stale {
+		return e.staleSince
+	}
+	return e.expires
+}
+
+func (s *Store) markStaleLocked(e *entry, now time.Time) {
+	if !e.stale {
+		e.stale, e.staleSince = true, now
+	}
+}
+
+// storeLocked must be called with s.mu held.
+func (s *Store) storeLocked(key string, value types.CacheValue, ttl time.Duration, tags []string, stale bool) {
 	if element, ok := s.entries[key]; ok {
-		s.remove(element)
+		s.removeLocked(element)
 	}
 	stored := &entry{key: key, value: value, tags: append([]string(nil), tags...)}
+	now := s.now()
 	if ttl > 0 {
-		stored.expires = s.now().Add(ttl)
+		stored.expires = now.Add(ttl)
+	}
+	if stale {
+		s.markStaleLocked(stored, now)
 	}
 	s.entries[key] = s.order.PushFront(stored)
-	for _, tag := range stored.tags {
+	s.indexLocked(stored)
+	for s.max > 0 && len(s.entries) > s.max {
+		s.removeLocked(s.order.Back())
+	}
+}
+
+// indexLocked must be called with s.mu held.
+func (s *Store) indexLocked(e *entry) {
+	for _, tag := range e.tags {
 		keys, ok := s.byTag[tag]
 		if !ok {
 			keys = make(map[string]struct{})
 			s.byTag[tag] = keys
 		}
-		keys[key] = struct{}{}
-	}
-	for s.max > 0 && len(s.entries) > s.max {
-		s.remove(s.order.Back())
+		keys[e.key] = struct{}{}
 	}
 }
 
-// remove must be called with s.mu held.
-func (s *Store) remove(element *list.Element) {
+// removeLocked must be called with s.mu held.
+func (s *Store) removeLocked(element *list.Element) {
 	stored := element.Value.(*entry)
 	s.order.Remove(element)
 	delete(s.entries, stored.key)
@@ -211,4 +377,11 @@ func (s *Store) remove(element *list.Element) {
 			}
 		}
 	}
+}
+
+// keyName is the part of a store key the application chose, for logs and
+// metrics: types.storeKey appends the type after a NUL.
+func keyName(key string) string {
+	name, _, _ := strings.Cut(key, "\x00")
+	return name
 }
