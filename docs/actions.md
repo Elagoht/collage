@@ -195,6 +195,14 @@ Declarative, and it runs **before** the response. An action that changed somethi
 and then redirects must not have the reader follow that redirect into a cache entry
 the change already made wrong.
 
+The pages go; the `collage.Cached` values they were built from are kept, marked
+stale. The page the redirect lands on is rendered from the stale value, which
+also starts the fetch that replaces it, so the reader sees the change on the
+next load, not this one. That is the price of a site that keeps answering while
+its upstream is down. When an action must show its own change at once, use
+`app.PurgeTags` from the handler for those tags instead. Nothing is then kept,
+so a failed fetch fails the page.
+
 ## Request bodies are bounded
 
 Four megabytes by default, `Server.MaxBodyBytes` for the application, `MaxBodyBytes`

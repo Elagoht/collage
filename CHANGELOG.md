@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.62.0
+
+### Changed
+
+- **`collage.Cached` serves stale data instead of failing.** `InvalidateTags`, and
+  a value's `ttl` running out, mark it stale rather than removing it. The next
+  render gets the stale value at once and one background fetch replaces it, with
+  a fixed 30-second timeout, detached from the request. If that fetch fails, the
+  stale value keeps being served, without limit. Before, an invalidation followed
+  by a slow or down upstream failed the layout's data, and with it every page.
+  A fetch error wrapping `ErrNotFound` still drops the value, so deleted content
+  answers 404. A render built from stale data is degraded: served with
+  `Cache-Control: no-store` and not cached. `collage.Build` never uses stale
+  data.
+
+### Added
+
+- **The data store persists beside a disk cache.** With `Cache.Type` `"disk"`,
+  `Cached` values are also written to `<Cache.Dir>/data/` and loaded at startup.
+  This directory is not namespaced by build. Store keys are now stable across
+  processes and change with a type's shape.
+- **`App.PurgeTags`** removes pages and `Cached` values outright, from disk too.
+- **`CacheStale` metrics event**, reported for each stale value served. A failed
+  background refresh is logged at warn.
+
 ## v0.61.5
 
 ### Changed

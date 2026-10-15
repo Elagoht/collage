@@ -329,13 +329,33 @@ Tags stay plain strings — `"author:" + id` here — because they are what
   invalidates only the pages.
 - **One fetch per key at a time.** Requests that need the same key while it is being
   fetched wait for that fetch rather than starting their own.
-- **Errors are not stored**, and a fetch that was still running when its tags were
-  invalidated hands its result to whoever was waiting but does not store it: what it
-  brought back is what the invalidation was meant to replace.
-- **Bounded and in-process.** Values are kept in memory, up to `Cache.MaxEntries`,
-  least recently used first to go — unlike the page memory cache, which evicts in
-  insertion order (see [below](#the-built-in-memory-cache)). Each instance of a multi-instance deployment keeps
-  its own, so N instances ask N times — still once each rather than once per page.
+- **Invalidation keeps the old value, to serve until a new one arrives.**
+  `InvalidateTags` and a passed `ttl` mark a value stale rather than removing it.
+  The next render is served the stale value at once, and one fetch in the
+  background replaces it, so the request after that one sees the change. If that
+  fetch fails, the stale value stays and keeps being served, however long the
+  upstream is down. A render built from a stale value is served with
+  `Cache-Control: no-store` and is not cached, so the page is rendered again once
+  the value is fresh. Each stale value served is reported as the `CacheStale`
+  metrics event, and each failed refresh is logged at warn with its error.
+- **Not found is the exception.** A fetch whose error wraps `collage.ErrNotFound`
+  drops the value, so a record deleted upstream disappears from the site and its
+  page answers 404.
+- **Errors are not stored.** A fetch that finds nothing stale to fall back on
+  returns its error to the render.
+- **`PurgeTags` removes outright.** It drops pages and values with nothing left
+  to serve stale, for data that must not be shown again even once.
+- **A static export never uses stale data.** `collage.Build` waits for the
+  upstream, and fails if the upstream fails.
+- **Bounded, and on disk beside a disk cache.** Values are kept in memory, up to
+  `Cache.MaxEntries`, least recently used first to go — unlike the page memory
+  cache, which evicts in insertion order (see [below](#the-built-in-memory-cache)).
+  With `Cache.Type` `"disk"`, they are also written to `<Cache.Dir>/data/` as
+  JSON and read back at startup, so a restart comes up warm. That directory is
+  not namespaced by build, so a new deploy with its upstream down renders from
+  the last one's data. A value whose type changed shape is not read back, and an
+  interface-typed key is kept in memory only. Each instance of a multi-instance
+  deployment keeps its own store.
 - **Where it keeps nothing.** With `Cache.Enabled` false, in development, for a
   request that called `SkipCache`, and in an action's own handler, `Cached` behaves
   as `Once`: shared within the render, fetched fresh by the next. A preview therefore
@@ -632,6 +652,10 @@ Cache: collage.CacheConfig{
 `Dir` has no default, because a framework that picks a place to write files is a
 framework that writes them somewhere nobody looked. An application that wants the
 build-tool convention says `.cache/pages` and adds a line to `.gitignore`.
+
+The `collage.Cached` data store lives beside the pages, in `Dir/data/`. Unlike
+the pages it is shared across builds: see
+[Caching data, not only pages](#caching-data-not-only-pages).
 
 A directory is all it takes. **A disk cache outlives the process that filled it**, so
 something has to stop a new binary serving HTML the old one rendered — a changed
