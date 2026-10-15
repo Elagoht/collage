@@ -81,7 +81,8 @@ type Store struct {
 	seq  uint64
 	// diskMu orders disk writes. It is never taken while mu is held.
 	diskMu sync.Mutex
-	// unencodable remembers the key names already logged as not persistable;
+	// unencodable remembers the types already logged as not persistable, so
+	// the log, and the map, grow with the application's types, not its keys;
 	// guarded by diskMu.
 	unencodable map[string]bool
 }
@@ -434,6 +435,12 @@ func keyName(key string) string {
 	return name
 }
 
+// keyType is the part of a store key naming its value's type.
+func keyType(key string) string {
+	_, typ, _ := strings.Cut(key, "\x00")
+	return typ
+}
+
 // diskOp records one change to an entry for the disk: its whole current state,
 // or its removal.
 type diskOp struct {
@@ -517,9 +524,9 @@ func (s *Store) writeOp(op diskOp) error {
 	if payload == nil {
 		encoded, err := encode(op.value)
 		if err != nil {
-			if name := keyName(op.key); !s.unencodable[name] {
-				s.unencodable[name] = true
-				s.logger.Warn("collage: data cache value kept in memory only", "key", name, "err", err)
+			if typ := keyType(op.key); !s.unencodable[typ] {
+				s.unencodable[typ] = true
+				s.logger.Warn("collage: data cache value kept in memory only", "key", keyName(op.key), "err", err)
 			}
 			return s.disk.remove(op.key)
 		}
@@ -595,3 +602,6 @@ func Open(dir string, opts Options) (*Store, error) {
 	}
 	return s, nil
 }
+
+// drain waits for queued disk writes; a stand-in until the writer exists.
+func (s *Store) drain() {}

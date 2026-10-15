@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -261,4 +262,36 @@ func TestOpen_ADecodeThatPanicsOrReturnsNothingIsAMiss(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The memory-only warning is logged once per type, not per key: a site with a
+// thousand unencodable authors logs one line, and remembers one type.
+func TestOpen_AnUnencodableTypeIsLoggedOnce(t *testing.T) {
+	var logs strings.Builder
+	var logsMu sync.Mutex
+	s := open(t, t.TempDir(), Options{Logger: slog.New(slog.NewTextHandler(lockedWriter{&logsMu, &logs}, nil))})
+	bad := func(context.Context) (types.CacheValue, error) { return unencodable{}, nil }
+	for _, key := range []string{"a\x00T", "b\x00T", "c\x00T", "d\x00U"} {
+		s.Load(bg, key, 0, nil, bad, decodeStr)
+	}
+	s.drain()
+	logsMu.Lock()
+	defer logsMu.Unlock()
+	if n := strings.Count(logs.String(), "kept in memory only"); n != 2 {
+		t.Errorf("logged %d times, want once per type (2):\n%s", n, logs.String())
+	}
+	if len(s.unencodable) != 2 {
+		t.Errorf("remembered %d, want 2", len(s.unencodable))
+	}
+}
+
+type lockedWriter struct {
+	mu *sync.Mutex
+	w  *strings.Builder
+}
+
+func (l lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }
