@@ -290,9 +290,18 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 
 	s.mu.Lock()
 	delete(s.inflight, key)
+	// A fresh-data load replacing a value whose refreshes failed is the
+	// recovery as much as a refresh would have been.
+	failures := 0
+	if element, ok := s.entries[key]; ok && err == nil {
+		failures = element.Value.(*entry).failures
+	}
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
 	s.mu.Unlock()
 	close(started.done)
+	if failures > 0 {
+		s.logger.Info("collage: data refreshed after failures", "key", keyName(key), "failures", failures)
+	}
 	return value, false, err, false
 }
 

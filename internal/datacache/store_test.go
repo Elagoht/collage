@@ -623,3 +623,24 @@ func TestStore_RefreshLogs(t *testing.T) {
 		t.Errorf("a refresh of a purged value claimed to serve it stale:\n%s", out)
 	}
 }
+
+// A fresh-data load that replaces a value after failed refreshes is the
+// recovery too, and says so.
+func TestStore_AFreshLoadAfterFailuresLogsTheRecovery(t *testing.T) {
+	var logs strings.Builder
+	var logsMu sync.Mutex
+	s := New(Options{Logger: slog.New(slog.NewTextHandler(lockedWriter{&logsMu, &logs}, &slog.HandlerOptions{Level: slog.LevelInfo}))})
+	var calls atomic.Int32
+	s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "old"), decodeStr)
+	s.Invalidate([]string{"t"})
+	s.Load(bg, "k", 0, nil, failing(errors.New("down")), decodeStr)
+	s.refreshes.Wait()
+	if v, _, err := s.Load(types.WithFreshData(bg), "k", 0, nil, counting(&calls, "new"), decodeStr); v != str("new") || err != nil {
+		t.Fatalf("fresh Load = %v, %v", v, err)
+	}
+	logsMu.Lock()
+	defer logsMu.Unlock()
+	if !strings.Contains(logs.String(), "refreshed after failures") || !strings.Contains(logs.String(), "failures=1") {
+		t.Errorf("want the recovery line with failures=1, got:\n%s", logs.String())
+	}
+}
