@@ -185,6 +185,74 @@ func TestCached_InterfaceKeysAreNotPersisted(t *testing.T) {
 	}
 }
 
+// persistHidden has a field JSON never writes.
+type persistHidden struct {
+	Title string
+	draft bool
+}
+
+// persistSkipped has a field JSON is told to skip.
+type persistSkipped struct {
+	Title  string
+	Secret string `json:"-"`
+}
+
+// persistNested holds an interface a few levels down.
+type persistNested struct {
+	Items []map[string]persistBlock
+}
+
+type persistBlock struct{ Body fmt.Stringer }
+
+// persistCustom has unexported state but writes and reads itself.
+type persistCustom struct{ n int }
+
+func (c persistCustom) MarshalJSON() ([]byte, error) { return []byte(fmt.Sprint(c.n)), nil }
+
+func (c *persistCustom) UnmarshalJSON(data []byte) error {
+	_, err := fmt.Sscan(string(data), &c.n)
+	return err
+}
+
+type persistPlain struct {
+	Title   string
+	At      time.Time
+	Tags    []string
+	Authors map[string]*persistPlain
+	Custom  persistCustom
+	Ptr     *persistCustom
+}
+
+// A value JSON would bring back different — an unexported field zeroed, a
+// skipped field dropped, an interface turned into maps and float64s — is not
+// encoded: kept in memory only rather than restored wrong after a restart.
+func TestCached_TypesThatDoNotRoundTripAreNotPersisted(t *testing.T) {
+	refused := map[string]func() ([]byte, error){
+		"unexported field": cachedValue[persistHidden]{}.Encode,
+		"json:\"-\" field": cachedValue[persistSkipped]{}.Encode,
+		"nested interface": cachedValue[persistNested]{}.Encode,
+		"slice of them":    cachedValue[[]persistHidden]{}.Encode,
+	}
+	for name, encode := range refused {
+		if _, err := encode(); err == nil {
+			t.Errorf("%s: encoded", name)
+		}
+	}
+	accepted := map[string]func() ([]byte, error){
+		"plain struct":     cachedValue[persistPlain]{}.Encode,
+		"slice of them":    cachedValue[[]persistPlain]{}.Encode,
+		"map of them":      cachedValue[map[string]persistPlain]{}.Encode,
+		"time.Time":        cachedValue[time.Time]{}.Encode,
+		"custom marshaler": cachedValue[persistCustom]{}.Encode,
+		"string":           cachedValue[string]{}.Encode,
+	}
+	for name, encode := range accepted {
+		if _, err := encode(); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
 // staleCache serves every key as a stale "old".
 type staleCache struct{}
 

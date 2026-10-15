@@ -38,16 +38,19 @@ var errInterfaceValue = errors.New("collage: a value of an interface type cannot
 // cachedValue is a T as the data cache holds it.
 type cachedValue[T any] struct{ value T }
 
+// Encode refuses a T that JSON would not bring back as it was: the store then
+// keeps the value in memory only, where it is exact, rather than restore it
+// after a restart with fields silently zeroed.
 func (c cachedValue[T]) Encode() ([]byte, error) {
-	if reflect.TypeFor[T]().Kind() == reflect.Interface {
-		return nil, errInterfaceValue
+	if err := persistable(reflect.TypeFor[T]()); err != nil {
+		return nil, err
 	}
 	return json.Marshal(c.value)
 }
 
 func decodeCached[T any](data []byte) (CacheValue, error) {
-	if reflect.TypeFor[T]().Kind() == reflect.Interface {
-		return nil, errInterfaceValue
+	if err := persistable(reflect.TypeFor[T]()); err != nil {
+		return nil, err
 	}
 	var value T
 	if err := json.Unmarshal(data, &value); err != nil {
@@ -149,26 +152,113 @@ func storeKey(id keyID) string {
 	return id.name + "\x00" + typeIdentity(id.typ)
 }
 
-var identities = struct {
-	sync.Mutex
-	byType map[reflect.Type]string
-}{byType: make(map[reflect.Type]string)}
+// typeMemo remembers one answer per type. Every Cached call asks, so the
+// common case — a type asked about before — takes only the read lock.
+type typeMemo[V any] struct {
+	mu     sync.RWMutex
+	byType map[reflect.Type]V
+}
+
+func (m *typeMemo[V]) get(t reflect.Type, compute func(reflect.Type) V) V {
+	m.mu.RLock()
+	v, ok := m.byType[t]
+	m.mu.RUnlock()
+	if ok {
+		return v
+	}
+	// Computed outside the lock: the answer depends on t alone, so two callers
+	// racing compute the same one and either may keep it.
+	v = compute(t)
+	m.mu.Lock()
+	if m.byType == nil {
+		m.byType = make(map[reflect.Type]V)
+	}
+	m.byType[t] = v
+	m.mu.Unlock()
+	return v
+}
+
+var identities typeMemo[string]
 
 // typeIdentity names t the same way in every process that has it, and
 // differently once its shape changes. encoding/json decodes a struct that gained
 // or lost a field without complaint, so the name alone would hand the new build
 // the old build's data, zeros where the new fields are.
 func typeIdentity(t reflect.Type) string {
-	identities.Lock()
-	defer identities.Unlock()
-	if id, ok := identities.byType[t]; ok {
-		return id
+	return identities.get(t, func(t reflect.Type) string {
+		sum := sha256.New()
+		writeShape(sum, t, make(map[reflect.Type]bool))
+		return t.PkgPath() + "\x00" + t.String() + "\x00" + hex.EncodeToString(sum.Sum(nil)[:8])
+	})
+}
+
+var persistability typeMemo[error]
+
+// persistable reports why a value of type t would not come back from JSON as
+// it went in, or nil when it would. JSON writes no unexported field and no
+// field tagged json:"-", so they come back zero; and it records no concrete
+// type under an interface, so what comes back is maps and float64s. A type
+// that writes and reads itself — time.Time, say, all unexported fields — is
+// trusted to round-trip, and not looked into.
+func persistable(t reflect.Type) error {
+	return persistability.get(t, func(t reflect.Type) error {
+		if t.Kind() == reflect.Interface {
+			return errInterfaceValue
+		}
+		if problem := persistProblem(t, make(map[reflect.Type]bool)); problem != "" {
+			return fmt.Errorf("collage: a %s cannot be persisted: %s", t, problem)
+		}
+		return nil
+	})
+}
+
+var (
+	jsonMarshaler   = reflect.TypeFor[json.Marshaler]()
+	jsonUnmarshaler = reflect.TypeFor[json.Unmarshaler]()
+)
+
+// persistProblem walks t as writeShape does and describes the first thing in
+// it JSON would not bring back, or returns "" when there is none. seen stops
+// a type that refers to itself.
+func persistProblem(t reflect.Type, seen map[reflect.Type]bool) string {
+	if codesItself(t) || seen[t] {
+		return ""
 	}
-	sum := sha256.New()
-	writeShape(sum, t, make(map[reflect.Type]bool))
-	id := t.PkgPath() + "\x00" + t.String() + "\x00" + hex.EncodeToString(sum.Sum(nil)[:8])
-	identities.byType[t] = id
-	return id
+	seen[t] = true
+	switch t.Kind() {
+	case reflect.Interface:
+		return fmt.Sprintf("it holds the interface %s", t)
+	case reflect.Struct:
+		for i := range t.NumField() {
+			field := t.Field(i)
+			if !field.IsExported() {
+				return fmt.Sprintf("%s.%s is unexported", t, field.Name)
+			}
+			if field.Tag.Get("json") == "-" {
+				return fmt.Sprintf("%s.%s is tagged json:\"-\"", t, field.Name)
+			}
+			if problem := persistProblem(field.Type, seen); problem != "" {
+				return problem
+			}
+		}
+	case reflect.Map:
+		if problem := persistProblem(t.Key(), seen); problem != "" {
+			return problem
+		}
+		return persistProblem(t.Elem(), seen)
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return persistProblem(t.Elem(), seen)
+	}
+	return ""
+}
+
+// codesItself reports whether t, or a pointer to it, both writes and reads
+// itself as JSON.
+func codesItself(t reflect.Type) bool {
+	implements := func(iface reflect.Type) bool {
+		return t.Implements(iface) || (t.Kind() != reflect.Pointer && reflect.PointerTo(t).Implements(iface))
+	}
+	return implements(jsonMarshaler) && implements(jsonUnmarshaler)
 }
 
 // writeShape writes what decides how t encodes: its kind and name, and, through
