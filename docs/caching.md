@@ -323,8 +323,8 @@ Tags stay plain strings — `"author:" + id` here — because they are what
 `InvalidateTags` is called with.
 
 - **One set of tags for both caches.** The tags are added to the page's own, so
-  `InvalidateTags("author:" + id)` drops the stored author *and* every cached page
-  that showed them, together. There is no second cache to keep in step by hand — the
+  `InvalidateTags("author:" + id)` marks the stored author stale *and* drops every
+  cached page that showed them, together. There is no second cache to keep in step by hand — the
   thing that goes wrong when an application memoises in its own API client and then
   invalidates only the pages.
 - **One fetch per key at a time.** Requests that need the same key while it is being
@@ -332,12 +332,15 @@ Tags stay plain strings — `"author:" + id` here — because they are what
 - **Invalidation keeps the old value, to serve until a new one arrives.**
   `InvalidateTags` and a passed `ttl` mark a value stale rather than removing it.
   The next render is served the stale value at once, and one fetch in the
-  background replaces it, so the request after that one sees the change. If that
-  fetch fails, the stale value stays and keeps being served, however long the
-  upstream is down. A render built from a stale value is served with
+  background replaces it, so a request after that fetch has finished sees the
+  change. If that fetch fails, the stale value stays and keeps being served,
+  however long the upstream is down. A render built from a stale value is served with
   `Cache-Control: no-store` and is not cached, so the page is rendered again once
   the value is fresh. Each stale value served is reported as the `CacheStale`
-  metrics event, and each failed refresh is logged at warn with its error.
+  metrics event, and each failed refresh is logged at warn with its error. A fetch
+  that was still running when its tags were invalidated hands its result to whoever
+  was waiting and is kept, but as stale; one overtaken by `PurgeTags` is not kept at
+  all.
 - **Not found is the exception.** A fetch whose error wraps `collage.ErrNotFound`
   drops the value, so a record deleted upstream disappears from the site and its
   page answers 404.
