@@ -27,6 +27,8 @@ var ErrNoRequest = errors.New("collage: no request to render for")
 // fragment an invalidation touched, and sends the parts in a message of its own.
 // Only a fragment the page opened is rendered — the same set of fragments HTTP
 // reaches — so a stream cannot be used to read a part of a page nobody published.
+// Values read through collage.Cached are fresh: the render waits for the
+// upstream rather than be built from a stale value, and fails when it is down.
 //
 // Plugins reach it through Host.RenderFragment.
 func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plugin.FragmentRender, error) {
@@ -35,7 +37,13 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 	}
 	// A plugin calls this outside ServeHTTP, so the origins ServeHTTP installs
 	// are not on r yet. It renders for a real request, so the host decides.
-	r = r.WithContext(httpx.WithOrigins(r.Context(), a.OriginFor))
+	//
+	// Fresh data, too: a plugin re-renders a fragment because an invalidation
+	// touched it, and pushes what it gets to readers who will not ask again. A
+	// stale value served here would be the push, and the refresh that replaced
+	// it a moment later would reach nobody. So the render waits on the
+	// upstream, and an upstream that is down is an error the plugin handles.
+	r = r.WithContext(types.WithFreshData(httpx.WithOrigins(r.Context(), a.OriginFor)))
 	page, fragment, locale, params, r, err := a.resolveFragmentRequest(r, req)
 	if err != nil {
 		return nil, err

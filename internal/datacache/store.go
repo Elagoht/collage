@@ -141,6 +141,8 @@ type call struct {
 	// abandoned reports a fetch that failed because the caller that started it
 	// went away: an answer about that caller, not about the key.
 	abandoned bool
+	// epoch is the store's epoch when the fetch started.
+	epoch uint64
 }
 
 // New returns an empty store kept in memory only.
@@ -183,7 +185,8 @@ func New(opts Options) *Store {
 // the fetch, whose error, if any, goes to every caller waiting on it and is
 // never stored. A ctx marked with types.WantsFreshData waits the same way on a
 // stale value, cooling down or not, and gets the upstream's error rather than
-// the value.
+// the value. It shares a running fetch only if no invalidation came after that
+// fetch started.
 //
 // decode is not used by a store kept in memory.
 func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), decode func([]byte) (types.CacheValue, error)) (types.CacheValue, bool, error) {
@@ -195,8 +198,9 @@ func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []
 	}
 }
 
-// load is one attempt at Load. again reports that it waited on a fetch its
-// starter abandoned, and the caller should try once more.
+// load is one attempt at Load. again reports that it waited on a fetch whose
+// answer is not its own — one its starter abandoned, or, for fresh data, one an
+// invalidation overtook — and the caller should try once more.
 func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), decode func([]byte) (types.CacheValue, error)) (value types.CacheValue, stale bool, err error, again bool) {
 	s.mu.Lock()
 	if element, ok := s.entries[key]; ok && element.Value.(*entry).raw != nil {
@@ -239,9 +243,17 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 		// until a successful fetch replaces it.
 	}
 	if running, ok := s.inflight[key]; ok {
+		// A fetch that started before an invalidation may have read what it
+		// invalidated. That is good enough for a reader served stale anyway,
+		// not for one that wants fresh data: it waits the old fetch out, so
+		// as not to race it, and then fetches again.
+		outdated := types.WantsFreshData(ctx) && running.epoch != s.epoch
 		s.mu.Unlock()
 		select {
 		case <-running.done:
+			if outdated && ctx.Err() == nil {
+				return nil, false, nil, true
+			}
 			// Not the starter's cancellation: one reader disconnecting, on
 			// purpose or not, would fail every reader who shared its fetch.
 			if running.abandoned && ctx.Err() == nil {
@@ -252,7 +264,7 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 			return nil, false, ctx.Err(), false
 		}
 	}
-	started := &call{done: make(chan struct{})}
+	started := &call{done: make(chan struct{}), epoch: s.epoch}
 	s.inflight[key] = started
 	epoch, purges := s.epoch, s.purges
 	s.mu.Unlock()
@@ -290,7 +302,7 @@ func (s *Store) refreshLocked(ctx context.Context, key string, ttl time.Duration
 	if _, running := s.inflight[key]; running || s.closing {
 		return
 	}
-	started := &call{done: make(chan struct{})}
+	started := &call{done: make(chan struct{}), epoch: s.epoch}
 	s.inflight[key] = started
 	epoch, purges := s.epoch, s.purges
 	s.refreshes.Add(1)

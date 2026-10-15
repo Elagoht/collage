@@ -548,3 +548,111 @@ func TestCached_ShutdownWaitsForARunningRefresh(t *testing.T) {
 		t.Fatalf("Shutdown: %v", err)
 	}
 }
+
+// liveSite is one page whose fragment, opened at /live/card, shows a value it
+// reads through Cached: what a live-update plugin re-renders after an
+// invalidation and pushes to every reader.
+type liveSite struct {
+	app *collage.App
+	mu  sync.Mutex
+	// value is the upstream's; a fetch reads it when it starts.
+	value string
+	// gate, when set, holds a fetch after it has read value.
+	gate chan struct{}
+}
+
+var liveKey = collage.NewKey[string]("live")
+
+func newLiveSite(t *testing.T) *liveSite {
+	t.Helper()
+	site := &liveSite{value: "v1"}
+	app := newFragmentApp(t, map[string]string{
+		"page.html": `<main>{{slot "card"}}</main>`,
+		"card.html": `<p>{{.}}</p>`,
+	}, func(cfg *collage.Config) {
+		cfg.Cache = collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour}
+	})
+	card := collage.NewFragment("card", "card.html").WithData(collage.Load(
+		func(_ context.Context, rc *collage.RenderContext) (string, error) {
+			return collage.Cached(rc, liveKey, time.Hour, []string{"thing"}, func(context.Context) (string, error) {
+				site.mu.Lock()
+				value, gate := site.value, site.gate
+				site.mu.Unlock()
+				if gate != nil {
+					<-gate
+				}
+				return value, nil
+			})
+		})).
+		Build()
+	page := collage.NewFragment("page", "page.html").WithSlotFragment("card", card).Build()
+	if err := app.RegisterPage(collage.NewPage("home").WithContent(page).WithPath("en", "/").
+		WithFragmentPath("en", "/live/card", card).Incremental(time.Hour).Build()); err != nil {
+		t.Fatal(err)
+	}
+	site.app = app
+	return site
+}
+
+func (s *liveSite) set(value string, gate chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.value, s.gate = value, gate
+}
+
+func (s *liveSite) render(t *testing.T) string {
+	t.Helper()
+	got, err := s.app.RenderFragment(httptest.NewRequest(http.MethodGet, "/", nil), collage.FragmentRequest{Path: "/live/card"})
+	if err != nil {
+		t.Fatalf("RenderFragment: %v", err)
+	}
+	return string(got.HTML)
+}
+
+// A plugin re-renders a fragment because an invalidation touched it, and pushes
+// what it gets to readers who will not ask again: it must get the new value,
+// not the stale one a page request would be served meanwhile.
+func TestRenderFragment_AfterAnInvalidationIsFresh(t *testing.T) {
+	site := newLiveSite(t)
+	if got := site.render(t); got != "<p>v1</p>" {
+		t.Fatalf("first render = %q", got)
+	}
+	site.set("v2", nil)
+	if err := site.app.InvalidateTags(context.Background(), "thing"); err != nil {
+		t.Fatal(err)
+	}
+	if got := site.render(t); got != "<p>v2</p>" {
+		t.Errorf("render after the invalidation = %q, want the new value", got)
+	}
+}
+
+// A refresh already running when a second invalidation lands fetched before
+// it: a fragment render waiting on that refresh must not take its answer as
+// fresh.
+func TestRenderFragment_DoesNotTakeARefreshOlderThanTheInvalidation(t *testing.T) {
+	site := newLiveSite(t)
+	site.render(t)
+
+	gate := make(chan struct{})
+	site.set("v2", gate)
+	site.app.InvalidateTags(context.Background(), "thing")
+	rec := httptest.NewRecorder()
+	site.app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil)) // stale; starts a refresh that read v2
+	site.set("v3", nil)
+	site.app.InvalidateTags(context.Background(), "thing")
+
+	rendered := make(chan string, 1)
+	go func() {
+		got, err := site.app.RenderFragment(httptest.NewRequest(http.MethodGet, "/", nil), collage.FragmentRequest{Path: "/live/card"})
+		if err != nil {
+			rendered <- err.Error()
+			return
+		}
+		rendered <- string(got.HTML)
+	}()
+	time.Sleep(20 * time.Millisecond) // let the render join the running refresh
+	close(gate)
+	if got := <-rendered; got != "<p>v3</p>" {
+		t.Errorf("render = %q, want v3: it took a refresh that predates the invalidation", got)
+	}
+}
