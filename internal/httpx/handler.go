@@ -115,6 +115,23 @@ const contentTypeHTML = "text/html; charset=utf-8"
 // build.
 const renderTimeHeader = "X-Collage-Render-Time"
 
+// CacheStatusHeader says where a cacheable page's or document's response came
+// from: HIT, STALE or MISS. It is set only on a cacheable GET or HEAD that
+// answered with the page, never on a failure, and never in development, where
+// the cache is not read, so its absence is never mistaken for a miss.
+const CacheStatusHeader = "X-Collage-Cache"
+
+// The values of CacheStatusHeader.
+const (
+	// cacheHit: a fresh entry was served without rendering.
+	cacheHit = "HIT"
+	// cacheStale: the entry was past an invalidation or its expiry, the render
+	// replacing it failed or was degraded, and the old entry was served instead.
+	cacheStale = "STALE"
+	// cacheMiss: the response is a render, from no entry or a stale one.
+	cacheMiss = "MISS"
+)
+
 // staticCacheTTL is the TTL a StrategyStatic page's cache entry is written with when
 // the page sets no CacheTTL of its own: a hundred years, which is "until explicitly
 // invalidated" as closely as the Cache interface can say it.
@@ -747,6 +764,9 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// Only GET and HEAD may be served from cache, and only a cacheable strategy
 	// is looked up at all: an unsafe method's response is never a cached page.
 	key := ""
+	// stale is the entry found past an invalidation or its expiry, kept for the
+	// render below to fall back to. Nil when there was none, or nothing was looked up.
+	var stale *staleEntry
 	cacheable := h.cache != nil && page.Strategy.Cacheable() && (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
 		!requestSkipsCache(r)
 	if cacheable {
@@ -775,12 +795,20 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// stored, tags still tracked, so anyone developing an
 		// invalidation rule still sees it work. What
 		// dev mode removes is serving a page that was rendered before the edit.
-		if content, etag, found := h.cacheGet(ctx, key); found {
+		content, etag, isStale, found := h.cacheGet(ctx, key)
+		if found && !isStale {
 			h.metrics.CacheEvent(ctx, observability.CacheHit, key)
 			// The only place cacheHit is ever reported true: what it times is the
 			// lookup that stood in for a render, not a render that did not happen.
 			h.metrics.RenderDuration(ctx, page.Name, time.Since(lookupStart), true)
-			return h.serveCached(w, r, page, content, etag)
+			return h.serveCached(w, r, page, content, etag, cacheHit)
+		}
+		// A stale entry is a miss as far as the cache is concerned: the page
+		// renders below as on any miss, and the entry is only what the reader is
+		// given if that render cannot replace it. CacheStale is reported when it
+		// is actually served, not here.
+		if found {
+			stale = &staleEntry{content: content, etag: etag}
 		}
 		h.metrics.CacheEvent(ctx, observability.CacheMiss, key)
 	}
@@ -836,6 +864,21 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		h.metrics.CacheEvent(ctx, observability.CacheCoalesced, key)
 	}
 
+	// Decided per request, after the flight: every request that joined a render
+	// made its own lookup, so each one falls back to the stale entry it found,
+	// and one that found none is answered by the render as on any miss.
+	if stale != nil {
+		switch h.staleFallback(ctx, out) {
+		case fallbackStale:
+			h.reportStale(r, key, "page", page.Name, out)
+			return h.serveCached(w, r, page, stale.content, stale.etag, cacheStale)
+		case fallbackDrop:
+			// The content is gone, so the stale copy of it goes too: kept, it
+			// would be served the next time a render merely failed.
+			_ = h.cache.InvalidateKey(ctx, key)
+		}
+	}
+
 	if out.fail != nil {
 		return h.serveFailure(w, r, *out.fail)
 	}
@@ -865,6 +908,11 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	}
 	if h.devMode {
 		header.Set(renderTimeHeader, out.renderTime.String())
+	}
+	// Here rather than with the other headers above: personalise can still fail,
+	// and the failure page answering instead must not claim to be a render.
+	if key != "" && h.reportsCacheStatus(ctx) {
+		header.Set(CacheStatusHeader, cacheMiss)
 	}
 	content = withDevOverlay(content, overlayHeading(out.problems), out.problems)
 	content = h.withDevReload(r, content)
@@ -983,6 +1031,10 @@ func (h *Handler) renderPage(
 	key string,
 	cacheable bool,
 ) *outcome {
+	// Read before anything renders, so an invalidation that lands at any point
+	// during the render keeps it out of the cache. See writeCache.
+	epoch := h.epoch()
+
 	// Deliberately after the cache lookup: BeforeRenderHook documents that it
 	// does not fire when a cached render is served instead of a fresh one.
 	// Built before the hook, not after: a plugin contributing to the page hoists
@@ -1078,7 +1130,7 @@ func (h *Handler) renderPage(
 	// it produced no body to store.
 	etag := ""
 	if cacheable && r.Method == http.MethodGet && !result.Degraded() {
-		etag = h.writeCache(r, key, page, content, result.DependencyTags)
+		etag = h.writeCache(r, key, page, content, result.DependencyTags, epoch)
 	}
 	if etag == "" {
 		etag = cache.ETag(content)
@@ -1090,19 +1142,102 @@ func (h *Handler) renderPage(
 
 // cacheGet is the cache lookup, which never finds anything in development. See the
 // call site for why.
-func (h *Handler) cacheGet(ctx context.Context, key string) ([]byte, string, bool) {
+//
+// Against a cache.StaleCache it also finds an entry kept past an invalidation or
+// its expiry, reported with stale true, for the caller to fall back to. It calls
+// GetStale alone, never Get first: one lookup is one hit or one miss in the
+// cache's own statistics. Any other Cache reports only fresh entries, exactly as
+// before there was such a thing as a stale page.
+func (h *Handler) cacheGet(ctx context.Context, key string) (content []byte, etag string, stale, found bool) {
 	if h.devMode {
-		return nil, "", false
+		return nil, "", false, false
 	}
-	content, etag, found := h.cache.Get(ctx, key)
+	if staleCache, ok := h.cache.(cache.StaleCache); ok {
+		content, etag, stale, found = staleCache.GetStale(ctx, key)
+	} else {
+		content, etag, found = h.cache.Get(ctx, key)
+	}
 	if found && h.staleMarker(content) {
 		// Stored under another forgery key — before a key change, or by a process
 		// that generated its own. Served, its form would carry a marker nothing
-		// replaces and be refused on submission, so it is a miss, and dropped.
+		// replaces and be refused on submission, so it is a miss, and dropped. A
+		// stale entry is no different: it is served as it was stored.
 		_ = h.cache.InvalidateKey(ctx, key)
-		return nil, "", false
+		return nil, "", false, false
 	}
-	return content, etag, found
+	return content, etag, stale, found
+}
+
+// staleEntry is a cache entry found past an invalidation or its expiry: what a
+// request falls back to when the render replacing it does not succeed.
+type staleEntry struct {
+	content []byte
+	etag    string
+}
+
+// fallback is what a request holding a stale entry does with the render's outcome.
+type fallback int
+
+const (
+	// fallbackNone serves the outcome, a render or its failure, as on a miss.
+	fallbackNone fallback = iota
+	// fallbackStale serves the stale entry instead of the outcome.
+	fallbackStale
+	// fallbackDrop drops the stale entry, then serves the outcome.
+	fallbackDrop
+)
+
+// staleFallback decides what a request that found a stale entry does with the
+// outcome of the render meant to replace it.
+//
+// A render that succeeded is served: it is fresher than the entry, and it has
+// already been written over it unless an invalidation overlapped it. A not found
+// is served too, and the entry dropped: the content is gone upstream, and the
+// reader is told so rather than shown it. Any other failure, or a degraded render,
+// is served the stale entry instead: the old page whole is better than an error
+// page or the new one with holes in it, which is the whole of the stale cache.
+//
+// Except for a request that has ended. Its failure is the flight reporting that
+// the reader left, which is no failure of the page, and nobody reads the answer.
+func (h *Handler) staleFallback(ctx context.Context, out *outcome) fallback {
+	switch {
+	case out.fail != nil && out.fail.status == http.StatusNotFound:
+		return fallbackDrop
+	case out.fail != nil && ctx.Err() != nil:
+		return fallbackNone
+	case out.fail != nil, out.degraded:
+		return fallbackStale
+	}
+	return fallbackNone
+}
+
+// reportStale counts and logs one stale page or document served in place of out:
+// a stale serve is the site hiding an outage, and every one of them stays visible.
+func (h *Handler) reportStale(r *http.Request, key, kind, name string, out *outcome) {
+	h.metrics.CacheEvent(r.Context(), observability.CacheStale, key)
+	reason := "degraded"
+	if out.fail != nil && out.fail.err != nil {
+		reason = out.fail.err.Error()
+	}
+	h.logger.Warn("collage: serving a stale "+kind+", its render failed",
+		kind, name, "path", r.URL.Path, "err", reason)
+}
+
+// reportsCacheStatus reports whether a cacheable response — one with a cache key,
+// which the caller checks — carries CacheStatusHeader. Never in development,
+// where the cache is not read, nor to a static build's header capture, whose
+// answers are not a reader's and whose headers are what an exported site is
+// served with.
+func (h *Handler) reportsCacheStatus(ctx context.Context) bool {
+	return !h.devMode && !types.IsCapture(ctx)
+}
+
+// epoch is the current invalidation epoch, or zero when there is no such rule.
+func (h *Handler) epoch() uint64 {
+	if h.invalidationEpoch == nil {
+		return 0
+	}
+	return h.invalidationEpoch()
 }
 
 // foreignMarker matches the forgery-token marker of any key.
@@ -1130,7 +1265,11 @@ func (h *Handler) staleMarker(content []byte) bool {
 // serveCached writes a cache hit: a 304 when the request's If-None-Match matches
 // the stored ETag, otherwise a 200 carrying the stored content. It returns the
 // status it wrote.
-func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *types.Page, content []byte, etag string) int {
+//
+// status is the CacheStatusHeader value, cacheHit or cacheStale. A stale entry is
+// served with no-store: it is this server's fallback while the page cannot be
+// re-made, and a CDN keeping it would go on serving it after the page could.
+func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *types.Page, content []byte, etag, status string) int {
 	// The stored body carries a marker where this reader's forgery token goes, so
 	// what is written is not what was stored — and the ETag has to name what was
 	// written, or a conditional request is answered 304 for a body the client was
@@ -1145,8 +1284,16 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 	header.Set("ETag", etag)
 	h.setCacheHeaders(header, r, page.Strategy, page.CacheTTL)
 	guardedCacheControl(header, page)
+	if status == cacheStale {
+		header.Set("Cache-Control", "no-store")
+	}
 	if personal {
 		header.Set("Cache-Control", "private, no-store")
+	}
+	// After personalise, which can still fail: the failure page answering
+	// instead is no cache hit. Before the 304, which is one.
+	if h.reportsCacheStatus(r.Context()) {
+		header.Set(CacheStatusHeader, status)
 	}
 
 	// Never for a body a hook made personal: its ETag is new on every response,
@@ -1182,12 +1329,20 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 // derives ETags its own way would otherwise send one value on the fresh response
 // and a different one on every hit that followed, and every conditional request
 // would miss.
-func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string) string {
+//
+// epoch is the invalidation epoch read before the render began. A render that an
+// invalidation or a purge overlapped may have read what was invalidated, so it is
+// not written: stored, it would be served as fresh for its whole TTL, and the
+// invalidation would be lost. It is still served to the requests it was made for.
+func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string, epoch uint64) string {
 	ctx := r.Context()
 	// A static build asking what it answers is not a reader: the build has
 	// written the file, and an entry or a hook call on its behalf would be
 	// state the build left behind.
 	if types.IsCapture(ctx) {
+		return ""
+	}
+	if h.epoch() != epoch {
 		return ""
 	}
 
@@ -1209,7 +1364,19 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	if err := h.tracker.Track(ctx, key, withRouteTags(tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
 	}
+	h.dropIfOverlapped(ctx, key, epoch)
 	return etag
+}
+
+// dropIfOverlapped drops the entry just written for key when an invalidation or a
+// purge began between the epoch check before the write and the write itself: the
+// check alone leaves that window, and the invalidation, finding nothing yet, would
+// leave the entry written after it fresh. Dropped rather than marked stale,
+// because which of the two it was is not known, and a purge leaves nothing behind.
+func (h *Handler) dropIfOverlapped(ctx context.Context, key string, epoch uint64) {
+	if h.epoch() != epoch {
+		_ = h.cache.InvalidateKey(ctx, key)
+	}
 }
 
 // documentPattern is the pattern doc answers in locale: its own path there, or

@@ -149,6 +149,16 @@ const FetchHeader = httpx.FetchHeader
 // LocationHeader carries an action's redirect to a request marked with FetchHeader.
 const LocationHeader = httpx.LocationHeader
 
+// CacheStatusHeader says where a cacheable page's or document's response came
+// from. HIT is a fresh cache entry served without rendering. MISS is a render,
+// because there was no entry or only a stale one. STALE is an entry kept past
+// InvalidateTags or its TTL, served with Cache-Control: no-store because the
+// render meant to replace it failed or was degraded; a custom CacheConfig.Store
+// that does not implement StaleCache never answers STALE. The header is set on a
+// cacheable GET or HEAD that answered with the page or document, never on an
+// error response, and never in development, where the cache is not read.
+const CacheStatusHeader = httpx.CacheStatusHeader
+
 // FragmentRequest names a fragment a page opened at its own URL, and the locale and
 // path parameters to render it in, for App.RenderFragment and Host.RenderFragment.
 type FragmentRequest = plugin.FragmentRequest

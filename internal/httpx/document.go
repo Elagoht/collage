@@ -58,6 +58,8 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	cacheable := h.cache != nil && doc.Strategy.Cacheable() && (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
 		!requestSkipsCache(r)
 	key := ""
+	// stale is the entry found past an invalidation or its expiry; see serve.
+	var stale *staleEntry
 	if cacheable {
 		key = cache.Key(cache.KeyInput{
 			Path:    r.URL.Path,
@@ -68,16 +70,24 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			Host:    ascii.LowerString(r.Host),
 		})
 		lookupStart := time.Now()
-		if content, etag, found := h.cacheGet(ctx, key); found {
+		content, etag, isStale, found := h.cacheGet(ctx, key)
+		if found && !isStale {
 			h.metrics.CacheEvent(ctx, observability.CacheHit, key)
 			h.metrics.RenderDuration(ctx, doc.Name, time.Since(lookupStart), true)
-			return h.serveCachedDocument(w, r, doc, content, etag)
+			return h.serveCachedDocument(w, r, doc, content, etag, cacheHit)
+		}
+		// Kept to fall back to, as a page's is: see serve.
+		if found {
+			stale = &staleEntry{content: content, etag: etag}
 		}
 		h.metrics.CacheEvent(ctx, observability.CacheMiss, key)
 	}
 
 	failed := func(f failure) *outcome { return &outcome{fail: &f} }
 	produce := func() *outcome {
+		// Before the handler runs, so an invalidation during it keeps its body
+		// out of the cache. See writeCache.
+		epoch := h.epoch()
 		docRenderer, ok := h.renderer.(documentRenderer)
 		if !ok {
 			err := fmt.Errorf("%w: %T", ErrDocumentRenderingUnsupported, h.renderer)
@@ -139,7 +149,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		// populates it — it produced no body worth storing under its own request.
 		etag := ""
 		if cacheable && r.Method == http.MethodGet && !result.Stale {
-			etag = h.writeDocumentCache(r, key, doc, result, route)
+			etag = h.writeDocumentCache(r, key, doc, result, route, epoch)
 		}
 		if etag == "" {
 			etag = cache.ETag(result.Body)
@@ -162,6 +172,17 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	} else {
 		out = produce()
 	}
+	// Per request, after the flight, as a page's: see serve.
+	if stale != nil {
+		switch h.staleFallback(ctx, out) {
+		case fallbackStale:
+			h.reportStale(r, key, "document", doc.Name, out)
+			return h.serveCachedDocument(w, r, doc, stale.content, stale.etag, cacheStale)
+		case fallbackDrop:
+			_ = h.cache.InvalidateKey(ctx, key)
+		}
+	}
+
 	if out.fail != nil {
 		return h.serveFailure(w, r, *out.fail)
 	}
@@ -178,6 +199,9 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	if h.devMode {
 		header.Set(renderTimeHeader, out.renderTime.String())
 	}
+	if key != "" && h.reportsCacheStatus(ctx) {
+		header.Set(CacheStatusHeader, cacheMiss)
+	}
 	w.WriteHeader(http.StatusOK)
 	writeBody(w, out.content)
 
@@ -186,11 +210,18 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 
 // serveCachedDocument writes a cache hit for a document: a 304 when the request's
 // If-None-Match matches the stored ETag, otherwise a 200 carrying the stored
-// content. It mirrors the page path's serveCached. It returns the status it wrote.
-func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, doc *types.Document, content []byte, etag string) int {
+// content. It mirrors the page path's serveCached, status included. It returns the
+// status it wrote.
+func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, doc *types.Document, content []byte, etag, status string) int {
 	header := w.Header()
 	header.Set("ETag", etag)
 	h.setCacheHeaders(header, r, doc.Strategy, doc.CacheTTL)
+	if status == cacheStale {
+		header.Set("Cache-Control", "no-store")
+	}
+	if h.reportsCacheStatus(r.Context()) {
+		header.Set(CacheStatusHeader, status)
+	}
 
 	if cache.ETagMatch(r.Header.Get("If-None-Match"), etag) {
 		// No Content-Type and no body: a 304 tells the client its copy is still
@@ -220,10 +251,16 @@ func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, do
 // document is already on its way out, so they go through reportError rather than
 // serveFailure. They are still built through route, so the log record names the
 // document exactly as a served failure's would.
-func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Document, result *render.DocumentResult, route *routeRef) string {
+//
+// epoch is read before the handler ran; a document an invalidation overlapped is
+// not written, as in writeCache.
+func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Document, result *render.DocumentResult, route *routeRef, epoch uint64) string {
 	ctx := r.Context()
 	// Not for a static build's header capture; see writeCache.
 	if types.IsCapture(ctx) {
+		return ""
+	}
+	if h.epoch() != epoch {
 		return ""
 	}
 
@@ -245,5 +282,6 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 	if err := h.tracker.Track(ctx, key, withRouteTags(result.Tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: track %q: %w", key, err)))
 	}
+	h.dropIfOverlapped(ctx, key, epoch)
 	return etag
 }
