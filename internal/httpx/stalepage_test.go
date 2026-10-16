@@ -611,3 +611,98 @@ func TestHandler_APlainCacheIsNeverStale(t *testing.T) {
 			rec.Code, CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
 	}
 }
+
+// A not found drops the stale entry even when the request that met it has ended
+// in the meantime: the drop is for every later reader, not for this one.
+func TestHandler_ANotFoundDropsTheStaleEntryAfterTheReaderLeft(t *testing.T) {
+	page := testPage("home", "/", types.StrategyIncremental)
+	inner := newFakeEngine(fakeRender{err: errors.New("gone"), notFound: true})
+	blocking := newBlockingEngine(inner)
+	env := newEnv(t, []*types.Page{page}, func(d *Deps) { d.Renderer = blocking })
+	key := flightKeyFor(t, env, "/")
+	ctx := context.Background()
+	if _, err := env.cache.SetTagged(ctx, key, []byte("<html>old</html>"), time.Hour, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.cache.MarkStaleKey(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+
+	reqCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.do(httptest.NewRequest(http.MethodGet, "/", nil).WithContext(reqCtx))
+	}()
+	<-blocking.started
+	cancel()
+	close(blocking.release)
+	<-done
+
+	if _, _, _, found := env.cache.GetStale(ctx, key); found {
+		t.Error("the stale entry survived a not found whose reader had left")
+	}
+}
+
+// sequenceEngine fails its first render with the leader's own cancellation, held
+// open until released, and every later render with "cms down".
+type sequenceEngine struct {
+	*fakeEngine
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+}
+
+func (e *sequenceEngine) Render(_ context.Context, rc *types.RenderContext) (*render.Result, error) {
+	result := &render.Result{Metadata: &render.Metadata{Page: rc.Page.Name, Locale: rc.Locale}}
+	if e.calls.Add(1) == 1 {
+		close(e.started)
+		<-e.release
+		return result, context.Canceled
+	}
+	return result, errors.New("cms down")
+}
+
+// A waiter whose leader's render failed with the leader's own cancellation renders
+// again; when that render fails too and the waiter serves the stale page, the
+// failure it serves over goes to the error hooks once, and the leader's
+// cancellation not at all.
+func TestHandler_AWaiterRerunAfterACancelledLeaderReportsItsStaleFailureOnce(t *testing.T) {
+	page := testPage("home", "/", types.StrategyIncremental)
+	engine := &sequenceEngine{fakeEngine: newFakeEngine(fakeRender{}), started: make(chan struct{}), release: make(chan struct{})}
+	recorder := &recordingPlugin{}
+	env := newEnv(t, []*types.Page{page}, withPlugins(t, recorder), func(d *Deps) { d.Renderer = engine })
+	key := flightKeyFor(t, env, "/")
+	ctx := context.Background()
+	if _, err := env.cache.SetTagged(ctx, key, []byte("<html>old</html>"), time.Hour, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := env.cache.MarkStaleKey(ctx, key); err != nil {
+		t.Fatal(err)
+	}
+
+	leaderCtx, cancel := context.WithCancel(ctx)
+	var wg sync.WaitGroup
+	wg.Go(func() { env.do(httptest.NewRequest(http.MethodGet, "/", nil).WithContext(leaderCtx)) })
+	<-engine.started
+	var waiter *httptest.ResponseRecorder
+	wg.Go(func() { waiter = env.get("/") })
+	awaitWaiters(t, env.handler.flight, key, 1)
+	cancel()
+	close(engine.release)
+	wg.Wait()
+
+	if waiter.Body.String() != "<html>old</html>" || waiter.Header().Get(CacheStatusHeader) != cacheStale {
+		t.Fatalf("waiter = %d %q %s=%q, want the stale page", waiter.Code, waiter.Body.String(),
+			CacheStatusHeader, waiter.Header().Get(CacheStatusHeader))
+	}
+	if got := engine.calls.Load(); got != 2 {
+		t.Errorf("renders = %d, want 2: the leader's and the waiter's re-run", got)
+	}
+	if errs := recorder.reportedErrors(); len(errs) != 1 || errs[0] == nil || errs[0].Error() != "cms down" {
+		t.Errorf("error hook got %v, want the re-run's failure once", errs)
+	}
+	if got := env.logs.count(staleLog); got != 1 {
+		t.Errorf("stale warnings = %d, want 1", got)
+	}
+}

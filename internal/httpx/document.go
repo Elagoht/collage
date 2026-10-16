@@ -181,7 +181,8 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			h.reportStale(r, key, "document", doc.Name, out)
 			return h.serveCachedDocument(w, r, doc, stale.content, stale.etag, cacheStale)
 		case fallbackDrop:
-			_ = h.cache.InvalidateKey(ctx, key)
+			// Whether or not the reader is still there: see the page path.
+			_ = h.cache.InvalidateKey(context.WithoutCancel(ctx), key)
 		}
 	}
 

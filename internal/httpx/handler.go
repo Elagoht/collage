@@ -881,8 +881,10 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			return status
 		case fallbackDrop:
 			// The content is gone, so the stale copy of it goes too: kept, it
-			// would be served the next time a render merely failed.
-			_ = h.cache.InvalidateKey(ctx, key)
+			// would be served the next time a render merely failed. Without the
+			// request's cancellation: the drop is for every later reader, and a
+			// reader who left must not keep the entry alive.
+			_ = h.cache.InvalidateKey(context.WithoutCancel(ctx), key)
 		}
 	}
 
