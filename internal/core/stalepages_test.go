@@ -2,10 +2,16 @@ package core
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/plugin"
+	"github.com/Elagoht/collage/internal/types"
 )
 
 // plainCache is a store implementing only cache.Cache, as an application's own
@@ -126,19 +132,22 @@ func TestInvalidateTags_ACustomStoreStillDrops(t *testing.T) {
 	}
 }
 
-func TestInvalidationEpoch_AdvancesPerCall(t *testing.T) {
+func TestInvalidations_CountEachCallStartedAndFinished(t *testing.T) {
 	app, _ := warmedHome(t, nil)
 	ctx := context.Background()
 
-	before := app.invalidationEpoch.Load()
+	started, finished := app.invalidations()
+	if started != finished {
+		t.Fatalf("at rest started=%d finished=%d, want them equal", started, finished)
+	}
 	_ = app.InvalidateTags(ctx, "homepage")
 	_ = app.PurgeTags(ctx, "homepage")
-	if got := app.invalidationEpoch.Load(); got != before+2 {
-		t.Fatalf("epoch = %d after two calls, want %d", got, before+2)
+	if s, f := app.invalidations(); s != started+2 || f != finished+2 {
+		t.Fatalf("after two calls started=%d finished=%d, want %d and %d", s, f, started+2, finished+2)
 	}
 	_ = app.InvalidateTags(ctx)
-	if got := app.invalidationEpoch.Load(); got != before+2 {
-		t.Fatalf("epoch = %d after an empty call, want it unchanged at %d", got, before+2)
+	if s, f := app.invalidations(); s != started+2 || f != finished+2 {
+		t.Fatalf("after an empty call started=%d finished=%d, want them unchanged", s, f)
 	}
 }
 
@@ -174,5 +183,96 @@ func TestInvalidateTags_ATaggedStoreWithoutStaleStillInvalidates(t *testing.T) {
 	}
 	if _, _, _, found := inner.GetStale(ctx, key); found {
 		t.Fatal("the page was kept, want it dropped: the store is not a StaleCache")
+	}
+}
+
+// blockingMarkCache is the built-in memory store with MarkStaleKey held open the
+// first time it is called, so a test can act while an invalidation is under way.
+type blockingMarkCache struct {
+	*cache.MemoryCache
+	once    sync.Once
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (c *blockingMarkCache) MarkStaleKey(ctx context.Context, key string) error {
+	c.once.Do(func() {
+		close(c.entered)
+		<-c.release
+	})
+	return c.MemoryCache.MarkStaleKey(ctx, key)
+}
+
+// pausingPlugin holds the first render of path open in BeforeRender: after the
+// handler has noted the invalidations, before anything is read.
+type pausingPlugin struct {
+	path    string
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (*pausingPlugin) Name() string                            { return "acme/pause" }
+func (*pausingPlugin) Version() string                         { return "1.0.0" }
+func (*pausingPlugin) Init(context.Context, plugin.Host) error { return nil }
+func (*pausingPlugin) Shutdown(context.Context) error          { return nil }
+
+func (p *pausingPlugin) OnBeforeRender(_ context.Context, ev *plugin.BeforeRenderEvent) error {
+	if ev.Path == p.path {
+		p.once.Do(func() {
+			close(p.started)
+			<-p.release
+		})
+	}
+	return nil
+}
+
+// A render that starts while an invalidation is under way — after it began, before
+// its marks land — may read the data it is replacing, and it is still running when
+// the invalidation ends. It is served, and not stored as fresh.
+func TestInvalidateTags_ARenderStartedMidInvalidationIsNotStored(t *testing.T) {
+	store := &blockingMarkCache{
+		MemoryCache: cache.NewMemory(cache.MemoryConfig{}),
+		entered:     make(chan struct{}),
+		release:     make(chan struct{}),
+	}
+	pause := &pausingPlugin{path: "/about", started: make(chan struct{}), release: make(chan struct{})}
+	app := newTestApp(t, func(cfg *Config) { cfg.Cache.Store = store })
+	if err := app.RegisterPlugin(pause); err != nil {
+		t.Fatalf("RegisterPlugin: %v", err)
+	}
+	about := newHomePage()
+	about.Name = "about"
+	about.Paths = map[string]string{"en": "/about"}
+	for _, page := range []*types.Page{newHomePage(), about} {
+		if err := app.RegisterPage(page); err != nil {
+			t.Fatalf("RegisterPage: %v", err)
+		}
+	}
+	handler := app.Handler()
+	if rec := get(handler, "/"); rec.Code != http.StatusOK {
+		t.Fatalf("warming status = %d", rec.Code)
+	}
+
+	invalidated := make(chan error, 1)
+	go func() { invalidated <- app.InvalidateTags(context.Background(), "homepage") }()
+	<-store.entered
+
+	served := make(chan *httptest.ResponseRecorder, 1)
+	go func() { served <- get(handler, "/about") }()
+	<-pause.started
+	close(store.release)
+	if err := <-invalidated; err != nil {
+		t.Fatalf("InvalidateTags: %v", err)
+	}
+	close(pause.release)
+	rec := <-served
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Welcome Home") {
+		t.Fatalf("render begun mid-invalidation = %d %q, want it served", rec.Code, rec.Body.String())
+	}
+	// The home page, kept stale; nothing for /about.
+	if n := store.Stats().Entries; n != 1 {
+		t.Fatalf("store holds %d entries, want 1: a render begun mid-invalidation was stored", n)
 	}
 }

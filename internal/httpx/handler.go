@@ -187,10 +187,12 @@ type Deps struct {
 	// COLLAGE_DEV_HOST list, which under "collage dev" includes the host its
 	// proxy listens on. Ignored outside development, and for a capture.
 	DevHosts []string
-	// InvalidationEpoch reports a counter that advances on every tag
-	// invalidation or purge. A render that began under one value and ends under
-	// another straddled an invalidation. Nil means no such rule.
-	InvalidationEpoch func() uint64
+	// Invalidations reports how many tag invalidations and purges have started
+	// and how many have finished, the finished count read first. A render is
+	// stored only when the two were equal as it began and the started count has
+	// not moved by its write: otherwise it overlapped an invalidation, and may
+	// have read what it replaced. Nil means no such rule.
+	Invalidations func() (started, finished uint64)
 	// DefaultTTL is the cache TTL used for a page that sets no CacheTTL of its
 	// own. Zero or less defers to the cache's own default TTL.
 	DefaultTTL time.Duration
@@ -258,8 +260,8 @@ type Handler struct {
 	devMode    bool
 	devHosts   []string
 	defaultTTL time.Duration
-	// invalidationEpoch is Deps.InvalidationEpoch, read around a render.
-	invalidationEpoch func() uint64
+	// invalidations is Deps.Invalidations, read around a render.
+	invalidations func() (started, finished uint64)
 	mounts            []*asset.Mount
 	handlers          []HandlerMount
 	chain             http.Handler
@@ -313,7 +315,7 @@ func New(d Deps) (*Handler, error) {
 		devMode:           d.DevMode,
 		devHosts:          slices.Clone(d.DevHosts),
 		defaultTTL:        d.DefaultTTL,
-		invalidationEpoch: d.InvalidationEpoch,
+		invalidations:     d.Invalidations,
 		// Cloned so a caller mutating d.Mounts after New returns cannot change
 		// what this Handler serves.
 		mounts:       slices.Clone(d.Mounts),
@@ -1036,9 +1038,9 @@ func (h *Handler) renderPage(
 	key string,
 	cacheable bool,
 ) *outcome {
-	// Read before anything renders, so an invalidation that lands at any point
-	// during the render keeps it out of the cache. See writeCache.
-	epoch := h.epoch()
+	// Read before anything renders, so an invalidation under way as it begins,
+	// or begun at any point during it, keeps it out of the cache. See writeCache.
+	mark := h.invalidationMark()
 
 	// Deliberately after the cache lookup: BeforeRenderHook documents that it
 	// does not fire when a cached render is served instead of a fresh one.
@@ -1135,7 +1137,7 @@ func (h *Handler) renderPage(
 	// it produced no body to store.
 	etag := ""
 	if cacheable && r.Method == http.MethodGet && !result.Degraded() {
-		etag = h.writeCache(r, key, page, content, result.DependencyTags, epoch)
+		etag = h.writeCache(r, key, page, content, result.DependencyTags, mark)
 	}
 	if etag == "" {
 		etag = cache.ETag(content)
@@ -1258,12 +1260,31 @@ func (h *Handler) reportsCacheStatus(ctx context.Context) bool {
 	return !h.devMode && !types.IsCapture(ctx)
 }
 
-// epoch is the current invalidation epoch, or zero when there is no such rule.
-func (h *Handler) epoch() uint64 {
-	if h.invalidationEpoch == nil {
-		return 0
+// invalidationMark is the invalidations counted started and finished when a
+// render began.
+type invalidationMark struct {
+	started, finished uint64
+}
+
+// invalidationMark reads the invalidation counts now, or zeros when there is no
+// such rule.
+func (h *Handler) invalidationMark() invalidationMark {
+	if h.invalidations == nil {
+		return invalidationMark{}
 	}
-	return h.invalidationEpoch()
+	started, finished := h.invalidations()
+	return invalidationMark{started: started, finished: finished}
+}
+
+// storable reports whether a render that began at m may be stored now: no
+// invalidation was under way when it began, and none has begun since.
+func (h *Handler) storable(m invalidationMark) bool {
+	return m.started == m.finished && !h.invalidatedSince(m)
+}
+
+// invalidatedSince reports whether an invalidation has begun since m was read.
+func (h *Handler) invalidatedSince(m invalidationMark) bool {
+	return h.invalidationMark().started != m.started
 }
 
 // foreignMarker matches the forgery-token marker of any key.
@@ -1356,11 +1377,12 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 // and a different one on every hit that followed, and every conditional request
 // would miss.
 //
-// epoch is the invalidation epoch read before the render began. A render that an
-// invalidation or a purge overlapped may have read what was invalidated, so it is
-// not written: stored, it would be served as fresh for its whole TTL, and the
-// invalidation would be lost. It is still served to the requests it was made for.
-func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string, epoch uint64) string {
+// mark is the invalidation counts read before the render began. A render that an
+// invalidation or a purge overlapped — under way as it began, or begun before its
+// write — may have read what was invalidated, so it is not written: stored, it
+// would be served as fresh for its whole TTL, and the invalidation would be lost.
+// It is still served to the requests it was made for.
+func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string, mark invalidationMark) string {
 	ctx := r.Context()
 	// A static build asking what it answers is not a reader: the build has
 	// written the file, and an entry or a hook call on its behalf would be
@@ -1368,7 +1390,7 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	if types.IsCapture(ctx) {
 		return ""
 	}
-	if h.epoch() != epoch {
+	if !h.storable(mark) {
 		return ""
 	}
 
@@ -1390,18 +1412,18 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	if err := h.tracker.Track(ctx, key, withRouteTags(tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
 	}
-	h.dropIfOverlapped(ctx, key, epoch)
+	h.dropIfOverlapped(ctx, key, mark)
 	return etag
 }
 
 // dropIfOverlapped drops the entry just written for key when an invalidation or a
-// purge began between the epoch check before the write and the write itself: the
-// check alone leaves that window, and the invalidation, finding nothing yet, would
-// leave the entry written after it fresh. Dropped rather than marked stale,
-// because which of the two it was is not known, and a purge leaves nothing behind.
-func (h *Handler) dropIfOverlapped(ctx context.Context, key string, epoch uint64) {
-	if h.epoch() != epoch {
-		_ = h.cache.InvalidateKey(ctx, key)
+// purge began between the check before the write and the write itself: the check
+// alone leaves that window, and the invalidation, finding nothing yet, would leave
+// the entry written after it fresh. Dropped rather than marked stale, because
+// which of the two it was is not known, and a purge leaves nothing behind.
+func (h *Handler) dropIfOverlapped(ctx context.Context, key string, mark invalidationMark) {
+	if h.invalidatedSince(mark) {
+		_ = h.cache.InvalidateKey(context.WithoutCancel(ctx), key)
 	}
 }
 

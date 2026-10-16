@@ -87,7 +87,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	produce := func() *outcome {
 		// Before the handler runs, so an invalidation during it keeps its body
 		// out of the cache. See writeCache.
-		epoch := h.epoch()
+		mark := h.invalidationMark()
 		docRenderer, ok := h.renderer.(documentRenderer)
 		if !ok {
 			err := fmt.Errorf("%w: %T", ErrDocumentRenderingUnsupported, h.renderer)
@@ -149,7 +149,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		// populates it — it produced no body worth storing under its own request.
 		etag := ""
 		if cacheable && r.Method == http.MethodGet && !result.Stale {
-			etag = h.writeDocumentCache(r, key, doc, result, route, epoch)
+			etag = h.writeDocumentCache(r, key, doc, result, route, mark)
 		}
 		if etag == "" {
 			etag = cache.ETag(result.Body)
@@ -252,15 +252,15 @@ func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, do
 // serveFailure. They are still built through route, so the log record names the
 // document exactly as a served failure's would.
 //
-// epoch is read before the handler ran; a document an invalidation overlapped is
+// mark is read before the handler ran; a document an invalidation overlapped is
 // not written, as in writeCache.
-func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Document, result *render.DocumentResult, route *routeRef, epoch uint64) string {
+func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Document, result *render.DocumentResult, route *routeRef, mark invalidationMark) string {
 	ctx := r.Context()
 	// Not for a static build's header capture; see writeCache.
 	if types.IsCapture(ctx) {
 		return ""
 	}
-	if h.epoch() != epoch {
+	if !h.storable(mark) {
 		return ""
 	}
 
@@ -282,6 +282,6 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 	if err := h.tracker.Track(ctx, key, withRouteTags(result.Tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: track %q: %w", key, err)))
 	}
-	h.dropIfOverlapped(ctx, key, epoch)
+	h.dropIfOverlapped(ctx, key, mark)
 	return etag
 }

@@ -279,11 +279,15 @@ type ObservabilityConfig struct {
 // InvalidateTags, Logger, RegisterCommand — are all safe to call while requests are
 // being served.
 type App struct {
-	// invalidationEpoch counts the tag invalidations and purges begun. The handler
-	// reads it around a render, so a page rendered across an invalidation is not
-	// stored as if it were fresh. It advances before the store is touched: a
-	// render that saw the old value can then never be mistaken for a later one.
-	invalidationEpoch atomic.Uint64
+	// invalidationsStarted and invalidationsFinished count the tag invalidations
+	// and purges begun and ended. The handler reads both around a render and
+	// stores it only when none was under way as it began and none began before
+	// its write, so a page rendered across any part of an invalidation is not
+	// stored as if it were fresh. Started advances before the store is touched
+	// and finished after everything is, so between the two they cover the whole
+	// of one.
+	invalidationsStarted  atomic.Uint64
+	invalidationsFinished atomic.Uint64
 	// invalidOrigins records, in development, the plugin+origin pairs already
 	// reported by invalidOrigin.
 	invalidOrigins sync.Map
@@ -893,7 +897,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		Router:            a.routes,
 		Renderer:          a.renderer,
 		Cache:             a.store,
-		InvalidationEpoch: a.invalidationEpoch.Load,
+		Invalidations:     a.invalidations,
 		Tracker:           a.tracker,
 		Plugins:           a.plugins,
 		Metrics:           a.metrics,
@@ -1328,6 +1332,16 @@ func (a *App) PurgeTags(ctx context.Context, tags ...string) error {
 	return err
 }
 
+// invalidations reports how many tag invalidations and purges have started and
+// how many have finished. Finished is read first: as each call finishes only
+// after it started, a started count read after it that matches it means none was
+// under way at that read.
+func (a *App) invalidations() (started, finished uint64) {
+	finished = a.invalidationsFinished.Load()
+	started = a.invalidationsStarted.Load()
+	return started, finished
+}
+
 // dropTags is InvalidateTagsN and PurgeTags: they differ only in what becomes of
 // the data store's values, marked stale or removed.
 func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, error) {
@@ -1335,9 +1349,11 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 		return 0, nil
 	}
 
-	// Before the store is touched, so a render that began earlier and finishes
-	// after the marks below is seen by the handler to have straddled them.
-	a.invalidationEpoch.Add(1)
+	// Started before the store is touched and finished after everything is, so
+	// a render that began before this call, or during it, is seen by the handler
+	// to have overlapped it. See invalidations.
+	a.invalidationsStarted.Add(1)
+	defer a.invalidationsFinished.Add(1)
 
 	keys, err := a.tracker.Resolve(ctx, tags)
 	if err != nil {

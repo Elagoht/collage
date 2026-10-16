@@ -17,10 +17,15 @@ import (
 	"github.com/Elagoht/collage/internal/types"
 )
 
-// withEpoch backs Deps.InvalidationEpoch with epoch, which a test advances to
-// stand for an invalidation.
+// withEpoch backs Deps.Invalidations with epoch, as both counts: a test advances
+// it to stand for an invalidation that started and finished at once.
 func withEpoch(epoch *atomic.Uint64) envOption {
-	return func(d *Deps) { d.InvalidationEpoch = epoch.Load }
+	return func(d *Deps) {
+		d.Invalidations = func() (uint64, uint64) {
+			n := epoch.Load()
+			return n, n
+		}
+	}
 }
 
 // staleEnv is a cached page "/" warmed with "<html>old</html>", whose entry is then
@@ -152,6 +157,40 @@ func TestHandler_ARenderOverlappingAnInvalidationIsNotStored(t *testing.T) {
 	if got := inner.pageCalls("home"); got != 2 {
 		t.Errorf("renders = %d, want 2: the request after it must render again", got)
 	}
+	if n := env.cacheEntries(); n != 1 {
+		t.Errorf("cache holds %d entries after an undisturbed render, want 1", n)
+	}
+}
+
+// A render begun while an invalidation is under way — started ahead of finished —
+// is served but not stored, even when that invalidation ends before the render
+// does and no other begins: it may have read what the invalidation replaced.
+func TestHandler_ARenderBegunMidInvalidationIsNotStoredStaleOrFresh(t *testing.T) {
+	page := testPage("home", "/", types.StrategyIncremental)
+	var started, finished atomic.Uint64
+	started.Add(1)
+	inner := newFakeEngine(fakeRender{html: "<html>home</html>"})
+	blocking := newBlockingEngine(inner)
+	env := newEnv(t, []*types.Page{page}, func(d *Deps) {
+		d.Renderer = blocking
+		d.Invalidations = func() (uint64, uint64) {
+			f := finished.Load()
+			return started.Load(), f
+		}
+	})
+
+	done := make(chan *httptest.ResponseRecorder)
+	go func() { done <- env.get("/") }()
+	<-blocking.started
+	finished.Add(1)
+	close(blocking.release)
+	if rec := <-done; rec.Code != http.StatusOK || rec.Body.String() != "<html>home</html>" {
+		t.Fatalf("render begun mid-invalidation = %d %q, want it served", rec.Code, rec.Body.String())
+	}
+	if n := env.cacheEntries(); n != 0 {
+		t.Errorf("cache holds %d entries, want none: a render begun mid-invalidation was stored", n)
+	}
+	env.get("/")
 	if n := env.cacheEntries(); n != 1 {
 		t.Errorf("cache holds %d entries after an undisturbed render, want 1", n)
 	}
