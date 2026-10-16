@@ -238,16 +238,121 @@ every page still answers 200.
 - Branch `feat/stale-data-cache`, in a worktree (other sessions share the tree).
   Minor bump to v0.62.0. **No tag or push without the user's go-ahead.**
 
-## v0.63.0: page cache (outline, to be brainstormed)
+## v0.63.0: page cache
 
-- Tiered page cache: memory in front, disk behind, write-through on `SetTagged`.
-  On startup, warm memory from the current build's disk namespace.
-- `InvalidateTags` marks pages stale. On a stale hit the handler renders. If the
-  render succeeds and is not degraded, it is stored and served. Otherwise the
-  stale HTML is served with a short `Cache-Control`. A 404 drops the entry.
-- `writeCache` gets the epoch rule.
-- An optional interface for staleness, so custom `Cache.Store`s keep today's
-  behaviour.
-- `X-Collage-Cache: HIT | STALE | MISS` header.
-- Open: block vs serve-stale on page hits (v0.62 chose serve-stale for data),
-  and whether the previous build's pages are a last resort across deploys.
+Status: designed 2026-10-16 with the open questions ruled on by the controller,
+since the user had asked for the work to be finished. Each ruling is marked, and
+the user can reverse it.
+
+### Decisions
+
+- **Stale hit: render, and fall back to the stale page** (ruling; this is the
+  spec's own proposal). Since v0.62.0 the data a render reads is
+  stale-while-revalidate, so this render rarely waits on the upstream. A stale
+  page hit therefore costs one in-memory render, and the page is fresh as soon
+  as its data is. In practice this is serve-stale-at-once, which matches the
+  user's choice for data.
+- **Across deploys: keep the build namespace** (ruling; also the spec's
+  proposal). The persisted data store already covers a new build. A new build
+  renders its pages from yesterday's data, and never serves the previous
+  build's HTML.
+- **No maximum stale age** for pages either, as for data.
+
+### Page cache (`internal/cache`)
+
+- **New optional interface `cache.StaleCache`** (re-exported as
+  `collage.StaleCache`):
+
+  ```go
+  type StaleCache interface {
+      Cache
+      // GetStale is Get that also returns an entry kept past an invalidation or
+      // its expiry, with stale true.
+      GetStale(ctx context.Context, key string) (content []byte, etag string, stale, found bool)
+      // MarkStaleKey keeps key's entry but marks it stale.
+      MarkStaleKey(ctx context.Context, key string) error
+      // MarkStale marks every entry associated with any of tags stale.
+      MarkStale(ctx context.Context, tags []string) error
+  }
+  ```
+
+  `Get` keeps its contract: it reports only fresh entries. A custom `Cache.Store`
+  that does not implement `StaleCache` behaves exactly as before.
+- **Memory and disk caches implement `StaleCache`.**
+  - An expired entry is kept as stale instead of being deleted. Eviction
+    (MaxEntries/MaxBytes) still removes entries, oldest first.
+  - Disk: the header gains `"stale":true`. Marking an entry stale rewrites its
+    file atomically.
+- **Tiered cache for `Type: "disk"`.** There is memory in front and disk behind.
+  - `SetTagged`, marking and removal write through to both. Reads go to memory
+    first, then disk; a disk hit is promoted into memory with its expiry, tags
+    and stale flag.
+  - On startup, memory is warmed from this build's disk directory, newest first
+    by file modification time, until memory's MaxEntries or MaxBytes is reached.
+    The memory tier uses the memory defaults (MaxBytes 256 MiB).
+  - A disk failure never fails a request. Disk stays the durable copy, and the
+    tier serves from memory.
+
+### Invalidation (`internal/core`)
+
+- `InvalidateTags` against a `StaleCache` store marks keys stale
+  (`MarkStaleKey`) instead of dropping them. It does not `Forget` them in the
+  tracker, so a later `PurgeTags` can still reach them. The tag-level call
+  becomes `MarkStale(tags)` when the store is a `StaleCache` (otherwise
+  `TaggedCache.Invalidate`, as before). The plugin event (`OnCacheInvalidate`)
+  and the returned count are unchanged.
+- `PurgeTags` removes pages outright, as today.
+- Each invalidation and purge increments an **invalidation epoch** that the
+  handler can read.
+
+### Handler (`internal/httpx`, pages and documents)
+
+- Lookup against a `StaleCache` uses `GetStale`. The CSRF-marker check still
+  applies to fresh and stale entries alike.
+- **Fresh hit:** serve, as today. Header `X-Collage-Cache: HIT`.
+- **Stale hit:** render through the existing flight, then:
+  - If the render succeeds, is not degraded, and no invalidation happened during
+    it, store it fresh and serve it with `X-Collage-Cache: MISS`.
+  - If it fails (a failure outcome, `ErrEmptyRender`, a required fragment's
+    error) or is degraded, serve the stale bytes with `Cache-Control: no-store`
+    and `X-Collage-Cache: STALE`. Report `observability.CacheStale` (key = the
+    page cache key) and log the render error at warn. If a render under an
+    epoch change succeeds, serve that render (it is fresh enough for this
+    reader) but do not store it.
+  - A render that answers **404 (not found)** drops the entry and serves the 404.
+- **Miss:** as today, with `X-Collage-Cache: MISS`.
+- **Epoch rule for writes:** a render that started before an invalidation or
+  purge finished is not written as fresh. This applies to pages and documents,
+  stale hit or plain miss.
+- The header constant is exported as `collage.CacheStatusHeader`. The header is
+  set on every cacheable GET/HEAD response of a page or document, and never in
+  dev mode, where the cache is not read.
+
+### Acceptance tests
+
+9. Cached page, `InvalidateTags`, upstream down: 200 with the old HTML, `STALE`,
+   `no-store`.
+10. Same with a degraded render: the old HTML, not the degraded one.
+11. A required fragment returns `ErrNotFound` after invalidation: 404, entry
+    dropped.
+12. A render in flight during `InvalidateTags` is not written as fresh.
+13. Restart (new app, same build, same dir): the first request is a cache `HIT`
+    served from the memory tier warmed from disk.
+14. A disk write failure never fails the request.
+15. A custom `Cache.Store` without `StaleCache` keeps today's behaviour: the
+    entry is dropped on invalidation and there is no `STALE`.
+16. Documents: steps 9 and 11 for a cached document.
+17. Expired page (TTL passed), upstream down: `STALE`, not an error.
+18. `PurgeTags`, upstream down: no stale page left. An error page, as before
+    v0.62.
+
+End to end on ose-landing (`Type: "disk"`): warm, mark everything stale, stop
+the CMS, and every page answers 200. A restart with the CMS still down answers
+200 from the warmed memory tier.
+
+### Constraints
+
+- No new `any`. Additive API only: `StaleCache`, `CacheStatusHeader`.
+- Branch `feat/stale-page-cache` in a worktree, CHANGELOG `## v0.63.0`, minor
+  bump. The user's standing go-ahead (`/goal bitir işi`) covers tag and push
+  once the work is verified and reviewed. Docs site after the release.
