@@ -312,3 +312,39 @@ func TestTiered_DefaultTTLAgreesAcrossTiers(t *testing.T) {
 		t.Error("memory kept the entry fresh past the disk's default TTL")
 	}
 }
+
+func TestTiered_ACancelledContextStillReachesMemory(t *testing.T) {
+	// The disk tier ignores cancellation and memory does not. A mutation on a
+	// request whose client left would otherwise reach the disk and skip memory,
+	// and memory, whose answer is final, would go on serving the old page.
+	ctx := context.Background()
+	clk := newClock(time.Unix(1_000_000, 0))
+	tier := newTestTier(t, t.TempDir(), clk, MemoryConfig{})
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+
+	if _, err := tier.Set(ctx, "k", []byte("old"), time.Hour); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if _, err := tier.SetTagged(cancelled, "k", []byte("new"), time.Hour, []string{"t"}); err != nil {
+		t.Fatalf("SetTagged: %v", err)
+	}
+	if content, _, found := tier.front.Get(ctx, "k"); !found || string(content) != "new" {
+		t.Errorf("after a cancelled SetTagged memory holds %q, %v; want the new page", content, found)
+	}
+
+	if err := tier.MarkStaleKey(cancelled, "k"); err != nil {
+		t.Fatalf("MarkStaleKey: %v", err)
+	}
+	assertStale(t, tier.front, "k", "new")
+
+	if err := tier.InvalidateKey(cancelled, "k"); err != nil {
+		t.Fatalf("InvalidateKey: %v", err)
+	}
+	if _, _, _, found := tier.front.GetStale(ctx, "k"); found {
+		t.Error("a cancelled InvalidateKey left the page in memory")
+	}
+	if _, _, _, found := tier.GetStale(ctx, "k"); found {
+		t.Error("a cancelled InvalidateKey left the page in the tier")
+	}
+}

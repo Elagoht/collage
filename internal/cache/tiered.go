@@ -149,10 +149,10 @@ func (t *TieredCache) SetTagged(ctx context.Context, key string, content []byte,
 	if ttl <= 0 {
 		ttl = t.back.defaultTTL
 	}
-	err := t.mutate(func() error {
+	err := t.mutate(ctx, func() error {
 		_, err := t.back.SetTagged(ctx, key, content, ttl, tags)
 		return err
-	}, func() error {
+	}, func(ctx context.Context) error {
 		_, err := t.front.SetTagged(ctx, key, content, ttl, tags)
 		return err
 	})
@@ -162,51 +162,56 @@ func (t *TieredCache) SetTagged(ctx context.Context, key string, content []byte,
 // mutate runs back and then front under the promotion guard described on
 // TieredCache. front runs whatever back returned, so memory is always applied;
 // their errors are joined.
-func (t *TieredCache) mutate(back, front func() error) error {
+//
+// front gets ctx without its cancellation. The disk tier ignores cancellation and
+// memory honours it, so a mutation on a request whose client has gone would
+// otherwise reach the disk and skip memory — and memory, whose answer is final
+// once it holds a key, would go on serving the page the mutation replaced.
+func (t *TieredCache) mutate(ctx context.Context, back func() error, front func(context.Context) error) error {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	t.gen.Add(1)
 	defer t.gen.Add(1)
 	backErr := back()
-	return errors.Join(backErr, front())
+	return errors.Join(backErr, front(context.WithoutCancel(ctx)))
 }
 
 // InvalidateKey removes key from both tiers.
 func (t *TieredCache) InvalidateKey(ctx context.Context, key string) error {
-	err := t.mutate(
+	err := t.mutate(ctx,
 		func() error { return t.back.InvalidateKey(ctx, key) },
-		func() error { return t.front.InvalidateKey(ctx, key) })
+		func(ctx context.Context) error { return t.front.InvalidateKey(ctx, key) })
 	return err
 }
 
 // Invalidate removes every entry carrying any of tags from both tiers.
 func (t *TieredCache) Invalidate(ctx context.Context, tags []string) error {
-	err := t.mutate(
+	err := t.mutate(ctx,
 		func() error { return t.back.Invalidate(ctx, tags) },
-		func() error { return t.front.Invalidate(ctx, tags) })
+		func(ctx context.Context) error { return t.front.Invalidate(ctx, tags) })
 	return err
 }
 
 // MarkStaleKey marks key stale in both tiers.
 func (t *TieredCache) MarkStaleKey(ctx context.Context, key string) error {
-	err := t.mutate(
+	err := t.mutate(ctx,
 		func() error { return t.back.MarkStaleKey(ctx, key) },
-		func() error { return t.front.MarkStaleKey(ctx, key) })
+		func(ctx context.Context) error { return t.front.MarkStaleKey(ctx, key) })
 	return err
 }
 
 // MarkStale marks every entry carrying any of tags stale in both tiers.
 func (t *TieredCache) MarkStale(ctx context.Context, tags []string) error {
-	err := t.mutate(
+	err := t.mutate(ctx,
 		func() error { return t.back.MarkStale(ctx, tags) },
-		func() error { return t.front.MarkStale(ctx, tags) })
+		func(ctx context.Context) error { return t.front.MarkStale(ctx, tags) })
 	return err
 }
 
 // Clear empties both tiers.
 func (t *TieredCache) Clear(ctx context.Context) error {
-	err := t.mutate(
+	err := t.mutate(ctx,
 		func() error { return t.back.Clear(ctx) },
-		func() error { return t.front.Clear(ctx) })
+		func(ctx context.Context) error { return t.front.Clear(ctx) })
 	return err
 }
