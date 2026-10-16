@@ -96,11 +96,17 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 		}
 		// Memory in front of the disk, so a hit is not a file read on every
 		// request. MaxEntries and MaxBytes size the disk, as they always have;
-		// memory takes the same entry cap but its own default byte cap, since the
-		// disk's is sized for a disk.
+		// memory takes the same entry cap, and a byte cap of its own default or
+		// MaxBytes, whichever is smaller: the disk's default is sized for a disk,
+		// but a MaxBytes set below the memory default is a ceiling on memory too.
+		memoryBytes := cache.DefaultMemoryMaxBytes
+		if cfg.Cache.MaxBytes > 0 {
+			memoryBytes = min(memoryBytes, cfg.Cache.MaxBytes)
+		}
 		tiered := cache.NewTiered(cache.NewMemory(cache.MemoryConfig{
 			DefaultTTL: cfg.Cache.DefaultTTL,
 			MaxEntries: cfg.Cache.MaxEntries,
+			MaxBytes:   memoryBytes,
 		}), disk)
 		logger.Info("collage: caching to disk", "dir", tiered.Dir(), "version", version)
 		return tiered, nil
@@ -119,9 +125,9 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 //
 // It is also stable where it needs to be. Two invocations of an unchanged program
 // hash the same, including under "go run", whose build cache hands back the same
-// binary; and every machine in a fleet running the same build hashes the same, so
-// they share a cache. Measured at one to two milliseconds for a binary of a few
-// megabytes, paid once at startup.
+// binary; and every machine in a fleet running the same build hashes the same.
+// Measured at one to two milliseconds for a binary of a few megabytes, paid once
+// at startup.
 //
 // Not the VCS revision from debug.ReadBuildInfo: "go run" usually omits it, and it
 // says nothing about uncommitted edits — which are exactly the edits a developer is

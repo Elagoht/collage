@@ -2,8 +2,11 @@ package core
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -274,5 +277,49 @@ func TestInvalidateTags_ARenderStartedMidInvalidationIsNotStored(t *testing.T) {
 	// The home page, kept stale; nothing for /about.
 	if n := store.Stats().Entries; n != 1 {
 		t.Fatalf("store holds %d entries, want 1: a render begun mid-invalidation was stored", n)
+	}
+}
+
+// A "disk" cache's memory tier is never larger than MaxBytes: a cap set below the
+// tier's own default bounds the process's memory as well as the disk, and a page
+// the disk has evicted is not still served from memory.
+func TestBuildCache_ADiskCachesMemoryTierHonoursASmallerMaxBytes(t *testing.T) {
+	ctx := context.Background()
+	var cfg Config
+	cfg.Cache.Type = "disk"
+	cfg.Cache.Dir = t.TempDir()
+	cfg.Cache.Version = "v"
+	cfg.Cache.MaxBytes = 4096
+	store, err := buildCache(cfg, false, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatalf("buildCache: %v", err)
+	}
+	tiered, ok := store.(*cache.TieredCache)
+	if !ok {
+		t.Fatalf("store is %T, want a tiered cache", store)
+	}
+
+	page := []byte(strings.Repeat("x", 3000))
+	if _, err := tiered.Set(ctx, "first", page, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	// Older than the second, so the disk evicts it first.
+	files, err := os.ReadDir(tiered.Dir())
+	if err != nil || len(files) != 1 {
+		t.Fatalf("ReadDir = %v, %v, want one file", files, err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(filepath.Join(tiered.Dir(), files[0].Name()), old, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tiered.Set(ctx, "second", page, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, _, found := tiered.Get(ctx, "first"); found {
+		t.Error("the memory tier still serves a page past MaxBytes")
+	}
+	if _, _, found := tiered.Get(ctx, "second"); !found {
+		t.Error("the newest page is missing")
 	}
 }
