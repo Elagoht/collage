@@ -262,18 +262,18 @@ type Handler struct {
 	defaultTTL time.Duration
 	// invalidations is Deps.Invalidations, read around a render.
 	invalidations func() (started, finished uint64)
-	mounts            []*asset.Mount
-	handlers          []HandlerMount
-	chain             http.Handler
-	reload            *reloadHub
-	pageReady         func(*types.Page) bool
-	maxBodyBytes      int64
-	invalidator       Invalidator
-	routes            types.Routes
-	csrf              *csrf.Guard
-	frameOptions      string
-	noSniff           bool
-	trusted           []netip.Prefix
+	mounts        []*asset.Mount
+	handlers      []HandlerMount
+	chain         http.Handler
+	reload        *reloadHub
+	pageReady     func(*types.Page) bool
+	maxBodyBytes  int64
+	invalidator   Invalidator
+	routes        types.Routes
+	csrf          *csrf.Guard
+	frameOptions  string
+	noSniff       bool
+	trusted       []netip.Prefix
 	// flight coalesces concurrent renders of one cache key, so an expiring
 	// popular page costs one render rather than one per request that arrives
 	// while it is being re-made.
@@ -303,19 +303,19 @@ func New(d Deps) (*Handler, error) {
 		return nil, fmt.Errorf("%w: Logger", ErrMissingDependency)
 	}
 	h := &Handler{
-		origins:           d.Origins,
-		router:            d.Router,
-		renderer:          d.Renderer,
-		cache:             d.Cache,
-		tracker:           d.Tracker,
-		plugins:           d.Plugins,
-		metrics:           observability.MetricsOrNoop(d.Metrics),
-		tracer:            observability.TracerOrNoop(d.Tracer),
-		logger:            d.Logger,
-		devMode:           d.DevMode,
-		devHosts:          slices.Clone(d.DevHosts),
-		defaultTTL:        d.DefaultTTL,
-		invalidations:     d.Invalidations,
+		origins:       d.Origins,
+		router:        d.Router,
+		renderer:      d.Renderer,
+		cache:         d.Cache,
+		tracker:       d.Tracker,
+		plugins:       d.Plugins,
+		metrics:       observability.MetricsOrNoop(d.Metrics),
+		tracer:        observability.TracerOrNoop(d.Tracer),
+		logger:        d.Logger,
+		devMode:       d.DevMode,
+		devHosts:      slices.Clone(d.DevHosts),
+		defaultTTL:    d.DefaultTTL,
+		invalidations: d.Invalidations,
 		// Cloned so a caller mutating d.Mounts after New returns cannot change
 		// what this Handler serves.
 		mounts:       slices.Clone(d.Mounts),
