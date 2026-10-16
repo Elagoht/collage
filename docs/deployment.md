@@ -390,7 +390,7 @@ pages first, so a restarted instance serves its recent pages from memory at once
 That memory is up to 256 MiB of the process, outside `MaxBytes`: see
 [below](#a-memory-cache-and-the-containers-limit). Instances that share one
 directory share its files but not that memory: an invalidation on one is seen by
-another only when its in-memory copy expires. And an invalidated page is kept, to
+another only when its in-memory copy expires or is evicted. And an invalidated page is kept, to
 be served if its re-render fails — see [caching](caching.md#stale-pages-and-x-collage-cache).
 
 **`.cache` is relative to the working directory, and that is the one thing about a

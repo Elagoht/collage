@@ -202,8 +202,8 @@ type BuiltRedirect = plugin.BuiltRedirect
 type RedirectSource = plugin.RedirectSource
 
 // PathTag is the dependency tag every cached page and document carries for the
-// URL path it was rendered for: InvalidateTags(ctx, PathTag("/blog")) drops what
-// is cached for that path, whatever else it depends on.
+// URL path it was rendered for: InvalidateTags(ctx, PathTag("/blog")) invalidates
+// (marks stale on the built-in stores) what is cached for that path, whatever else it depends on.
 func PathTag(path string) string { return types.PathTag(path) }
 
 // FragmentReport is how one fragment of a render went, as AfterRenderEvent.Fragments

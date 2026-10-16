@@ -196,13 +196,15 @@ and then redirects must not have the reader follow that redirect into a cache en
 the change already made wrong.
 
 The pages are marked stale, and so are the `collage.Cached` values they were
-built from: both are kept. The page the redirect lands on is rendered again, from
-the stale value, which also starts the fetch that replaces it, so the reader sees
-the change once that fetch has finished, not on this load. That render is not
-stored, and if it fails the reader is shown the old page. That is the price of a
-site that keeps answering while its upstream is down. When an action must show its
+built from: both are kept. A page that reads `Cached` data is degraded right after the
+invalidation, since it read a stale value. So the redirect lands on the *old* page,
+served stale (`X-Collage-Cache: STALE`, `Cache-Control: no-store`) while the fetch
+that replaces the value runs in the background; the next request after that fetch
+has finished renders the new page and stores it. That is the price of a site that
+keeps answering while its upstream is down. When an action must show its
 own change at once, use `app.PurgeTags` from the handler for those tags instead.
-Nothing is then kept, so a failed fetch fails the page.
+Nothing is then kept, so the redirect shows the change at once, and a failed fetch
+fails the page.
 
 ## Request bodies are bounded
 

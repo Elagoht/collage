@@ -322,7 +322,9 @@ the same flight as any miss, so concurrent requests still share one render:
 
 - **A good render** is stored and served in place of the stale one. The response
   is a `MISS`.
-- **A render that fails, or comes out degraded**, is not stored. The stale bytes
+- **A render that fails, or comes out degraded**, is not stored. Reading a stale
+  `collage.Cached` value is one cause of degraded, and the usual one right after an
+  invalidation: the page's data is stale until the background fetch replaces it. The stale bytes
   are served instead, with `Cache-Control: no-store` so that no browser or CDN
   keeps them, and the response says `X-Collage-Cache: STALE`. A visitor sees an
   old page, not a 500.
@@ -361,7 +363,8 @@ answered with a page or document carries one of:
 | `MISS` | Rendered — no entry, or only a stale one. |
 | `STALE` | The stale entry, served because its replacement failed or was degraded. |
 
-The header is not sent in development, where the cache is not read, nor on an
+A `304` answer to a conditional request carries it too. The header is not sent in
+development, where the cache is not read, nor on an
 error response, nor on a page that is not cacheable (`Dynamic()`, `SkipCache`),
 nor in a static build.
 A custom store that is not a `StaleCache` never answers `STALE`. It is for
@@ -551,8 +554,9 @@ the file's contents, served `immutable`, so a changed file is a new URL — see
 The same `MaxEntries` bounds the `collage.Cached` data store, which evicts the
 other way: least recently used, so a value read on every page stays. Two caches,
 one number — an application that sizes it sizes both, each counted separately. A
-`"disk"` cache is not bounded by it; its entries leave by expiry and
-invalidation.
+`"disk"` cache is bounded by it in both tiers (the disk also by `MaxBytes`); its
+entries leave by eviction or `PurgeTags` — an expired or invalidated entry stays,
+as stale.
 
 ## Supplying your own cache
 

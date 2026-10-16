@@ -50,9 +50,12 @@
   as before: invalidation drops, and it never answers `STALE`. A `StaleCache` that
   is not also a `TaggedCache` cannot have already-invalidated pages purged by tag
   with `PurgeTags`.
-- **An action's redirect after `InvalidateTags`** now lands on a page rendered
-  from the new data, or on the old page if that render fails, rather than on a
-  guaranteed-new render; use `PurgeTags` to never show the old page.
+- **An action's redirect after `InvalidateTags`**: a page that reads
+  `collage.Cached` data is degraded right after the invalidation, so the redirect
+  lands on the old page, served `STALE` with `no-store`, while the background fetch
+  runs; the next request after it renders and stores the new page. Call `PurgeTags`
+  from the handler to show the change at once, failing the page if the upstream is
+  down.
 
 ## v0.62.0
 
