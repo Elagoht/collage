@@ -116,6 +116,11 @@ type DiskCache struct {
 
 // header is the JSON line at the front of an entry file.
 type header struct {
+	// Key is the cache key the entry was stored under. File names are hashes of
+	// it and cannot be turned back into it, so this is what lets a tiered cache
+	// warm its memory tier from the directory after a restart. Files written
+	// before it existed lack it; they are still read by key, only not warmed.
+	Key       string   `json:"key,omitempty"`
 	ETag      string   `json:"etag"`
 	ExpiresAt int64    `json:"expiresAt"`
 	Tags      []string `json:"tags,omitempty"`
@@ -230,6 +235,65 @@ func (c *DiskCache) GetStale(_ context.Context, key string) ([]byte, string, boo
 	return content, h.ETag, h.Stale || c.now().UnixNano() >= h.ExpiresAt, true
 }
 
+// load returns key's whole entry — content, ETag, expiry and tags — and whether it
+// is stale, for a tiered cache copying it into memory as it is. found is false for
+// a missing or unreadable entry.
+func (c *DiskCache) load(key string) (Entry, bool, bool) {
+	path, ok := c.path(key)
+	if !ok {
+		return Entry{}, false, false
+	}
+	h, content, err := readEntry(path)
+	if err != nil {
+		return Entry{}, false, false
+	}
+	e, stale := c.entryOf(h, content)
+	return e, stale, true
+}
+
+// entryOf turns a stored header and content into an Entry, and reports whether
+// it is stale by the same rule GetStale applies.
+func (c *DiskCache) entryOf(h header, content []byte) (Entry, bool) {
+	var expiresAt time.Time
+	if h.ExpiresAt != 0 {
+		expiresAt = time.Unix(0, h.ExpiresAt)
+	}
+	e := Entry{Content: content, ETag: h.ETag, ExpiresAt: expiresAt, Tags: h.Tags}
+	return e, h.Stale || c.now().UnixNano() >= h.ExpiresAt
+}
+
+// newestFirst returns the paths of the stored entry files, most recently written
+// first, skipping the temporary files, dotfiles and subdirectories countEntries
+// skips. It returns paths rather than keys because a file name is a hash of its
+// key; the key is in the header. An unreadable directory yields none.
+func (c *DiskCache) newestFirst() []string {
+	dirEntries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return nil
+	}
+	type stored struct {
+		path    string
+		modTime time.Time
+	}
+	files := make([]stored, 0, len(dirEntries))
+	for _, entry := range dirEntries {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, stored{filepath.Join(c.dir, entry.Name()), info.ModTime()})
+	}
+	sort.SliceStable(files, func(i, j int) bool { return files[i].modTime.After(files[j].modTime) })
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.path
+	}
+	return paths
+}
+
 // Set stores content under key.
 func (c *DiskCache) Set(ctx context.Context, key string, content []byte, ttl time.Duration) (string, error) {
 	return c.SetTagged(ctx, key, content, ttl, nil)
@@ -247,6 +311,7 @@ func (c *DiskCache) SetTagged(_ context.Context, key string, content []byte, ttl
 
 	etag := ETag(content)
 	line, err := json.Marshal(header{
+		Key:       key,
 		ETag:      etag,
 		ExpiresAt: c.now().Add(ttl).UnixNano(),
 		Tags:      tags,

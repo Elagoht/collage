@@ -227,31 +227,71 @@ func (c *MemoryCache) SetTagged(ctx context.Context, key string, content []byte,
 		expiresAt = c.cfg.Now().Add(ttl)
 	}
 
+	if c.insertLocked(key, Entry{Content: content, ETag: etag, ExpiresAt: expiresAt, Tags: tags}, false) {
+		c.sets.Add(1)
+	}
+	return etag, nil
+}
+
+// put stores e under key exactly as given — its expiry, tags and the stale flag —
+// rather than computing an expiry from a ttl the way SetTagged does. The tiered
+// cache uses it to copy a disk entry into memory, where a fresh expiry would let a
+// promoted page outlive the copy it came from. It respects the limits as a write
+// does, and is not counted in Stats.Sets, since nothing new was rendered.
+func (c *MemoryCache) put(key string, e Entry, stale bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.insertLocked(key, e, stale)
+}
+
+// room reports how many more entries, and how many more bytes of content, the
+// cache takes before a write would evict. A negative value means that limit is
+// off. The tiered cache's warm-up uses it to stop short of evicting anything.
+func (c *MemoryCache) room() (entries int, size int64) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	entries, size = -1, -1
+	if c.cfg.MaxEntries >= 0 {
+		entries = max(c.cfg.MaxEntries-len(c.entries), 0)
+	}
+	if c.cfg.MaxBytes > 0 {
+		size = max(c.cfg.MaxBytes-c.bytes, 0)
+	}
+	return entries, size
+}
+
+// insertLocked replaces whatever key holds with e, copying its content and tags,
+// assigning it a new insertion sequence and indexing its tags, then evicts down to
+// the limits. It reports whether the entry was stored: one larger than the whole
+// byte cap is not. SetTagged and put share it so the tag index, the byte count
+// and the FIFO queue are kept in one place. Callers must hold c.mu for writing.
+func (c *MemoryCache) insertLocked(key string, e Entry, stale bool) bool {
 	if _, exists := c.entries[key]; exists {
 		c.removeLocked(key)
 	}
-	if c.cfg.MaxBytes > 0 && int64(len(content)) > c.cfg.MaxBytes {
+	if c.cfg.MaxBytes > 0 && int64(len(e.Content)) > c.cfg.MaxBytes {
 		// Larger than the whole cache: storing it would evict everything else
 		// and then itself. Served, not kept; the entry it replaces is gone,
 		// because that one is stale now.
-		return etag, nil
+		return false
 	}
 
 	c.seq++
 	pos := c.pushBackLocked(key)
 	c.entries[key] = &record{
 		entry: Entry{
-			Content:   append([]byte(nil), content...),
-			ETag:      etag,
-			ExpiresAt: expiresAt,
-			Tags:      append([]string(nil), tags...),
+			Content:   append([]byte(nil), e.Content...),
+			ETag:      e.ETag,
+			ExpiresAt: e.ExpiresAt,
+			Tags:      append([]string(nil), e.Tags...),
 			Sequence:  c.seq,
 		},
-		pos: pos,
+		pos:   pos,
+		stale: stale,
 	}
-	c.bytes += int64(len(content))
+	c.bytes += int64(len(e.Content))
 
-	for _, tag := range tags {
+	for _, tag := range e.Tags {
 		set, ok := c.tags[tag]
 		if !ok {
 			set = make(map[string]struct{})
@@ -260,10 +300,8 @@ func (c *MemoryCache) SetTagged(ctx context.Context, key string, content []byte,
 		set[key] = struct{}{}
 	}
 
-	c.sets.Add(1)
 	c.evictIfNeededLocked()
-
-	return etag, nil
+	return true
 }
 
 // Invalidate removes every entry associated with any of tags, and drops each of

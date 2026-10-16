@@ -94,8 +94,16 @@ func buildCache(cfg Config, devMode bool, logger *slog.Logger) (cache.Cache, err
 				"dir", cfg.Cache.Dir, "err", err)
 			return memory(), nil
 		}
-		logger.Info("collage: caching to disk", "dir", disk.Dir(), "version", version)
-		return disk, nil
+		// Memory in front of the disk, so a hit is not a file read on every
+		// request. MaxEntries and MaxBytes size the disk, as they always have;
+		// memory takes the same entry cap but its own default byte cap, since the
+		// disk's is sized for a disk.
+		tiered := cache.NewTiered(cache.NewMemory(cache.MemoryConfig{
+			DefaultTTL: cfg.Cache.DefaultTTL,
+			MaxEntries: cfg.Cache.MaxEntries,
+		}), disk)
+		logger.Info("collage: caching to disk", "dir", tiered.Dir(), "version", version)
+		return tiered, nil
 
 	default:
 		return nil, fmt.Errorf("%w: %q", ErrInvalidCacheType, cfg.Cache.Type)
