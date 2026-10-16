@@ -1318,6 +1318,11 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 // outright, never kept to be served stale, and collage.Cached values outright, on disk too, rather
 // than keeping them to serve stale. The pages count and the errors are
 // InvalidateTagsN's.
+//
+// A page that InvalidateTags already marked stale is reached through the store's
+// own tag index (cache.TaggedCache), since the tracker has forgotten it. A custom
+// cache.StaleCache that is not also a TaggedCache therefore cannot have such
+// pages purged by tag; every built-in store can.
 func (a *App) PurgeTags(ctx context.Context, tags ...string) error {
 	_, err := a.dropTags(ctx, tags, true)
 	return err
@@ -1433,12 +1438,11 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 		failures = errors.Join(failures, err)
 	}
 
-	// Stale pages stay known to the tracker: a later PurgeTags must still reach
-	// them, and the next good render writes the same tags again.
+	// Forgotten even when the pages were only marked stale, so the plugin event
+	// and the count do not name an already-invalidated page again. A later
+	// PurgeTags still reaches those stale pages through the store's own tag
+	// index, which keeps stale entries, not through this tracker.
 	for _, key := range keys {
-		if staleStore != nil {
-			break
-		}
 		if err := a.tracker.Forget(ctx, key); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("collage: forget %q: %w", key, err))
 		}

@@ -32,11 +32,17 @@ func (p plainCache) Clear(ctx context.Context) error { return p.inner.Clear(ctx)
 // renders the home page once and returns the app with the page's cache key.
 func warmedHome(t *testing.T, store cache.Cache) (*App, string) {
 	t.Helper()
-	app := newTestApp(t, func(cfg *Config) {
+	return warmedHomeWith(t, func(cfg *Config) {
 		if store != nil {
 			cfg.Cache.Store = store
 		}
 	})
+}
+
+// warmedHomeWith is warmedHome with the configuration changed by mutate.
+func warmedHomeWith(t *testing.T, mutate func(*Config)) (*App, string) {
+	t.Helper()
+	app := newTestApp(t, mutate)
 	if err := app.RegisterPage(newHomePage()); err != nil {
 		t.Fatalf("RegisterPage: %v", err)
 	}
@@ -69,18 +75,38 @@ func TestInvalidateTags_MarksPagesStaleOnAStaleCache(t *testing.T) {
 	}
 }
 
+// A purge after an invalidation reaches the stale page through the store's own
+// tag index, because the tracker has already forgotten it.
 func TestPurgeTags_RemovesStalePages(t *testing.T) {
-	app, key := warmedHome(t, nil)
-	ctx := context.Background()
+	stores := map[string]func(*Config){
+		"memory": nil,
+		"tiered disk": func(cfg *Config) {
+			cfg.Cache.Type = "disk"
+			cfg.Cache.Dir = t.TempDir()
+		},
+	}
+	for name, mutate := range stores {
+		t.Run(name, func(t *testing.T) {
+			app, key := warmedHomeWith(t, mutate)
+			ctx := context.Background()
+			stale, ok := app.store.(cache.StaleCache)
+			if !ok {
+				t.Fatalf("store %T is not a StaleCache", app.store)
+			}
 
-	if err := app.InvalidateTags(ctx, "homepage"); err != nil {
-		t.Fatalf("InvalidateTags: %v", err)
-	}
-	if err := app.PurgeTags(ctx, "homepage"); err != nil {
-		t.Fatalf("PurgeTags: %v", err)
-	}
-	if _, _, _, found := app.store.(cache.StaleCache).GetStale(ctx, key); found {
-		t.Fatal("GetStale found the page after a purge, want nothing")
+			if err := app.InvalidateTags(ctx, "homepage"); err != nil {
+				t.Fatalf("InvalidateTags: %v", err)
+			}
+			if _, _, isStale, found := stale.GetStale(ctx, key); !found || !isStale {
+				t.Fatalf("before the purge: found=%v stale=%v, want a stale page", found, isStale)
+			}
+			if err := app.PurgeTags(ctx, "homepage"); err != nil {
+				t.Fatalf("PurgeTags: %v", err)
+			}
+			if _, _, _, found := stale.GetStale(ctx, key); found {
+				t.Fatal("GetStale found the page after a purge, want nothing")
+			}
+		})
 	}
 }
 
