@@ -348,3 +348,46 @@ func TestTiered_ACancelledContextStillReachesMemory(t *testing.T) {
 		t.Error("a cancelled InvalidateKey left the page in the tier")
 	}
 }
+
+// A promotion never waits on a mutation: with one in flight — the read lock held
+// — a disk hit is answered at once and simply not copied into memory, which the
+// generation check would have refused anyway. Waiting would queue every reader
+// of a disk-only key behind a slow invalidation.
+func TestTiered_APromotionDuringAMutationDoesNotWait(t *testing.T) {
+	ctx := context.Background()
+	clk := newClock(time.Unix(1_000_000, 0))
+	back := newTestDisk(t, t.TempDir(), "v1", clk.Now)
+	if _, err := back.SetTagged(ctx, "k", []byte("from disk"), time.Minute, nil); err != nil {
+		t.Fatal(err)
+	}
+	tier := &TieredCache{front: NewMemory(MemoryConfig{Now: clk.Now}), back: back}
+
+	tier.mu.RLock()
+	got := make(chan string, 1)
+	go func() {
+		content, _, _, _ := tier.GetStale(ctx, "k")
+		got <- string(content)
+	}()
+	select {
+	case content := <-got:
+		if content != "from disk" {
+			t.Errorf("GetStale = %q, want the disk entry", content)
+		}
+	case <-time.After(2 * time.Second):
+		tier.mu.RUnlock()
+		<-got
+		t.Fatal("a promotion waited on a mutation in flight")
+	}
+	tier.mu.RUnlock()
+	if keys := frontKeys(tier, "k"); len(keys) != 0 {
+		t.Errorf("memory holds %v, want nothing promoted during a mutation", keys)
+	}
+
+	// With nothing in flight it promotes as before.
+	if content, _, _, _ := tier.GetStale(ctx, "k"); content == nil {
+		t.Fatal("GetStale missed the disk entry")
+	}
+	if keys := frontKeys(tier, "k"); len(keys) != 1 {
+		t.Errorf("memory holds %v, want the entry promoted", keys)
+	}
+}

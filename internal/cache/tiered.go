@@ -28,10 +28,14 @@ type TieredCache struct {
 	//
 	// Each mutation bumps gen before and after it touches the tiers, holding mu's
 	// read lock throughout. A promotion notes gen before reading the disk, and
-	// copies only under mu's write lock with gen unchanged. The write lock waits
-	// for a mutation already in flight, whose second bump then shows; a mutation
-	// that starts later waits for the copy, and so overwrites or removes it.
-	// Mutations do not wait on each other, only on the rare promotion.
+	// copies only under mu's write lock with gen unchanged. It only tries for the
+	// write lock: one it cannot have now means a mutation is in flight, whose
+	// bumps would fail the check anyway, so the promotion is skipped and the disk
+	// entry served as it is. Waiting instead would queue every reader of a
+	// disk-only key behind a slow invalidation, and every mutation behind them. A
+	// mutation that starts after the lock was taken waits for the copy, and so
+	// overwrites or removes it. Mutations do not wait on each other, only on the
+	// rare promotion, and a promotion never waits.
 	mu  sync.RWMutex
 	gen atomic.Uint64
 }
@@ -110,7 +114,8 @@ func (t *TieredCache) Get(ctx context.Context, key string) ([]byte, string, bool
 // GetStale returns key's entry, fresh or stale, from memory, or from disk when
 // memory has none. Memory's answer is final once it has the key: it holds the same
 // entry the disk does, so asking the disk again would only cost a read. A disk hit
-// is copied into memory with its expiry, tags and stale mark unchanged.
+// is copied into memory with its expiry, tags and stale mark unchanged, unless a
+// mutation is in flight: see TieredCache.
 func (t *TieredCache) GetStale(ctx context.Context, key string) ([]byte, string, bool, bool) {
 	if ctx.Err() != nil {
 		return nil, "", false, false
@@ -124,11 +129,12 @@ func (t *TieredCache) GetStale(ctx context.Context, key string) ([]byte, string,
 	if !found {
 		return nil, "", false, false
 	}
-	t.mu.Lock()
-	if t.gen.Load() == gen {
-		t.front.put(key, e, stale)
+	if t.mu.TryLock() {
+		if t.gen.Load() == gen {
+			t.front.put(key, e, stale)
+		}
+		t.mu.Unlock()
 	}
-	t.mu.Unlock()
 	return e.Content, e.ETag, stale, true
 }
 
