@@ -75,12 +75,19 @@ func (t *TieredCache) warm() {
 		if entries == 0 {
 			break
 		}
-		h, content, err := readEntry(path)
+		// The header alone first: a file that will be skipped is not read whole.
+		h, err := readHeader(path)
 		if err != nil || h.Key == "" {
 			continue
 		}
 		if want, ok := t.back.path(h.Key); !ok || want != path {
 			continue // a header that names some other file's key
+		}
+		// Read again whole: a write since the header was read leaves the same
+		// key at the same path, so only the read itself can fail here.
+		h, content, err := readEntry(path)
+		if err != nil {
+			continue
 		}
 		if size >= 0 && int64(len(content)) > size {
 			break
