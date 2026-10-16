@@ -210,12 +210,17 @@ only `GET` and `HEAD` are served from cache and that a `HEAD` never populates it
 Tag invalidation is the same call:
 
 ```go
-// A new post drops the cached home page, the cached post page, and the cached
-// sitemap — all three declared "blog:posts".
+// A new post invalidates the cached home page, the cached post page, and the
+// cached sitemap — all three declared "blog:posts"; each renders again on its next
+// request.
 if err := app.InvalidateTags(ctx, "blog:posts"); err != nil {
 	log.Printf("invalidate: %v", err)
 }
 ```
+
+A stale document is served the way a stale page is, when its re-render fails: with
+`Cache-Control: no-store` and `X-Collage-Cache: STALE`, and a 404 drops it. See
+[stale pages](caching.md#stale-pages-and-x-collage-cache).
 
 ## Plugins see three hooks, not five
 

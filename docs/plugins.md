@@ -284,7 +284,7 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | `RequestHook` | `OnRequest` | First, before collage's request span, middleware and routing — also for a request answered before routing (an encoded slash, a dirty path); returns the context to serve under and a function told the final status | the request's context |
 | `AfterRenderHook` | `OnAfterRender` | After a successful render, with `ev.Fragments` (each fragment's time and failure), `ev.DependencyTags` and `ev.Values` (read with a key's `In`). **Pages only**, on the same terms | `ev.HTML`, `ev.Hoist(area, key, html)`; reports with `ev.Warn`, `ev.Error` |
 | `DocumentRenderedHook` | `OnDocumentRendered` | After a document handler returns, before its body is cached or served. **Documents only** | `ev.Body` |
-| `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike; `ev.Entries` names each dropped entry's host and URL path | nothing |
+| `CacheInvalidateHook` | `OnCacheInvalidate` | After entries for some tags were invalidated — for a page or a document alike; `ev.Entries` names each invalidated entry's host and URL path | nothing |
 | `ErrorHook` | `OnError` | On any failure while serving a request — a page, a document, or a mounted asset alike | nothing |
 | `BuildFinishedHook` | `OnBuildFinished` | Once, when a static build has written every file | reports with `ev.Warn`, `ev.Error` |
 | `StreamCloser` | `CloseStreams` | Once, when shutdown begins, before the server waits for open requests (see "Streams and shutdown") | nothing |

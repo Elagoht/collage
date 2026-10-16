@@ -385,6 +385,14 @@ the previous one's pages and you never have to remember to clear anything. In a
 container the directory is inside the container, so every instance fills its own;
 that is fine — the cost is one render per page per instance.
 
+A disk cache has memory in front of it, filled from the directory at startup, newest
+pages first, so a restarted instance serves its recent pages from memory at once.
+That memory is up to 256 MiB of the process, outside `MaxBytes`: see
+[below](#a-memory-cache-and-the-containers-limit). Instances that share one
+directory share its files but not that memory: an invalidation on one is seen by
+another only when its in-memory copy expires. And an invalidated page is kept, to
+be served if its re-render fails — see [caching](caching.md#stale-pages-and-x-collage-cache).
+
 **`.cache` is relative to the working directory, and that is the one thing about a
 scaffolded project that is not.** Templates and static files are embedded, so the
 binary runs from anywhere; the cache directory is a path, so it lands wherever you
@@ -442,7 +450,9 @@ below it — what the cache holds is live and cannot be collected however hard t
 runtime tries. A cache sized at a third to a half of the limit leaves room for the
 renders themselves — in a 512 MiB container, lower `MaxBytes` from its default to
 128–192 MiB. A `"disk"` cache, which is what a scaffolded project uses,
-keeps its pages on disk and does not need this.
+keeps its pages on disk, but has a memory tier of up to 256 MiB in front of them
+that this applies to as well. `MaxBytes` sizes the disk, not that tier: set
+`GOMEMLIMIT`, and lower `MaxEntries` if the tier must hold less.
 
 ## Health checks
 
