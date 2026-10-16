@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
@@ -38,6 +40,9 @@ type newsOptions struct {
 	ttl     time.Duration
 	// dynamic makes the page uncacheable.
 	dynamic bool
+	// plugins and logger, when set, go into the Config.
+	plugins []collage.Plugin
+	logger  *slog.Logger
 }
 
 func newNewsSite(t *testing.T, opts newsOptions) *newsSite {
@@ -57,7 +62,9 @@ func newNewsSite(t *testing.T, opts newsOptions) *newsSite {
 			"t/body.html":  {Data: []byte(`<h1>{{.Text}}</h1>`)},
 			"t/aside.html": {Data: []byte(`<aside>{{.Text}}</aside>`)},
 		}, Root: "t"},
-		Cache: opts.cache,
+		Cache:   opts.cache,
+		Plugins: opts.plugins,
+		Logger:  opts.logger,
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
@@ -396,5 +403,43 @@ func TestStalePages_ADocumentOverlappingAnInvalidationIsNotStored(t *testing.T) 
 	defer site.mu.Unlock()
 	if runs != 2 {
 		t.Errorf("handler runs = %d, want 2", runs)
+	}
+}
+
+// A stale page hides an outage from readers, not from the operator: the failed
+// render reaches the error hooks once, with a zero status because the reader got
+// the stale page. A degraded fallback has no error to report; its failed fragment
+// is reported as any degraded render's is, by the render engine's warning, and the
+// error hooks hear nothing of it, stale or not.
+func TestStalePages_TheHiddenFailureReachesTheErrorHook(t *testing.T) {
+	events := &eventRecorder{}
+	logs := &lockedBuffer{}
+	site := newNewsSite(t, newsOptions{
+		plugins: []collage.Plugin{events},
+		logger:  slog.New(slog.NewTextHandler(logs, nil)),
+	})
+	site.get()
+	const fragmentWarning = "fragment failed; the page is served without it"
+
+	site.set(func(s *newsSite) { s.asideErr = errors.New("aside down") })
+	if err := site.app.InvalidateTags(context.Background(), "news"); err != nil {
+		t.Fatal(err)
+	}
+	expect(t, "degraded", site.get(), http.StatusOK, oldNews, "STALE")
+	if got := len(events.at("/")); got != 0 {
+		t.Errorf("error hook calls for a degraded fallback = %d, want 0", got)
+	}
+	if got := strings.Count(logs.String(), fragmentWarning); got != 1 {
+		t.Errorf("fragment warnings = %d, want 1: the degraded render reports its fragment as always", got)
+	}
+
+	site.set(func(s *newsSite) { s.asideErr = nil; s.textErr = errors.New("cms down") })
+	expect(t, "failed", site.get(), http.StatusOK, oldNews, "STALE")
+	got := events.at("/")
+	if len(got) != 1 {
+		t.Fatalf("error hook calls for a failed render served stale = %d, want 1", len(got))
+	}
+	if got[0].Status != 0 || !strings.Contains(got[0].Err.Error(), "cms down") || got[0].Stage != collage.StageRender {
+		t.Errorf("error event = status %d stage %q err %v, want 0, render, cms down", got[0].Status, got[0].Stage, got[0].Err)
 	}
 }

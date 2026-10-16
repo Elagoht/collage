@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -294,7 +295,8 @@ func TestHandler_WaitersOfAFailedRenderEachServeTheStalePage(t *testing.T) {
 	page := testPage("home", "/", types.StrategyIncremental)
 	inner := newFakeEngine(fakeRender{err: errors.New("cms down")})
 	blocking := newBlockingEngine(inner)
-	env := newEnv(t, []*types.Page{page}, func(d *Deps) { d.Renderer = blocking })
+	recorder := &recordingPlugin{}
+	env := newEnv(t, []*types.Page{page}, withPlugins(t, recorder), func(d *Deps) { d.Renderer = blocking })
 	key := flightKeyFor(t, env, "/")
 	ctx := context.Background()
 	if _, err := env.cache.SetTagged(ctx, key, []byte("<html>old</html>"), time.Hour, nil); err != nil {
@@ -327,6 +329,36 @@ func TestHandler_WaitersOfAFailedRenderEachServeTheStalePage(t *testing.T) {
 	}
 	if got := cacheEvents(env, observability.CacheStale); got != readers {
 		t.Errorf("CacheStale events = %d, want one per reader (%d)", got, readers)
+	}
+	// One render failed, so one outage is reported, however many readers it
+	// was hidden from.
+	if errs := recorder.reportedErrors(); len(errs) != 1 || errs[0] == nil || errs[0].Error() != "cms down" {
+		t.Errorf("error hook got %v, want the one render's failure once", errs)
+	}
+	if got := recorder.recorded(); !slices.Contains(got, "Error:"+stageRender) {
+		t.Errorf("hooks = %q, want an Error at the render stage", got)
+	}
+	if got := env.logs.count(staleLog); got != 1 {
+		t.Errorf("stale warnings = %d, want 1 for one failed render", got)
+	}
+}
+
+// A degraded render falling back to the stale page has no error to hand the
+// error hooks: its fragment failure is the render engine's to report.
+func TestHandler_ADegradedStaleFallbackFiresNoErrorHook(t *testing.T) {
+	recorder := &recordingPlugin{}
+	env, _ := staleEnv(t, withPlugins(t, recorder))
+	env.engine.set("home", fakeRender{html: "<html>holed</html>", degraded: "aside", err: nil})
+	rec := env.get("/")
+	if rec.Body.String() != "<html>old</html>" || rec.Header().Get(CacheStatusHeader) != cacheStale {
+		t.Fatalf("degraded over a stale entry = %q %s=%q, want the stale page",
+			rec.Body.String(), CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if errs := recorder.reportedErrors(); len(errs) != 0 {
+		t.Errorf("error hook got %v for a degraded fallback, want nothing", errs)
+	}
+	if got := env.logs.count(staleLog); got != 1 {
+		t.Errorf("stale warnings = %d, want 1", got)
 	}
 }
 

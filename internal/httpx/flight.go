@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -31,6 +32,11 @@ type outcome struct {
 	// degraded reports a render served with a failed optional fragment, which
 	// no cache may keep.
 	degraded bool
+	// staleReported is claimed by the first request that answers this outcome
+	// with a stale entry. Every request that joined the render holds this same
+	// outcome, so the failure behind the stale serves is logged and handed to
+	// the error hooks once per render, not once per reader. See reportStale.
+	staleReported atomic.Bool
 }
 
 // flight coalesces concurrent renders of the same cache key.

@@ -1216,16 +1216,37 @@ func (h *Handler) staleFallback(ctx context.Context, out *outcome) fallback {
 	return fallbackNone
 }
 
-// reportStale counts and logs one stale page or document served in place of out:
-// a stale serve is the site hiding an outage, and every one of them stays visible.
+// reportStale accounts for one stale page or document served in place of out: a
+// stale serve is the site hiding an outage, and the outage must stay visible to
+// whoever watches the site.
+//
+// CacheStale is reported for every stale response, since it counts serves. The
+// warning, and the render's failure for the error hooks, are reported once per
+// render: every request that joined one render in the flight holds the same
+// outcome, and the first of them to serve stale claims it. Without that, eight
+// readers waiting on one failed render would be eight outages to an error
+// tracker. The failure goes out with a zero status, as a failed cache write's
+// does, because the response actually sent is the stale page, not an error.
+//
+// A degraded render has no failure to hand on: its failed fragments were already
+// logged and measured by the render engine, which is how a fragment failure is
+// reported whether or not the page is then served stale.
 func (h *Handler) reportStale(r *http.Request, key, kind, name string, out *outcome) {
 	h.metrics.CacheEvent(r.Context(), observability.CacheStale, key)
+	if !out.staleReported.CompareAndSwap(false, true) {
+		return
+	}
 	reason := "degraded"
 	if out.fail != nil && out.fail.err != nil {
 		reason = out.fail.err.Error()
 	}
 	h.logger.Warn("collage: serving a stale "+kind+", its render failed",
 		kind, name, "path", r.URL.Path, "err", reason)
+	if out.fail != nil {
+		hidden := *out.fail
+		hidden.status = 0
+		h.reportError(r, hidden)
+	}
 }
 
 // reportsCacheStatus reports whether a cacheable response — one with a cache key,
