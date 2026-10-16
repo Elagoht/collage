@@ -715,7 +715,8 @@ type StaleCache interface {
   expiry, with `stale` true. `found` is false only when the key has no entry at
   all.
 - `Get` must no longer report a stale entry, nor an expired one: it is a miss, as
-  before. The framework calls `GetStale` only after `Get` missed.
+  before. For a store that implements `StaleCache`, the framework looks a page up
+  with `GetStale` alone, so one lookup is one hit or one miss in your counters.
 - `MarkStaleKey` keeps the entry, with its content, ETag, expiry and tags, and
   marks it. Marking a key with no entry is not an error. A later `Set` or
   `SetTagged` for the key stores a fresh entry, which clears the mark.
