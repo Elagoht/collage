@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/observability"
+	"github.com/Elagoht/collage/internal/render"
+	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -58,7 +61,180 @@ func cacheEvents(env *testEnv, event observability.CacheEvent) int {
 	return n
 }
 
-const staleLog = "collage: serving a stale page, its render failed"
+const (
+	staleLog       = "collage: serving a stale page, its render failed"
+	staleDataLog   = "collage: serving a stale page while its data refreshes"
+	staleDocLog    = "collage: serving a stale document, its render failed"
+	staleDocData   = "collage: serving a stale document while its data refreshes"
+	requestFailLog = "collage: request failed"
+)
+
+// levelCount counts the records logged at level, whatever their message.
+func levelCount(logs *countingHandler, level slog.Level) int {
+	logs.mu.Lock()
+	defer logs.mu.Unlock()
+	n := 0
+	for _, rec := range logs.records {
+		if rec.level == level {
+			n++
+		}
+	}
+	return n
+}
+
+// recordsAt returns the records carrying msg logged at level.
+func recordsAt(logs *countingHandler, msg string, level slog.Level) int {
+	n := 0
+	for _, rec := range logs.recordsFor(msg) {
+		if rec.level == level {
+			n++
+		}
+	}
+	return n
+}
+
+// A render degraded only because it read stale cached data is the data store
+// refreshing in the background, which is the stale cache working as it should:
+// the stale page it falls back to is a debug line, not a warning, and no error.
+func TestHandler_AStaleDataFallbackLogsAtDebug(t *testing.T) {
+	recorder := &recordingPlugin{}
+	env, _ := staleEnv(t, withPlugins(t, recorder))
+	env.engine.set("home", fakeRender{html: "<html>from stale data</html>", stale: true})
+	rec := env.get("/")
+	if rec.Body.String() != "<html>old</html>" || rec.Header().Get(CacheStatusHeader) != cacheStale {
+		t.Fatalf("stale-data render over a stale entry = %q %s=%q, want the stale page",
+			rec.Body.String(), CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if got := env.logs.count(staleLog); got != 0 {
+		t.Errorf("stale warnings = %d, want none for a render that only read stale data", got)
+	}
+	if got := recordsAt(env.logs, staleDataLog, slog.LevelDebug); got != 1 {
+		t.Errorf("debug %q lines = %d, want 1", staleDataLog, got)
+	}
+	if got := levelCount(env.logs, slog.LevelWarn) + levelCount(env.logs, slog.LevelError); got != 0 {
+		t.Errorf("warn/error lines = %d, want none", got)
+	}
+	if errs := recorder.reportedErrors(); len(errs) != 0 {
+		t.Errorf("error hook got %v, want nothing", errs)
+	}
+	if got := cacheEvents(env, observability.CacheStale); got != 1 {
+		t.Errorf("CacheStale events = %d, want 1", got)
+	}
+}
+
+// A failed render a stale page hides is one log line, the warning, and one call to
+// the error hooks: not also the error-level "request failed" an error page would
+// have logged, since no error page was served.
+func TestHandler_AHiddenStaleFailureLogsOneWarning(t *testing.T) {
+	recorder := &recordingPlugin{}
+	env, _ := staleEnv(t, withPlugins(t, recorder))
+	rec := env.get("/")
+	if rec.Header().Get(CacheStatusHeader) != cacheStale {
+		t.Fatalf("%s = %q, want STALE", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if got := recordsAt(env.logs, staleLog, slog.LevelWarn); got != 1 {
+		t.Errorf("stale warnings = %d, want 1", got)
+	}
+	if got := levelCount(env.logs, slog.LevelError); got != 0 {
+		t.Errorf("error-level lines = %d (%d %q), want none", got, env.logs.count(requestFailLog), requestFailLog)
+	}
+	if got := levelCount(env.logs, slog.LevelWarn); got != 1 {
+		t.Errorf("warn lines = %d, want exactly the one stale warning", got)
+	}
+	if errs := recorder.reportedErrors(); len(errs) != 1 {
+		t.Errorf("error hook got %v, want the failure once", errs)
+	}
+}
+
+// staleDocEngine is a fakeEngine that also answers documents, with result.
+type staleDocEngine struct {
+	*fakeEngine
+	mu     sync.Mutex
+	result render.DocumentResult
+	err    error
+}
+
+func (e *staleDocEngine) set(result render.DocumentResult, err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.result, e.err = result, err
+}
+
+func (e *staleDocEngine) ExecuteDocument(_ context.Context, doc *types.Document, _ *types.RenderContext) (*render.DocumentResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	result := e.result
+	result.ContentType = doc.ContentType
+	return &result, e.err
+}
+
+// staleDocEnv is a cached document at /feed.xml warmed with "old", whose entry is
+// then marked stale.
+func staleDocEnv(t *testing.T, opts ...envOption) (*testEnv, *staleDocEngine) {
+	t.Helper()
+	doc := &types.Document{
+		Name:        "feed",
+		ContentType: "application/xml",
+		Paths:       map[string]string{"en": "/feed.xml"},
+		Strategy:    types.StrategyIncremental,
+		CacheTTL:    time.Hour,
+		Handler: func(context.Context, *types.RenderContext) ([]byte, []string, error) {
+			return nil, nil, nil
+		},
+	}
+	engine := &staleDocEngine{fakeEngine: newFakeEngine(fakeRender{})}
+	engine.set(render.DocumentResult{Body: []byte("old"), Tags: []string{"feed"}}, nil)
+	rt := router.New(router.LocaleOptions{Default: "en"})
+	if err := rt.RegisterDocument(doc); err != nil {
+		t.Fatal(err)
+	}
+	opts = append([]envOption{func(d *Deps) { d.Router, d.Renderer = rt, engine }}, opts...)
+	env := newEnv(t, nil, opts...)
+	if rec := env.get("/feed.xml"); rec.Code != http.StatusOK {
+		t.Fatalf("warm = %d", rec.Code)
+	}
+	keys, err := env.tracker.Resolve(context.Background(), []string{"feed"})
+	if err != nil || len(keys) != 1 {
+		t.Fatalf("Resolve = %v, %v", keys, err)
+	}
+	if err := env.cache.MarkStaleKey(context.Background(), keys[0]); err != nil {
+		t.Fatal(err)
+	}
+	return env, engine
+}
+
+// A document is the same: stale data alone is debug, a failure a warning.
+func TestHandler_AStaleDocumentLogsByWhyItIsStale(t *testing.T) {
+	recorder := &recordingPlugin{}
+	env, engine := staleDocEnv(t, withPlugins(t, recorder))
+
+	engine.set(render.DocumentResult{Body: []byte("from stale data"), Stale: true}, nil)
+	if rec := env.get("/feed.xml"); rec.Body.String() != "old" || rec.Header().Get(CacheStatusHeader) != cacheStale {
+		t.Fatalf("stale-data document = %q %s=%q, want the stale entry", rec.Body.String(),
+			CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if got := recordsAt(env.logs, staleDocData, slog.LevelDebug); got != 1 {
+		t.Errorf("debug %q lines = %d, want 1", staleDocData, got)
+	}
+	if got := levelCount(env.logs, slog.LevelWarn) + levelCount(env.logs, slog.LevelError); got != 0 {
+		t.Errorf("warn/error lines = %d after a stale-data document, want none", got)
+	}
+
+	engine.set(render.DocumentResult{}, errors.New("feed down"))
+	if rec := env.get("/feed.xml"); rec.Body.String() != "old" || rec.Header().Get(CacheStatusHeader) != cacheStale {
+		t.Fatalf("failed document = %q %s=%q, want the stale entry", rec.Body.String(),
+			CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if got := recordsAt(env.logs, staleDocLog, slog.LevelWarn); got != 1 {
+		t.Errorf("stale document warnings = %d, want 1", got)
+	}
+	if got := levelCount(env.logs, slog.LevelError); got != 0 {
+		t.Errorf("error-level lines = %d, want none", got)
+	}
+	if errs := recorder.reportedErrors(); len(errs) != 1 {
+		t.Errorf("error hook got %v, want the failure once", errs)
+	}
+}
 
 // A stale serve is a miss to the cache, one lookup's worth, and a stale event and
 // a warning to whoever watches the site: an outage hidden from readers must not

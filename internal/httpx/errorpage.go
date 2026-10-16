@@ -160,6 +160,12 @@ func (h *Handler) ServeStatus(w http.ResponseWriter, r *http.Request, status int
 // document, since the event's Path already identifies the route, and widening a
 // public plugin struct just to carry a name for a log line is not worth it.
 func (h *Handler) reportError(r *http.Request, f failure) {
+	h.logFailure(r, f)
+	h.dispatchError(r, f)
+}
+
+// logFailure is reportError's log line, at the level reportError describes.
+func (h *Handler) logFailure(r *http.Request, f failure) {
 	level := slog.LevelError
 	switch {
 	case f.requestFault:
@@ -216,7 +222,12 @@ func (h *Handler) reportError(r *http.Request, f failure) {
 			slog.Any("error", f.err),
 		}, stack...)...)
 	}
+}
 
+// dispatchError is reportError's call to the error hooks, without its log line:
+// for a caller that has logged the failure its own way. A request's own fault
+// goes to no hook.
+func (h *Handler) dispatchError(r *http.Request, f failure) {
 	if f.requestFault {
 		return
 	}

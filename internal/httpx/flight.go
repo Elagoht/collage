@@ -29,9 +29,14 @@ type outcome struct {
 	// problems are the fragments that failed in a render that produced a page
 	// anyway, collected in development only, for the overlay.
 	problems []devProblem
-	// degraded reports a render served with a failed optional fragment, which
-	// no cache may keep.
+	// degraded reports a render served with a failed optional fragment, or built
+	// from stale cached data, which no cache may keep.
 	degraded bool
+	// staleDataOnly reports a degraded render whose only fault is stale cached
+	// data: no fragment failed, and the data store is refreshing what it read.
+	// A stale page served in its place is the cache working, not an outage, and
+	// is logged at debug rather than warned about. See reportStale.
+	staleDataOnly bool
 	// staleReported is claimed by the first request that answers this outcome
 	// with a stale entry. Every request that joined the render holds this same
 	// outcome, so the failure behind the stale serves is logged and handed to

@@ -1144,7 +1144,14 @@ func (h *Handler) renderPage(
 	}
 
 	problems := append(h.devProblems(result), h.devFindings(afterRender.Findings)...)
-	return &outcome{content: content, etag: etag, renderTime: renderTime, problems: problems, degraded: result.Degraded()}
+	return &outcome{
+		content:       content,
+		etag:          etag,
+		renderTime:    renderTime,
+		problems:      problems,
+		degraded:      result.Degraded(),
+		staleDataOnly: result.Stale && !anyFragmentFailed(result),
+	}
 }
 
 // cacheGet is the cache lookup, which never finds anything in development. See the
@@ -1223,19 +1230,31 @@ func (h *Handler) staleFallback(ctx context.Context, out *outcome) fallback {
 // whoever watches the site.
 //
 // CacheStale is reported for every stale response, since it counts serves. The
-// warning, and the render's failure for the error hooks, are reported once per
+// log line, and the render's failure for the error hooks, are reported once per
 // render: every request that joined one render in the flight holds the same
 // outcome, and the first of them to serve stale claims it. Without that, eight
 // readers waiting on one failed render would be eight outages to an error
-// tracker. The failure goes out with a zero status, as a failed cache write's
-// does, because the response actually sent is the stale page, not an error.
+// tracker.
 //
+// The line's level says why. A render that failed, or that has a failed fragment,
+// is a warning. A render whose only fault is stale cached data is no outage: the
+// data store is refreshing what it read in the background, and the next render
+// is likely whole, so it is a debug line.
+//
+// A failure goes to the error hooks with a zero status, as a failed cache
+// write's does, because the response actually sent is the stale page, not an
+// error. It is not also logged as "request failed": the warning is its one line.
 // A degraded render has no failure to hand on: its failed fragments were already
 // logged and measured by the render engine, which is how a fragment failure is
 // reported whether or not the page is then served stale.
 func (h *Handler) reportStale(r *http.Request, key, kind, name string, out *outcome) {
 	h.metrics.CacheEvent(r.Context(), observability.CacheStale, key)
 	if !out.staleReported.CompareAndSwap(false, true) {
+		return
+	}
+	if out.fail == nil && out.staleDataOnly {
+		h.logger.Debug("collage: serving a stale "+kind+" while its data refreshes",
+			kind, name, "path", r.URL.Path)
 		return
 	}
 	reason := "degraded"
@@ -1247,8 +1266,22 @@ func (h *Handler) reportStale(r *http.Request, key, kind, name string, out *outc
 	if out.fail != nil {
 		hidden := *out.fail
 		hidden.status = 0
-		h.reportError(r, hidden)
+		h.dispatchError(r, hidden)
 	}
+}
+
+// anyFragmentFailed reports whether any fragment of result failed. It is
+// nil-safe.
+func anyFragmentFailed(result *render.Result) bool {
+	if result == nil || result.Metadata == nil {
+		return false
+	}
+	for i := range result.Metadata.Fragments {
+		if result.Metadata.Fragments[i].Failed {
+			return true
+		}
+	}
+	return false
 }
 
 // reportsCacheStatus reports whether a cacheable response — one with a cache key,

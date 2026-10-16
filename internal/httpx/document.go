@@ -154,7 +154,9 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		if etag == "" {
 			etag = cache.ETag(result.Body)
 		}
-		return &outcome{content: result.Body, etag: etag, renderTime: result.Timing.Total, degraded: result.Stale}
+		// A document has no fragments: its one way to be degraded is stale data.
+		return &outcome{content: result.Body, etag: etag, renderTime: result.Timing.Total,
+			degraded: result.Stale, staleDataOnly: result.Stale}
 	}
 
 	// Concurrent misses on one key share one run of the handler, as a page's do:

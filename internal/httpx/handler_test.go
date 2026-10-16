@@ -38,6 +38,8 @@ type fakeRender struct {
 	err      error
 	degraded string
 	notFound bool
+	// stale reports a render built from a value collage.Cached kept stale.
+	stale bool
 }
 
 // fakeEngine is a render.Engine that returns a pre-programmed outcome per page name
@@ -88,7 +90,7 @@ func (e *fakeEngine) Render(_ context.Context, rc *types.RenderContext) (*render
 	if out.degraded != "" {
 		metadata.Fragments = []types.FragmentReport{{Name: out.degraded, Failed: true, Err: out.err}}
 	}
-	result := &render.Result{DependencyTags: out.tags, Metadata: metadata, NotFound: out.notFound}
+	result := &render.Result{DependencyTags: out.tags, Metadata: metadata, NotFound: out.notFound, Stale: out.stale}
 	if out.err != nil {
 		return result, out.err
 	}
