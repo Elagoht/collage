@@ -1305,10 +1305,10 @@ func (s *taggedSpy) Invalidate(ctx context.Context, tags []string) error {
 	return s.MemoryCache.Invalidate(ctx, tags)
 }
 
-// MarkStale records its tags separately from Invalidate's: the spy is a StaleCache through the embedded
-// memory cache, and an invalidation reaches such a store by marking its entries
-// stale, not through Invalidate, which stays for a purge and for stores that
-// cannot keep a stale entry.
+// MarkStale records its tags separately from Invalidate's: the spy is a
+// StaleCache through the embedded memory cache, and an invalidation reaches such
+// a store by marking its entries stale, not through Invalidate, which stays for
+// a purge and for stores that cannot keep a stale entry.
 func (s *taggedSpy) MarkStale(ctx context.Context, tags []string) error {
 	s.mu.Lock()
 	s.marked = append(s.marked, append([]string(nil), tags...))
