@@ -339,15 +339,21 @@ there to be asked for.
 
 Each stale response is reported as the `CacheStale` metrics event, once per
 response served. The failure it hides is reported once per failed render, however
-many requests were waiting on it: logged at warn (`collage: serving a stale page,
-its render failed`, with the path and the error) and handed to plugins' `OnError`
-hook with a status of 0, since no error response was sent. A degraded render has
-no error of its own to hand on; its failed fragments were already logged and
-counted when they failed.
+many requests were waiting on it: logged once at warn (`collage: serving a stale
+page, its render failed`, with the path and the error) — not also as an
+error-level `collage: request failed`, since no error page was served — and handed
+to plugins' `OnError` hook with a status of 0, since no error response was sent. A
+render with a failed fragment is a warning too, but has no error of its own to
+hand on; its failed fragments were already logged and counted when they failed. A
+render degraded only because it read stale `collage.Cached` data is no outage —
+the data is refreshing in the background — so its stale serve is logged at debug
+(`collage: serving a stale page while its data refreshes`), and nothing reaches
+`OnError`. Documents are reported the same way.
 
-A render that overlaps any `InvalidateTags` or `PurgeTags` call, for any tags, is
-not stored: it may have read the data from before the change, and storing it would
-bring the old page back as fresh.
+A render that overlaps any `InvalidateTags` or `PurgeTags` call — one that began
+while a call was under way, or during which one began — is not stored, for any
+tags: it may have read the data from before the change, and storing it would bring
+the old page back as fresh.
 
 `PurgeTags` leaves nothing to fall back on, so a purged page that fails to render
 fails.
@@ -802,10 +808,10 @@ a read and a JSON decode, on every request; so a `"disk"` cache is a
 [memory cache](#the-built-in-memory-cache) over the directory. A write goes to
 disk and then to memory, and a read asks memory first and copies what it found on
 disk into memory as it goes. `MaxEntries` bounds both tiers. `MaxBytes` bounds the
-disk (default 1 GiB); the memory tier has its own byte cap of 256 MiB, so a disk
-cache can hold up to that much of your process's memory on top of the disk, which
-`MaxBytes` does not lower. In a small container, set `GOMEMLIMIT` as for a memory
-cache, and `MaxEntries` lower if the tier must hold less (see
+disk (default 1 GiB); the memory tier's byte cap is 256 MiB, or `MaxBytes` when
+that is smaller, so a disk cache can hold up to that much of your process's memory
+on top of the disk. In a small container, set `GOMEMLIMIT` as for a memory cache,
+and lower `MaxBytes` or `MaxEntries` if the tier must hold less (see
 [deployment](deployment.md#a-memory-cache-and-the-containers-limit)).
 
 **A restart starts warm.** At startup the memory tier is filled from the current
@@ -816,12 +822,15 @@ upstream outage still has them to serve. Files written by v0.62 or earlier carry
 key in their header, so they are not warmed; they are still served, on the first
 request that reads them.
 
-Instances sharing one `Dir` share its files, but not their memory tiers:
-an invalidation in one instance reaches its own memory and the disk, and another
-instance keeps serving what it already holds in memory until that expires or is
-evicted. Before the memory tier, its next read would have found the file gone.
-If that matters for a fleet, give each instance its own `Dir`, or keep the TTL
-short.
+**Instances do not share a cache through one `Dir`.** Each has its own memory
+tier, and memory's answer is final once it holds a page. An invalidation in one
+instance marks the disk and its own memory; every other instance goes on serving
+the copy in its memory as a fresh `HIT` until that copy expires — for a `Static`
+page, which has no TTL, that can be until the instance restarts or evicts it. A CDN
+that refetches the page meanwhile can be handed the old copy and keep it. Give
+each instance its own `Dir`. For a fleet that must see one another's
+invalidations, use a shared `Cache.Store` that implements `collage.StaleCache` and
+`collage.TaggedCache` instead of `Type: "disk"`.
 
 The `collage.Cached` data store lives beside the pages, in `Dir/data/`. Unlike
 the pages it is shared across builds: see
@@ -835,8 +844,9 @@ under a subdirectory named for the build, and `Version` names it.
 Leave `Version` empty and it is a hash of the running executable, which changes
 exactly when the rendered output might. Two runs of an unchanged program derive the
 same value — including under `go run`, whose build cache hands back the same binary
-— and so does every machine in a fleet running the same build, so they share a
-cache. It costs one to two milliseconds at startup.
+— and so does every machine in a fleet running the same build. That keeps a build
+from reading another build's pages; it does not make a fleet share one cache (see
+above). It costs one to two milliseconds at startup.
 
 Set it when something outside the binary decides what the output looks like: a
 content revision, a configuration digest. Not to identify the build, which the

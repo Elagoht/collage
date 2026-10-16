@@ -326,7 +326,9 @@ type CacheConfig struct {
 	// Zero means the cache type's default: 256 MiB for "memory", 1 GiB for
 	// "disk". A negative value means unlimited. Past it the oldest entries are
 	// evicted, as at MaxEntries, and a page larger than the whole cap is served
-	// but not stored. A custom Store bounds itself and ignores this.
+	// but not stored. A "disk" cache's memory tier holds up to 256 MiB, or
+	// MaxBytes when that is smaller. A custom Store bounds itself and ignores
+	// this.
 	//
 	// MaxEntries counts entries, not what they weigh. The cache key holds the
 	// query by default, so a client asking for one large page under thousands
@@ -342,7 +344,9 @@ type CacheConfig struct {
 	// changes exactly when the rendered output might: a changed template compiled
 	// in, a changed handler, a changed dependency. Two runs of an unchanged program
 	// derive the same value, and so does every machine in a fleet running the same
-	// build, so they share a cache.
+	// build. Instances sharing a Dir still do not share a cache: each serves what
+	// its own memory tier holds, past another's invalidation, until it expires.
+	// Give each instance its own Dir.
 	//
 	// Set it to override that — a git commit, a release tag — when something
 	// outside the binary decides what the output looks like.

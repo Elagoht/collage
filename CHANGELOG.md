@@ -16,13 +16,16 @@
   `PurgeTags` still removes outright, and a purged page that fails to render
   fails.
 - **A render that overlaps any `InvalidateTags` or `PurgeTags` is not stored**,
-  for any tags: it may have read data from before the change.
+  for any tags — one that began while a call was under way, or during which one
+  began: it may have read data from before the change.
 - **A stale serve is reported once per failure.** The `CacheStale` metrics event
   is counted per stale response served; a failed render that a stale page hides is
-  logged at warn and handed to the plugins' `OnError` hook once, with a status of
-  0, however many requests were waiting on it.
-- **`Cache.Type` `"disk"` is now tiered**: a memory cache (up to 256 MiB by
-  default, `MaxEntries` entries) in front of the disk. A hit is served from
+  logged once at warn (not also as an error-level `request failed`) and handed to
+  the plugins' `OnError` hook once, with a status of 0, however many requests were
+  waiting on it. A render degraded only by stale `collage.Cached` data is its data
+  refreshing, not an outage: its stale serve is logged at debug.
+- **`Cache.Type` `"disk"` is now tiered**: a memory cache (up to 256 MiB, or
+  `MaxBytes` when smaller; `MaxEntries` entries) in front of the disk. A hit is served from
   memory, not read from a file. At startup the memory tier is warmed from the
   current build's directory, newest entries first, so a restart serves `HIT`s
   from memory. Files written by v0.62 or earlier carry no key in their header and
@@ -40,12 +43,14 @@
 ### Upgrade notes
 
 - **Memory.** A `"disk"` cache now holds up to 256 MiB of pages in memory as
-  well as on disk; `MaxBytes` does not lower it. In a small container, set
-  `GOMEMLIMIT` and lower `MaxEntries` if needed.
-- **Instances sharing one `Cache.Dir`.** An invalidation now reaches the disk and
-  the invalidating instance's memory; another instance keeps serving its
-  in-memory copy until it expires or is evicted. Give each instance its own
-  directory, or a short TTL, if that matters.
+  well as on disk, or `MaxBytes` when that is smaller. In a small container, set
+  `GOMEMLIMIT` and lower `MaxBytes` or `MaxEntries` if needed.
+- **Instances sharing one `Cache.Dir` do not share a cache.** An invalidation
+  reaches the disk and the invalidating instance's memory; every other instance
+  keeps serving its in-memory copy as a fresh `HIT` until it expires — for a
+  `Static` page, until a restart or an eviction — and a CDN refetching the page
+  meanwhile can keep the old copy. Give each instance its own directory, or use a
+  shared `Cache.Store` that implements `StaleCache` and `TaggedCache`.
 - **Custom stores.** A `Cache.Store` that does not implement `StaleCache` behaves
   as before: invalidation drops, and it never answers `STALE`. A `StaleCache` that
   is not also a `TaggedCache` cannot have already-invalidated pages purged by tag
