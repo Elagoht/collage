@@ -531,7 +531,8 @@ func (c *DiskCache) MarkStaleKey(_ context.Context, key string) error {
 }
 
 // MarkStale marks every entry carrying any of tags stale. Like Invalidate, it
-// reads every entry's header, and removes an entry whose header cannot be read.
+// reads every entry's header, and removes an entry whose header is corrupt. One it
+// cannot read for another reason is left as it is, and the error returned.
 func (c *DiskCache) MarkStale(_ context.Context, tags []string) error {
 	if len(tags) == 0 {
 		return nil
@@ -556,9 +557,21 @@ func (c *DiskCache) MarkStale(_ context.Context, tags []string) error {
 		}
 		path := filepath.Join(c.dir, entry.Name())
 		h, err := readHeader(path)
-		if err != nil {
+		switch {
+		case errors.Is(err, errCorruptEntry):
 			// Broken, as in Invalidate: nothing can ever read or expire it.
 			os.Remove(path)
+			continue
+		case errors.Is(err, fs.ErrNotExist):
+			continue
+		case err != nil:
+			// The system's failure, not the file's: the page may be whole, and
+			// removing it would lose what a failed render falls back to.
+			failures = append(failures, fmt.Errorf("collage: disk cache: read %s: %w", path, err))
+			continue
+		}
+		if h.Stale {
+			// Already marked: nothing to rewrite, so no reason to read the rest.
 			continue
 		}
 		for _, tag := range h.Tags {
@@ -574,10 +587,16 @@ func (c *DiskCache) MarkStale(_ context.Context, tags []string) error {
 }
 
 // markStaleLocked rewrites the entry at path with its header marked stale and
-// everything else, content included, unchanged. A missing file is not an error, an
-// unreadable one is removed, and one already stale is left alone. Callers must
-// hold c.mu, which keeps a SetTagged of the same key from being renamed into
-// place between the read and the rename here.
+// everything else, content included, unchanged. A missing file is not an error, a
+// corrupt one is removed, one that cannot be read for another reason is left and
+// the error returned, and one already stale is left alone. Callers must hold c.mu,
+// which keeps a SetTagged of the same key from being renamed into place between
+// the read and the rename here.
+//
+// Eviction scans without c.mu, so it can remove the file between the read and the
+// rename, and the rename then brings it back, once, marked stale. That is bounded:
+// the next scan recounts the directory from disk, and the file, keeping its old
+// modification time, is among the first it removes.
 //
 // The rewrite keeps the file's modification time. Eviction removes the oldest
 // file first by that time, so a mark that made the file look new would evict
@@ -594,9 +613,12 @@ func (c *DiskCache) markStaleLocked(path string) error {
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	if err != nil {
+	if errors.Is(err, errCorruptEntry) {
 		os.Remove(path)
 		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("collage: disk cache: read %s: %w", path, err)
 	}
 	if h.Stale {
 		return nil
@@ -703,7 +725,14 @@ func (c *DiskCache) writeTemp(body []byte) (string, error) {
 	return name, nil
 }
 
-// readEntry reads an entry's header and content.
+// errCorruptEntry marks a file whose bytes are not an entry: a header cut off
+// before its newline, or one that is not the JSON a header is. It is the one read
+// failure that says the file itself is broken; any other — a permission, too many
+// open files, an I/O error — is the system's, and says nothing about the file.
+var errCorruptEntry = errors.New("collage: disk cache: corrupt entry")
+
+// readEntry reads an entry's header and content. A file that is not an entry
+// fails with an error wrapping errCorruptEntry.
 func readEntry(path string) (header, []byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -712,12 +741,8 @@ func readEntry(path string) (header, []byte, error) {
 	defer file.Close()
 
 	reader := bufio.NewReader(file)
-	line, err := reader.ReadBytes('\n')
+	h, err := parseHeader(reader)
 	if err != nil {
-		return header{}, nil, err
-	}
-	var h header
-	if err := json.Unmarshal(line, &h); err != nil {
 		return header{}, nil, err
 	}
 	content, err := io.ReadAll(reader)
@@ -727,21 +752,29 @@ func readEntry(path string) (header, []byte, error) {
 	return h, content, nil
 }
 
-// readHeader reads an entry's header without reading its content.
+// readHeader reads an entry's header without reading its content. A file that is
+// not an entry fails with an error wrapping errCorruptEntry.
 func readHeader(path string) (header, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return header{}, err
 	}
 	defer file.Close()
+	return parseHeader(bufio.NewReader(file))
+}
 
-	line, err := bufio.NewReader(file).ReadBytes('\n')
+// parseHeader reads the header line from reader.
+func parseHeader(reader *bufio.Reader) (header, error) {
+	line, err := reader.ReadBytes('\n')
+	if errors.Is(err, io.EOF) {
+		return header{}, fmt.Errorf("%w: no header line", errCorruptEntry)
+	}
 	if err != nil {
 		return header{}, err
 	}
 	var h header
 	if err := json.Unmarshal(line, &h); err != nil {
-		return header{}, err
+		return header{}, fmt.Errorf("%w: %w", errCorruptEntry, err)
 	}
 	return h, nil
 }

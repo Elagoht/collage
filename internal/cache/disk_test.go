@@ -492,6 +492,76 @@ func TestDisk_MarkStaleRemovesAnUnreadableEntry(t *testing.T) {
 	}
 }
 
+// A file MarkStaleKey finds broken — a header cut off before its newline — is
+// removed, as one MarkStale's scan finds is.
+func TestDisk_MarkStaleKeyRemovesACorruptEntry(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	path, _ := c.path("k")
+	if err := os.WriteFile(path, []byte(`{"etag":"x"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.MarkStaleKey(ctx, "k"); err != nil {
+		t.Fatalf("MarkStaleKey: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("a corrupt entry survived MarkStaleKey: %v", err)
+	}
+}
+
+// unreadable makes the file at path unreadable for the rest of the test, which
+// is skipped where permissions do not stop the reader.
+func unreadable(t *testing.T, path string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its permissions")
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+}
+
+// A file that cannot be read for a reason of the system's — permissions here,
+// EMFILE or EIO in production — is not a broken entry. MarkStale leaves it and
+// says so, rather than deleting a page it would have kept.
+func TestDisk_MarkStaleKeepsAnEntryItCannotRead(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	for _, key := range []string{"locked", "open"} {
+		if _, err := c.SetTagged(ctx, key, []byte(key), time.Hour, []string{"t"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	locked, _ := c.path("locked")
+	unreadable(t, locked)
+
+	if err := c.MarkStale(ctx, []string{"t"}); err == nil {
+		t.Error("MarkStale = nil, want the read error reported")
+	}
+	if _, err := os.Stat(locked); err != nil {
+		t.Errorf("MarkStale removed an entry it could not read: %v", err)
+	}
+	assertStale(t, c, "open", "open")
+}
+
+func TestDisk_MarkStaleKeyKeepsAnEntryItCannotRead(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	if _, err := c.SetTagged(ctx, "locked", []byte("locked"), time.Hour, nil); err != nil {
+		t.Fatal(err)
+	}
+	locked, _ := c.path("locked")
+	unreadable(t, locked)
+
+	if err := c.MarkStaleKey(ctx, "locked"); err == nil {
+		t.Error("MarkStaleKey = nil, want the read error reported")
+	}
+	if _, err := os.Stat(locked); err != nil {
+		t.Errorf("MarkStaleKey removed an entry it could not read: %v", err)
+	}
+}
+
 // TestDisk_EvictionStillBoundsStaleEntries: entries kept as stale count against
 // the cap like any other, and marking one does not make it look new. Eviction
 // goes oldest first by modification time, so a rewrite that bumped the time
