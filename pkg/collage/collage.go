@@ -473,7 +473,9 @@ const (
 	// key that was already running, rather than starting one of its own.
 	CacheCoalesced = observability.CacheCoalesced
 	// CacheStale means collage.Cached served a value kept past an invalidation or
-	// its ttl, because the fetch replacing it had not succeeded.
+	// its ttl, because the fetch replacing it had not succeeded. The page cache
+	// reports it too, with the page cache key, for a page or document served
+	// stale because the render replacing it failed or was degraded.
 	CacheStale = observability.CacheStale
 )
 

@@ -870,8 +870,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	if stale != nil {
 		switch h.staleFallback(ctx, out) {
 		case fallbackStale:
-			h.reportStale(r, key, "page", page.Name, out)
-			return h.serveCached(w, r, page, stale.content, stale.etag, cacheStale)
+			// Reported once the stale page went out: serveCached can still fail
+			// to personalise it, and then what was served is an error page.
+			status := h.serveCached(w, r, page, stale.content, stale.etag, cacheStale)
+			if status == http.StatusOK || status == http.StatusNotModified {
+				h.reportStale(r, key, "page", page.Name, out)
+			}
+			return status
 		case fallbackDrop:
 			// The content is gone, so the stale copy of it goes too: kept, it
 			// would be served the next time a render merely failed.
