@@ -52,12 +52,17 @@ type node struct {
 type record struct {
 	entry Entry
 	pos   *node
+	// stale is set by MarkStaleKey and MarkStale. It lives here rather than on
+	// Entry because only the cache reads it: a write builds a new record, which is
+	// what clears it.
+	stale bool
 }
 
-// MemoryCache is an in-memory, process-local implementation of Cache and
-// TaggedCache. It evicts FIFO — oldest by insertion sequence, not least recently
-// used — once MemoryConfig.MaxEntries is exceeded, and expires entries lazily on
-// Get.
+// MemoryCache is an in-memory, process-local implementation of Cache,
+// TaggedCache and StaleCache. It evicts FIFO — oldest by insertion sequence, not
+// least recently used — once MemoryConfig.MaxEntries or MaxBytes is exceeded. An
+// expired entry is not deleted but kept as stale, so eviction is the only thing
+// that removes an entry nobody invalidates.
 type MemoryCache struct {
 	mu      sync.RWMutex
 	cfg     MemoryConfig
@@ -78,14 +83,16 @@ type MemoryCache struct {
 var (
 	_ Cache       = (*MemoryCache)(nil)
 	_ TaggedCache = (*MemoryCache)(nil)
+	_ StaleCache  = (*MemoryCache)(nil)
 )
 
 // Stats reports MemoryCache's cumulative counters, for observability.
 type Stats struct {
-	// Hits counts Get calls that returned a live entry.
+	// Hits counts Get and GetStale calls that found a fresh entry.
 	Hits uint64
-	// Misses counts Get calls that found no live entry, including entries that
-	// had expired.
+	// Misses counts Get and GetStale calls that found no fresh entry, including
+	// an entry that had expired or been marked stale. GetStale counts too because
+	// a handler reading through it would otherwise leave both counters at zero.
 	Misses uint64
 	// Sets counts successful Set and SetTagged calls.
 	Sets uint64
@@ -118,51 +125,76 @@ func NewMemory(cfg MemoryConfig) *MemoryCache {
 }
 
 // Get returns the cached content and ETag for key. found is false when there is no
-// live entry, including one that has expired — an expired entry is lazily deleted
-// as part of this call. Get only takes the write lock for that lazy delete; a plain
-// hit or a miss on a key that was never present only takes the read lock.
+// fresh entry, including one that has expired or been marked stale. Neither is
+// deleted: it stays for GetStale until it is rewritten, invalidated or evicted.
 func (c *MemoryCache) Get(ctx context.Context, key string) ([]byte, string, bool) {
-	if ctx.Err() != nil {
+	content, etag, stale, found := c.GetStale(ctx, key)
+	if !found || stale {
 		return nil, "", false
+	}
+	return content, etag, true
+}
+
+// GetStale returns key's entry whether it is fresh or not; stale is true when it
+// has expired or been marked stale. It only takes the read lock, since nothing
+// is deleted on the way out.
+func (c *MemoryCache) GetStale(ctx context.Context, key string) ([]byte, string, bool, bool) {
+	if ctx.Err() != nil {
+		return nil, "", false, false
 	}
 
 	c.mu.RLock()
 	rec, ok := c.entries[key]
-	if ok && !c.isExpired(rec.entry.ExpiresAt) {
-		content, etag := rec.entry.Content, rec.entry.ETag
+	if !ok {
 		c.mu.RUnlock()
-		c.hits.Add(1)
-		return content, etag, true
+		c.misses.Add(1)
+		return nil, "", false, false
 	}
+	content, etag := rec.entry.Content, rec.entry.ETag
+	stale := rec.stale || c.isExpired(rec.entry.ExpiresAt)
 	c.mu.RUnlock()
 
-	if !ok {
+	if stale {
 		c.misses.Add(1)
-		return nil, "", false
+	} else {
+		c.hits.Add(1)
+	}
+	return content, etag, stale, true
+}
+
+// MarkStaleKey marks key's entry stale, keeping its content, expiry, tags and
+// FIFO position: being marked is not a new insertion, so it does not buy the
+// entry a longer life under eviction. A key with no entry is not an error.
+func (c *MemoryCache) MarkStaleKey(ctx context.Context, key string) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
-	// rec existed but looked expired under the read lock. Upgrade to the write
-	// lock and re-check by key rather than trusting rec: another goroutine may
-	// have deleted, replaced, or refreshed this key between the RUnlock above and
-	// the Lock below.
 	c.mu.Lock()
-	rec, ok = c.entries[key]
-	switch {
-	case !ok:
-		c.mu.Unlock()
-		c.misses.Add(1)
-		return nil, "", false
-	case c.isExpired(rec.entry.ExpiresAt):
-		c.removeLocked(key)
-		c.mu.Unlock()
-		c.misses.Add(1)
-		return nil, "", false
-	default:
-		content, etag := rec.entry.Content, rec.entry.ETag
-		c.mu.Unlock()
-		c.hits.Add(1)
-		return content, etag, true
+	defer c.mu.Unlock()
+	if rec, ok := c.entries[key]; ok {
+		rec.stale = true
 	}
+	return nil
+}
+
+// MarkStale marks every entry associated with any of tags stale, as MarkStaleKey
+// does. The tag index is left as it is, so a later Invalidate still reaches them.
+func (c *MemoryCache) MarkStale(ctx context.Context, tags []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, tag := range tags {
+		for key := range c.tags[tag] {
+			if rec, ok := c.entries[key]; ok {
+				rec.stale = true
+			}
+		}
+	}
+	return nil
 }
 
 // Set stores content under key with no tags. It is equivalent to calling
@@ -174,8 +206,8 @@ func (c *MemoryCache) Set(ctx context.Context, key string, content []byte, ttl t
 // SetTagged stores content under key with the given ttl and tags, returning the
 // content's ETag. A ttl of zero or less uses cfg.DefaultTTL; a DefaultTTL of zero
 // means the entry never expires. Setting a key that already has an entry replaces
-// it entirely — content, ETag, expiry, and tags — and refreshes its FIFO position,
-// since the replacement is itself a new insertion. If the cache is now over
+// it entirely — content, ETag, expiry, tags and any stale mark — and refreshes its
+// FIFO position, since the replacement is itself a new insertion. If the cache is now over
 // MaxEntries, the oldest entry by insertion sequence is evicted.
 func (c *MemoryCache) SetTagged(ctx context.Context, key string, content []byte, ttl time.Duration, tags []string) (string, error) {
 	if err := ctx.Err(); err != nil {

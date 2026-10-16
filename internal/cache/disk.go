@@ -119,9 +119,16 @@ type header struct {
 	ETag      string   `json:"etag"`
 	ExpiresAt int64    `json:"expiresAt"`
 	Tags      []string `json:"tags,omitempty"`
+	// Stale is set by MarkStaleKey and MarkStale, so a mark survives a restart
+	// along with the entry. omitempty keeps a fresh entry's file as it was.
+	Stale bool `json:"stale,omitempty"`
 }
 
-var _ TaggedCache = (*DiskCache)(nil)
+var (
+	_ Cache       = (*DiskCache)(nil)
+	_ TaggedCache = (*DiskCache)(nil)
+	_ StaleCache  = (*DiskCache)(nil)
+)
 
 // NewDisk returns a DiskCache under cfg.Dir, in a subdirectory named for cfg.Version.
 func NewDisk(cfg DiskConfig) (*DiskCache, error) {
@@ -198,43 +205,29 @@ func (c *DiskCache) countEntries() int {
 // Dir is where this cache stores its entries, version subdirectory included.
 func (c *DiskCache) Dir() string { return c.dir }
 
-// Get returns the cached content and ETag for key.
-//
-// An expired entry is reported missing and deleted on the way out, so a cache that
-// is read but never written does not grow without bound.
-func (c *DiskCache) Get(_ context.Context, key string) ([]byte, string, bool) {
+// Get returns the cached content and ETag for key. An entry that has expired or
+// been marked stale is reported missing but left on disk for GetStale; eviction,
+// not reading, is what bounds the directory.
+func (c *DiskCache) Get(ctx context.Context, key string) ([]byte, string, bool) {
+	content, etag, stale, found := c.GetStale(ctx, key)
+	if !found || stale {
+		return nil, "", false
+	}
+	return content, etag, true
+}
+
+// GetStale returns key's entry whether it is fresh or not; stale is true when it
+// has expired or been marked stale.
+func (c *DiskCache) GetStale(_ context.Context, key string) ([]byte, string, bool, bool) {
 	path, ok := c.path(key)
 	if !ok {
-		return nil, "", false
+		return nil, "", false, false
 	}
-
-	file, err := os.Open(path)
+	h, content, err := readEntry(path)
 	if err != nil {
-		return nil, "", false
+		return nil, "", false, false
 	}
-	defer file.Close()
-
-	reader := bufio.NewReader(file)
-	line, err := reader.ReadBytes('\n')
-	if err != nil {
-		return nil, "", false
-	}
-	var h header
-	if err := json.Unmarshal(line, &h); err != nil {
-		return nil, "", false
-	}
-	if c.now().UnixNano() >= h.ExpiresAt {
-		c.mu.Lock()
-		os.Remove(path)
-		c.mu.Unlock()
-		return nil, "", false
-	}
-
-	content, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, "", false
-	}
-	return content, h.ETag, true
+	return content, h.ETag, h.Stale || c.now().UnixNano() >= h.ExpiresAt, true
 }
 
 // Set stores content under key.
@@ -460,6 +453,118 @@ func (c *DiskCache) Invalidate(_ context.Context, tags []string) error {
 	return errors.Join(failures...)
 }
 
+// MarkStaleKey marks the entry stored under key stale. A key with no entry is not
+// an error.
+func (c *DiskCache) MarkStaleKey(_ context.Context, key string) error {
+	path, ok := c.path(key)
+	if !ok {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.markStaleLocked(path)
+}
+
+// MarkStale marks every entry carrying any of tags stale. Like Invalidate, it
+// reads every entry's header, and removes an entry whose header cannot be read.
+func (c *DiskCache) MarkStale(_ context.Context, tags []string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	wanted := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		wanted[tag] = struct{}{}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return fmt.Errorf("collage: disk cache: list %s: %w", c.dir, err)
+	}
+
+	var failures []error
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		path := filepath.Join(c.dir, entry.Name())
+		h, err := readHeader(path)
+		if err != nil {
+			// Broken, as in Invalidate: nothing can ever read or expire it.
+			os.Remove(path)
+			continue
+		}
+		for _, tag := range h.Tags {
+			if _, hit := wanted[tag]; hit {
+				if err := c.markStaleLocked(path); err != nil {
+					failures = append(failures, err)
+				}
+				break
+			}
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// markStaleLocked rewrites the entry at path with its header marked stale and
+// everything else, content included, unchanged. A missing file is not an error, an
+// unreadable one is removed, and one already stale is left alone. Callers must
+// hold c.mu, which keeps a SetTagged of the same key from being renamed into
+// place between the read and the rename here.
+//
+// The rewrite keeps the file's modification time. Eviction removes the oldest
+// file first by that time, so a mark that made the file look new would evict
+// fresh pages ahead of the stale one.
+func (c *DiskCache) markStaleLocked(path string) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	h, content, err := readEntry(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		os.Remove(path)
+		return nil
+	}
+	if h.Stale {
+		return nil
+	}
+
+	h.Stale = true
+	line, err := json.Marshal(h)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	buf.Grow(len(line) + 1 + len(content))
+	buf.Write(line)
+	buf.WriteByte('\n')
+	buf.Write(content)
+
+	tmp, err := c.writeTemp(buf.Bytes())
+	if err != nil {
+		return err
+	}
+	mod := info.ModTime()
+	if err := os.Chtimes(tmp, mod, mod); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	c.bytes += int64(buf.Len()) - info.Size()
+	return nil
+}
+
 // InvalidateKey removes the entry stored under key.
 func (c *DiskCache) InvalidateKey(_ context.Context, key string) error {
 	path, ok := c.path(key)
@@ -531,6 +636,30 @@ func (c *DiskCache) writeTemp(body []byte) (string, error) {
 		return "", err
 	}
 	return name, nil
+}
+
+// readEntry reads an entry's header and content.
+func readEntry(path string) (header, []byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return header{}, nil, err
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	line, err := reader.ReadBytes('\n')
+	if err != nil {
+		return header{}, nil, err
+	}
+	var h header
+	if err := json.Unmarshal(line, &h); err != nil {
+		return header{}, nil, err
+	}
+	content, err := io.ReadAll(reader)
+	if err != nil {
+		return header{}, nil, err
+	}
+	return h, content, nil
 }
 
 // readHeader reads an entry's header without reading its content.

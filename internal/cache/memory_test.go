@@ -80,18 +80,13 @@ func TestMemoryCache_Expiry(t *testing.T) {
 		t.Fatal("Get() found = false before TTL elapsed")
 	}
 
-	// At and past expiry: gone, and lazily removed.
+	// At and past expiry: Get misses it. It used to be deleted here too; it is now
+	// kept as stale, the copy a failed re-render falls back to.
 	clk.Advance(time.Second)
 	if _, _, found := c.Get(ctx, "k1"); found {
 		t.Fatal("Get() found = true after TTL elapsed")
 	}
-
-	c.mu.RLock()
-	_, stillStored := c.entries["k1"]
-	c.mu.RUnlock()
-	if stillStored {
-		t.Fatal("expired entry was not lazily deleted from entries")
-	}
+	assertStale(t, c, "k1", "hello")
 }
 
 func TestMemoryCache_SetTTLLessOrEqualZeroUsesDefault(t *testing.T) {
@@ -266,7 +261,10 @@ func TestMemoryCache_TagIndexHasNoOrphans(t *testing.T) {
 		}
 	})
 
-	t.Run("after lazy expiry", func(t *testing.T) {
+	t.Run("after expiry and invalidation", func(t *testing.T) {
+		// An expired entry is kept as stale, so its tags stay indexed: without
+		// them MarkStale and Invalidate could never reach it. The index empties
+		// once the entry is actually removed.
 		clk := newClock(time.Unix(0, 0))
 		c := NewMemory(MemoryConfig{Now: clk.Now})
 		if _, err := c.SetTagged(ctx, "k", []byte("v"), time.Minute, []string{"t1", "t2"}); err != nil {
@@ -275,6 +273,15 @@ func TestMemoryCache_TagIndexHasNoOrphans(t *testing.T) {
 		clk.Advance(2 * time.Minute)
 		if _, _, found := c.Get(ctx, "k"); found {
 			t.Fatal("entry should have been expired")
+		}
+		c.mu.RLock()
+		_, hasT1 := c.tags["t1"]
+		c.mu.RUnlock()
+		if !hasT1 {
+			t.Fatal("an expired entry's tags left the index while the entry is kept")
+		}
+		if err := c.Invalidate(ctx, []string{"t1"}); err != nil {
+			t.Fatalf("Invalidate() error = %v", err)
 		}
 		assertTagIndexEmpty(t, c)
 	})
@@ -571,5 +578,115 @@ func TestMemoryCache_ReSetRefreshesFIFOPosition(t *testing.T) {
 	fill(t, c, "e")
 	if got := present(t, c, "a", "c", "d", "e"); !equalKeys(got, []string{"a", "d", "e"}) {
 		t.Fatalf("live keys = %v, want [a d e]: a Get must not refresh FIFO position", got)
+	}
+}
+
+// assertStale checks that GetStale finds key with want content, marked stale.
+func assertStale(t *testing.T, c StaleCache, key, want string) {
+	t.Helper()
+	content, etag, stale, found := c.GetStale(context.Background(), key)
+	if !found {
+		t.Fatalf("GetStale(%q) found = false, want the entry kept as stale", key)
+	}
+	if !stale {
+		t.Errorf("GetStale(%q) stale = false, want true", key)
+	}
+	if string(content) != want {
+		t.Errorf("GetStale(%q) content = %q, want %q", key, content, want)
+	}
+	if etag != ETag([]byte(want)) {
+		t.Errorf("GetStale(%q) etag = %q, want %q", key, etag, ETag([]byte(want)))
+	}
+}
+
+func TestMemoryCache_MarkStaleKeyKeepsTheEntry(t *testing.T) {
+	ctx := context.Background()
+	c := NewMemory(MemoryConfig{})
+	if _, err := c.Set(ctx, "k", []byte("old page"), time.Hour); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if err := c.MarkStaleKey(ctx, "k"); err != nil {
+		t.Fatalf("MarkStaleKey() error = %v", err)
+	}
+	if _, _, found := c.Get(ctx, "k"); found {
+		t.Error("Get() served an entry marked stale")
+	}
+	assertStale(t, c, "k", "old page")
+}
+
+func TestMemoryCache_MarkStaleByTag(t *testing.T) {
+	ctx := context.Background()
+	c := NewMemory(MemoryConfig{})
+	if _, err := c.SetTagged(ctx, "a", []byte("A"), time.Hour, []string{"post:1"}); err != nil {
+		t.Fatalf("SetTagged(a) error = %v", err)
+	}
+	if _, err := c.SetTagged(ctx, "b", []byte("B"), time.Hour, []string{"post:2", "list"}); err != nil {
+		t.Fatalf("SetTagged(b) error = %v", err)
+	}
+	if _, err := c.SetTagged(ctx, "c", []byte("C"), time.Hour, []string{"other"}); err != nil {
+		t.Fatalf("SetTagged(c) error = %v", err)
+	}
+	if err := c.MarkStale(ctx, []string{"post:1", "list"}); err != nil {
+		t.Fatalf("MarkStale() error = %v", err)
+	}
+	assertStale(t, c, "a", "A")
+	assertStale(t, c, "b", "B")
+	if _, _, stale, found := c.GetStale(ctx, "c"); !found || stale {
+		t.Errorf("untagged entry: stale = %v, found = %v; want fresh and found", stale, found)
+	}
+	if _, _, found := c.Get(ctx, "c"); !found {
+		t.Error("Get() missed an entry no tag reached")
+	}
+}
+
+func TestMemoryCache_ExpiredIsStaleNotGone(t *testing.T) {
+	ctx := context.Background()
+	clk := newClock(time.Unix(0, 0))
+	c := NewMemory(MemoryConfig{Now: clk.Now})
+	if _, err := c.SetTagged(ctx, "k", []byte("body"), time.Minute, []string{"t"}); err != nil {
+		t.Fatalf("SetTagged() error = %v", err)
+	}
+	clk.Advance(time.Minute)
+	if _, _, found := c.Get(ctx, "k"); found {
+		t.Error("Get() served an expired entry")
+	}
+	assertStale(t, c, "k", "body")
+	// Get missing an expired entry must not have dropped it: it is the copy a
+	// failed re-render falls back to.
+	assertStale(t, c, "k", "body")
+}
+
+func TestMemoryCache_SetClearsStale(t *testing.T) {
+	ctx := context.Background()
+	c := NewMemory(MemoryConfig{})
+	if _, err := c.SetTagged(ctx, "k", []byte("old"), time.Hour, []string{"t"}); err != nil {
+		t.Fatalf("SetTagged() error = %v", err)
+	}
+	if err := c.MarkStale(ctx, []string{"t"}); err != nil {
+		t.Fatalf("MarkStale() error = %v", err)
+	}
+	if _, err := c.Set(ctx, "k", []byte("new"), time.Hour); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	content, _, stale, found := c.GetStale(ctx, "k")
+	if !found || stale || string(content) != "new" {
+		t.Errorf("GetStale() = %q, stale %v, found %v; want \"new\", fresh", content, stale, found)
+	}
+	if _, _, found := c.Get(ctx, "k"); !found {
+		t.Error("Get() missed an entry rewritten after it was marked stale")
+	}
+}
+
+func TestMemoryCache_MarkStaleOnMissingKeyIsNoError(t *testing.T) {
+	ctx := context.Background()
+	c := NewMemory(MemoryConfig{})
+	if err := c.MarkStaleKey(ctx, "missing"); err != nil {
+		t.Errorf("MarkStaleKey(missing) error = %v, want nil", err)
+	}
+	if err := c.MarkStale(ctx, []string{"no-such-tag"}); err != nil {
+		t.Errorf("MarkStale(no-such-tag) error = %v, want nil", err)
+	}
+	if _, _, _, found := c.GetStale(ctx, "missing"); found {
+		t.Error("marking a missing key stale created an entry")
 	}
 }

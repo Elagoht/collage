@@ -424,6 +424,13 @@ type Cache = cache.Cache
 // the authority either way.
 type TaggedCache = cache.TaggedCache
 
+// StaleCache is the optional extension a Cache implements when it can keep an
+// entry past its invalidation or expiry and report it as stale. The framework
+// type-asserts for it so that a page whose re-render fails can be answered with
+// the last copy that rendered; a cache that does not implement it drops an entry
+// on invalidation, as before. The built-in memory and disk caches implement it.
+type StaleCache = cache.StaleCache
+
 // Metrics receives the framework's counters and timings. Implement it to bridge the
 // framework into a metrics backend; a nil Metrics means no-op.
 type Metrics = observability.Metrics
