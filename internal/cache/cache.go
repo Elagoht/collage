@@ -14,7 +14,8 @@ import (
 // sentinels.
 type Cache interface {
 	// Get returns the cached content and its ETag for key. found is false when
-	// there is no live entry for key, including one that has expired. Callers must
+	// there is no fresh entry for key, including one that has expired or, in a
+	// StaleCache, been marked stale. Callers must
 	// not mutate the returned content slice: an implementation may return its
 	// internal copy directly for performance.
 	Get(ctx context.Context, key string) (content []byte, etag string, found bool)
@@ -41,6 +42,26 @@ type TaggedCache interface {
 	SetTagged(ctx context.Context, key string, content []byte, ttl time.Duration, tags []string) (etag string, err error)
 	// Invalidate removes every entry associated with any of tags.
 	Invalidate(ctx context.Context, tags []string) error
+}
+
+// StaleCache is implemented by caches that keep an entry past its invalidation or
+// expiry, so a page whose re-render fails can still be answered with the last copy
+// that rendered. Callers type-assert for it; a cache that does not implement it
+// drops an entry on invalidation and reports an expired one missing, as before.
+// There is no maximum stale age: eviction is what bounds a stale entry's life.
+type StaleCache interface {
+	Cache
+	// GetStale is Get that also returns an entry kept past an invalidation or its
+	// expiry, with stale true. found is false only when key has no entry at all.
+	GetStale(ctx context.Context, key string) (content []byte, etag string, stale, found bool)
+	// MarkStaleKey keeps key's entry but marks it stale, so Get no longer reports
+	// it and GetStale reports it stale. Its content, ETag, expiry and tags are
+	// unchanged. Marking a key that has no entry is not an error. A later write to
+	// key stores a fresh entry, which clears the mark.
+	MarkStaleKey(ctx context.Context, key string) error
+	// MarkStale marks every entry associated with any of tags stale, as
+	// MarkStaleKey does for one key.
+	MarkStale(ctx context.Context, tags []string) error
 }
 
 // Entry is one stored cache record: rendered content, its ETag, expiry, the tags it

@@ -116,12 +116,24 @@ type DiskCache struct {
 
 // header is the JSON line at the front of an entry file.
 type header struct {
+	// Key is the cache key the entry was stored under. File names are hashes of
+	// it and cannot be turned back into it, so this is what lets a tiered cache
+	// warm its memory tier from the directory after a restart. Files written
+	// before it existed lack it; they are still read by key, only not warmed.
+	Key       string   `json:"key,omitempty"`
 	ETag      string   `json:"etag"`
 	ExpiresAt int64    `json:"expiresAt"`
 	Tags      []string `json:"tags,omitempty"`
+	// Stale is set by MarkStaleKey and MarkStale, so a mark survives a restart
+	// along with the entry. omitempty keeps a fresh entry's file as it was.
+	Stale bool `json:"stale,omitempty"`
 }
 
-var _ TaggedCache = (*DiskCache)(nil)
+var (
+	_ Cache       = (*DiskCache)(nil)
+	_ TaggedCache = (*DiskCache)(nil)
+	_ StaleCache  = (*DiskCache)(nil)
+)
 
 // NewDisk returns a DiskCache under cfg.Dir, in a subdirectory named for cfg.Version.
 func NewDisk(cfg DiskConfig) (*DiskCache, error) {
@@ -198,43 +210,88 @@ func (c *DiskCache) countEntries() int {
 // Dir is where this cache stores its entries, version subdirectory included.
 func (c *DiskCache) Dir() string { return c.dir }
 
-// Get returns the cached content and ETag for key.
-//
-// An expired entry is reported missing and deleted on the way out, so a cache that
-// is read but never written does not grow without bound.
-func (c *DiskCache) Get(_ context.Context, key string) ([]byte, string, bool) {
+// Get returns the cached content and ETag for key. An entry that has expired or
+// been marked stale is reported missing but left on disk for GetStale; eviction,
+// not reading, is what bounds the directory.
+func (c *DiskCache) Get(ctx context.Context, key string) ([]byte, string, bool) {
+	content, etag, stale, found := c.GetStale(ctx, key)
+	if !found || stale {
+		return nil, "", false
+	}
+	return content, etag, true
+}
+
+// GetStale returns key's entry whether it is fresh or not; stale is true when it
+// has expired or been marked stale.
+func (c *DiskCache) GetStale(_ context.Context, key string) ([]byte, string, bool, bool) {
 	path, ok := c.path(key)
 	if !ok {
-		return nil, "", false
+		return nil, "", false, false
 	}
-
-	file, err := os.Open(path)
+	h, content, err := readEntry(path)
 	if err != nil {
-		return nil, "", false
+		return nil, "", false, false
 	}
-	defer file.Close()
+	return content, h.ETag, h.Stale || c.now().UnixNano() >= h.ExpiresAt, true
+}
 
-	reader := bufio.NewReader(file)
-	line, err := reader.ReadBytes('\n')
+// load returns key's whole entry — content, ETag, expiry and tags — and whether it
+// is stale, for a tiered cache copying it into memory as it is. found is false for
+// a missing or unreadable entry.
+func (c *DiskCache) load(key string) (Entry, bool, bool) {
+	path, ok := c.path(key)
+	if !ok {
+		return Entry{}, false, false
+	}
+	h, content, err := readEntry(path)
 	if err != nil {
-		return nil, "", false
+		return Entry{}, false, false
 	}
-	var h header
-	if err := json.Unmarshal(line, &h); err != nil {
-		return nil, "", false
-	}
-	if c.now().UnixNano() >= h.ExpiresAt {
-		c.mu.Lock()
-		os.Remove(path)
-		c.mu.Unlock()
-		return nil, "", false
-	}
+	e, stale := c.entryOf(h, content)
+	return e, stale, true
+}
 
-	content, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, "", false
+// entryOf turns a stored header and content into an Entry, and reports whether
+// it is stale by the same rule GetStale applies.
+func (c *DiskCache) entryOf(h header, content []byte) (Entry, bool) {
+	var expiresAt time.Time
+	if h.ExpiresAt != 0 {
+		expiresAt = time.Unix(0, h.ExpiresAt)
 	}
-	return content, h.ETag, true
+	e := Entry{Content: content, ETag: h.ETag, ExpiresAt: expiresAt, Tags: h.Tags}
+	return e, h.Stale || c.now().UnixNano() >= h.ExpiresAt
+}
+
+// newestFirst returns the paths of the stored entry files, most recently written
+// first, skipping the temporary files, dotfiles and subdirectories countEntries
+// skips. It returns paths rather than keys because a file name is a hash of its
+// key; the key is in the header. An unreadable directory yields none.
+func (c *DiskCache) newestFirst() []string {
+	dirEntries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return nil
+	}
+	type stored struct {
+		path    string
+		modTime time.Time
+	}
+	files := make([]stored, 0, len(dirEntries))
+	for _, entry := range dirEntries {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, stored{filepath.Join(c.dir, entry.Name()), info.ModTime()})
+	}
+	sort.SliceStable(files, func(i, j int) bool { return files[i].modTime.After(files[j].modTime) })
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.path
+	}
+	return paths
 }
 
 // Set stores content under key.
@@ -254,6 +311,7 @@ func (c *DiskCache) SetTagged(_ context.Context, key string, content []byte, ttl
 
 	etag := ETag(content)
 	line, err := json.Marshal(header{
+		Key:       key,
 		ETag:      etag,
 		ExpiresAt: c.now().Add(ttl).UnixNano(),
 		Tags:      tags,
@@ -460,6 +518,140 @@ func (c *DiskCache) Invalidate(_ context.Context, tags []string) error {
 	return errors.Join(failures...)
 }
 
+// MarkStaleKey marks the entry stored under key stale. A key with no entry is not
+// an error.
+func (c *DiskCache) MarkStaleKey(_ context.Context, key string) error {
+	path, ok := c.path(key)
+	if !ok {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.markStaleLocked(path)
+}
+
+// MarkStale marks every entry carrying any of tags stale. Like Invalidate, it
+// reads every entry's header, and removes an entry whose header is corrupt. One it
+// cannot read for another reason is left as it is, and the error returned.
+func (c *DiskCache) MarkStale(_ context.Context, tags []string) error {
+	if len(tags) == 0 {
+		return nil
+	}
+	wanted := make(map[string]struct{}, len(tags))
+	for _, tag := range tags {
+		wanted[tag] = struct{}{}
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	entries, err := os.ReadDir(c.dir)
+	if err != nil {
+		return fmt.Errorf("collage: disk cache: list %s: %w", c.dir, err)
+	}
+
+	var failures []error
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		path := filepath.Join(c.dir, entry.Name())
+		h, err := readHeader(path)
+		switch {
+		case errors.Is(err, errCorruptEntry):
+			// Broken, as in Invalidate: nothing can ever read or expire it.
+			os.Remove(path)
+			continue
+		case errors.Is(err, fs.ErrNotExist):
+			continue
+		case err != nil:
+			// The system's failure, not the file's: the page may be whole, and
+			// removing it would lose what a failed render falls back to.
+			failures = append(failures, fmt.Errorf("collage: disk cache: read %s: %w", path, err))
+			continue
+		}
+		if h.Stale {
+			// Already marked: nothing to rewrite, so no reason to read the rest.
+			continue
+		}
+		for _, tag := range h.Tags {
+			if _, hit := wanted[tag]; hit {
+				if err := c.markStaleLocked(path); err != nil {
+					failures = append(failures, err)
+				}
+				break
+			}
+		}
+	}
+	return errors.Join(failures...)
+}
+
+// markStaleLocked rewrites the entry at path with its header marked stale and
+// everything else, content included, unchanged. A missing file is not an error, a
+// corrupt one is removed, one that cannot be read for another reason is left and
+// the error returned, and one already stale is left alone. Callers must hold c.mu,
+// which keeps a SetTagged of the same key from being renamed into place between
+// the read and the rename here.
+//
+// Eviction scans without c.mu, so it can remove the file between the read and the
+// rename, and the rename then brings it back, once, marked stale. That is bounded:
+// the next scan recounts the directory from disk, and the file, keeping its old
+// modification time, is among the first it removes.
+//
+// The rewrite keeps the file's modification time. Eviction removes the oldest
+// file first by that time, so a mark that made the file look new would evict
+// fresh pages ahead of the stale one.
+func (c *DiskCache) markStaleLocked(path string) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	h, content, err := readEntry(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if errors.Is(err, errCorruptEntry) {
+		os.Remove(path)
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("collage: disk cache: read %s: %w", path, err)
+	}
+	if h.Stale {
+		return nil
+	}
+
+	h.Stale = true
+	line, err := json.Marshal(h)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	buf.Grow(len(line) + 1 + len(content))
+	buf.Write(line)
+	buf.WriteByte('\n')
+	buf.Write(content)
+
+	tmp, err := c.writeTemp(buf.Bytes())
+	if err != nil {
+		return err
+	}
+	mod := info.ModTime()
+	if err := os.Chtimes(tmp, mod, mod); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	c.bytes += int64(buf.Len()) - info.Size()
+	return nil
+}
+
 // InvalidateKey removes the entry stored under key.
 func (c *DiskCache) InvalidateKey(_ context.Context, key string) error {
 	path, ok := c.path(key)
@@ -533,21 +725,56 @@ func (c *DiskCache) writeTemp(body []byte) (string, error) {
 	return name, nil
 }
 
-// readHeader reads an entry's header without reading its content.
+// errCorruptEntry marks a file whose bytes are not an entry: a header cut off
+// before its newline, or one that is not the JSON a header is. It is the one read
+// failure that says the file itself is broken; any other — a permission, too many
+// open files, an I/O error — is the system's, and says nothing about the file.
+var errCorruptEntry = errors.New("collage: disk cache: corrupt entry")
+
+// readEntry reads an entry's header and content. A file that is not an entry
+// fails with an error wrapping errCorruptEntry.
+func readEntry(path string) (header, []byte, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return header{}, nil, err
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+	h, err := parseHeader(reader)
+	if err != nil {
+		return header{}, nil, err
+	}
+	content, err := io.ReadAll(reader)
+	if err != nil {
+		return header{}, nil, err
+	}
+	return h, content, nil
+}
+
+// readHeader reads an entry's header without reading its content. A file that is
+// not an entry fails with an error wrapping errCorruptEntry.
 func readHeader(path string) (header, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return header{}, err
 	}
 	defer file.Close()
+	return parseHeader(bufio.NewReader(file))
+}
 
-	line, err := bufio.NewReader(file).ReadBytes('\n')
+// parseHeader reads the header line from reader.
+func parseHeader(reader *bufio.Reader) (header, error) {
+	line, err := reader.ReadBytes('\n')
+	if errors.Is(err, io.EOF) {
+		return header{}, fmt.Errorf("%w: no header line", errCorruptEntry)
+	}
 	if err != nil {
 		return header{}, err
 	}
 	var h header
 	if err := json.Unmarshal(line, &h); err != nil {
-		return header{}, err
+		return header{}, fmt.Errorf("%w: %w", errCorruptEntry, err)
 	}
 	return h, nil
 }

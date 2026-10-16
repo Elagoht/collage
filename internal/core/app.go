@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -278,6 +279,15 @@ type ObservabilityConfig struct {
 // InvalidateTags, Logger, RegisterCommand — are all safe to call while requests are
 // being served.
 type App struct {
+	// invalidationsStarted and invalidationsFinished count the tag invalidations
+	// and purges begun and ended. The handler reads both around a render and
+	// stores it only when none was under way as it began and none began before
+	// its write, so a page rendered across any part of an invalidation is not
+	// stored as if it were fresh. Started advances before the store is touched
+	// and finished after everything is, so between the two they cover the whole
+	// of one.
+	invalidationsStarted  atomic.Uint64
+	invalidationsFinished atomic.Uint64
 	// invalidOrigins records, in development, the plugin+origin pairs already
 	// reported by invalidOrigin.
 	invalidOrigins sync.Map
@@ -883,23 +893,24 @@ func (a *App) buildHandler() (http.Handler, error) {
 	a.warnAboutGeneratedKey()
 
 	handler, err := httpx.New(httpx.Deps{
-		Origins:      a.OriginFor,
-		Router:       a.routes,
-		Renderer:     a.renderer,
-		Cache:        a.store,
-		Tracker:      a.tracker,
-		Plugins:      a.plugins,
-		Metrics:      a.metrics,
-		Tracer:       a.tracer,
-		Logger:       a.logger,
-		DevMode:      a.devMode,
-		DefaultTTL:   a.cfg.Cache.DefaultTTL,
-		Mounts:       a.Mounts(),
-		Handlers:     a.handlers,
-		DevSources:   a.devSources(),
-		PageReady:    a.pageReady,
-		Middleware:   a.middlewareChain(),
-		MaxBodyBytes: a.cfg.Server.MaxBodyBytes,
+		Origins:       a.OriginFor,
+		Router:        a.routes,
+		Renderer:      a.renderer,
+		Cache:         a.store,
+		Invalidations: a.invalidations,
+		Tracker:       a.tracker,
+		Plugins:       a.plugins,
+		Metrics:       a.metrics,
+		Tracer:        a.tracer,
+		Logger:        a.logger,
+		DevMode:       a.devMode,
+		DefaultTTL:    a.cfg.Cache.DefaultTTL,
+		Mounts:        a.Mounts(),
+		Handlers:      a.handlers,
+		DevSources:    a.devSources(),
+		PageReady:     a.pageReady,
+		Middleware:    a.middlewareChain(),
+		MaxBodyBytes:  a.cfg.Server.MaxBodyBytes,
 		// An action asks for invalidation declaratively, and this is what
 		// carries it out. Handing every handler the whole application so it
 		// could call InvalidateTags itself would put the application inside a
@@ -1262,7 +1273,13 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 }
 
 // InvalidateTagsN invalidates every cache entry associated with any of tags and
-// returns how many were removed.
+// returns how many were invalidated.
+//
+// When the store keeps entries past invalidation (cache.StaleCache, which every
+// built-in store does) pages are marked stale rather than removed: they are not
+// served as fresh, and a good render replaces them, but one that fails is
+// answered with the stale copy. Any other store drops them, as described below.
+// PurgeTags removes pages outright.
 //
 // The dependency tracker is the authority: it resolves tags to the cache keys built
 // from them, each key is dropped from the cache, plugins are told through
@@ -1301,13 +1318,28 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 	return a.dropTags(ctx, tags, false)
 }
 
-// PurgeTags removes every cache entry associated with any of tags: pages as
-// InvalidateTags does, and collage.Cached values outright, on disk too, rather
-// than keeping them to serve stale. The pages count and the errors are
-// InvalidateTagsN's.
+// PurgeTags removes every cache entry associated with any of tags: pages
+// outright, never kept to be served stale, and collage.Cached values outright,
+// on disk too, rather than keeping them to serve stale. The pages count and the
+// errors are InvalidateTagsN's.
+//
+// A page that InvalidateTags already marked stale is reached through the store's
+// own tag index (cache.TaggedCache), since the tracker has forgotten it. A custom
+// cache.StaleCache that is not also a TaggedCache therefore cannot have such
+// pages purged by tag; every built-in store can.
 func (a *App) PurgeTags(ctx context.Context, tags ...string) error {
 	_, err := a.dropTags(ctx, tags, true)
 	return err
+}
+
+// invalidations reports how many tag invalidations and purges have started and
+// how many have finished. Finished is read first: as each call finishes only
+// after it started, a started count read after it that matches it means none was
+// under way at that read.
+func (a *App) invalidations() (started, finished uint64) {
+	finished = a.invalidationsFinished.Load()
+	started = a.invalidationsStarted.Load()
+	return started, finished
 }
 
 // dropTags is InvalidateTagsN and PurgeTags: they differ only in what becomes of
@@ -1317,9 +1349,23 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 		return 0, nil
 	}
 
+	// Started before the store is touched and finished after everything is, so
+	// a render that began before this call, or during it, is seen by the handler
+	// to have overlapped it. See invalidations.
+	a.invalidationsStarted.Add(1)
+	defer a.invalidationsFinished.Add(1)
+
 	keys, err := a.tracker.Resolve(ctx, tags)
 	if err != nil {
 		return 0, fmt.Errorf("collage: resolve tags: %w", err)
+	}
+
+	// A store that can keep an entry past its invalidation has its pages marked
+	// stale rather than dropped, so a failing re-render can still be answered
+	// with the last good copy. A purge, and a store that cannot, drop outright.
+	var staleStore cache.StaleCache
+	if !purge {
+		staleStore, _ = a.store.(cache.StaleCache)
 	}
 
 	// The data first, so a page re-rendered the moment its entry is dropped
@@ -1369,7 +1415,12 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	var failures error
 	invalidated := 0
 	for _, key := range keys {
-		if a.store != nil {
+		if staleStore != nil {
+			if err := staleStore.MarkStaleKey(ctx, key); err != nil {
+				failures = errors.Join(failures, fmt.Errorf("collage: mark %q stale: %w", key, err))
+				continue
+			}
+		} else if a.store != nil {
 			if err := a.store.InvalidateKey(ctx, key); err != nil {
 				failures = errors.Join(failures, fmt.Errorf("collage: invalidate %q: %w", key, err))
 				continue
@@ -1383,7 +1434,11 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	// that indexes them separately cannot disagree about a key both of them know:
 	// the key-level invalidation has already run by the time the tag-level one
 	// does, and both are idempotent.
-	if tagged, ok := a.store.(cache.TaggedCache); ok {
+	if staleStore != nil {
+		if err := staleStore.MarkStale(ctx, tags); err != nil {
+			failures = errors.Join(failures, fmt.Errorf("collage: mark tags %v stale: %w", tags, err))
+		}
+	} else if tagged, ok := a.store.(cache.TaggedCache); ok {
 		if err := tagged.Invalidate(ctx, tags); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("collage: invalidate tags %v: %w", tags, err))
 		}
@@ -1399,6 +1454,10 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 		failures = errors.Join(failures, err)
 	}
 
+	// Forgotten even when the pages were only marked stale, so the plugin event
+	// and the count do not name an already-invalidated page again. A later
+	// PurgeTags still reaches those stale pages through the store's own tag
+	// index, which keeps stale entries, not through this tracker.
 	for _, key := range keys {
 		if err := a.tracker.Forget(ctx, key); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("collage: forget %q: %w", key, err))

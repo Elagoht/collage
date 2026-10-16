@@ -475,16 +475,17 @@ type CacheInvalidateEvent struct {
 	// a plugin that wants to trigger an invalidation uses Host.InvalidateTags
 	// instead of trying to feed this back into one.
 	Tags []string
-	// Entries are the cached pages and documents the invalidation dropped, with the
+	// Entries are the cached pages and documents the invalidation invalidated (marked stale on the built-in
+	// stores), with the
 	// host each was cached for, sorted by host, then path: one path cached under
 	// two hosts is two entries. A page that is not cached is never in it: nothing
-	// of it was dropped. A plugin that makes the URLs absolute reads these, because
+	// of it was invalidated. A plugin that makes the URLs absolute reads these, because
 	// on a site served on several hosts a path alone does not say which origin it
-	// was dropped from.
+	// was invalidated.
 	Entries []InvalidatedEntry
 }
 
-// InvalidatedEntry is one cached page or document an invalidation dropped: the
+// InvalidatedEntry is one cached page or document an invalidation invalidated (marked stale on the built-in stores): the
 // host it was cached for, lower-cased as in the cache key, and its URL path. The
 // host keeps its port when the request had one, "acme.test:8080"; pass it to
 // Origins.OriginFor, which drops it.

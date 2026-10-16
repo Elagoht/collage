@@ -12,6 +12,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/types"
 	"os"
@@ -436,6 +438,51 @@ func TestCache_DiskCacheSurvivesARestart(t *testing.T) {
 	}
 	if got, want := rec2.Header().Get("ETag"), rec.Header().Get("ETag"); got != want {
 		t.Errorf("ETag = %q, want %q — a restart must not change what a client is holding", got, want)
+	}
+}
+
+func TestCache_DiskCacheRestartServesItsFirstRequestFromCache(t *testing.T) {
+	// The same bytes after a restart prove little: a re-render produces them too.
+	// What a restart must save is the render, so the restarted application's own
+	// metrics must show a cache hit and no render.
+	dir := t.TempDir()
+	build := func(metrics *observability.RecordingMetrics) *App {
+		app := newTestAppWith(t, defaultTemplates(), func(cfg *Config) {
+			cfg.Cache = CacheConfig{Enabled: true, Type: "disk", Dir: dir, Version: "v1", DefaultTTL: time.Minute}
+			cfg.Observability.Metrics = metrics
+		})
+		if err := app.RegisterPage(newHomePage()); err != nil {
+			t.Fatalf("RegisterPage: %v", err)
+		}
+		return app
+	}
+
+	first := build(observability.NewRecordingMetrics())
+	rec := httptest.NewRecorder()
+	first.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first request = %d: %s", rec.Code, rec.Body.String())
+	}
+
+	metrics := observability.NewRecordingMetrics()
+	second := build(metrics)
+	tiered, ok := second.store.(*cache.TieredCache)
+	if !ok {
+		t.Fatalf("the disk store is %T, want *cache.TieredCache", second.store)
+	}
+	if tiered.Dir() == "" {
+		t.Error("the tier reports no directory")
+	}
+	rec2 := httptest.NewRecorder()
+	second.Handler().ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("second request = %d", rec2.Code)
+	}
+	if rec2.Body.String() != rec.Body.String() {
+		t.Errorf("the restarted application served different bytes")
+	}
+	if fresh, hits := renderCounts(metrics); fresh != 0 || hits != 1 {
+		t.Errorf("after a restart: %d renders, %d cache hits; want the first request served from cache", fresh, hits)
 	}
 }
 

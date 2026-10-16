@@ -149,6 +149,16 @@ const FetchHeader = httpx.FetchHeader
 // LocationHeader carries an action's redirect to a request marked with FetchHeader.
 const LocationHeader = httpx.LocationHeader
 
+// CacheStatusHeader says where a cacheable page's or document's response came
+// from. HIT is a fresh cache entry served without rendering. MISS is a render,
+// because there was no entry or only a stale one. STALE is an entry kept past
+// InvalidateTags or its TTL, served with Cache-Control: no-store because the
+// render meant to replace it failed or was degraded; a custom CacheConfig.Store
+// that does not implement StaleCache never answers STALE. The header is set on a
+// cacheable GET or HEAD that answered with the page or document, never on an
+// error response, and never in development, where the cache is not read.
+const CacheStatusHeader = httpx.CacheStatusHeader
+
 // FragmentRequest names a fragment a page opened at its own URL, and the locale and
 // path parameters to render it in, for App.RenderFragment and Host.RenderFragment.
 type FragmentRequest = plugin.FragmentRequest
@@ -192,8 +202,8 @@ type BuiltRedirect = plugin.BuiltRedirect
 type RedirectSource = plugin.RedirectSource
 
 // PathTag is the dependency tag every cached page and document carries for the
-// URL path it was rendered for: InvalidateTags(ctx, PathTag("/blog")) drops what
-// is cached for that path, whatever else it depends on.
+// URL path it was rendered for: InvalidateTags(ctx, PathTag("/blog")) invalidates
+// (marks stale on the built-in stores) what is cached for that path, whatever else it depends on.
 func PathTag(path string) string { return types.PathTag(path) }
 
 // FragmentReport is how one fragment of a render went, as AfterRenderEvent.Fragments
@@ -424,6 +434,13 @@ type Cache = cache.Cache
 // the authority either way.
 type TaggedCache = cache.TaggedCache
 
+// StaleCache is the optional extension a Cache implements when it can keep an
+// entry past its invalidation or expiry and report it as stale. The framework
+// type-asserts for it so that a page whose re-render fails can be answered with
+// the last copy that rendered; a cache that does not implement it drops an entry
+// on invalidation, as before. The built-in memory and disk caches implement it.
+type StaleCache = cache.StaleCache
+
 // Metrics receives the framework's counters and timings. Implement it to bridge the
 // framework into a metrics backend; a nil Metrics means no-op.
 type Metrics = observability.Metrics
@@ -456,7 +473,9 @@ const (
 	// key that was already running, rather than starting one of its own.
 	CacheCoalesced = observability.CacheCoalesced
 	// CacheStale means collage.Cached served a value kept past an invalidation or
-	// its ttl, because the fetch replacing it had not succeeded.
+	// its ttl, because the fetch replacing it had not succeeded. The page cache
+	// reports it too, with the page cache key, for a page or document served
+	// stale because the render replacing it failed or was degraded.
 	CacheStale = observability.CacheStale
 )
 

@@ -64,35 +64,6 @@ func TestDisk_ADifferentVersionSeesNothing(t *testing.T) {
 	}
 }
 
-func TestDisk_ExpiredEntryIsGoneAndRemoved(t *testing.T) {
-	dir := t.TempDir()
-	ctx := context.Background()
-	now := time.Now()
-	clock := func() time.Time { return now }
-
-	c := newTestDisk(t, dir, "v", clock)
-	if _, err := c.Set(ctx, "k", []byte("body"), 10*time.Second); err != nil {
-		t.Fatalf("Set: %v", err)
-	}
-	if _, _, found := c.Get(ctx, "k"); !found {
-		t.Fatal("the entry is missing before it expired")
-	}
-
-	now = now.Add(11 * time.Second)
-	if _, _, found := c.Get(ctx, "k"); found {
-		t.Error("an expired entry was served")
-	}
-
-	// Swept on the way out, so a cache that is read but never written does not grow.
-	entries, err := os.ReadDir(c.Dir())
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
-	}
-	if len(entries) != 0 {
-		t.Errorf("%d files left after an expired read, want 0", len(entries))
-	}
-}
-
 func TestDisk_InvalidateByTag(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
@@ -387,4 +358,272 @@ func BenchmarkDisk_SetAtTheCap(b *testing.B) {
 			}
 		}
 	})
+}
+
+func TestDisk_MarkStaleKeyKeepsTheEntry(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	if _, err := c.Set(ctx, "k", []byte("old page"), time.Hour); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if err := c.MarkStaleKey(ctx, "k"); err != nil {
+		t.Fatalf("MarkStaleKey: %v", err)
+	}
+	if _, _, found := c.Get(ctx, "k"); found {
+		t.Error("Get served an entry marked stale")
+	}
+	assertStale(t, c, "k", "old page")
+}
+
+func TestDisk_MarkStaleByTag(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	if _, err := c.SetTagged(ctx, "a", []byte("A"), time.Hour, []string{"post:1"}); err != nil {
+		t.Fatalf("SetTagged(a): %v", err)
+	}
+	if _, err := c.SetTagged(ctx, "b", []byte("B"), time.Hour, []string{"post:2", "list"}); err != nil {
+		t.Fatalf("SetTagged(b): %v", err)
+	}
+	if _, err := c.SetTagged(ctx, "c", []byte("C"), time.Hour, []string{"other"}); err != nil {
+		t.Fatalf("SetTagged(c): %v", err)
+	}
+	if err := c.MarkStale(ctx, []string{"post:1", "list"}); err != nil {
+		t.Fatalf("MarkStale: %v", err)
+	}
+	assertStale(t, c, "a", "A")
+	assertStale(t, c, "b", "B")
+	if _, _, found := c.Get(ctx, "c"); !found {
+		t.Error("Get missed an entry no tag reached")
+	}
+
+	// Marking keeps the tags, so a later invalidation still reaches the entry.
+	if err := c.Invalidate(ctx, []string{"post:2"}); err != nil {
+		t.Fatalf("Invalidate: %v", err)
+	}
+	if _, _, _, found := c.GetStale(ctx, "b"); found {
+		t.Error("a stale entry lost its tags: Invalidate did not reach it")
+	}
+}
+
+func TestDisk_ExpiredIsStaleNotGone(t *testing.T) {
+	ctx := context.Background()
+	now := time.Now()
+	c := newTestDisk(t, t.TempDir(), "v", func() time.Time { return now })
+	if _, err := c.Set(ctx, "k", []byte("body"), 10*time.Second); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if _, _, found := c.Get(ctx, "k"); !found {
+		t.Fatal("the entry is missing before it expired")
+	}
+	now = now.Add(11 * time.Second)
+	if _, _, found := c.Get(ctx, "k"); found {
+		t.Error("Get served an expired entry")
+	}
+	// Get used to delete an expired file on the way out. It is now the copy a
+	// failed re-render falls back to, and eviction is what bounds the directory.
+	assertStale(t, c, "k", "body")
+}
+
+func TestDisk_SetClearsStale(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	if _, err := c.SetTagged(ctx, "k", []byte("old"), time.Hour, []string{"t"}); err != nil {
+		t.Fatalf("SetTagged: %v", err)
+	}
+	if err := c.MarkStale(ctx, []string{"t"}); err != nil {
+		t.Fatalf("MarkStale: %v", err)
+	}
+	if _, err := c.Set(ctx, "k", []byte("new"), time.Hour); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	content, _, stale, found := c.GetStale(ctx, "k")
+	if !found || stale || string(content) != "new" {
+		t.Errorf("GetStale = %q, stale %v, found %v; want \"new\", fresh", content, stale, found)
+	}
+	if _, _, found := c.Get(ctx, "k"); !found {
+		t.Error("Get missed an entry rewritten after it was marked stale")
+	}
+}
+
+func TestDisk_MarkStaleOnMissingKeyIsNoError(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	if err := c.MarkStaleKey(ctx, "missing"); err != nil {
+		t.Errorf("MarkStaleKey(missing) = %v, want nil", err)
+	}
+	if err := c.MarkStale(ctx, []string{"no-such-tag"}); err != nil {
+		t.Errorf("MarkStale(no-such-tag) = %v, want nil", err)
+	}
+	if _, _, _, found := c.GetStale(ctx, "missing"); found {
+		t.Error("marking a missing key stale created an entry")
+	}
+}
+
+func TestDisk_StaleSurvivesReopen(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	first := newTestDisk(t, dir, "build-1", nil)
+	if _, err := first.SetTagged(ctx, "k", []byte("page"), time.Hour, []string{"t"}); err != nil {
+		t.Fatalf("SetTagged: %v", err)
+	}
+	if err := first.MarkStale(ctx, []string{"t"}); err != nil {
+		t.Fatalf("MarkStale: %v", err)
+	}
+
+	second := newTestDisk(t, dir, "build-1", nil)
+	if _, _, found := second.Get(ctx, "k"); found {
+		t.Error("a restart turned a stale entry fresh")
+	}
+	assertStale(t, second, "k", "page")
+}
+
+func TestDisk_MarkStaleRemovesAnUnreadableEntry(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	broken := filepath.Join(c.Dir(), "broken")
+	if err := os.WriteFile(broken, []byte("not a header"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.MarkStale(ctx, []string{"t"}); err != nil {
+		t.Fatalf("MarkStale: %v", err)
+	}
+	if _, err := os.Stat(broken); !os.IsNotExist(err) {
+		t.Errorf("an unreadable entry survived MarkStale: %v", err)
+	}
+}
+
+// A file MarkStaleKey finds broken — a header cut off before its newline — is
+// removed, as one MarkStale's scan finds is.
+func TestDisk_MarkStaleKeyRemovesACorruptEntry(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	path, _ := c.path("k")
+	if err := os.WriteFile(path, []byte(`{"etag":"x"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.MarkStaleKey(ctx, "k"); err != nil {
+		t.Fatalf("MarkStaleKey: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("a corrupt entry survived MarkStaleKey: %v", err)
+	}
+}
+
+// unreadable makes the file at path unreadable for the rest of the test, which
+// is skipped where permissions do not stop the reader.
+func unreadable(t *testing.T, path string) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file whatever its permissions")
+	}
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+}
+
+// A file that cannot be read for a reason of the system's — permissions here,
+// EMFILE or EIO in production — is not a broken entry. MarkStale leaves it and
+// says so, rather than deleting a page it would have kept.
+func TestDisk_MarkStaleKeepsAnEntryItCannotRead(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	for _, key := range []string{"locked", "open"} {
+		if _, err := c.SetTagged(ctx, key, []byte(key), time.Hour, []string{"t"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	locked, _ := c.path("locked")
+	unreadable(t, locked)
+
+	if err := c.MarkStale(ctx, []string{"t"}); err == nil {
+		t.Error("MarkStale = nil, want the read error reported")
+	}
+	if _, err := os.Stat(locked); err != nil {
+		t.Errorf("MarkStale removed an entry it could not read: %v", err)
+	}
+	assertStale(t, c, "open", "open")
+}
+
+func TestDisk_MarkStaleKeyKeepsAnEntryItCannotRead(t *testing.T) {
+	ctx := context.Background()
+	c := newTestDisk(t, t.TempDir(), "v", nil)
+	if _, err := c.SetTagged(ctx, "locked", []byte("locked"), time.Hour, nil); err != nil {
+		t.Fatal(err)
+	}
+	locked, _ := c.path("locked")
+	unreadable(t, locked)
+
+	if err := c.MarkStaleKey(ctx, "locked"); err == nil {
+		t.Error("MarkStaleKey = nil, want the read error reported")
+	}
+	if _, err := os.Stat(locked); err != nil {
+		t.Errorf("MarkStaleKey removed an entry it could not read: %v", err)
+	}
+}
+
+// TestDisk_EvictionStillBoundsStaleEntries: entries kept as stale count against
+// the cap like any other, and marking one does not make it look new. Eviction
+// goes oldest first by modification time, so a rewrite that bumped the time
+// would evict fresh pages ahead of the stale ones.
+func TestDisk_EvictionStillBoundsStaleEntries(t *testing.T) {
+	ctx := context.Background()
+	c, err := NewDisk(DiskConfig{Dir: t.TempDir(), Version: "v", DefaultTTL: time.Minute, MaxEntries: 8})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := time.Now().Add(-time.Hour)
+	for i := range 6 {
+		key := fmt.Sprintf("k%02d", i)
+		if _, err := c.SetTagged(ctx, key, []byte("v"), time.Hour, []string{"t" + strconv.Itoa(i)}); err != nil {
+			t.Fatal(err)
+		}
+		path, _ := c.path(key)
+		mod := base.Add(time.Duration(i) * time.Minute)
+		if err := os.Chtimes(path, mod, mod); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Compared against what the filesystem stored rather than base, which it may
+	// have rounded.
+	path, _ := c.path("k00")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.MarkStale(ctx, []string{"t0", "t1"}); err != nil {
+		t.Fatalf("MarkStale: %v", err)
+	}
+	if err := c.MarkStaleKey(ctx, "k02"); err != nil {
+		t.Fatalf("MarkStaleKey: %v", err)
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("marking stale changed the modification time: %v, want %v", after.ModTime(), before.ModTime())
+	}
+
+	// At MaxEntries 8 each write past the cap evicts one file, so these five
+	// writes evict exactly three: the stale k00–k02 if marking kept their age,
+	// k03–k05 if it made them look new.
+	for i := 6; i < 11; i++ {
+		if _, err := c.Set(ctx, fmt.Sprintf("k%02d", i), []byte("v"), time.Hour); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := c.countEntries(); got != 8 {
+		t.Errorf("entries on disk = %d, want MaxEntries 8: stale entries escaped the cap", got)
+	}
+	for _, key := range []string{"k00", "k01", "k02"} {
+		if _, _, _, found := c.GetStale(ctx, key); found {
+			t.Errorf("the old stale entry %s survived eviction", key)
+		}
+	}
+	for _, key := range []string{"k03", "k04", "k05", "k10"} {
+		if _, _, _, found := c.GetStale(ctx, key); !found {
+			t.Errorf("%s was evicted ahead of older stale entries", key)
+		}
+	}
 }

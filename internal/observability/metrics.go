@@ -61,6 +61,10 @@ const (
 	// its ttl, because the fetch replacing it had not succeeded. It is reported
 	// once per value served; the key is the Cached key's name. A count that
 	// climbs is an upstream that is down.
+	//
+	// The page cache reports it too, with the page cache key, for each page or
+	// document served from an entry kept past an invalidation or its TTL because
+	// the render replacing it failed or was degraded.
 	CacheStale CacheEvent = "stale"
 )
 

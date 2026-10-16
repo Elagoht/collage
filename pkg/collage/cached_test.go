@@ -196,7 +196,9 @@ func TestCached_InvalidatesWithThePages(t *testing.T) {
 		t.Fatalf("InvalidateTagsN = %d, %v; want A's twenty pages dropped", dropped, err)
 	}
 	// The first request after the invalidation is served the stale author at
-	// once, and starts the refresh; a later one shows the new name.
+	// once, and starts the refresh; a later one shows the new name. Since v0.63
+	// the page is stale too, and its render from stale data is degraded, so what
+	// that first request is served is the stale page: the same body.
 	if body := site.get(t, 3, false); body != "<article><p>Ada</p></article>" {
 		t.Errorf("A's page right after the invalidation = %q, want the stale name", body)
 	}
@@ -281,6 +283,7 @@ func TestCached_InADocument(t *testing.T) {
 
 // A document built from stale data is served with no-store and not cached, so
 // the next request shows the refreshed name rather than the old one for its TTL.
+// Since v0.63 that first response is the stale document, which has the same body.
 func TestCached_AStaleDocumentIsNotCached(t *testing.T) {
 	site := newAuthorSite(t, false)
 	doc := collage.NewDocument("authors", "text/plain").WithPath("en", "/authors.txt").Incremental(time.Hour).
@@ -387,7 +390,9 @@ func TestDocument_ConcurrentMissesAreCoalesced(t *testing.T) {
 }
 
 // A page built from stale data is served, but neither cached here nor at a CDN:
-// otherwise the old name would be pinned for the page's whole TTL.
+// otherwise the old name would be pinned for the page's whole TTL. Since v0.63 the
+// response right after the invalidation is the stale page itself, standing in for
+// that degraded render: the same body, also no-store.
 func TestCached_TheRequestAfterAStaleOneIsFresh(t *testing.T) {
 	site := newAuthorSite(t, false)
 	site.get(t, 3, false)
@@ -402,6 +407,9 @@ func TestCached_TheRequestAfterAStaleOneIsFresh(t *testing.T) {
 	}
 	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
 		t.Errorf("Cache-Control on a stale render = %q, want no-store", cc)
+	}
+	if got := rec.Header().Get(collage.CacheStatusHeader); got != "STALE" {
+		t.Errorf("%s on a stale render = %q, want STALE", collage.CacheStatusHeader, got)
 	}
 	site.eventually(t, 3, "the new name", func(rec *httptest.ResponseRecorder) bool {
 		return rec.Body.String() == "<article><p>Ada Lovelace</p></article>"
@@ -430,6 +438,10 @@ func TestCached_AnInvalidatedPageRendersWhileTheUpstreamIsDown(t *testing.T) {
 // card's failure is a 500 here instead, make the card's slot hold a Required
 // fragment as that test does - the point under test is that the page stops
 // showing the stale author, not which status the slot policy picks).
+//
+// Since v0.63 the request right after the invalidation is the stale page (its
+// render reads the stale author), and the 404 comes once the refresh has dropped
+// the author; eventually already allows for that.
 func TestCached_NotFoundUpstreamBecomesA404(t *testing.T) {
 	site := newAuthorSite(t, false)
 	site.get(t, 3, false)

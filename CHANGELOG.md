@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.63.0
+
+### Changed
+
+- **`InvalidateTags` marks pages stale instead of removing them.** On the
+  built-in stores (memory, and disk with its new memory tier) an invalidated page
+  or document is no longer served as fresh, but its bytes are kept. The next
+  request renders it again: a good render is stored and served (`MISS`); a render
+  that fails or comes out degraded is not stored, and the stale bytes are served
+  instead with `Cache-Control: no-store` and `X-Collage-Cache: STALE`. A render
+  answering 404 drops the entry. Before, an invalidation followed by a failing
+  render was a 500. An expired page (TTL) is stale in the same sense. There is no
+  maximum stale age; eviction at `MaxEntries` or `MaxBytes` bounds it.
+  `PurgeTags` still removes outright, and a purged page that fails to render
+  fails.
+- **A render that overlaps any `InvalidateTags` or `PurgeTags` is not stored**,
+  for any tags — one that began while a call was under way, or during which one
+  began: it may have read data from before the change.
+- **A stale serve is reported once per failure.** The `CacheStale` metrics event
+  is counted per stale response served; a failed render that a stale page hides is
+  logged once at warn (not also as an error-level `request failed`) and handed to
+  the plugins' `OnError` hook once, with a status of 0, however many requests were
+  waiting on it. A render degraded only by stale `collage.Cached` data is its data
+  refreshing, not an outage: its stale serve is logged at debug.
+- **`Cache.Type` `"disk"` is now tiered**: a memory cache (up to 256 MiB, or
+  `MaxBytes` when smaller; `MaxEntries` entries) in front of the disk. A hit is served from
+  memory, not read from a file. At startup the memory tier is warmed from the
+  current build's directory, newest entries first, so a restart serves `HIT`s
+  from memory. Files written by v0.62 or earlier carry no key in their header and
+  are not warmed; they are still served on the first read.
+
+### Added
+
+- **`collage.StaleCache`**, the optional interface (`GetStale`, `MarkStaleKey`,
+  `MarkStale`) a custom `CacheConfig.Store` implements to keep invalidated pages
+  and serve them stale.
+- **`collage.CacheStatusHeader`** (`X-Collage-Cache`): `HIT`, `MISS` or `STALE`,
+  on a cacheable `GET` or `HEAD` that answered with a page or document. Not sent
+  in development, on error responses, or in a static build.
+
+### Upgrade notes
+
+- **Memory.** A `"disk"` cache now holds up to 256 MiB of pages in memory as
+  well as on disk, or `MaxBytes` when that is smaller. In a small container, set
+  `GOMEMLIMIT` and lower `MaxBytes` or `MaxEntries` if needed.
+- **Instances sharing one `Cache.Dir` do not share a cache.** An invalidation
+  reaches the disk and the invalidating instance's memory; every other instance
+  keeps serving its in-memory copy as a fresh `HIT` until it expires — for a
+  `Static` page, until a restart or an eviction — and a CDN refetching the page
+  meanwhile can keep the old copy. Give each instance its own directory, or use a
+  shared `Cache.Store` that implements `StaleCache` and `TaggedCache`.
+- **Custom stores.** A `Cache.Store` that does not implement `StaleCache` behaves
+  as before: invalidation drops, and it never answers `STALE`. A `StaleCache` that
+  is not also a `TaggedCache` cannot have already-invalidated pages purged by tag
+  with `PurgeTags`.
+- **An action's redirect after `InvalidateTags`**: a page that reads
+  `collage.Cached` data is degraded right after the invalidation, so the redirect
+  lands on the old page, served `STALE` with `no-store`, while the background fetch
+  runs; the next request after it renders and stores the new page. Call `PurgeTags`
+  from the handler to show the change at once, failing the page if the upstream is
+  down.
+
 ## v0.62.0
 
 ### Changed
