@@ -91,9 +91,11 @@ points. `Follow` takes it when the page behind it is what the test is about.
 The scaffolded `main.go` builds the application in `newApp`, which `main` calls to
 serve and the tests call to test, so the tests exercise the site that runs rather
 than a second wiring. Point the disk cache at `t.TempDir()` before building it —
-otherwise a test can be served a page an earlier test or run rendered. The demo
-project `collage new --template demo` scaffolds has a `main_test.go` written this
-way.
+otherwise a test can be served a page an earlier test or run rendered — and shut
+the application down in a `t.Cleanup` registered after it: the data cache writes
+to that directory in the background, and `App.Shutdown` waits for those writes,
+so the directory is not removed while one is still being made. The demo project
+`collage new --template demo` scaffolds has a `main_test.go` written this way.
 
 ## Test a plugin with a site of its own
 

@@ -356,6 +356,9 @@ type buildTask struct {
 // then mounted asset files, regardless of that concurrency: this package's output
 // is deterministic by construction, not only at the default concurrency of 1.
 func (b *Builder) Build(ctx context.Context) (*Report, error) {
+	// An export writes files nothing re-renders: it waits for the upstream
+	// rather than writing what the data cache kept past an invalidation.
+	ctx = types.WithFreshData(ctx)
 	start := time.Now()
 	report := &Report{}
 

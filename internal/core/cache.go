@@ -8,10 +8,13 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strconv"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/datacache"
+	"github.com/Elagoht/collage/internal/observability"
 )
 
 // buildCache constructs the cache an application asked for.
@@ -153,4 +156,22 @@ func (a *App) BuildID() string {
 		}
 	})
 	return a.buildID
+}
+
+// buildDataCache constructs the store collage.Cached keeps values in: on disk
+// beside a built-in disk cache, so a restart starts warm and a deploy with its
+// upstream down renders from what the last one fetched; in memory otherwise. A
+// directory it cannot use costs persistence, not the start.
+func buildDataCache(cfg Config, logger *slog.Logger, metrics observability.Metrics) *datacache.Store {
+	opts := datacache.Options{MaxEntries: cfg.Cache.MaxEntries, Logger: logger, Metrics: metrics}
+	if cfg.Cache.Store != nil || cfg.Cache.Type != "disk" || cfg.Cache.Dir == "" {
+		return datacache.New(opts)
+	}
+	dir := filepath.Join(cfg.Cache.Dir, "data")
+	store, err := datacache.Open(dir, opts)
+	if err != nil {
+		logger.Warn("collage: cannot use the data cache directory, keeping data in memory only", "dir", dir, "err", err)
+		return datacache.New(opts)
+	}
+	return store
 }

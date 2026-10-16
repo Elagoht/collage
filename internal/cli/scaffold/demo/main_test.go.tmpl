@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/url"
@@ -26,6 +27,13 @@ func client(t *testing.T) *collagetest.Client {
 	if err != nil {
 		t.Fatalf("newApp() = %v, want nil", err)
 	}
+	// Shut down before the cache directory is removed: the data cache writes to
+	// it in the background, and Shutdown waits for those writes.
+	t.Cleanup(func() {
+		if err := app.Shutdown(context.Background()); err != nil {
+			t.Errorf("Shutdown() = %v, want nil", err)
+		}
+	})
 	return collagetest.New(t, app.Handler())
 }
 

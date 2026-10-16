@@ -138,13 +138,13 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		// Only a GET populates the cache; a HEAD is served from cache but never
 		// populates it — it produced no body worth storing under its own request.
 		etag := ""
-		if cacheable && r.Method == http.MethodGet {
+		if cacheable && r.Method == http.MethodGet && !result.Stale {
 			etag = h.writeDocumentCache(r, key, doc, result, route)
 		}
 		if etag == "" {
 			etag = cache.ETag(result.Body)
 		}
-		return &outcome{content: result.Body, etag: etag, renderTime: result.Timing.Total}
+		return &outcome{content: result.Body, etag: etag, renderTime: result.Timing.Total, degraded: result.Stale}
 	}
 
 	// Concurrent misses on one key share one run of the handler, as a page's do:
@@ -171,6 +171,10 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	header.Set("Content-Type", doc.ContentType)
 	header.Set("ETag", etag)
 	h.setCacheHeaders(header, r, doc.Strategy, doc.CacheTTL)
+	// Built from stale data, so not cached here; not at a CDN either.
+	if out.degraded {
+		header.Set("Cache-Control", "no-store")
+	}
 	if h.devMode {
 		header.Set(renderTimeHeader, out.renderTime.String())
 	}

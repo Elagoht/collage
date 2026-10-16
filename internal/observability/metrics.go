@@ -57,6 +57,11 @@ const (
 	// expiring faster than it can be re-made, which is what a too-short TTL looks
 	// like from the outside.
 	CacheCoalesced CacheEvent = "coalesced"
+	// CacheStale means collage.Cached served a value kept past an invalidation or
+	// its ttl, because the fetch replacing it had not succeeded. It is reported
+	// once per value served; the key is the Cached key's name. A count that
+	// climbs is an upstream that is down.
+	CacheStale CacheEvent = "stale"
 )
 
 // Timing records where a render spent its time. The render engine fills one of

@@ -16,7 +16,7 @@ func TestApp_MethodSet(t *testing.T) {
 	want := []string{
 		"ActionURL", "Actions", "BaseURL", "BuildID", "Check", "Commands", "DevMode",
 		"Documents", "FragmentURL", "Handle", "Handler", "InvalidateTags", "InvalidateTagsN",
-		"ListenAndServe", "Locales", "Logger", "Mount", "OriginFor", "Page", "PageURLs", "Pages",
+		"ListenAndServe", "Locales", "Logger", "Mount", "OriginFor", "Page", "PageURLs", "Pages", "PurgeTags",
 		"Register", "RegisterAction", "RegisterCommand", "RegisterDocument", "RegisterErrorPage",
 		"RegisterNotFoundPage", "RegisterPage", "RegisterPlugin", "RenderDocumentPath",
 		"RenderFragment", "RenderPath", "ServeStatus", "Shutdown", "Start", "URL", "Use",

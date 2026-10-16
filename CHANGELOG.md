@@ -1,5 +1,49 @@
 # Changelog
 
+## v0.62.0
+
+### Changed
+
+- **`collage.Cached` serves stale data instead of failing.** `InvalidateTags`, and
+  a value's `ttl` running out, mark it stale rather than removing it. The next
+  render gets the stale value at once and one background fetch replaces it, with
+  a fixed 30-second timeout, detached from the request. If that fetch fails, the
+  stale value keeps being served, without limit. Before, an invalidation followed
+  by a slow or down upstream failed the layout's data, and with it every page.
+  A fetch error wrapping `ErrNotFound` still drops the value, so deleted content
+  answers 404. A render built from stale data is degraded: served with
+  `Cache-Control: no-store` and not cached. `collage.Build` never uses stale
+  data, and neither does `App.RenderFragment`, so a plugin pushing re-rendered
+  fragments after an invalidation pushes the new value; it waits for the
+  upstream, and returns an error when the upstream fails.
+- **A failed background refresh cools its key down.** No new refresh starts for
+  the key for 1 second after a failure, doubling with each further failure up
+  to a minute; a success ends it. A down upstream is no longer asked once per
+  request.
+- **`AfterRenderEvent.Degraded` is also true for a render built from stale
+  cached data**, so plugins see such renders as degraded.
+- **`App.Shutdown` waits for the data store**: its running refreshes and its
+  disk writes, before the plugins are shut down. Disk writes are now made in the
+  background, so a test that points a disk cache at `t.TempDir()` should shut
+  the application down in a `t.Cleanup`, as the demo project's `main_test.go`
+  now does; otherwise a late write can make the directory's removal fail.
+
+### Added
+
+- **The data store persists beside a disk cache.** With `Cache.Type` `"disk"`,
+  `Cached` values are also written to `<Cache.Dir>/data/`, in the background,
+  and loaded at startup. A restart serves the persisted data at once and
+  refreshes each value in the background on its first use. This directory is not
+  namespaced by build, and only the store's own files in it are ever removed.
+  Store keys are now stable across processes and change with a type's shape. A
+  type JSON would not restore exactly — an unexported or `json:"-"` field, an
+  interface — is kept in memory only, unless it implements `json.Marshaler` and
+  `json.Unmarshaler`. The files are not encrypted.
+- **`App.PurgeTags`** removes pages and `Cached` values outright, from disk too.
+- **`CacheStale` metrics event**, reported for each stale value served. A failed
+  background refresh is logged at warn, and the first success after failures at
+  info.
+
 ## v0.61.5
 
 ### Changed

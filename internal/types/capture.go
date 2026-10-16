@@ -50,3 +50,22 @@ func IsCapture(ctx context.Context) bool {
 	marked, _ := ctx.Value(CaptureKey{}).(bool)
 	return marked
 }
+
+type freshDataKey struct{}
+
+// WithFreshData returns ctx marked as a render that must not be built from
+// stale cached data: a static export, which writes what it renders to files
+// nobody re-renders, waits for the upstream instead.
+func WithFreshData(ctx context.Context) context.Context {
+	return context.WithValue(ctx, freshDataKey{}, true)
+}
+
+// WantsFreshData reports whether ctx was marked by WithFreshData, or is a static
+// build's header capture, whose headers are the export's too.
+func WantsFreshData(ctx context.Context) bool {
+	if IsCapture(ctx) {
+		return true
+	}
+	fresh, _ := ctx.Value(freshDataKey{}).(bool)
+	return fresh
+}

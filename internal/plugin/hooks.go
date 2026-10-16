@@ -448,7 +448,8 @@ type AfterRenderEvent struct {
 	// BeforeRenderEvent.Path carried. This event's own copy.
 	Path string
 	// Degraded reports whether any fragment in the render failed, whether or not
-	// a fallback covered for it. This event's own copy.
+	// a fallback covered for it, or the render was built from a stale value
+	// collage.Cached served while its refresh runs. This event's own copy.
 	Degraded bool
 	// HTML is the rendered output. A plugin implementing AfterRenderHook MAY
 	// replace this slice to add a post-process step; the replaced value is what

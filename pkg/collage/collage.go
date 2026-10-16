@@ -455,6 +455,9 @@ const (
 	// CacheCoalesced means the request was served by a render of the same cache
 	// key that was already running, rather than starting one of its own.
 	CacheCoalesced = observability.CacheCoalesced
+	// CacheStale means collage.Cached served a value kept past an invalidation or
+	// its ttl, because the fetch replacing it had not succeeded.
+	CacheStale = observability.CacheStale
 )
 
 // ETag returns the strong HTTP ETag the framework itself computes for content: the

@@ -170,7 +170,10 @@ half of the framework's rule that plugins cannot mutate core state.
 `RenderFragment` is for a plugin that sends fragments over a connection it owns — an
 event stream or a WebSocket — instead of waiting for the browser to ask for them. It
 renders exactly what a request to the fragment's path renders, and returns the parts
-instead of a response:
+instead of a response. One difference: values read through `collage.Cached` are
+fresh. A request may be served a stale value while it is refreshed, but a pushed
+fragment is not asked for again, so `RenderFragment` waits for the upstream, and
+returns an error when it fails:
 
 | Field | |
 | --- | --- |

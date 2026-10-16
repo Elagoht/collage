@@ -595,7 +595,7 @@ func New(cfg Config) (*App, error) {
 	// is not read either, because what a developer is changing must show on the
 	// next request.
 	if cfg.Cache.Enabled && !devMode {
-		app.data = datacache.New(cfg.Cache.MaxEntries)
+		app.data = buildDataCache(cfg, logger, metrics)
 	}
 
 	app.renderer = render.New(tmpl, render.Options{
@@ -1185,13 +1185,14 @@ func cleanStop(err error) error {
 	return err
 }
 
-// Shutdown drains, then stops the running server, then the plugin registry,
-// joining whatever errors either produced. The drain cancels the ServeHook ctx,
+// Shutdown drains, then stops the running server, then waits for the data
+// cache's background refreshes and disk writes, then stops the plugin registry,
+// joining whatever errors any produced. The drain cancels the ServeHook ctx,
 // tells DrainHook plugins, turns keep-alives off and, with a server serving, a
 // ServerConfig.DrainDelay and not in development mode, keeps serving for
 // DrainDelay. ctx bounds the drain's wait and the server's wait for in-flight
-// requests together; ListenAndServe's own signal handler drains first and then
-// bounds the rest with ServerConfig.ShutdownTimeout.
+// requests and the data cache's wait together; ListenAndServe's own signal
+// handler drains first and then bounds the rest with ServerConfig.ShutdownTimeout.
 //
 // It is idempotent: the work runs exactly once and every caller — including one
 // racing another — observes the same result. Calling it before ListenAndServe has
@@ -1240,6 +1241,14 @@ func (a *App) shutdown(ctx context.Context) error {
 			err = errors.Join(err, fmt.Errorf("collage: server shutdown: %w", serverErr))
 		}
 	}
+	// The data cache's refreshes outlive the requests that started them, and
+	// fetch through what plugins provide: they are waited for, and their writes
+	// to disk made, before the plugins stop.
+	if a.data != nil {
+		if dataErr := a.data.Close(ctx); dataErr != nil {
+			err = errors.Join(err, fmt.Errorf("collage: data cache shutdown: %w", dataErr))
+		}
+	}
 	// Plugins stop after the server, not before: a plugin released while requests
 	// are still in flight would be torn out from under them.
 	return errors.Join(err, a.plugins.Shutdown(ctx))
@@ -1259,7 +1268,9 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 // from them, each key is dropped from the cache, plugins are told through
 // OnCacheInvalidate, the keys are forgotten so they cannot resolve again, and the
 // count is reported to Metrics.Invalidation. An empty tags invalidates nothing and
-// is not an error.
+// is not an error. collage.Cached values are not removed but marked stale: they
+// are served until a fetch replaces them, so an upstream that is down costs
+// freshness, not pages. PurgeTags removes them.
 //
 // When the store also implements cache.TaggedCache, its Invalidate is called with
 // the tags as well. That is not redundant with the tracker walk, and it is the only
@@ -1287,6 +1298,21 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 // returned error, because a partial invalidation that reports success is how stale
 // pages survive a deploy.
 func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) {
+	return a.dropTags(ctx, tags, false)
+}
+
+// PurgeTags removes every cache entry associated with any of tags: pages as
+// InvalidateTags does, and collage.Cached values outright, on disk too, rather
+// than keeping them to serve stale. The pages count and the errors are
+// InvalidateTagsN's.
+func (a *App) PurgeTags(ctx context.Context, tags ...string) error {
+	_, err := a.dropTags(ctx, tags, true)
+	return err
+}
+
+// dropTags is InvalidateTagsN and PurgeTags: they differ only in what becomes of
+// the data store's values, marked stale or removed.
+func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, error) {
 	if len(tags) == 0 {
 		return 0, nil
 	}
@@ -1297,9 +1323,14 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 	}
 
 	// The data first, so a page re-rendered the moment its entry is dropped
-	// below cannot be built from the value being replaced.
+	// below is built from the value being replaced only as a stale, uncached
+	// render — or, after a purge, not at all.
 	if a.data != nil {
-		a.data.Invalidate(tags)
+		if purge {
+			a.data.Purge(tags)
+		} else {
+			a.data.Invalidate(tags)
+		}
 	}
 
 	// The pages and documents being dropped, read before the keys are forgotten:
