@@ -18,8 +18,8 @@
   upstream, and returns an error when the upstream fails.
 - **A failed background refresh cools its key down.** No new refresh starts for
   the key for 1 second after a failure, doubling with each further failure up
-  to a minute; a success ends it. A down upstream is no longer asked once per
-  request.
+  to a minute; a success ends it, and so does an invalidation of the key. A down
+  upstream is no longer asked once per request.
 - **`AfterRenderEvent.Degraded` is also true for a render built from stale
   cached data**, so plugins see such renders as degraded.
 - **`App.Shutdown` waits for the data store**: its running refreshes and its
