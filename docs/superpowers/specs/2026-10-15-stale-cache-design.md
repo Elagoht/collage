@@ -71,7 +71,8 @@ invalidated or when its TTL passes. Expiry no longer removes it.
     doubling with each further one, capped at 60s. Stale hits inside the
     cooldown are still served and still emit `CacheStale`. A success replaces
     the entry, which ends the cooldown, and logs one info line with the failure
-    count. A fresh-data load (`types.WantsFreshData`) ignores the cooldown. If
+    count. An invalidation of the key also ends the cooldown (the failure count
+    stays, so a further failure backs off from where it was). A fresh-data load (`types.WantsFreshData`) ignores the cooldown. If
     the entry is gone when the refresh fails (purged or evicted), nothing is
     served stale and the failure is logged at debug only;
   - Emit `CacheStale` once for each stale value served.

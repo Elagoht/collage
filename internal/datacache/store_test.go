@@ -644,3 +644,42 @@ func TestStore_AFreshLoadAfterFailuresLogsTheRecovery(t *testing.T) {
 		t.Errorf("want the recovery line with failures=1, got:\n%s", logs.String())
 	}
 }
+
+// An invalidation is news from the upstream — a webhook says the content
+// changed, so the upstream is answering again. A key cooling down after failed
+// refreshes tries again on its next load rather than sitting out the rest of
+// its cooldown; the failure count stays, so a refresh that fails again backs
+// off from where it was.
+func TestStore_AnInvalidationEndsTheCooldown(t *testing.T) {
+	s := New(Options{})
+	clk := newClock(s)
+	var calls atomic.Int32
+	s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "old"), decodeStr)
+	s.Invalidate([]string{"t"})
+
+	var attempts atomic.Int32
+	down := func(context.Context) (types.CacheValue, error) {
+		attempts.Add(1)
+		return nil, errors.New("down")
+	}
+	for range 3 { // three failures: the cooldown is now 4s
+		s.Load(bg, "k", 0, []string{"t"}, down, decodeStr)
+		s.refreshes.Wait()
+		clk.advance(time.Minute)
+	}
+	s.Load(bg, "k", 0, []string{"t"}, down, decodeStr)
+	s.refreshes.Wait()
+	before := attempts.Load()
+
+	s.Invalidate([]string{"t"})
+	if v, stale, err := s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "new"), decodeStr); v != str("old") || !stale || err != nil {
+		t.Fatalf("Load after the invalidation = %v, %v, %v; want the stale value while it refreshes", v, stale, err)
+	}
+	s.refreshes.Wait()
+	if v, stale, _ := s.Load(bg, "k", 0, nil, down, decodeStr); v != str("new") || stale {
+		t.Fatalf("Load = %v, stale=%v; want the refresh the invalidation allowed", v, stale)
+	}
+	if attempts.Load() != before {
+		t.Errorf("down was called %d more times", attempts.Load()-before)
+	}
+}

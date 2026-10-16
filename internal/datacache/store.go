@@ -403,7 +403,12 @@ func (s *Store) Invalidate(tags []string) int {
 	for _, tag := range tags {
 		for key := range s.byTag[tag] {
 			if element, ok := s.entries[key]; ok {
-				s.markStaleLocked(element.Value.(*entry), now)
+				stored := element.Value.(*entry)
+				s.markStaleLocked(stored, now)
+				// An invalidation is news that the upstream is answering, so a
+				// key cooling down after failed refreshes tries on its next
+				// load. failures stays: one more failure backs off from there.
+				stored.retryAt = time.Time{}
 				marked++
 			}
 		}

@@ -339,10 +339,11 @@ Tags stay plain strings — `"author:" + id` here — because they are what
   stays and keeps being served, however long the upstream is down, and the key
   cools down: no new fetch starts for it for a second, then two, four, and so on
   up to a minute after each further failure, so a down upstream is not asked once
-  per request. A successful fetch ends the cooldown. A render built from a stale
-  value is served with `Cache-Control: no-store` and is not cached, so the page is
-  rendered again once the value is fresh, and plugins see it as degraded
-  (`AfterRenderEvent.Degraded`).
+  per request. A successful fetch ends the cooldown, and so does an
+  invalidation of the key: a webhook is news that the upstream is answering. A
+  render built from a stale value is served with `Cache-Control: no-store` and is
+  not cached, so the page is rendered again once the value is fresh, and plugins
+  see it as degraded (`AfterRenderEvent.Degraded`).
 - **Stale serves are reported.** Each stale value served is reported as the
   `CacheStale` metrics event, cooldown or not. Each failed refresh is logged at
   warn with its error, and the first success after failures at info, with how
