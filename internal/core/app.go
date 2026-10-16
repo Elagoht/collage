@@ -1315,9 +1315,9 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 }
 
 // PurgeTags removes every cache entry associated with any of tags: pages
-// outright, never kept to be served stale, and collage.Cached values outright, on disk too, rather
-// than keeping them to serve stale. The pages count and the errors are
-// InvalidateTagsN's.
+// outright, never kept to be served stale, and collage.Cached values outright,
+// on disk too, rather than keeping them to serve stale. The pages count and the
+// errors are InvalidateTagsN's.
 //
 // A page that InvalidateTags already marked stale is reached through the store's
 // own tag index (cache.TaggedCache), since the tracker has forgotten it. A custom

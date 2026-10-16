@@ -141,3 +141,38 @@ func TestInvalidationEpoch_AdvancesPerCall(t *testing.T) {
 		t.Fatalf("epoch = %d after an empty call, want it unchanged at %d", got, before+2)
 	}
 }
+
+// taggedOnlyCache implements cache.Cache and cache.TaggedCache but not
+// cache.StaleCache, and records the tags Invalidate received.
+type taggedOnlyCache struct {
+	plainCache
+	invalidated [][]string
+}
+
+func (c *taggedOnlyCache) SetTagged(ctx context.Context, key string, content []byte, ttl time.Duration, _ []string) (string, error) {
+	return c.Set(ctx, key, content, ttl)
+}
+
+func (c *taggedOnlyCache) Invalidate(ctx context.Context, tags []string) error {
+	c.invalidated = append(c.invalidated, append([]string(nil), tags...))
+	return nil
+}
+
+// A TaggedCache that cannot keep stale entries still has Invalidate called with
+// the tags, and its pages are dropped through InvalidateKey as before.
+func TestInvalidateTags_ATaggedStoreWithoutStaleStillInvalidates(t *testing.T) {
+	inner := cache.NewMemory(cache.MemoryConfig{})
+	store := &taggedOnlyCache{plainCache: plainCache{inner: inner}}
+	app, key := warmedHome(t, store)
+	ctx := context.Background()
+
+	if err := app.InvalidateTags(ctx, "homepage"); err != nil {
+		t.Fatalf("InvalidateTags: %v", err)
+	}
+	if len(store.invalidated) != 1 || len(store.invalidated[0]) != 1 || store.invalidated[0][0] != "homepage" {
+		t.Fatalf("Invalidate calls = %v, want one call carrying [homepage]", store.invalidated)
+	}
+	if _, _, _, found := inner.GetStale(ctx, key); found {
+		t.Fatal("the page was kept, want it dropped: the store is not a StaleCache")
+	}
+}

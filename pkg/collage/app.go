@@ -152,21 +152,23 @@ func (a *App) FragmentURL(page, fragment, locale string, params map[string]strin
 // InvalidateTags invalidates every cached render that depended on any of tags:
 // when the cache supports it (every built-in one does) the render is marked
 // stale, so a render that fails is answered with it; any other cache removes
-// it. It also marks every collage.Cached value under them stale: the next render is served
-// the stale value at once while one fetch replaces it, and keeps being served
-// it while the upstream is down. It is InvalidateTagsN without the count.
+// it. It also marks every collage.Cached value under them stale: the next
+// render is served the stale value at once while one fetch replaces it, and
+// keeps being served it while the upstream is down. It is InvalidateTagsN
+// without the count.
 func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 	return a.c.InvalidateTags(ctx, tags...)
 }
 
-// InvalidateTagsN is InvalidateTags returning how many cached renders it invalidated. A failure to remove one entry does not stop
-// the rest; the failures are joined into the returned error.
+// InvalidateTagsN is InvalidateTags returning how many cached renders it
+// invalidated. A failure to remove one entry does not stop the rest; the
+// failures are joined into the returned error.
 func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) {
 	return a.c.InvalidateTagsN(ctx, tags...)
 }
 
-// PurgeTags removes outright every cached render and every collage.Cached value under
-// any of tags, from disk too. Unlike InvalidateTags nothing is left to serve
+// PurgeTags removes outright every cached render and every collage.Cached value
+// under any of tags, from disk too. Unlike InvalidateTags nothing is left to serve
 // stale: the next render waits for the upstream, and fails if it is down. For
 // data that must not be shown again, once; InvalidateTags is the everyday call.
 func (a *App) PurgeTags(ctx context.Context, tags ...string) error {

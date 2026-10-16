@@ -1292,6 +1292,7 @@ type taggedSpy struct {
 
 	mu         sync.Mutex
 	invalidate [][]string
+	marked     [][]string
 }
 
 var _ cache.TaggedCache = (*taggedSpy)(nil)
@@ -1304,15 +1305,22 @@ func (s *taggedSpy) Invalidate(ctx context.Context, tags []string) error {
 	return s.MemoryCache.Invalidate(ctx, tags)
 }
 
-// MarkStale records tags too: the spy is a StaleCache through the embedded
+// MarkStale records its tags separately from Invalidate's: the spy is a StaleCache through the embedded
 // memory cache, and an invalidation reaches such a store by marking its entries
 // stale, not through Invalidate, which stays for a purge and for stores that
 // cannot keep a stale entry.
 func (s *taggedSpy) MarkStale(ctx context.Context, tags []string) error {
 	s.mu.Lock()
-	s.invalidate = append(s.invalidate, append([]string(nil), tags...))
+	s.marked = append(s.marked, append([]string(nil), tags...))
 	s.mu.Unlock()
 	return s.MemoryCache.MarkStale(ctx, tags)
+}
+
+// marks returns a copy of the tag slices MarkStale received, in order.
+func (s *taggedSpy) marks() [][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][]string(nil), s.marked...)
 }
 
 // invalidations returns a copy of the tag slices Invalidate received, in order.
@@ -1351,9 +1359,12 @@ func TestInvalidateTags_ReachesATaggedCache(t *testing.T) {
 		t.Fatalf("InvalidateTagsN: %v", err)
 	}
 
-	got := store.invalidations()
+	got := store.marks()
 	if len(got) != 1 || len(got[0]) != 1 || got[0][0] != "homepage" {
-		t.Fatalf("Invalidate calls = %v, want one call carrying [homepage]", got)
+		t.Fatalf("MarkStale calls = %v, want one call carrying [homepage]", got)
+	}
+	if dropped := store.invalidations(); len(dropped) != 0 {
+		t.Fatalf("Invalidate calls = %v, want none: a StaleCache is marked, not dropped", dropped)
 	}
 	if _, _, found := store.Get(context.Background(), "written-elsewhere"); found {
 		t.Error("the entry the tracker could not name survived: a shared store is still uninvalidatable")
