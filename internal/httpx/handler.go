@@ -170,6 +170,10 @@ type Deps struct {
 	// COLLAGE_DEV_HOST list, which under "collage dev" includes the host its
 	// proxy listens on. Ignored outside development, and for a capture.
 	DevHosts []string
+	// InvalidationEpoch reports a counter that advances on every tag
+	// invalidation or purge. A render that began under one value and ends under
+	// another straddled an invalidation. Nil means no such rule.
+	InvalidationEpoch func() uint64
 	// DefaultTTL is the cache TTL used for a page that sets no CacheTTL of its
 	// own. Zero or less defers to the cache's own default TTL.
 	DefaultTTL time.Duration
@@ -225,30 +229,32 @@ type Deps struct {
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
 // Handler is safe for concurrent use by as many requests as the server accepts.
 type Handler struct {
-	origins      OriginFunc
-	router       router.Router
-	renderer     render.Engine
-	cache        cache.Cache
-	tracker      dependency.Tracker
-	plugins      *plugin.Registry
-	metrics      observability.Metrics
-	tracer       observability.Tracer
-	logger       *slog.Logger
-	devMode      bool
-	devHosts     []string
-	defaultTTL   time.Duration
-	mounts       []*asset.Mount
-	handlers     []HandlerMount
-	chain        http.Handler
-	reload       *reloadHub
-	pageReady    func(*types.Page) bool
-	maxBodyBytes int64
-	invalidator  Invalidator
-	routes       types.Routes
-	csrf         *csrf.Guard
-	frameOptions string
-	noSniff      bool
-	trusted      []netip.Prefix
+	origins    OriginFunc
+	router     router.Router
+	renderer   render.Engine
+	cache      cache.Cache
+	tracker    dependency.Tracker
+	plugins    *plugin.Registry
+	metrics    observability.Metrics
+	tracer     observability.Tracer
+	logger     *slog.Logger
+	devMode    bool
+	devHosts   []string
+	defaultTTL time.Duration
+	// invalidationEpoch is Deps.InvalidationEpoch, read around a render.
+	invalidationEpoch func() uint64
+	mounts            []*asset.Mount
+	handlers          []HandlerMount
+	chain             http.Handler
+	reload            *reloadHub
+	pageReady         func(*types.Page) bool
+	maxBodyBytes      int64
+	invalidator       Invalidator
+	routes            types.Routes
+	csrf              *csrf.Guard
+	frameOptions      string
+	noSniff           bool
+	trusted           []netip.Prefix
 	// flight coalesces concurrent renders of one cache key, so an expiring
 	// popular page costs one render rather than one per request that arrives
 	// while it is being re-made.
@@ -278,18 +284,19 @@ func New(d Deps) (*Handler, error) {
 		return nil, fmt.Errorf("%w: Logger", ErrMissingDependency)
 	}
 	h := &Handler{
-		origins:    d.Origins,
-		router:     d.Router,
-		renderer:   d.Renderer,
-		cache:      d.Cache,
-		tracker:    d.Tracker,
-		plugins:    d.Plugins,
-		metrics:    observability.MetricsOrNoop(d.Metrics),
-		tracer:     observability.TracerOrNoop(d.Tracer),
-		logger:     d.Logger,
-		devMode:    d.DevMode,
-		devHosts:   slices.Clone(d.DevHosts),
-		defaultTTL: d.DefaultTTL,
+		origins:           d.Origins,
+		router:            d.Router,
+		renderer:          d.Renderer,
+		cache:             d.Cache,
+		tracker:           d.Tracker,
+		plugins:           d.Plugins,
+		metrics:           observability.MetricsOrNoop(d.Metrics),
+		tracer:            observability.TracerOrNoop(d.Tracer),
+		logger:            d.Logger,
+		devMode:           d.DevMode,
+		devHosts:          slices.Clone(d.DevHosts),
+		defaultTTL:        d.DefaultTTL,
+		invalidationEpoch: d.InvalidationEpoch,
 		// Cloned so a caller mutating d.Mounts after New returns cannot change
 		// what this Handler serves.
 		mounts:       slices.Clone(d.Mounts),

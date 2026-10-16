@@ -28,6 +28,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -278,6 +279,11 @@ type ObservabilityConfig struct {
 // InvalidateTags, Logger, RegisterCommand — are all safe to call while requests are
 // being served.
 type App struct {
+	// invalidationEpoch counts the tag invalidations and purges begun. The handler
+	// reads it around a render, so a page rendered across an invalidation is not
+	// stored as if it were fresh. It advances before the store is touched: a
+	// render that saw the old value can then never be mistaken for a later one.
+	invalidationEpoch atomic.Uint64
 	// invalidOrigins records, in development, the plugin+origin pairs already
 	// reported by invalidOrigin.
 	invalidOrigins sync.Map
@@ -883,23 +889,24 @@ func (a *App) buildHandler() (http.Handler, error) {
 	a.warnAboutGeneratedKey()
 
 	handler, err := httpx.New(httpx.Deps{
-		Origins:      a.OriginFor,
-		Router:       a.routes,
-		Renderer:     a.renderer,
-		Cache:        a.store,
-		Tracker:      a.tracker,
-		Plugins:      a.plugins,
-		Metrics:      a.metrics,
-		Tracer:       a.tracer,
-		Logger:       a.logger,
-		DevMode:      a.devMode,
-		DefaultTTL:   a.cfg.Cache.DefaultTTL,
-		Mounts:       a.Mounts(),
-		Handlers:     a.handlers,
-		DevSources:   a.devSources(),
-		PageReady:    a.pageReady,
-		Middleware:   a.middlewareChain(),
-		MaxBodyBytes: a.cfg.Server.MaxBodyBytes,
+		Origins:           a.OriginFor,
+		Router:            a.routes,
+		Renderer:          a.renderer,
+		Cache:             a.store,
+		InvalidationEpoch: a.invalidationEpoch.Load,
+		Tracker:           a.tracker,
+		Plugins:           a.plugins,
+		Metrics:           a.metrics,
+		Tracer:            a.tracer,
+		Logger:            a.logger,
+		DevMode:           a.devMode,
+		DefaultTTL:        a.cfg.Cache.DefaultTTL,
+		Mounts:            a.Mounts(),
+		Handlers:          a.handlers,
+		DevSources:        a.devSources(),
+		PageReady:         a.pageReady,
+		Middleware:        a.middlewareChain(),
+		MaxBodyBytes:      a.cfg.Server.MaxBodyBytes,
 		// An action asks for invalidation declaratively, and this is what
 		// carries it out. Handing every handler the whole application so it
 		// could call InvalidateTags itself would put the application inside a
@@ -1262,7 +1269,13 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 }
 
 // InvalidateTagsN invalidates every cache entry associated with any of tags and
-// returns how many were removed.
+// returns how many were invalidated.
+//
+// When the store keeps entries past invalidation (cache.StaleCache, which every
+// built-in store does) pages are marked stale rather than removed: they are not
+// served as fresh, and a good render replaces them, but one that fails is
+// answered with the stale copy. Any other store drops them, as described below.
+// PurgeTags removes pages outright.
 //
 // The dependency tracker is the authority: it resolves tags to the cache keys built
 // from them, each key is dropped from the cache, plugins are told through
@@ -1301,8 +1314,8 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 	return a.dropTags(ctx, tags, false)
 }
 
-// PurgeTags removes every cache entry associated with any of tags: pages as
-// InvalidateTags does, and collage.Cached values outright, on disk too, rather
+// PurgeTags removes every cache entry associated with any of tags: pages
+// outright, never kept to be served stale, and collage.Cached values outright, on disk too, rather
 // than keeping them to serve stale. The pages count and the errors are
 // InvalidateTagsN's.
 func (a *App) PurgeTags(ctx context.Context, tags ...string) error {
@@ -1317,9 +1330,21 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 		return 0, nil
 	}
 
+	// Before the store is touched, so a render that began earlier and finishes
+	// after the marks below is seen by the handler to have straddled them.
+	a.invalidationEpoch.Add(1)
+
 	keys, err := a.tracker.Resolve(ctx, tags)
 	if err != nil {
 		return 0, fmt.Errorf("collage: resolve tags: %w", err)
+	}
+
+	// A store that can keep an entry past its invalidation has its pages marked
+	// stale rather than dropped, so a failing re-render can still be answered
+	// with the last good copy. A purge, and a store that cannot, drop outright.
+	var staleStore cache.StaleCache
+	if !purge {
+		staleStore, _ = a.store.(cache.StaleCache)
 	}
 
 	// The data first, so a page re-rendered the moment its entry is dropped
@@ -1369,7 +1394,12 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	var failures error
 	invalidated := 0
 	for _, key := range keys {
-		if a.store != nil {
+		if staleStore != nil {
+			if err := staleStore.MarkStaleKey(ctx, key); err != nil {
+				failures = errors.Join(failures, fmt.Errorf("collage: mark %q stale: %w", key, err))
+				continue
+			}
+		} else if a.store != nil {
 			if err := a.store.InvalidateKey(ctx, key); err != nil {
 				failures = errors.Join(failures, fmt.Errorf("collage: invalidate %q: %w", key, err))
 				continue
@@ -1383,7 +1413,11 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	// that indexes them separately cannot disagree about a key both of them know:
 	// the key-level invalidation has already run by the time the tag-level one
 	// does, and both are idempotent.
-	if tagged, ok := a.store.(cache.TaggedCache); ok {
+	if staleStore != nil {
+		if err := staleStore.MarkStale(ctx, tags); err != nil {
+			failures = errors.Join(failures, fmt.Errorf("collage: mark tags %v stale: %w", tags, err))
+		}
+	} else if tagged, ok := a.store.(cache.TaggedCache); ok {
 		if err := tagged.Invalidate(ctx, tags); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("collage: invalidate tags %v: %w", tags, err))
 		}
@@ -1399,7 +1433,12 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 		failures = errors.Join(failures, err)
 	}
 
+	// Stale pages stay known to the tracker: a later PurgeTags must still reach
+	// them, and the next good render writes the same tags again.
 	for _, key := range keys {
+		if staleStore != nil {
+			break
+		}
 		if err := a.tracker.Forget(ctx, key); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("collage: forget %q: %w", key, err))
 		}
