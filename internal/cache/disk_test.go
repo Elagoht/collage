@@ -514,31 +514,46 @@ func TestDisk_EvictionStillBoundsStaleEntries(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Compared against what the filesystem stored rather than base, which it may
+	// have rounded.
+	path, _ := c.path("k00")
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := c.MarkStale(ctx, []string{"t0", "t1"}); err != nil {
 		t.Fatalf("MarkStale: %v", err)
 	}
 	if err := c.MarkStaleKey(ctx, "k02"); err != nil {
 		t.Fatalf("MarkStaleKey: %v", err)
 	}
-	path, _ := c.path("k00")
-	if info, err := os.Stat(path); err != nil || !info.ModTime().Equal(base) {
-		t.Fatalf("marking stale changed the modification time: %v, %v; want %v", info.ModTime(), err, base)
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("marking stale changed the modification time: %v, want %v", after.ModTime(), before.ModTime())
 	}
 
-	for i := 6; i < 30; i++ {
+	// At MaxEntries 8 each write past the cap evicts one file, so these five
+	// writes evict exactly three: the stale k00–k02 if marking kept their age,
+	// k03–k05 if it made them look new.
+	for i := 6; i < 11; i++ {
 		if _, err := c.Set(ctx, fmt.Sprintf("k%02d", i), []byte("v"), time.Hour); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if got := c.countEntries(); got > 8 {
-		t.Errorf("entries on disk = %d, want <= MaxEntries 8: stale entries escaped the cap", got)
+	if got := c.countEntries(); got != 8 {
+		t.Errorf("entries on disk = %d, want MaxEntries 8: stale entries escaped the cap", got)
 	}
 	for _, key := range []string{"k00", "k01", "k02"} {
 		if _, _, _, found := c.GetStale(ctx, key); found {
 			t.Errorf("the old stale entry %s survived eviction", key)
 		}
 	}
-	if _, _, found := c.Get(ctx, "k29"); !found {
-		t.Error("the newest entry was evicted")
+	for _, key := range []string{"k03", "k04", "k05", "k10"} {
+		if _, _, _, found := c.GetStale(ctx, key); !found {
+			t.Errorf("%s was evicted ahead of older stale entries", key)
+		}
 	}
 }
