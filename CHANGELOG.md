@@ -5,39 +5,59 @@
 ### Added
 
 - **Cache warming.** After every `InvalidateTags` and `PurgeTags`, the pages and
-  documents the invalidation reached are re-rendered in the background, with fresh
-  data, so the next visitor gets a fresh `HIT` instead of paying for the render.
-  Four workers, started after the first key warms successfully, as a probe. Only variants actually served are
-  warmed: recipes are recorded when an entry is written, in memory only, so there
-  are none after a restart until pages are written again. A run stops at the first
-  real render failure (one warning); skips (overlapped by another invalidation,
-  404, guarded pages, already fresh) do not stop it. One info line per run.
-  Warm renders skip `App.Use` and plugin middleware, request hooks,
-  personalisation, error hooks and per-request logs; `BeforeRender`,
-  `AfterRender` and `DocumentRendered` still run. Off in development, in static
-  builds and with the cache off; `Shutdown` stops it.
+  documents the invalidation reached are re-rendered in the background, with
+  fresh data, so the next visitor gets a fresh `HIT` instead of paying for the
+  render. Four workers, started after the first key warms successfully, as a
+  probe. Only variants actually served are warmed: recipes are recorded when an
+  entry is written, in memory only, so there are none after a restart until
+  pages are written again. A page is warmed again only if a visitor had it
+  since its last warm, and an `InvalidateTags` does not bring back a page the
+  cache evicted (`PurgeTags` warms its pages all the same). A warm that another
+  invalidation overlapped is queued again once no invalidation is under way, at
+  most once per overlapping invalidation. A run stops at the first real render
+  failure (one warning); skips (404, guarded pages, already fresh, unread,
+  evicted) do not stop it. One info line per run. Warm renders skip `App.Use`
+  and plugin middleware, request hooks, personalisation, error hooks and
+  per-request logs; `BeforeRender`, `AfterRender` and `DocumentRendered` still
+  run. Off in development, in static builds and with the cache off; `Shutdown`
+  stops it.
 - **`CacheConfig.WarmLimit`** caps the keys one invalidation warms, newest first.
   Zero means 1000; negative turns warming off.
 - **`collage.CacheWarm`**, a metrics event per warmed key.
+- **`collagetest.Site.WaitWarmed`** waits until the warmer is idle, for a test
+  that asserts a `HIT` after an invalidation.
 
 ### Changed
 
 - **An action's redirect target is warmed before the redirect is written.** An
   action returning `InvalidateTags` and a same-origin `Location` has that
-  `Location`'s variants rendered again first, within 5 seconds (and the request's
-  deadline), so the redirect lands on the new page. Past the budget, or on a
-  failure, the redirect still goes out and the page is served `STALE`. Redirect
-  to a clean URL or declare `CacheParams`: a query that is not a cache dimension
-  of a route declaring none is a key of its own, which nothing warms.
+  `Location`'s variants rendered again first, the submitter's own variant first,
+  so the redirect lands on the new page. The wait is held to the shortest of 5
+  seconds, the request's deadline, and the response's write deadline (the
+  action's `BodyTimeout`, or `Server.WriteTimeout`) less 500ms; with no time
+  left it does not wait. Past the budget, or on a failure, the redirect still
+  goes out and the page is served `STALE`. Redirect to a clean URL or declare
+  `CacheParams`: a query that is not a cache dimension of a route declaring none
+  is a key of its own, which nothing warms. An action calling `app.InvalidateTags`
+  in its handler, rather than returning `InvalidateTags`, gets the background
+  warm only.
 
 ### Upgrade notes
 
 - A test that asserts `STALE` or `MISS` right after an invalidation races the
-  warmer. Set `WarmLimit: -1` in such tests.
-- Keep `Server.WriteTimeout` above 5 seconds, or an action's warm budget can
-  outlast it.
-- Expect extra CPU, and a burst of `CacheMiss`/`CacheSet` events, right after
-  large invalidations. Lower `WarmLimit` or set it negative to opt out.
+  warmer. Set `WarmLimit: -1` in such tests; a test asserting the `HIT` calls
+  `site.WaitWarmed()` first.
+- Never declare `Cookie` or `Authorization` as a `Vary` header: its value would
+  be kept in the warm recipe and sent again with every warm render.
+- Warm renders skip middleware, so one that refuses a request (a tenant plugin's
+  404 for a deleted host) does not stop warming from writing entries no visitor
+  reaches after a purge.
+- A key left out of a run (over `WarmLimit`, a stopped run, passed over) is
+  untracked until it is next written.
+- Expect extra CPU, and a burst of `CacheMiss`/`CacheSet` events and
+  `RenderDuration` and fragment metrics, right after large invalidations. Lower
+  `WarmLimit` or set it negative to opt out. Declare `CacheParams` on routes
+  whose query can carry junk, so junk variants are not keys to warm.
 
 ## v0.63.0
 

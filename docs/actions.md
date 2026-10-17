@@ -201,10 +201,21 @@ built from: both are kept. The invalidated pages are then
 first: when `Location` is on the same origin, its variant (its query varied as the
 cache key varies it, and every `Vary` header variant of it) is rendered again
 with fresh data before the redirect is written, so the redirect lands on the new
-page, a fresh `HIT`. Only this action's response waits for that, no longer than 5
-seconds and no longer than the request's deadline; the remaining keys stay in the
-background run. Keep `Server.WriteTimeout` above 5 seconds, or the budget can
-outlast it.
+page, a fresh `HIT`. The variant the submitter lands on, the one whose `Vary`
+values their request declared, goes first, and is warmed even if nobody read it
+since its last warm. Only this action's response waits for that, and for no
+longer than the shortest of 5 seconds, the request's deadline, and what is left
+of the response's write deadline less half a second to write the redirect in.
+The write deadline is the action's own `BodyTimeout` when it sets one, and
+otherwise `Server.WriteTimeout` from when the request arrived. With no time left
+the response does not wait at all. The keys not warmed by then stay in the
+background run.
+
+Only `ActionResult.InvalidateTags` does this. An action that calls
+`app.InvalidateTags` (or `PurgeTags`) itself, inside its handler, has those pages
+warmed in the background like any other invalidation's, but its redirect is
+written without waiting for its page, so the submitter may land on it `STALE` or
+pay for its render.
 
 The page is served stale (`X-Collage-Cache: STALE`, `Cache-Control: no-store`)
 only when the render cannot finish in time: the upstream is slow or down, the
