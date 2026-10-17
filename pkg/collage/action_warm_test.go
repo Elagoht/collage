@@ -32,7 +32,9 @@ type postSite struct {
 
 type postView struct{ Title string }
 
-func newPostSite(t *testing.T, cacheConfig collage.CacheConfig) *postSite {
+// newPostSite builds the site. A fragmentTimeout above zero bounds each page's
+// data handler.
+func newPostSite(t *testing.T, cacheConfig collage.CacheConfig, fragmentTimeout ...time.Duration) *postSite {
 	t.Helper()
 	site := &postSite{
 		titles:  map[string]string{"a": "old a", "b": "old b", "c": "old c"},
@@ -70,8 +72,11 @@ func newPostSite(t *testing.T, cacheConfig collage.CacheConfig) *postSite {
 					return postView{}, failure
 				}
 				return postView{Title: title}, nil
-			})).Required().Build()
-		page := collage.NewPage("p-"+name).WithContent(post).WithPath("en", "/p/"+name).
+			})).Required()
+		if len(fragmentTimeout) > 0 {
+			post = post.WithTimeout(fragmentTimeout[0])
+		}
+		page := collage.NewPage("p-"+name).WithContent(post.Build()).WithPath("en", "/p/"+name).
 			Incremental(time.Hour).WithDependencyTags("posts").Build()
 		if err := app.RegisterPage(page); err != nil {
 			t.Fatalf("RegisterPage: %v", err)
@@ -198,6 +203,28 @@ func TestAction_UpstreamDownStillRedirects(t *testing.T) {
 	got := site.get("a")
 	if status := got.Header().Get(collage.CacheStatusHeader); got.Code != http.StatusOK || status != "STALE" || got.Body.String() != "<h1>old a</h1>" {
 		t.Fatalf("redirect target = %d %s %q, want the stale page", got.Code, status, got.Body.String())
+	}
+}
+
+// An upstream that hangs holds the submit no longer than the fragment's own
+// timeout: the redirect goes out, and the target is stale.
+func TestAction_HangingUpstreamIsBoundedByTheFragmentTimeout(t *testing.T) {
+	site := newPostSite(t, warmingCache(), 100*time.Millisecond)
+	site.prime(t)
+	gate := make(chan struct{})
+	t.Cleanup(func() { close(gate) })
+	site.set(func(s *postSite) { s.location, s.gate = "/p/a", gate })
+	began := time.Now()
+	rec := site.post(nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST = %d, want the redirect", rec.Code)
+	}
+	if took := time.Since(began); took > time.Second {
+		t.Fatalf("the redirect took %v, want about one fragment timeout", took)
+	}
+	site.set(func(s *postSite) { s.gate = nil; s.failure = errors.New("cms down") })
+	if got := site.get("a"); got.Header().Get(collage.CacheStatusHeader) != "STALE" {
+		t.Fatalf("redirect target = %s, want STALE", got.Header().Get(collage.CacheStatusHeader))
 	}
 }
 

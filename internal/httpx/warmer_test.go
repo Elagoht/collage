@@ -755,3 +755,37 @@ func TestActionWarm_NothingAfterStopWarming(t *testing.T) {
 		t.Fatalf("rendered %v after StopWarming", got)
 	}
 }
+
+// A joined render that failed is upstream trouble, and the action's warm does
+// not render the key again: the submit waits for one render, not two, and the
+// target stays stale.
+func TestActionWarm_DoesNotRetryAJoinedRenderThatFailed(t *testing.T) {
+	env, engine, keys := postsEnv(t, 2)
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/2")
+
+	env.handler.Warm(keys[1:])
+	<-entered
+	engine.set("post", fakeRender{err: errors.New("cms down")})
+	before := len(engine.rendered())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/2")
+	}()
+	waitJoined(t, env.handler, keys[1])
+	engine.mu.Lock()
+	engine.hold = ""
+	engine.mu.Unlock()
+	close(gate)
+	<-done
+	waitWarmed(t, env.handler)
+
+	if got := engine.renderedSince(before); len(got) != 0 {
+		t.Fatalf("rendered %v after joining the failed render, want nothing more", got)
+	}
+	if _, fresh := freshIn(t, env, keys[1]); fresh {
+		t.Fatal("the target is fresh after a failed render")
+	}
+}

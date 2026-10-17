@@ -908,12 +908,13 @@ func (h *Handler) warmRedirectTarget(r *http.Request, action, location string) {
 			return
 		}
 		result := h.warmOne(w.ctx, key)
-		if result.outcome == warmSkip && w.ctx.Err() == nil &&
-			(errors.Is(result.err, errWarmNotStored) || errors.Is(result.err, errWarmShared)) {
+		if result.outcome == warmSkip && w.ctx.Err() == nil && errors.Is(result.err, errWarmNotStored) {
 			// It joined a render that began before this action's invalidation,
-			// whose write the invalidation then refused, or that failed for the
-			// warm leading it. That flight is over, so this one leads a render
-			// of its own; without it the key, out of the queue, stays stale.
+			// whose write the invalidation then refused. That flight is over, so
+			// this one leads a render of its own; without it the key, out of the
+			// queue, stays stale. A joined render that failed (errWarmShared) is
+			// not retried: that is the upstream in trouble, and a second render
+			// would hold the submit for a second fragment timeout.
 			result = h.warmOne(w.ctx, key)
 		}
 		switch result.outcome {
