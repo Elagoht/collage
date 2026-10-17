@@ -17,9 +17,9 @@ import (
 )
 
 // capturingRenderer is a fakeRenderer whose default locale carries its prefix, so
-// the build writes a root redirect, and which answers CaptureResponses: every
-// path with 200, its own path in X-Path and X-Nonce unstable, except the paths in
-// status.
+// the build writes a root copy of the home page, and which answers
+// CaptureResponses: every path with 200, its own path in X-Path and X-Nonce
+// unstable, except the paths in status.
 type capturingRenderer struct {
 	*fakeRenderer
 	status map[string]int
@@ -114,7 +114,8 @@ func newCapturingRenderer(t *testing.T) *capturingRenderer {
 
 // TestBuild_CapturesEveryWrittenFilesHeaders: the build asks the application for
 // every page, document and asset it wrote, and for neither file it made up itself
-// — the root redirect and the 404 page — and what comes back lands on each file.
+// — the root copy of the home page and the 404 page — and what comes back lands
+// on each file, the root copy carrying the home page's.
 func TestBuild_CapturesEveryWrittenFilesHeaders(t *testing.T) {
 	out := resolvedTempDir(t)
 	app := &capturingFinisher{capturingRenderer: newCapturingRenderer(t)}
@@ -132,9 +133,18 @@ func TestBuild_CapturesEveryWrittenFilesHeaders(t *testing.T) {
 		t.Fatalf("captured %v, want %v", captured, want)
 	}
 
-	var synthesized int
+	var synthesized, root int
 	for _, f := range app.files {
-		if f.Path == "/" || strings.HasSuffix(f.Path, "/404.html") {
+		if f.Path == "/" {
+			// The root is never asked for — the application redirects it — but it
+			// is the home page, so it carries what the home page was answered with.
+			root++
+			if !f.Captured || f.Status != http.StatusOK || f.Headers.Get("X-Path") != "/en" {
+				t.Errorf("/ got Captured %v Status %d Headers %v, want the home page's", f.Captured, f.Status, f.Headers)
+			}
+			continue
+		}
+		if strings.HasSuffix(f.Path, "/404.html") {
 			synthesized++
 			if f.Status != 0 || f.Headers != nil {
 				t.Errorf("%s (synthesized) got Status %d Headers %v", f.Path, f.Status, f.Headers)
@@ -152,8 +162,8 @@ func TestBuild_CapturesEveryWrittenFilesHeaders(t *testing.T) {
 			t.Errorf("%s Status = %d, want %d", f.Path, f.Status, wantStatus)
 		}
 	}
-	if synthesized != 2 {
-		t.Errorf("files = %+v, want the root redirect and the 404 page among them", app.files)
+	if synthesized != 1 || root != 1 {
+		t.Errorf("files = %+v, want the root copy of the home page and the 404 page among them", app.files)
 	}
 
 	var unstable, status []types.Finding
@@ -328,7 +338,8 @@ func TestBuild_AStoppedCaptureWarnsOnceMore(t *testing.T) {
 
 // TestBuild_CapturedMarksEveryFileTheBuildAskedFor: a file the build asked the
 // application for is Captured whether the answer came, failed, or was never
-// reached because the capture stopped; the files the build made itself are not.
+// reached because the capture stopped; the 404 page the build made itself is
+// not, and the root copy of the home page is what the home page is.
 func TestBuild_CapturedMarksEveryFileTheBuildAskedFor(t *testing.T) {
 	t.Run("failed", func(t *testing.T) {
 		app := newCapturingRenderer(t)
@@ -366,15 +377,15 @@ func TestBuild_CapturedMarksEveryFileTheBuildAskedFor(t *testing.T) {
 	})
 }
 
-// assertCaptured checks that every file but the root redirect and the 404 page
-// is Captured.
+// assertCaptured checks that every file but the 404 page is Captured: the root
+// copy of the home page carries the home page's capture.
 func assertCaptured(t *testing.T, files []plugin.BuiltFile) {
 	t.Helper()
 	if len(files) == 0 {
 		t.Fatal("no files reached BuildFinished")
 	}
 	for _, f := range files {
-		synthesized := f.Path == "/" || strings.HasSuffix(f.Path, "/404.html")
+		synthesized := strings.HasSuffix(f.Path, "/404.html")
 		if f.Captured == synthesized {
 			t.Errorf("%s Captured = %v, want %v", f.Path, f.Captured, !synthesized)
 		}

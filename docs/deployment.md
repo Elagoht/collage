@@ -548,7 +548,8 @@ without being declared again. Left out:
 - a header whose value differs between the two answers, such as a CSP nonce. A
   file cannot carry a new one per reader, so it is left out and an
   `unstable-header` warning names it;
-- the `404.html` pages and the root redirect, which the build makes itself.
+- the `404.html` pages, which the build makes itself. The root copy of the
+  home page gets the home page's headers.
 
 A path answered with something other than one 2xx is a `capture-status` warning,
 one not answered at all a `capture-failed` warning, and a build in development

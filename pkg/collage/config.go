@@ -400,8 +400,8 @@ type LocaleConfig struct {
 	// locale's: "/en/blog/post" beside "/tr/blog/post", with no language at the
 	// bare address. Links built by name carry it, and a page requested without it
 	// is redirected, 301, to the address with it — "/" to "/en". A static export
-	// writes Default's pages under en/ too, and at its root a page that sends the
-	// reader to Default's home.
+	// writes Default's pages under en/ too, and at its root a copy of Default's
+	// home that names the prefixed address as canonical.
 	//
 	// Documents are prefixed like pages — "/en/sitemap.xml" beside
 	// "/tr/sitemap.xml" — except one built with DocumentBuilder.AtRoot, like

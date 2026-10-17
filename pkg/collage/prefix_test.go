@@ -132,8 +132,8 @@ func TestPrefixDefault_Redirects(t *testing.T) {
 }
 
 // The export writes the default locale's pages and documents under its directory,
-// a document at the root at the root, and a root page that sends the reader to
-// the default locale's home.
+// a document at the root at the root, and the default locale's home at the root
+// too.
 func TestPrefixDefault_Export(t *testing.T) {
 	app := prefixApp(t, true)
 	out := t.TempDir()
@@ -155,9 +155,14 @@ func TestPrefixDefault_Export(t *testing.T) {
 	if err != nil {
 		t.Fatalf("no root page: %v", err)
 	}
-	for _, want := range []string{`<meta http-equiv="refresh" content="0; url=/en/">`, `<link rel="canonical" href="/en/">`, `noindex`} {
-		if !strings.Contains(string(root), want) {
-			t.Errorf("root page has no %s:\n%s", want, root)
-		}
+	home, err := os.ReadFile(filepath.Join(out, "en", "index.html"))
+	if err != nil {
+		t.Fatalf("no home page: %v", err)
+	}
+	// The fixture's pages have no <head>, so there is nowhere to add a canonical
+	// link and the root is the home page byte for byte; TestWithCanonical covers
+	// a page that has one.
+	if string(root) != string(home) {
+		t.Errorf("root is not the home page:\n%s\nwant:\n%s", root, home)
 	}
 }

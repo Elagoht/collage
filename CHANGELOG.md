@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.65.0
+
+### Changed
+
+- **The root of a `PrefixDefault` export is the home page.** `dist/index.html`
+  is a copy of the default locale's home, with a canonical link to
+  `/<default>/` added after `<head>` when the page has none, instead of a page
+  that refreshes to it. A visitor to the bare domain on a static host sees the
+  site at once, and `BuildFinished` gives it the home page's captured status
+  and headers. The server's 301 from `/` is unchanged.
+
 ## v0.64.0
 
 ### Added
