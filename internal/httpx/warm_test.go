@@ -10,9 +10,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Elagoht/collage/internal/datacache"
 	"github.com/Elagoht/collage/internal/render"
+	"github.com/Elagoht/collage/internal/router"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -256,6 +258,65 @@ func TestWarm_DocumentsToo(t *testing.T) {
 	}
 	if rec := env.get("/feed.xml"); rec.Header().Get(CacheStatusHeader) != cacheHit || rec.Body.String() != "new" {
 		t.Fatalf("after warm = %q %s=%q, want a HIT on new", rec.Body.String(), CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+}
+
+// A document keyed on some of its query is warmed under the key its reader wrote,
+// though the reader's request, not a shared one, is what the document path records
+// from: the parameters the key ignores are left out of the recipe.
+func TestWarm_ADocumentKeyedOnPartOfItsQuery(t *testing.T) {
+	doc := &types.Document{
+		Name:        "feed",
+		ContentType: "application/xml",
+		Paths:       map[string]string{"en": "/feed.xml"},
+		Strategy:    types.StrategyIncremental,
+		CacheTTL:    time.Hour,
+		CacheParams: []string{"page"},
+		Handler: func(context.Context, *types.RenderContext) ([]byte, []string, error) {
+			return nil, nil, nil
+		},
+	}
+	engine := &staleDocEngine{fakeEngine: newFakeEngine(fakeRender{})}
+	engine.set(render.DocumentResult{Body: []byte("old"), Tags: []string{"feed"}}, nil)
+	rt := router.New(router.LocaleOptions{Default: "en"})
+	if err := rt.RegisterDocument(doc); err != nil {
+		t.Fatal(err)
+	}
+	env := newEnv(t, nil, func(d *Deps) { d.Router, d.Renderer = rt, engine })
+	const target = "/feed.xml?utm=x&page=2"
+	if rec := env.get(target); rec.Header().Get(CacheStatusHeader) != cacheMiss {
+		t.Fatalf("first %s = %q, want MISS", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	key := onlyKey(t, env, "feed")
+	if err := env.cache.MarkStaleKey(context.Background(), key); err != nil {
+		t.Fatal(err)
+	}
+	engine.set(render.DocumentResult{Body: []byte("new"), Tags: []string{"feed"}}, nil)
+	if ok, err := env.handler.warmKey(context.Background(), key); !ok || err != nil {
+		t.Fatalf("warmKey = %v, %v; want true, nil", ok, err)
+	}
+	if got := env.cacheEntries(); got != 1 {
+		t.Fatalf("cache entries = %d, want 1", got)
+	}
+	if rec := env.get(target); rec.Header().Get(CacheStatusHeader) != cacheHit || rec.Body.String() != "new" {
+		t.Fatalf("after warm = %q %s=%q, want a HIT on new", rec.Body.String(), CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+}
+
+// Content that is gone upstream is no failure of the upstream: the warm says so
+// apart, and forgets the recipe, so later runs do not render it again.
+func TestWarm_ContentGoneDropsTheRecipe(t *testing.T) {
+	env, key := staleEnv(t)
+	env.engine.set("home", fakeRender{notFound: true, err: errors.New("no such post")})
+	ok, err := env.handler.warmKey(context.Background(), key)
+	if ok || !errors.Is(err, errWarmGone) {
+		t.Fatalf("warmKey = %v, %v; want false, errWarmGone", ok, err)
+	}
+	if _, found := env.handler.recipes.get(key); found {
+		t.Fatal("the recipe of a key whose content is gone was kept")
+	}
+	if _, _, _, found := env.cache.GetStale(context.Background(), key); found {
+		t.Fatal("the stale entry of content that is gone was kept")
 	}
 }
 

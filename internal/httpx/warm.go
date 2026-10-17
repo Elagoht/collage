@@ -27,6 +27,11 @@ const defaultMaxRecipes = 10000
 // the write. Nothing about the upstream is known from it, unlike a failed render.
 var errWarmNotStored = errors.New("collage: warm render was not stored")
 
+// errWarmGone is warmKey's error for a key whose content no longer exists: the
+// render was a not found, which drops the entry, so its recipe goes too. A deleted
+// post is the common case, and it is no sign that the upstream is down.
+var errWarmGone = errors.New("collage: warmed content no longer exists")
+
 // recipe is how to rebuild the request that wrote one cache key: exactly what the
 // key was made of, so a warm render built from it writes that key and no other.
 //
@@ -172,6 +177,16 @@ func (s *recipes) get(key string) (recipe, bool) {
 	return node.recipe, true
 }
 
+// drop forgets key's recipe.
+func (s *recipes) drop(key string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if node, ok := s.byKey[key]; ok {
+		s.unlinkLocked(node)
+		delete(s.byKey, key)
+	}
+}
+
 // forPath returns the keys whose recipe is for path on host, every variant of one
 // URL. Hosts compare without case, as the cache key's does.
 func (s *recipes) forPath(host, path string) []string {
@@ -287,6 +302,10 @@ func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) 
 	status := h.serveWarm(w, req, route)
 
 	where := rcp.host + rcp.path
+	if status == http.StatusNotFound {
+		h.recipes.drop(key)
+		return false, fmt.Errorf("%w: %s", errWarmGone, where)
+	}
 	if status != http.StatusOK {
 		return false, fmt.Errorf("collage: warm %s: status %d", where, status)
 	}
