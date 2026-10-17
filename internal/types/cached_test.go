@@ -188,6 +188,7 @@ func TestCached_InterfaceKeysAreNotPersisted(t *testing.T) {
 // persistHidden has a field JSON never writes.
 type persistHidden struct {
 	Title string
+	//lint:ignore U1000 never read on purpose: an unexported field is what makes the type unpersistable
 	draft bool
 }
 

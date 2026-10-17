@@ -229,10 +229,10 @@ func (s *warmState) record(out *outcome) {
 	}
 }
 
-func (s *warmState) result() (cause, skipped, writeErr error, degraded, shared bool) {
+func (s *warmState) result() (degraded, shared bool, cause, skipped, writeErr error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cause, s.skipped, s.writeErr, s.degraded, s.shared
+	return s.degraded, s.shared, s.cause, s.skipped, s.writeErr
 }
 
 // recipe is how to rebuild the request that wrote one cache key: exactly what the
@@ -580,7 +580,7 @@ func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) 
 	status := h.serveWarm(w, req, route)
 
 	where := rcp.host + rcp.path
-	cause, skip, writeErr, degraded, shared := state.result()
+	degraded, shared, cause, skip, writeErr := state.result()
 	switch {
 	case skip != nil:
 		if errors.Is(skip, errWarmGuarded) {
