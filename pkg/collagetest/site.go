@@ -261,6 +261,25 @@ func (s *Site) Shutdown(ctx context.Context) error {
 	return s.App.Shutdown(ctx)
 }
 
+// WaitWarmed blocks until the application's warmer is idle: every page an
+// InvalidateTags or PurgeTags reached has been rendered again in the background,
+// or passed over. A test that asserts a HIT after an invalidation calls it first,
+// rather than racing the warmer:
+//
+//	site.App.InvalidateTags(ctx, "posts")
+//	site.WaitWarmed()
+//	site.Get("/posts").WantStatus(http.StatusOK) // X-Collage-Cache: HIT
+//
+// It returns at once when warming is off — no cache, development mode, or a
+// negative CacheConfig.WarmLimit.
+func (s *Site) WaitWarmed() {
+	// The handler's own method, which collage does not export: it is the
+	// framework's handler, not an API of App.
+	if warmer, ok := s.App.Handler().(interface{ WaitWarmed() }); ok {
+		warmer.WaitWarmed()
+	}
+}
+
 // Logs is everything the application logged, at debug level and above, as
 // text records. It is safe to read while the application runs.
 type Logs struct {
