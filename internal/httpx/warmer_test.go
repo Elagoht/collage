@@ -328,6 +328,67 @@ func TestWarmer_ShutdownDropsTheQueue(t *testing.T) {
 	}
 }
 
+// A run queued behind the one running is dropped by StopWarming too, never
+// started.
+func TestWarmer_ShutdownWithAFullQueue(t *testing.T) {
+	env, engine, keys := postsEnv(t, 8)
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/6")
+	before := len(engine.rendered())
+	env.handler.Warm(keys[:6])
+	<-entered
+	env.handler.Warm(keys[6:])
+
+	stopped := make(chan struct{})
+	go func() {
+		env.handler.StopWarming(context.Background())
+		close(stopped)
+	}()
+	// StopWarming waits for the held render, so the queue is dropped while it
+	// is still held.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		env.handler.warm.mu.Lock()
+		dropped := env.handler.warm.stopped
+		env.handler.warm.mu.Unlock()
+		if dropped {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("StopWarming never dropped the queue")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(gate)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("StopWarming did not return once the running render ended")
+	}
+	waitWarmed(t, env.handler)
+	if got := engine.renderedSince(before); len(got) != 1 {
+		t.Fatalf("renders = %v, want only the one that was running", got)
+	}
+}
+
+// With no cache there is nothing to warm into: no warmer, and Warm, WaitWarmed
+// and StopWarming do nothing.
+func TestWarmer_OffWithNoCache(t *testing.T) {
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)},
+		func(d *Deps) { d.Cache = nil })
+	if env.handler.warm != nil {
+		t.Fatal("a warmer exists with no cache")
+	}
+	env.get("/")
+	renders := env.engine.totalCalls()
+	env.handler.Warm([]string{"some-key"})
+	env.handler.WaitWarmed()
+	env.handler.StopWarming(context.Background())
+	if env.engine.totalCalls() != renders {
+		t.Fatal("rendered with no cache")
+	}
+}
+
 // StopWarming on a handler that never warmed returns at once, and a second call
 // is harmless.
 func TestWarmer_StopWithoutWarming(t *testing.T) {

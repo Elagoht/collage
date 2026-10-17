@@ -726,6 +726,24 @@ func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <
 	held := ""
 	stop := w.stop
 	for {
+		// Checked first, not only beside the send below: with both ready, the
+		// select would pick at random, and hand out one more key after the
+		// queue was dropped about half the time.
+		if stop != nil {
+			select {
+			case <-stop:
+				stop = nil
+				if !stopping {
+					stopping = true
+					skipped += len(run) - next
+					if held != "" {
+						skipped++
+						held = ""
+					}
+				}
+			default:
+			}
+		}
 		if held == "" && !stopping && (!probing || outstanding == 0) {
 			held, next = w.claim(run, next)
 		}
