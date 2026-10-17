@@ -1497,8 +1497,11 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
 	// r is the shared request the render was made from, so the recipe holds what
-	// the key holds and nothing of the reader. See warmKey.
-	h.recipes.put(key, newRecipe(r, page.CacheParams, false))
+	// the key holds and nothing of the reader. See warmKey. Not with warming
+	// off, when nothing reads it.
+	if h.warm != nil {
+		h.recipes.put(key, newRecipe(r, page.CacheParams, false))
+	}
 
 	if err := h.tracker.Track(ctx, key, withRouteTags(tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})

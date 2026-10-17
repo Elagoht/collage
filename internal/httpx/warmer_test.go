@@ -895,7 +895,9 @@ func (e slowVaryEngine) Render(ctx context.Context, rc *types.RenderContext) (*r
 // render is under way: the redirect goes out, and the variants it did not take
 // are warmed by the background run.
 func TestActionWarm_HeldToItsBudget(t *testing.T) {
-	const delay, budget = 300 * time.Millisecond, 100 * time.Millisecond
+	// A render longer than the margin below, so a budget checked only between
+	// keys, not while one renders, still fails the test.
+	const delay, budget = 2 * time.Second, 100 * time.Millisecond
 	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)},
 		withVary("Accept-Language"),
 		func(d *Deps) {
@@ -923,11 +925,13 @@ func TestActionWarm_HeldToItsBudget(t *testing.T) {
 
 	began := time.Now()
 	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/")
-	if took := time.Since(began); took > budget+150*time.Millisecond {
+	// A second of margin: under -race the redirect's own goroutines are slow
+	// to be scheduled, never two seconds slow.
+	if took := time.Since(began); took > budget+time.Second {
 		t.Fatalf("the action waited %v, want its budget of %v", took, budget)
 	}
 
-	deadline := time.Now().Add(10 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for _, key := range keys {
 		for {
 			if _, fresh := freshIn(t, env, key); fresh {

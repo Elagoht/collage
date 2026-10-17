@@ -306,21 +306,6 @@ func (s *recipes) drop(key string) {
 	}
 }
 
-// forPath returns the keys whose recipe is for path on host, every variant of one
-// URL. Hosts compare without case, as the cache key's does.
-func (s *recipes) forPath(host, path string) []string {
-	host = ascii.LowerString(host)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var keys []string
-	for node := s.newest; node != nil; node = node.older {
-		if node.recipe.path == path && ascii.LowerString(node.recipe.host) == host {
-			keys = append(keys, node.key)
-		}
-	}
-	return keys
-}
-
 // forURL returns the keys a GET of target on host would be looked up under,
 // every vary-header variant of it: those whose recipe is for target's path, and
 // whose query is the one target's key is built from — its raw query on a route
@@ -788,6 +773,21 @@ func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <
 	probing, stopping := true, false
 	held := ""
 	stop := w.stop
+	// stopped is what StopWarming does to the run, seen from either select:
+	// nothing more is handed out, and what was not, held key included, is
+	// counted skipped.
+	stopped := func() {
+		stop = nil
+		if stopping {
+			return
+		}
+		stopping = true
+		skipped += len(run) - next
+		if held != "" {
+			skipped++
+			held = ""
+		}
+	}
 	for {
 		// Checked first, not only beside the send below: with both ready, the
 		// select would pick at random, and hand out one more key after the
@@ -795,15 +795,7 @@ func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <
 		if stop != nil {
 			select {
 			case <-stop:
-				stop = nil
-				if !stopping {
-					stopping = true
-					skipped += len(run) - next
-					if held != "" {
-						skipped++
-						held = ""
-					}
-				}
+				stopped()
 			default:
 			}
 		}
@@ -847,15 +839,7 @@ func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <
 			// Shutdown: what is not running is dropped, without a warn — it is
 			// no failure — and StopWarming has let go of the queue already. The
 			// renders running are still waited for, above.
-			stop = nil
-			if !stopping {
-				stopping = true
-				skipped += len(run) - next
-				if held != "" {
-					skipped++
-					held = ""
-				}
-			}
+			stopped()
 		}
 	}
 	h.logger.Info("collage: warmed pages", "warmed", warmed, "skipped", skipped, "failed", failed,

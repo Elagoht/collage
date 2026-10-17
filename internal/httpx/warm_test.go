@@ -363,14 +363,6 @@ func TestRecipes_BoundedNewestFirst(t *testing.T) {
 	if got := store.newestFirst([]string{"a", "b", "c", "d", "zz"}); !slices.Equal(got, []string{"d", "a", "c"}) {
 		t.Fatalf("newestFirst = %v, want [d a c]", got)
 	}
-	got := store.forPath("EXAMPLE.com", "/a")
-	slices.Sort(got)
-	if !slices.Equal(got, []string{"a", "d"}) {
-		t.Fatalf("forPath = %v, want [a d]", got)
-	}
-	if got := store.forPath("other.com", "/a"); len(got) != 0 {
-		t.Fatalf("forPath on another host = %v, want none", got)
-	}
 }
 
 // An action's Location names a page of this cache only on the request's own
@@ -410,4 +402,87 @@ func TestSameOriginTarget(t *testing.T) {
 				tc.location, path, query, ok, tc.path, tc.query, tc.ok)
 		}
 	}
+}
+
+// recipeCount is how many recipes the handler holds.
+func recipeCount(h *Handler) int {
+	h.recipes.mu.Lock()
+	defer h.recipes.mu.Unlock()
+	return len(h.recipes.byKey)
+}
+
+// With warming off nothing reads a recipe, so none is recorded: not for a page,
+// not for a document.
+func TestWarm_NoRecipesWhenWarmingIsOff(t *testing.T) {
+	off := withWarmLimit(-1)
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)}, off)
+	env.engine.set("home", fakeRender{html: "<html>page</html>", tags: []string{"posts"}})
+	if rec := env.get("/"); rec.Header().Get(CacheStatusHeader) != cacheMiss {
+		t.Fatalf("page %s = %q, want a MISS that writes", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if got := recipeCount(env.handler); got != 0 {
+		t.Fatalf("page: %d recipes with warming off, want none", got)
+	}
+	docEnv, _ := staleDocEnv(t, off)
+	if got := recipeCount(docEnv.handler); got != 0 {
+		t.Fatalf("document: %d recipes with warming off, want none", got)
+	}
+}
+
+// A reader's Cookie and Authorization headers are no vary header, so they never
+// reach the recipe, nor the request a warm builds from it: a warm render is no
+// reader's, and a shared entry must not be made with one's credentials. A page's
+// recipe is made from the shared request, a document's from the reader's own.
+func TestWarm_CredentialsNeverReachTheWarmRequest(t *testing.T) {
+	credentialed := func(path string) *http.Request {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Cookie", "session=secret")
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Accept-Language", "tr")
+		return req
+	}
+	check := func(t *testing.T, env *testEnv, key string) {
+		t.Helper()
+		rcp, ok := env.handler.recipes.get(key)
+		if !ok {
+			t.Fatal("no recipe")
+		}
+		header := rcp.request(context.Background()).Header
+		for _, name := range []string{"Cookie", "Authorization"} {
+			if got := header.Values(name); len(got) != 0 {
+				t.Errorf("warm request %s = %v, want none", name, got)
+			}
+		}
+		if got := header.Get("Accept-Language"); got != "tr" {
+			t.Errorf("warm request Accept-Language = %q, want the declared vary header kept", got)
+		}
+	}
+	t.Run("page", func(t *testing.T) {
+		env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)}, withVary("Accept-Language"))
+		env.engine.set("home", fakeRender{html: "<html>page</html>", tags: []string{"posts"}})
+		if rec := env.do(credentialed("/")); rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d", rec.Code)
+		}
+		check(t, env, onlyKey(t, env, "posts"))
+	})
+	t.Run("document", func(t *testing.T) {
+		env, _ := staleDocEnv(t, withVary("Accept-Language"))
+		if rec := env.do(credentialed("/feed.xml")); rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d", rec.Code)
+		}
+		keys, err := env.tracker.Resolve(context.Background(), []string{"feed"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		found := false
+		for _, key := range keys {
+			if rcp, ok := env.handler.recipes.get(key); ok && slices.Contains(rcp.vary, "Accept-Language=tr") {
+				check(t, env, key)
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("no recipe for the tr variant")
+		}
+	})
 }

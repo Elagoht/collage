@@ -291,8 +291,11 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
 	// r is the reader's own request here, not a shared one; newRecipe keeps only
-	// the query the key varies on and the declared vary headers of it.
-	h.recipes.put(key, newRecipe(r, doc.CacheParams, true))
+	// the query the key varies on and the declared vary headers of it. Not with
+	// warming off, as for a page.
+	if h.warm != nil {
+		h.recipes.put(key, newRecipe(r, doc.CacheParams, true))
+	}
 
 	if err := h.tracker.Track(ctx, key, withRouteTags(result.Tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: track %q: %w", key, err)))
