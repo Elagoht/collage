@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-186 -160 320 320">
+  <!--
+    A puzzle piece shaped like a C, centred on its bounding box.
+    Body: the square ±100, corners of radius 25 (an eighth of a side).
+    Knobs: circles of radius 32.5 whose centres are 19.5 outside an edge, so each
+    meets the edge across a neck of 52 (19.5-26-32.5, a 3-4-5 triangle). They
+    reach 152 from the centre.
+    Mouth: a hole of radius 53.38 around the centre, opened by a channel ±26
+    high — level with the neck of the knob opposite — which meets the hole at
+    (46.62, ±26), exactly: 26² + 46.62² = 53.38². The jaws end in quarter
+    circles of radius 30.
+  -->
+  <path fill="#4c7d5d" d="
+    M -75 -100 H -26
+    A 32.5 32.5 0 1 1 26 -100
+    H 75 A 25 25 0 0 1 100 -75
+    V -56 A 30 30 0 0 1 70 -26
+    H 46.62 A 53.38 53.38 0 1 0 46.62 26
+    H 70 A 30 30 0 0 1 100 56
+    V 75 A 25 25 0 0 1 75 100
+    H 26 A 32.5 32.5 0 1 1 -26 100
+    H -75 A 25 25 0 0 1 -100 75
+    V 26 A 32.5 32.5 0 1 1 -100 -26
+    V -75 A 25 25 0 0 1 -75 -100
+    Z" />
+</svg>

@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" alt="collage logo" width="120"></p>
+
 # collage
 
 A Go framework for server-side, component-based rendering.
