@@ -372,3 +372,33 @@ func TestRecipes_BoundedNewestFirst(t *testing.T) {
 		t.Fatalf("forPath on another host = %v, want none", got)
 	}
 }
+
+// An action's Location names a page of this cache only on the request's own
+// origin; the query and fragment never pick the path.
+func TestSameOriginPath(t *testing.T) {
+	for _, tc := range []struct {
+		location, path string
+		ok             bool
+	}{
+		{"/p/x", "/p/x", true},
+		{"/p/x?saved=1#top", "/p/x", true},
+		{"x", "/admin/x", true},
+		{"../p/x", "/p/x", true},
+		{"?page=2", "/admin/save", true},
+		{"/p/%C3%BC", "/p/ü", true},
+		{"http://Example.com/p/x", "/p/x", true},
+		{"https://example.com", "/", true},
+		{"https://other.example/p/x", "", false},
+		{"//other.example/p/x", "", false},
+		{"ftp://example.com/p/x", "", false},
+		{"http:/p/x", "", false},
+		{"mailto:x@example.com", "", false},
+		{"http://[::1", "", false},
+	} {
+		r := httptest.NewRequest(http.MethodPost, "/admin/save", nil)
+		path, ok := sameOriginPath(r, tc.location)
+		if path != tc.path || ok != tc.ok {
+			t.Errorf("sameOriginPath(%q) = %q, %v; want %q, %v", tc.location, path, ok, tc.path, tc.ok)
+		}
+	}
+}

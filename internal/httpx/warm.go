@@ -860,3 +860,100 @@ func (h *Handler) warmOne(ctx context.Context, key string) (result warmResult) {
 	}
 	return warmResult{outcome: warmFail, err: err}
 }
+
+// take takes key out of the queue, so the background run passes it over, and
+// reports whether the warmer is still running: after StopWarming nothing is
+// warmed, not even an action's redirect target.
+func (w *warmer) take(key string) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	delete(w.pending, key)
+	return !w.stopped
+}
+
+// warmRedirectTarget warms the page an action's response redirects to, before the
+// response goes out, so the reader who submitted the form lands on a fresh HIT
+// with what they just changed rather than waiting on its render, or being handed a
+// stale copy when the background run has not got to it. It is called after the
+// action's invalidation, which has queued the same keys for the background run.
+//
+// Every key the target's path was written under is warmed — one per variant, as
+// the background run would — one at a time, each taken out of the queue just
+// before, so it is not rendered twice and, should a render fail, the rest stay
+// queued for the background run. Taking a key the background run has claimed
+// already is harmless: the two renders coalesce in warmFlight, or one finds the
+// other's entry fresh.
+//
+// The renders run under the warmer's context, not the request's: detached from the
+// client going away, and carrying none of the values an auth middleware or the
+// action left on the request's, which must not reach a shared entry. What bounds
+// the wait is each fragment's own data timeout. A failure stops here and is logged
+// at debug only: the page stays stale, the background run reports the upstream,
+// and the redirect goes out all the same.
+func (h *Handler) warmRedirectTarget(r *http.Request, action, location string) {
+	w := h.warm
+	if w == nil {
+		return
+	}
+	path, ok := sameOriginPath(r, location)
+	if !ok {
+		return
+	}
+	keys := h.recipes.forPath(r.Host, path)
+	if len(keys) > w.limit {
+		keys = keys[:w.limit]
+	}
+	for _, key := range keys {
+		if !w.take(key) {
+			return
+		}
+		result := h.warmOne(w.ctx, key)
+		if result.outcome == warmSkip && w.ctx.Err() == nil &&
+			(errors.Is(result.err, errWarmNotStored) || errors.Is(result.err, errWarmShared)) {
+			// It joined a render that began before this action's invalidation,
+			// whose write the invalidation then refused, or that failed for the
+			// warm leading it. That flight is over, so this one leads a render
+			// of its own; without it the key, out of the queue, stays stale.
+			result = h.warmOne(w.ctx, key)
+		}
+		switch result.outcome {
+		case warmFail:
+			h.logger.Debug("collage: an action's redirect target was not warmed, it stays stale",
+				"action", action, "path", path, "err", result.err)
+			return
+		case warmSkip:
+			if result.err != nil {
+				h.logger.Debug("collage: an action's redirect target was skipped by warming",
+					"action", action, "path", path, "err", result.err)
+			}
+		}
+	}
+}
+
+// sameOriginPath returns the path location names on r's own origin: a relative
+// reference resolved against r's URL, or an absolute http or https URL naming r's
+// host. Anything else — another host, another scheme, an unparsable location — is
+// no page of this cache, and ok is false. The query and fragment are dropped: a
+// recipe is found by its path, every variant of it.
+func sameOriginPath(r *http.Request, location string) (path string, ok bool) {
+	loc, err := url.Parse(location)
+	if err != nil || loc.Opaque != "" {
+		return "", false
+	}
+	if loc.Scheme != "" || loc.Host != "" {
+		// url.Parse lowercases the scheme; a host compares without case, as the
+		// cache key's does. A scheme with no host ("http:/p") is left alone:
+		// what a browser makes of it is not worth guessing at.
+		if loc.Scheme != "" && loc.Scheme != "http" && loc.Scheme != "https" {
+			return "", false
+		}
+		if loc.Host == "" || ascii.LowerString(loc.Host) != ascii.LowerString(r.Host) {
+			return "", false
+		}
+	}
+	path = r.URL.ResolveReference(loc).Path
+	if path == "" {
+		path = "/"
+	}
+	return path, true
+}

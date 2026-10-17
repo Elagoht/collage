@@ -224,6 +224,12 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 			h.logger.Error("collage: action invalidation failed",
 				"action", action.Name, "tags", result.InvalidateTags, "err", err)
 		}
+		// After the invalidation, which queued the target for the background
+		// run, and before the redirect, so the reader following it is handed
+		// the fresh page at once. Only this action's own response waits for it.
+		if result.Location != "" {
+			h.warmRedirectTarget(r, action.Name, result.Location)
+		}
 	}
 
 	return h.writeActionResult(w, r, rc, match, result, route)

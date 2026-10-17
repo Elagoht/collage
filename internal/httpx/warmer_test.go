@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strings"
 	"sync"
@@ -657,5 +658,100 @@ func TestWarmer_OffInDevMode(t *testing.T) {
 	waitWarmed(t, env.handler)
 	if got := len(engine.renderedSince(before)); got != 0 {
 		t.Fatalf("renders = %d in dev mode, want none", got)
+	}
+}
+
+// waitJoined waits until a render of key in the warm flight has a waiter.
+func waitJoined(t *testing.T, h *Handler, key string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for h.warmFlight.waitingOn(key) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("nothing joined the warm render")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// An action's redirect target the background run has claimed and is rendering
+// is not rendered a second time: the action's warm joins that render.
+func TestActionWarm_JoinsAClaimedRender(t *testing.T) {
+	env, engine, keys := postsEnv(t, 3)
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	// /posts/3 is the newest recipe, so the run's probe.
+	gate, entered := engine.holdPath("/posts/3")
+	before := len(engine.rendered())
+
+	env.handler.Warm(keys)
+	<-entered
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/3")
+	}()
+	waitJoined(t, env.handler, keys[2])
+	close(gate)
+	<-done
+	waitWarmed(t, env.handler)
+
+	counts := map[string]int{}
+	for _, path := range engine.renderedSince(before) {
+		counts[path]++
+	}
+	if counts["/posts/3"] != 1 {
+		t.Fatalf("renders = %v, want /posts/3 once", counts)
+	}
+	if content, fresh := freshIn(t, env, keys[2]); !fresh || content != "<html>new</html>" {
+		t.Fatalf("target = %q fresh %v, want the new page", content, fresh)
+	}
+}
+
+// A render that began before the action's invalidation is not stored, being
+// overlapped by it. The action's warm, having joined it and taken the key out
+// of the queue, renders the key again itself rather than leave it stale.
+func TestActionWarm_RetriesAJoinedRenderThatWasNotStored(t *testing.T) {
+	var epoch atomic.Uint64
+	env, engine, keys := postsEnv(t, 2, withEpoch(&epoch))
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/1")
+
+	// An earlier run, rendering /posts/1 with what the upstream said then.
+	env.handler.Warm(keys[:1])
+	<-entered
+	// The action's invalidation, during that render: it changes the page and
+	// queues /posts/1 again.
+	epoch.Add(1)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	env.handler.Warm(keys[:1])
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1")
+	}()
+	waitJoined(t, env.handler, keys[0])
+	// Later renders of /posts/1 are not held.
+	engine.mu.Lock()
+	engine.hold = ""
+	engine.mu.Unlock()
+	close(gate)
+	<-done
+
+	if content, fresh := freshIn(t, env, keys[0]); !fresh || content != "<html>new</html>" {
+		t.Fatalf("target = %q fresh %v right after the action, want the new page", content, fresh)
+	}
+	waitWarmed(t, env.handler)
+}
+
+// After StopWarming an action warms nothing.
+func TestActionWarm_NothingAfterStopWarming(t *testing.T) {
+	env, engine, keys := postsEnv(t, 1)
+	markAllStale(t, env, keys)
+	env.handler.StopWarming(context.Background())
+	before := len(engine.rendered())
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1")
+	if got := engine.renderedSince(before); len(got) != 0 {
+		t.Fatalf("rendered %v after StopWarming", got)
 	}
 }
