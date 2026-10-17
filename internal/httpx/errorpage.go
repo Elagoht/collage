@@ -168,7 +168,11 @@ func (h *Handler) ServeStatus(w http.ResponseWriter, r *http.Request, status int
 func (h *Handler) reportError(r *http.Request, f failure) {
 	// A warm's failure, such as its cache write's, is the warmer's to report.
 	if warm := warmStateOf(r.Context()); warm != nil {
-		warm.fail(f.err)
+		if f.stage == stageCacheWrite {
+			warm.writeFailed(f.err)
+		} else {
+			warm.fail(f.err)
+		}
 		return
 	}
 	h.logFailure(r, f)

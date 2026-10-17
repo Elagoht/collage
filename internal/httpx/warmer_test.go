@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/datacache"
+	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
@@ -276,9 +279,12 @@ func TestWarmer_DedupesQueuedKeys(t *testing.T) {
 		}
 	}
 	// /posts/1 was queued again while it rendered, and that second warm found it
-	// fresh: five warms, four renders.
-	if got := cacheEvents(env, observability.CacheWarm); got != 5 {
-		t.Fatalf("CacheWarm events = %d, want 5", got)
+	// fresh: a skip, not a warm, so four CacheWarm for four renders.
+	if got := cacheEvents(env, observability.CacheWarm); got != 4 {
+		t.Fatalf("CacheWarm events = %d, want 4", got)
+	}
+	if recs := env.logs.recordsFor(warmRunLog); len(recs) != 4 || recs[3].skipped != "1" {
+		t.Fatalf("run lines = %+v, want four, the last with one skipped", recs)
 	}
 }
 
@@ -428,6 +434,74 @@ func TestWarmer_SkipsGuardedPages(t *testing.T) {
 	}
 	if got := env.logs.count(warmStoppedLog); got != 0 {
 		t.Fatalf("a skipped guarded page stopped the run (%d warns)", got)
+	}
+	if _, found := env.handler.recipes.get(key); found {
+		t.Fatal("a guarded page's recipe was kept: every invalidation would queue it again")
+	}
+}
+
+// failingTagged is a memory cache whose SetTagged fails while fail is set.
+type failingTagged struct {
+	*cache.MemoryCache
+	fail atomic.Bool
+}
+
+func (c *failingTagged) SetTagged(ctx context.Context, key string, content []byte, ttl time.Duration, tags []string) (string, error) {
+	if c.fail.Load() {
+		return "", errors.New("disk full")
+	}
+	return c.MemoryCache.SetTagged(ctx, key, content, ttl, tags)
+}
+
+// failingTracker is a memory tracker whose Track fails while fail is set.
+type failingTracker struct {
+	*dependency.MemoryTracker
+	fail atomic.Bool
+}
+
+func (t *failingTracker) Track(ctx context.Context, key string, tags []string) error {
+	if t.fail.Load() {
+		return errors.New("tracker unavailable")
+	}
+	return t.MemoryTracker.Track(ctx, key, tags)
+}
+
+// A warm whose cache write or tracking fails is a failure, not a skip: the next
+// warm would fail the same way, and an entry written but untracked is out of
+// every invalidation's reach. The run stops, and its one warn names the error.
+func TestWarmer_AFailedCacheWriteStopsTheRun(t *testing.T) {
+	inner := cache.NewMemory(cache.MemoryConfig{})
+	store := &failingTagged{MemoryCache: inner}
+	tracker := &failingTracker{MemoryTracker: dependency.NewMemory()}
+	for name, failing := range map[string]*atomic.Bool{"write": &store.fail, "track": &tracker.fail} {
+		t.Run(name, func(t *testing.T) {
+			inner.Clear(context.Background())
+			store.fail.Store(false)
+			tracker.fail.Store(false)
+			env, engine, keys := postsEnv(t, 5, func(d *Deps) { d.Cache, d.Tracker = store, tracker })
+			env.cache = inner
+			markAllStale(t, env, keys)
+			failing.Store(true)
+			before := len(engine.rendered())
+
+			env.handler.Warm(keys)
+			waitWarmed(t, env.handler)
+
+			if got := len(engine.renderedSince(before)); got != 1 {
+				t.Fatalf("renders = %d, want 1: the run stops at the failed write", got)
+			}
+			warns := env.logs.recordsFor(warmStoppedLog)
+			want := map[string]string{"write": "disk full", "track": "tracker unavailable"}[name]
+			if len(warns) != 1 || !strings.Contains(warns[0].err, want) {
+				t.Fatalf("warns = %+v, want one naming %q", warns, want)
+			}
+			if got := cacheEvents(env, observability.CacheWarm); got != 0 {
+				t.Fatalf("CacheWarm = %d, want none", got)
+			}
+			if got := env.logs.count("collage: request failed"); got != 0 {
+				t.Fatalf("the warm logged %d request failures, want none", got)
+			}
+		})
 	}
 }
 

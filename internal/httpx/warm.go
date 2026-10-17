@@ -43,6 +43,10 @@ var errWarmGuarded = errors.New("collage: a guarded page is not warmed")
 // nothing to stop a run over.
 var errWarmNotAPage = errors.New("collage: warmed URL no longer answers with its page")
 
+// errWarmFresh is warmKey's error for a key found fresh already: a reader's
+// request re-made it first. Nothing was warmed, and nothing is wrong.
+var errWarmFresh = errors.New("collage: key was already fresh")
+
 // errWarmShared is warmKey's error for a warm that joined another warm's render
 // of the same key and found it failed: the warm that led it reports it.
 var errWarmShared = errors.New("collage: warm joined a render that did not store")
@@ -51,7 +55,8 @@ var errWarmShared = errors.New("collage: warm joined a render that did not store
 // the upstream, so a run goes on past it.
 func warmSkipped(err error) bool {
 	return err == nil || errors.Is(err, errWarmNotStored) || errors.Is(err, errWarmGone) ||
-		errors.Is(err, errWarmGuarded) || errors.Is(err, errWarmNotAPage) || errors.Is(err, errWarmShared)
+		errors.Is(err, errWarmGuarded) || errors.Is(err, errWarmNotAPage) || errors.Is(err, errWarmShared) ||
+		errors.Is(err, errWarmFresh)
 }
 
 // warmCtxKey marks a warm request's context with its *warmState. Unexported, so
@@ -67,6 +72,11 @@ type warmState struct {
 	skipped  error
 	degraded bool
 	shared   bool
+	// writeErr is the render's cache write or tracking failure. Unlike any
+	// other recorded cause it fails a warm that otherwise succeeded: an entry
+	// not written is a page left stale, and one written but not tracked is
+	// fresh and out of every invalidation's reach.
+	writeErr error
 }
 
 // warmStateOf returns ctx's warm state, or nil for any request but a warm.
@@ -85,6 +95,18 @@ func (s *warmState) fail(err error) {
 	defer s.mu.Unlock()
 	if s.cause == nil {
 		s.cause = err
+	}
+}
+
+// writeFailed records the failure of the render's cache write or tracking.
+func (s *warmState) writeFailed(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.writeErr == nil {
+		s.writeErr = err
 	}
 }
 
@@ -115,10 +137,10 @@ func (s *warmState) record(out *outcome) {
 	}
 }
 
-func (s *warmState) result() (cause, skipped error, degraded, shared bool) {
+func (s *warmState) result() (cause, skipped, writeErr error, degraded, shared bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cause, s.skipped, s.degraded, s.shared
+	return s.cause, s.skipped, s.writeErr, s.degraded, s.shared
 }
 
 // recipe is how to rebuild the request that wrote one cache key: exactly what the
@@ -400,9 +422,13 @@ func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) 
 	status := h.serveWarm(w, req, route)
 
 	where := rcp.host + rcp.path
-	cause, skip, degraded, shared := state.result()
+	cause, skip, writeErr, degraded, shared := state.result()
 	switch {
 	case skip != nil:
+		if errors.Is(skip, errWarmGuarded) {
+			// It never will be warmed, so later invalidations need not queue it.
+			h.recipes.drop(key)
+		}
 		return false, fmt.Errorf("%w: %s", skip, where)
 	case status == http.StatusNotFound:
 		h.recipes.drop(key)
@@ -421,6 +447,12 @@ func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) 
 			cause = errors.New("a fragment failed")
 		}
 		return false, fmt.Errorf("collage: warm %s: the render failed or was degraded, the stale entry stays: %w", where, cause)
+	case writeErr != nil:
+		// A failure, not a skip: the cache or the tracker is failing, which the
+		// next warm would run into as well.
+		return false, fmt.Errorf("collage: warm %s: %w", where, writeErr)
+	case w.header.Get(CacheStatusHeader) == cacheHit:
+		return false, fmt.Errorf("%w: %s", errWarmFresh, where)
 	}
 	// Judged by the store, not the header: a render another invalidation
 	// overlapped goes out as a MISS all the same, and only the entry says
