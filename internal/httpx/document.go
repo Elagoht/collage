@@ -273,6 +273,7 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 		return ""
 	}
 	if !h.storable(mark) {
+		h.overlapped(ctx, mark)
 		return ""
 	}
 

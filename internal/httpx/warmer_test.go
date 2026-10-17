@@ -1016,3 +1016,147 @@ func TestActionWarm_StopsAtAJoinedFailure(t *testing.T) {
 		t.Fatal("the key after the joined failure was taken out of the queue")
 	}
 }
+
+// manualInvalidations is the two counters core keeps around an invalidation,
+// driven by hand: begin and end one as dropTags does, the Warm it calls once
+// finished included — with no keys, as an invalidation that reached none.
+type manualInvalidations struct {
+	started, finished atomic.Uint64
+}
+
+func (m *manualInvalidations) counts() (started, finished uint64) {
+	finished = m.finished.Load()
+	return m.started.Load(), finished
+}
+
+func (m *manualInvalidations) begin() { m.started.Add(1) }
+
+func (m *manualInvalidations) end(h *Handler) {
+	m.finished.Add(1)
+	h.Warm(nil)
+}
+
+func withInvalidations(m *manualInvalidations) envOption {
+	return func(d *Deps) { d.Invalidations = m.counts }
+}
+
+// waitParked waits until key waits for an invalidation to end before it is
+// warmed again.
+func waitParked(t *testing.T, h *Handler, key string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		h.warm.mu.Lock()
+		_, parked := h.warm.parked[key]
+		h.warm.mu.Unlock()
+		if parked {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the key was never parked")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A warm render that an unrelated invalidation overlapped is refused its write,
+// and the key, which the earlier invalidation's tracker had forgotten, would be
+// stale until its next reader. It is warmed again once that invalidation is
+// over: a HIT, with no reader's render.
+func TestWarmer_AnOverlappedWarmIsWarmedAgain(t *testing.T) {
+	inv := &manualInvalidations{}
+	env, engine, keys := postsEnv(t, 1, withInvalidations(inv))
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	gate, entered := engine.holdPath("/posts/1")
+
+	env.handler.Warm(keys)
+	<-entered
+	inv.begin() // another tag's, reaching nothing this run holds
+	engine.mu.Lock()
+	engine.hold = ""
+	engine.mu.Unlock()
+	close(gate)
+	waitParked(t, env.handler, keys[0])
+	if _, fresh := freshIn(t, env, keys[0]); fresh {
+		t.Fatal("an overlapped warm render was stored")
+	}
+
+	inv.end(env.handler)
+	waitWarmed(t, env.handler)
+	if content, fresh := freshIn(t, env, keys[0]); !fresh || content != "<html>new</html>" {
+		t.Fatalf("entry = %q fresh %v after the invalidation ended, want the new page", content, fresh)
+	}
+	renders := len(engine.rendered())
+	if rec := env.get("/posts/1"); rec.Header().Get(CacheStatusHeader) != cacheHit {
+		t.Fatalf("%s = %q, want a HIT", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if len(engine.rendered()) != renders {
+		t.Fatal("the reader's request rendered")
+	}
+}
+
+// A storm of invalidations, each overlapping the warm of one key, renders it at
+// most once more per invalidation, and it ends warmed.
+func TestWarmer_AnInvalidationStormIsBounded(t *testing.T) {
+	const storm = 5
+	inv := &manualInvalidations{}
+	env, engine, keys := postsEnv(t, 1, withInvalidations(inv))
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	before := len(engine.rendered())
+
+	for i := range storm {
+		gate, entered := engine.holdPath("/posts/1")
+		if i == 0 {
+			env.handler.Warm(keys)
+		}
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			close(gate)
+			t.Fatalf("render #%d never began: the overlapped warm was not re-queued", i+1)
+		}
+		inv.begin()
+		inv.end(env.handler)
+		if i == storm-1 {
+			engine.mu.Lock()
+			engine.hold = ""
+			engine.mu.Unlock()
+		}
+		close(gate)
+	}
+	waitWarmed(t, env.handler)
+	if got := len(engine.renderedSince(before)); got > storm+1 {
+		t.Fatalf("%d renders for %d invalidations, want at most %d", got, storm, storm+1)
+	}
+	if _, fresh := freshIn(t, env, keys[0]); !fresh {
+		t.Fatal("the key was not warmed in the end")
+	}
+}
+
+// The bound itself: a key is re-queued at most once per invalidation started
+// since its first refused render began, whatever refuses it.
+func TestWarmer_RequeueBound(t *testing.T) {
+	inv := &manualInvalidations{}
+	env, _, keys := postsEnv(t, 1, withInvalidations(inv))
+	w := env.handler.warm
+	mark := invalidationMark{started: 0, finished: 0}
+	inv.begin()
+	inv.begin()
+	// Two invalidations under way: two re-queues, not a third.
+	for i, want := range []bool{true, true, false} {
+		if got := w.park(keys[0], mark, 2); got != want {
+			t.Fatalf("park #%d = %v, want %v", i+1, got, want)
+		}
+	}
+	// A third invalidation allows one more.
+	inv.begin()
+	if !w.park(keys[0], mark, 3) {
+		t.Fatal("park after a new invalidation = false, want true")
+	}
+	inv.end(env.handler)
+	inv.end(env.handler)
+	inv.end(env.handler)
+	waitWarmed(t, env.handler)
+}

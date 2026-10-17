@@ -228,3 +228,59 @@ func TestWarmer_ShutdownDropsTheQueue(t *testing.T) {
 		t.Fatalf("upstream asked %d times, want once: the rest of the queue was dropped", got)
 	}
 }
+
+// slowInvalidation holds every invalidation of the tag "slow" inside its
+// OnCacheInvalidate until release is closed, so the invalidation is under way
+// for as long as a test likes.
+type slowInvalidation struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *slowInvalidation) Name() string                             { return "test/slow-invalidation" }
+func (p *slowInvalidation) Version() string                          { return "0" }
+func (p *slowInvalidation) Init(context.Context, collage.Host) error { return nil }
+func (p *slowInvalidation) Shutdown(context.Context) error           { return nil }
+func (p *slowInvalidation) OnCacheInvalidate(_ context.Context, ev *collage.CacheInvalidateEvent) error {
+	if len(ev.Tags) == 1 && ev.Tags[0] == "slow" {
+		p.entered <- struct{}{}
+		<-p.release
+	}
+	return nil
+}
+
+// A warm overlapped by an unrelated invalidation — one that reached no page,
+// under way when the warm render ends — is not lost: once that invalidation is
+// over the page is warmed again, and its next reader is a HIT on the new name.
+func TestWarmer_AnUnrelatedInvalidationDoesNotLoseAWarm(t *testing.T) {
+	site := warmingAuthorSite(t, false)
+	slow := &slowInvalidation{entered: make(chan struct{}, 1), release: make(chan struct{})}
+	if err := site.app.RegisterPlugin(slow); err != nil {
+		t.Fatal(err)
+	}
+	site.get(t, 3, false)
+	site.renamed("A", "Ada Lovelace")
+	gate := site.hold()
+	before := site.attempts.Load()
+	if err := site.app.InvalidateTags(context.Background(), "author:A"); err != nil {
+		t.Fatal(err)
+	}
+	for site.attempts.Load() == before {
+		time.Sleep(time.Millisecond)
+	}
+	slowDone := make(chan error, 1)
+	go func() { slowDone <- site.app.InvalidateTags(context.Background(), "slow") }()
+	<-slow.entered
+	close(gate)
+	// The warm render ends while "slow" is under way, and is refused its write.
+	time.Sleep(50 * time.Millisecond)
+	close(slow.release)
+	if err := <-slowDone; err != nil {
+		t.Fatal(err)
+	}
+	waitWarmed(t, site.app)
+	rec := site.serve(t, 3)
+	if got := rec.Header().Get(collage.CacheStatusHeader); got != "HIT" || rec.Body.String() != "<article><p>Ada Lovelace</p></article>" {
+		t.Fatalf("after both invalidations = %s %q, want a HIT on the new name", got, rec.Body.String())
+	}
+}

@@ -30,6 +30,22 @@ const defaultMaxRecipes = 10000
 // the write. Nothing about the upstream is known from it, unlike a failed render.
 var errWarmNotStored = errors.New("collage: warm render was not stored")
 
+// warmOverlapError is warmKey's error for a warm render whose write an
+// invalidation refused, having overlapped it. It is an errWarmNotStored, and
+// carries the render's mark: an invalidation forgets the keys it reached, so this
+// one is reached by none until it is written again, and the warmer queues it
+// again itself (see requeue), bounded by the invalidations since that mark.
+type warmOverlapError struct {
+	where string
+	mark  invalidationMark
+}
+
+func (e *warmOverlapError) Error() string {
+	return errWarmNotStored.Error() + ": " + e.where + ": an invalidation overlapped it"
+}
+
+func (e *warmOverlapError) Is(target error) bool { return target == errWarmNotStored }
+
 // errWarmGone is warmKey's error for a key whose content no longer exists: the
 // render was a not found, which drops the entry, so its recipe goes too. A deleted
 // post is the common case, and it is no sign that the upstream is down.
@@ -73,6 +89,10 @@ type warmState struct {
 	skipped  error
 	degraded bool
 	shared   bool
+	// overlapped is set when an invalidation refused the render's write, or
+	// dropped the entry just written; mark is when that render began.
+	overlapped bool
+	mark       invalidationMark
 	// writeErr is the render's cache write or tracking failure. Unlike any
 	// other recorded cause it fails a warm that otherwise succeeded: an entry
 	// not written is a page left stale, and one written but not tracked is
@@ -109,6 +129,21 @@ func (s *warmState) writeFailed(err error) {
 	if s.writeErr == nil {
 		s.writeErr = err
 	}
+}
+
+// overlap records that an invalidation overlapped the render begun at mark, so
+// its entry was not kept.
+func (s *warmState) overlap(mark invalidationMark) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.overlapped, s.mark = true, mark
+}
+
+// overlapMark returns the mark overlap recorded, and whether it did.
+func (s *warmState) overlapMark() (invalidationMark, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mark, s.overlapped
 }
 
 // skip records that the warm was not attempted, and why.
@@ -478,6 +513,12 @@ func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) 
 		_, _, stored = h.cache.Get(ctx, key)
 	}
 	if !stored {
+		// Told apart from a cache that dropped the write on its own: only an
+		// overlap is warmed again, as only an overlap has an invalidation that
+		// bounds how often.
+		if mark, overlapped := state.overlapMark(); overlapped {
+			return false, &warmOverlapError{where: where, mark: mark}
+		}
 		if cause != nil {
 			return false, fmt.Errorf("%w: %s: %w", errWarmNotStored, where, cause)
 		}
@@ -529,6 +570,12 @@ type warmer struct {
 	// during that render keeps the render from being stored, and must be able
 	// to queue the key again.
 	pending map[string]struct{}
+	// parked holds the keys whose warm an invalidation overlapped, waiting for
+	// no invalidation to be under way to be queued again: rendered while one
+	// is, they would be refused again. requeued is each such key's bound, kept
+	// until the key's warm ends some other way. See requeue.
+	parked   map[string]struct{}
+	requeued map[string]requeueCount
 	// runs are the runs not yet started, oldest first. A key of a run that is no
 	// longer pending — dropped by a stop — is passed over.
 	runs [][]string
@@ -563,6 +610,8 @@ func newWarmer(limit int) *warmer {
 		limit:        limit,
 		targetBudget: actionWarmBudget,
 		pending:      make(map[string]struct{}),
+		parked:       make(map[string]struct{}),
+		requeued:     make(map[string]requeueCount),
 		wake:         make(chan struct{}, 1),
 		stop:         make(chan struct{}),
 		ctx:          ctx,
@@ -600,12 +649,16 @@ type warmResult struct {
 // Warm does nothing when warming is off, and nothing after StopWarming.
 func (h *Handler) Warm(keys []string) {
 	w := h.warm
-	if w == nil || len(keys) == 0 {
+	if w == nil {
 		return
 	}
 	// Before the warmer's lock, which the coordinator takes between renders: the
 	// recipe store has a lock of its own.
 	ordered := h.recipes.newestFirst(keys)
+	// Every invalidation calls Warm once over, those that reached no key too:
+	// that is when the keys parked behind it are queued again, unless another
+	// is still under way, whose own Warm will.
+	quiet := h.noInvalidationUnderWay()
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -623,6 +676,16 @@ func (h *Handler) Warm(keys []string) {
 		w.pending[key] = struct{}{}
 		run = append(run, key)
 	}
+	if quiet {
+		run = w.unparkLocked(run)
+	}
+	h.queueRunLocked(run)
+}
+
+// queueRunLocked queues run, starting the goroutines with the first, and wakes
+// the coordinator. Under w.mu.
+func (h *Handler) queueRunLocked(run []string) {
+	w := h.warm
 	if len(run) == 0 {
 		return
 	}
@@ -657,6 +720,8 @@ func (h *Handler) StopWarming(ctx context.Context) {
 	if !w.stopped {
 		w.stopped = true
 		clear(w.pending)
+		clear(w.parked)
+		clear(w.requeued)
 		w.runs = nil
 		close(w.stop)
 		w.idle.Broadcast()
@@ -689,8 +754,103 @@ func (h *Handler) WaitWarmed() {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for len(w.runs) > 0 || w.running {
+	for len(w.runs) > 0 || w.running || len(w.parked) > 0 {
 		w.idle.Wait()
+	}
+}
+
+// requeueCount is how often a key has been queued again after an overlapped
+// warm, and the finished count when the first such warm began: the
+// invalidations not finished by then, under way or begun since, are those
+// allowed to have overlapped it, one re-queue each.
+type requeueCount struct {
+	base, count uint64
+}
+
+// noInvalidationUnderWay reports whether no invalidation is under way now.
+func (h *Handler) noInvalidationUnderWay() bool {
+	m := h.invalidationMark()
+	return m.started == m.finished
+}
+
+// requeue queues key again after its warm render, begun at mark, was refused its
+// write by an invalidation that overlapped it. The invalidation forgot the key,
+// as every invalidation forgets what it reached, and the refused write did not
+// track it again, so no later invalidation would reach it: without this it
+// stays stale until its next reader.
+//
+// It is parked until no invalidation is under way, when either the invalidation
+// ending queues it (see Warm), or, already over, this does at once. Parked
+// before the counts are read, so an invalidation ending between the two still
+// finds it.
+//
+// Bounded, so a storm of invalidations cannot keep one key rendering: see park.
+func (h *Handler) requeue(key string, mark invalidationMark) {
+	w := h.warm
+	if !w.park(key, mark, h.invalidationMark().started) {
+		return
+	}
+	if !h.noInvalidationUnderWay() {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	h.queueRunLocked(w.unparkLocked(nil))
+}
+
+// park parks key for requeue, and reports whether it did: at most once per
+// invalidation started, as of started, since the first of its refused warms
+// began at mark — any later refusal needs an invalidation of its own to have
+// overlapped it. Past that the key is let go, stale until its next reader.
+func (w *warmer) park(key string, mark invalidationMark, started uint64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped {
+		return false
+	}
+	count, ok := w.requeued[key]
+	if !ok {
+		count = requeueCount{base: mark.finished}
+	}
+	// base is a finished count read no later than started was, so never
+	// above it.
+	if count.count >= started-count.base {
+		w.settleLocked(key)
+		return false
+	}
+	count.count++
+	w.requeued[key] = count
+	w.parked[key] = struct{}{}
+	return true
+}
+
+// unparkLocked appends the parked keys not already queued to run, and queues
+// them. Under w.mu.
+func (w *warmer) unparkLocked(run []string) []string {
+	for key := range w.parked {
+		delete(w.parked, key)
+		if _, queued := w.pending[key]; queued {
+			continue
+		}
+		w.pending[key] = struct{}{}
+		run = append(run, key)
+	}
+	return run
+}
+
+// settle forgets key's re-queue bound, once its warm has ended some other way
+// than overlapped.
+func (w *warmer) settle(key string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.settleLocked(key)
+}
+
+func (w *warmer) settleLocked(key string) {
+	delete(w.requeued, key)
+	if _, parked := w.parked[key]; parked {
+		delete(w.parked, key)
+		w.idle.Broadcast()
 	}
 }
 
@@ -750,6 +910,7 @@ func (w *warmer) release(run []string, i int) int {
 	for ; i < len(run); i++ {
 		if _, queued := w.pending[run[i]]; queued {
 			delete(w.pending, run[i])
+			delete(w.requeued, run[i])
 			n++
 		}
 	}
@@ -865,6 +1026,14 @@ func (h *Handler) warmOne(ctx context.Context, key string) (result warmResult) {
 		}
 	}()
 	ok, err := h.warmKey(ctx, key)
+	// Before the result is handed on, so a run is not over, nor the warmer
+	// idle, while the key is still to be queued again.
+	var overlap *warmOverlapError
+	if errors.As(err, &overlap) && ctx.Err() == nil {
+		h.requeue(key, overlap.mark)
+	} else {
+		h.warm.settle(key)
+	}
 	switch {
 	case ok:
 		h.metrics.CacheEvent(ctx, observability.CacheWarm, key)

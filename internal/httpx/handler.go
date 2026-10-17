@@ -1479,6 +1479,7 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 		return ""
 	}
 	if !h.storable(mark) {
+		h.overlapped(ctx, mark)
 		return ""
 	}
 
@@ -1510,6 +1511,16 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	return etag
 }
 
+// overlapped records, on a warm's render, that an invalidation overlapped the
+// render begun at mark and its entry was not kept, so the warmer queues the key
+// again (see requeue). A reader's render records nothing: its key is rendered
+// again on its next request.
+func (h *Handler) overlapped(ctx context.Context, mark invalidationMark) {
+	if warm := warmStateOf(ctx); warm != nil {
+		warm.overlap(mark)
+	}
+}
+
 // dropIfOverlapped drops the entry just written for key when an invalidation or a
 // purge began between the check before the write and the write itself: the check
 // alone leaves that window, and the invalidation, finding nothing yet, would leave
@@ -1518,6 +1529,7 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 func (h *Handler) dropIfOverlapped(ctx context.Context, key string, mark invalidationMark) {
 	if h.invalidatedSince(mark) {
 		_ = h.cache.InvalidateKey(context.WithoutCancel(ctx), key)
+		h.overlapped(ctx, mark)
 	}
 }
 
