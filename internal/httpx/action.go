@@ -79,8 +79,11 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// here works as long as they have not passed; nothing before this point
 	// reads the body, unless a middleware does, which then reads it under the
 	// server's deadlines.
+	// The deadline the response must be written by, when this request set its
+	// own; otherwise the server's, worked out below.
+	var writeDeadline time.Time
 	if action.BodyTimeout > 0 && !action.StreamingBody {
-		h.setBodyDeadlines(w, r, action)
+		writeDeadline = h.setBodyDeadlines(w, r, action)
 	}
 
 	// A multipart body over the parser's memory budget spills its files to disk,
@@ -146,7 +149,10 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// under the server's short ones, and the drain net/http does after the
 	// refusal is bounded by them too.
 	if action.BodyTimeout > 0 && action.StreamingBody {
-		h.setBodyDeadlines(w, r, action)
+		writeDeadline = h.setBodyDeadlines(w, r, action)
+	}
+	if writeDeadline.IsZero() && h.writeTimeout > 0 && !route.start.IsZero() {
+		writeDeadline = route.start.Add(h.writeTimeout)
 	}
 
 	ctx := r.Context()
@@ -237,7 +243,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		// meant to land on a warm page is a clean URL, or names only declared
 		// CacheParams.
 		if result.Location != "" {
-			h.warmRedirectTarget(r, action.Name, result.Location)
+			h.warmRedirectTarget(r, action.Name, result.Location, writeDeadline)
 		}
 	}
 
@@ -272,11 +278,15 @@ const bodyTimeoutUnsupported = "collage: an action's body timeout could not be s
 	"a middleware's ResponseWriter wrapper probably lacks Unwrap"
 
 // setBodyDeadlines gives r action's BodyTimeout to be read and answered in,
-// replacing the server's ReadTimeout and WriteTimeout for this request.
-func (h *Handler) setBodyDeadlines(w http.ResponseWriter, r *http.Request, action *types.Action) {
+// replacing the server's ReadTimeout and WriteTimeout for this request. It returns
+// the write deadline it set, or the zero time when it set none, and the server's
+// still applies.
+func (h *Handler) setBodyDeadlines(w http.ResponseWriter, r *http.Request, action *types.Action) time.Time {
 	deadline := time.Now().Add(action.BodyTimeout)
 	controller := http.NewResponseController(w)
-	err := errors.Join(controller.SetReadDeadline(deadline), controller.SetWriteDeadline(deadline))
+	readErr := controller.SetReadDeadline(deadline)
+	writeErr := controller.SetWriteDeadline(deadline)
+	err := errors.Join(readErr, writeErr)
 	switch {
 	case err == nil:
 	case errors.Is(err, http.ErrNotSupported):
@@ -287,6 +297,10 @@ func (h *Handler) setBodyDeadlines(w http.ResponseWriter, r *http.Request, actio
 		// The connection is already gone, as a rule; the body's read will say so.
 		h.logger.Debug("collage: an action's body timeout could not be set", "action", action.Name, "err", err)
 	}
+	if writeErr != nil {
+		return time.Time{}
+	}
+	return deadline
 }
 
 // actionErrorStatus maps a handler's error to a status.

@@ -1183,11 +1183,29 @@ func (h *Handler) warmOne(ctx context.Context, key string, checks warmChecks) (r
 }
 
 // actionWarmBudget is the longest an action's response waits for its redirect
-// target to be warmed. A request deadline, when the request has one, cuts it
-// shorter. Past it the redirect goes out, the render under way finishes on its
-// own, and the keys not yet taken are left to the background run: the submit is
-// the editor's, and is not to be held on a slow upstream.
+// target to be warmed. The response's write deadline, less actionWriteMargin, and
+// the request's context deadline cut it shorter (see warmBudget). Past it the
+// redirect goes out, the render under way finishes on its own, and the keys not
+// yet taken are left to the background run: the submit is the editor's, and is
+// not to be held on a slow upstream.
 const actionWarmBudget = 5 * time.Second
+
+// actionWriteMargin is the time left before the write deadline for the redirect
+// to be written in once the wait is over.
+const actionWriteMargin = 500 * time.Millisecond
+
+// warmBudget is how long an action's response may wait for its redirect target
+// from now: budget, cut to what is left of writeDeadline less actionWriteMargin
+// when there is one, and to ctx's deadline. Zero or less means no wait at all.
+func warmBudget(ctx context.Context, now time.Time, budget time.Duration, writeDeadline time.Time) time.Duration {
+	if !writeDeadline.IsZero() {
+		budget = min(budget, writeDeadline.Sub(now)-actionWriteMargin)
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = min(budget, deadline.Sub(now))
+	}
+	return budget
+}
 
 // take takes key out of the queue, so the background run passes it over, and
 // reports whether the warmer is still running: after StopWarming nothing is
@@ -1237,7 +1255,7 @@ func (w *warmer) begin() bool {
 // render, or a joined one that failed, ends it at once — the upstream is in
 // trouble, and the background run reports it — logged at debug only: the page
 // stays stale, and the redirect goes out all the same.
-func (h *Handler) warmRedirectTarget(r *http.Request, action, location string) {
+func (h *Handler) warmRedirectTarget(r *http.Request, action, location string, writeDeadline time.Time) {
 	w := h.warm
 	if w == nil {
 		return
@@ -1264,10 +1282,16 @@ func (h *Handler) warmRedirectTarget(r *http.Request, action, location string) {
 		// not anyone read it since its last warm, or the cache still holds it.
 		jobs[0].checks = 0
 	}
-	deadline := time.Now().Add(w.targetBudget)
-	if requestDeadline, set := r.Context().Deadline(); set && requestDeadline.Before(deadline) {
-		deadline = requestDeadline
+	now := time.Now()
+	wait := warmBudget(r.Context(), now, w.targetBudget, writeDeadline)
+	if wait <= 0 {
+		// No time to wait in: the redirect goes out now, and the keys stay in
+		// the background run's queue.
+		h.logger.Debug("collage: an action's redirect target was not warmed, no time was left before its write deadline",
+			"action", action, "path", target.Path)
+		return
 	}
+	deadline := now.Add(wait)
 	if !w.begin() {
 		return
 	}
@@ -1285,7 +1309,7 @@ func (h *Handler) warmRedirectTarget(r *http.Request, action, location string) {
 		// The render under way goes on in the goroutine, which takes no
 		// further key: what is left is the background run's.
 		h.logger.Debug("collage: an action's redirect target was not warmed within its budget",
-			"action", action, "path", target.Path, "budget", w.targetBudget)
+			"action", action, "path", target.Path, "budget", wait)
 	}
 }
 

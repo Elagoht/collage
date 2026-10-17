@@ -937,6 +937,9 @@ func (a *App) buildHandler() (http.Handler, error) {
 		// A recipe is only worth keeping for a key the cache can still hold.
 		MaxRecipes: a.cfg.Cache.MaxEntries,
 		WarmLimit:  a.cfg.Cache.WarmLimit,
+		// An action's wait for its redirect target is held to what is left of
+		// the response's write deadline.
+		WriteTimeout: a.cfg.Server.WriteTimeout,
 	})
 	if err != nil {
 		return a.failedAfterInit(err)

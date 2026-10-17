@@ -688,7 +688,7 @@ func TestActionWarm_JoinsAClaimedRender(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/3")
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/3", time.Time{})
 	}()
 	waitJoined(t, env.handler, keys[2])
 	close(gate)
@@ -728,7 +728,7 @@ func TestActionWarm_RetriesAJoinedRenderThatWasNotStored(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1")
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1", time.Time{})
 	}()
 	waitJoined(t, env.handler, keys[0])
 	// Later renders of /posts/1 are not held.
@@ -750,7 +750,7 @@ func TestActionWarm_NothingAfterStopWarming(t *testing.T) {
 	markAllStale(t, env, keys)
 	env.handler.StopWarming(context.Background())
 	before := len(engine.rendered())
-	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1")
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1", time.Time{})
 	if got := engine.renderedSince(before); len(got) != 0 {
 		t.Fatalf("rendered %v after StopWarming", got)
 	}
@@ -772,7 +772,7 @@ func TestActionWarm_DoesNotRetryAJoinedRenderThatFailed(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/2")
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/2", time.Time{})
 	}()
 	waitJoined(t, env.handler, keys[1])
 	engine.mu.Lock()
@@ -842,7 +842,7 @@ func TestActionWarm_OnlyTheLocationsQueryVariant(t *testing.T) {
 	env.handler.Warm(keys)
 	<-entered
 
-	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1")
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1", time.Time{})
 	if content, fresh := freshIn(t, env, bare); !fresh || content != "<html>new</html>" {
 		t.Fatalf("bare key = %q fresh %v, want the new page", content, fresh)
 	}
@@ -881,7 +881,7 @@ func TestActionWarm_CacheParamsSelectTheVariant(t *testing.T) {
 	markAllStale(t, env, keys)
 
 	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save",
-		"/list?page=2&utm=z&sort=new")
+		"/list?page=2&utm=z&sort=new", time.Time{})
 	if _, fresh := freshIn(t, env, keys[0]); !fresh {
 		t.Fatal("the page=2 variant was not warmed")
 	}
@@ -934,7 +934,7 @@ func TestActionWarm_HeldToItsBudget(t *testing.T) {
 	env.handler.Warm(keys)
 
 	began := time.Now()
-	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/")
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/", time.Time{})
 	// A second of margin: under -race the redirect's own goroutines are slow
 	// to be scheduled, never two seconds slow.
 	if took := time.Since(began); took > budget+time.Second {
@@ -966,7 +966,7 @@ func TestActionWarm_HeldToTheRequestDeadline(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil).WithContext(ctx), "save", "/posts/1")
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil).WithContext(ctx), "save", "/posts/1", time.Time{})
 	}()
 	select {
 	case <-done:
@@ -1327,11 +1327,112 @@ func TestActionWarm_TheSubmittersVariantFirst(t *testing.T) {
 	if got, matched := env.handler.recipes.forURL(action.Host, target, requestVary(action)); !matched || got[0] != en {
 		t.Fatalf("forURL = %v matched %v, want %q first", got, matched, en)
 	}
-	env.handler.warmRedirectTarget(action, "save", "/")
+	env.handler.warmRedirectTarget(action, "save", "/", time.Time{})
 	if _, fresh := freshIn(t, env, en); !fresh {
 		t.Fatal("the submitter's variant was not warmed")
 	}
 	if _, fresh := freshIn(t, env, tr); fresh {
 		t.Fatal("a variant nobody read since its last warm was warmed")
+	}
+}
+
+// budgetServer is posts with a slow /posts/1 and an action at /save that
+// invalidates and redirects there, served by a real server whose WriteTimeout is
+// writeTimeout, as Deps.WriteTimeout says. bodyTimeout, when set, is the action's
+// BodyTimeout. It returns the server's URL.
+func budgetServer(t *testing.T, writeTimeout, bodyTimeout time.Duration) string {
+	t.Helper()
+	save := action("save", "/save", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+			return &types.ActionResult{Location: "/posts/1", InvalidateTags: []string{"posts"}}, nil
+		})
+	save.BodyTimeout = bodyTimeout
+	env, engine, keys := postsEnv(t, 1, func(d *Deps) {
+		d.WriteTimeout = writeTimeout
+		d.Invalidator = func(context.Context, []string) error { return nil }
+	})
+	if err := env.router.RegisterAction(save); err != nil {
+		t.Fatal(err)
+	}
+	markAllStale(t, env, keys)
+	gate, _ := engine.holdPath("/posts/1")
+	srv := httptest.NewUnstartedServer(env.handler)
+	srv.Config.WriteTimeout = writeTimeout
+	srv.Start()
+	// Registered after postsEnv's StopWarming, so they run before it: the held
+	// render is let go, then the server closed, then the warmer stopped.
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(gate) })
+	return srv.URL
+}
+
+// postSave posts to /save, not following the redirect, and returns the response
+// and how long it took.
+func postSave(t *testing.T, base string) (*http.Response, time.Duration) {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := http.NewRequest(http.MethodPost, base+"/save", strings.NewReader("x=1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// The host the posts were written for, which the action's warm looks
+	// their recipes up by.
+	req.Host = "example.com"
+	began := time.Now()
+	res, err := client.Do(req)
+	took := time.Since(began)
+	if err != nil {
+		t.Fatalf("POST /save after %v: %v; the redirect was not written", took, err)
+	}
+	_ = res.Body.Close()
+	return res, took
+}
+
+// An action's wait for its redirect target is held to what is left of its write
+// deadline, less a margin to write the redirect in: with a WriteTimeout shorter
+// than the budget the wait is shorter, and the redirect arrives.
+func TestActionWarm_HeldToTheWriteDeadline(t *testing.T) {
+	base := budgetServer(t, 1500*time.Millisecond, 0)
+	res, took := postSave(t, base)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", res.StatusCode)
+	}
+	if took < 700*time.Millisecond || took > 1400*time.Millisecond {
+		t.Fatalf("the action answered after %v, want its write deadline less the margin, about 1s", took)
+	}
+}
+
+// An action's own BodyTimeout replaces the server's write deadline, so it is
+// the one the wait is held to.
+func TestActionWarm_HeldToTheBodyDeadline(t *testing.T) {
+	base := budgetServer(t, 200*time.Millisecond, 1500*time.Millisecond)
+	res, took := postSave(t, base)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", res.StatusCode)
+	}
+	if took < 700*time.Millisecond || took > 1400*time.Millisecond {
+		t.Fatalf("the action answered after %v, want its body deadline less the margin, about 1s", took)
+	}
+}
+
+// With no time left to wait in, the action does not wait at all: the target is
+// not taken, and stays in the background queue.
+func TestActionWarm_NoBudgetLeftSkipsTheWarm(t *testing.T) {
+	env, engine, keys := postsEnv(t, 1)
+	markAllStale(t, env, keys)
+	queue(env.handler, keys...)
+	before := len(engine.rendered())
+	began := time.Now()
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1",
+		time.Now().Add(100*time.Millisecond))
+	if took := time.Since(began); took > 50*time.Millisecond {
+		t.Fatalf("the action waited %v with no budget left", took)
+	}
+	if got := engine.renderedSince(before); len(got) != 0 {
+		t.Fatalf("rendered %v with no budget left", got)
+	}
+	if !isPending(env.handler, keys[0]) {
+		t.Fatal("the target was taken out of the background queue")
 	}
 }

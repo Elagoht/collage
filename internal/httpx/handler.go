@@ -250,6 +250,9 @@ type Deps struct {
 	// written first. Zero means 1000; negative turns warming off, so Warm does
 	// nothing. Warming is off as well in development and with no Cache.
 	WarmLimit int
+	// WriteTimeout is the server's, so an action holds its wait for its
+	// redirect target to what is left of it. Zero means none.
+	WriteTimeout time.Duration
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
@@ -275,6 +278,7 @@ type Handler struct {
 	reload        *reloadHub
 	pageReady     func(*types.Page) bool
 	maxBodyBytes  int64
+	writeTimeout  time.Duration
 	invalidator   Invalidator
 	routes        types.Routes
 	csrf          *csrf.Guard
@@ -339,6 +343,7 @@ func New(d Deps) (*Handler, error) {
 		handlers:     slices.Clone(d.Handlers),
 		pageReady:    d.PageReady,
 		maxBodyBytes: d.MaxBodyBytes,
+		writeTimeout: d.WriteTimeout,
 		invalidator:  d.Invalidator,
 		routes:       d.Routes,
 		csrf:         d.CSRF,
@@ -436,7 +441,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the raw path. See RouteInfo. Ahead of the request hooks: a hook keeps the
 	// context it was handed and reads the route from it once the response is
 	// written. A request answered before routing leaves it empty.
-	route := &routeRef{}
+	route := &routeRef{start: time.Now()}
 	r = r.WithContext(context.WithValue(r.Context(), routeCtxKey{}, route))
 	if h.origins != nil {
 		r = r.WithContext(WithOrigins(r.Context(), h.origins))
