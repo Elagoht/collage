@@ -4,7 +4,7 @@
 
 **Goal:** After an invalidation, affected pages are re-rendered in the background before anyone asks. An action's redirect target is rendered fresh before the redirect is sent, so an editor never needs a second refresh and no page view waits.
 
-**Architecture:** The handler records a *warm recipe* per cache key when it writes a page or document: host, path, the query values the key varies on, the frozen vary-set values, and the kind. A warm render replays a recipe through the handler's own `ServeHTTP` (inside the application's and plugins' middleware, which it never passes through) with a discarding ResponseWriter and a `types.WithFreshData` context. The existing stale-hit flow then renders and stores the page. Core hands the keys resolved by every `dropTags` to a background warmer (4 workers, capped, stops on the first failure). The action handler warms the redirect target's recipes synchronously before it writes the redirect.
+**Architecture:** The handler records a *warm recipe* per cache key when it writes a page or document: host, path, the query values the key varies on, the frozen vary-set values, and the kind. A warm render replays a recipe through the handler's inner `serve` (skipping `ServeHTTP`'s request hooks and the application's and plugins' middleware), in its own flight namespace, with a discarding ResponseWriter and a `types.WithFreshData` context. The existing stale-hit flow then renders and stores the page. Core hands the keys resolved by every `dropTags` to a background warmer (4 workers, capped, stops on the first failure). The action handler warms the redirect target's recipes synchronously before it writes the redirect.
 
 **Tech Stack:** Go stdlib.
 

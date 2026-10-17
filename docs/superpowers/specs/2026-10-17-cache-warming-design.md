@@ -82,8 +82,11 @@ the action (the form submit), never on the page view.
   - **On the first failed warm render, the run stops**, so a down upstream is
     not hammered. One warn line is logged, naming the error and how many keys
     were skipped.
-  - If a visitor asks for a page while it is being warmed, they join the same
-    flight and share the render.
+  - A warm render runs in its own flight namespace (ruling 2026-10-17): a visitor
+    never joins it, so no page view waits on the upstream, and a warm never joins
+    a visitor's non-fresh render. A page may render twice while being warmed.
+  - Guarded pages are not warmed (skipped). Warm requests skip personalisation and
+    plugin hooks, and log nothing per page; the warmer logs its own run lines.
 - Warming never runs in dev mode, in a static build, or when the cache is off.
 - It stops on `Shutdown`: the queue is dropped, and running renders finish
   under the shutdown context.
@@ -132,7 +135,8 @@ the action (the form submit), never on the page view.
    `Accept-Language`) is warmed under its own key.
 6. `WarmLimit` caps a run, and the most recently written keys are warmed first.
    A negative value warms nothing.
-7. A visitor during warming joins the flight, so the page is rendered once.
+7. A visitor during warming is never made to wait on the warm render; it is
+   served at once (stale or fresh), and the warm render stores the fresh page.
 8. No warming in dev mode, in a static build, or with the cache off.
    `Shutdown` stops the warmer.
 9. Warm requests never pass through `App.Use` middleware or plugin middleware.
