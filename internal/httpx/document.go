@@ -74,6 +74,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		if found && !isStale {
 			h.metrics.CacheEvent(ctx, observability.CacheHit, key)
 			h.metrics.RenderDuration(ctx, doc.Name, time.Since(lookupStart), true)
+			h.readBy(ctx, key)
 			return h.serveCachedDocument(w, r, doc, content, etag, cacheHit)
 		}
 		// Kept to fall back to, as a page's is: see serve.
@@ -187,6 +188,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	if stale != nil {
 		switch h.staleFallback(ctx, out) {
 		case fallbackStale:
+			h.readBy(ctx, key)
 			h.reportStale(r, key, "document", doc.Name, out)
 			return h.serveCachedDocument(w, r, doc, stale.content, stale.etag, cacheStale)
 		case fallbackDrop:
@@ -295,12 +297,12 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 	// the query the key varies on and the declared vary headers of it. Not with
 	// warming off, as for a page.
 	if h.warm != nil {
-		h.recipes.put(key, newRecipe(r, doc.CacheParams, true))
+		h.recipes.put(key, newRecipe(r, doc.CacheParams, true), warmStateOf(ctx) == nil)
 	}
 
 	if err := h.tracker.Track(ctx, key, withRouteTags(result.Tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: track %q: %w", key, err)))
 	}
-	h.dropIfOverlapped(ctx, key, mark)
+	h.wroteForWarm(ctx, key, h.dropIfOverlapped(ctx, key, mark))
 	return etag
 }

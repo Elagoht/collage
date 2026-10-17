@@ -353,10 +353,10 @@ func TestWarm_NotInDevMode(t *testing.T) {
 func TestRecipes_BoundedNewestFirst(t *testing.T) {
 	store := newRecipes(3)
 	for _, key := range []string{"a", "b", "c"} {
-		store.put(key, recipe{host: "example.com", path: "/" + key})
+		store.put(key, recipe{host: "example.com", path: "/" + key}, true)
 	}
-	store.put("a", recipe{host: "example.com", path: "/a"})
-	store.put("d", recipe{host: "example.com", path: "/a"})
+	store.put("a", recipe{host: "example.com", path: "/a"}, true)
+	store.put("d", recipe{host: "example.com", path: "/a"}, true)
 	if _, ok := store.get("b"); ok {
 		t.Fatal("b survived past the cap: the oldest is evicted first")
 	}

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Elagoht/collage/internal/ascii"
@@ -64,6 +65,18 @@ var errWarmNotAPage = errors.New("collage: warmed URL no longer answers with its
 // request re-made it first. Nothing was warmed, and nothing is wrong.
 var errWarmFresh = errors.New("collage: key was already fresh")
 
+// errWarmEvicted is the warmer's error for a key an invalidation reached whose
+// entry the cache no longer holds, not even stale: evicted, expired or dropped,
+// so nobody is being served it. Warmed, it would be brought back for no reader;
+// it is passed over, and its recipe dropped. A purge, which removes its entries
+// itself, warms them all the same.
+var errWarmEvicted = errors.New("collage: the cache no longer holds the key")
+
+// errWarmUnread is the warmer's error for a key no reader has had since its last
+// warm. Warming it again would keep a variant somebody asked for once warm for
+// good; it is passed over, its recipe kept, until a reader has it again.
+var errWarmUnread = errors.New("collage: nobody read the key since its last warm")
+
 // errWarmShared is warmKey's error for a warm that joined another warm's render
 // of the same key and found it failed: the warm that led it reports it.
 var errWarmShared = errors.New("collage: warm joined a render that did not store")
@@ -73,7 +86,50 @@ var errWarmShared = errors.New("collage: warm joined a render that did not store
 func warmSkipped(err error) bool {
 	return err == nil || errors.Is(err, errWarmNotStored) || errors.Is(err, errWarmGone) ||
 		errors.Is(err, errWarmGuarded) || errors.Is(err, errWarmNotAPage) || errors.Is(err, errWarmShared) ||
-		errors.Is(err, errWarmFresh)
+		errors.Is(err, errWarmFresh) || errors.Is(err, errWarmEvicted) || errors.Is(err, errWarmUnread)
+}
+
+// warmChecks are what a queued key is checked for before it is rendered, any of
+// which passes it over.
+type warmChecks uint8
+
+const (
+	// checkEntry passes over a key the cache no longer holds: errWarmEvicted.
+	checkEntry warmChecks = 1 << iota
+	// checkRead passes over a key no reader has had since its last warm:
+	// errWarmUnread.
+	checkRead
+
+	// checksInvalidate are an invalidation's keys' checks.
+	checksInvalidate = checkEntry | checkRead
+	// checksPurge are a purge's: it removed the entries itself.
+	checksPurge = checkRead
+)
+
+// warmJob is one key handed to a worker, with what it is checked for.
+type warmJob struct {
+	key    string
+	checks warmChecks
+}
+
+// warmEligible checks key for checks before its render, and returns why it is
+// passed over, or nil.
+func (h *Handler) warmEligible(ctx context.Context, key string, checks warmChecks) error {
+	if checks&checkRead != 0 && !h.recipes.readSinceWarm(key) {
+		return fmt.Errorf("%w: %s", errWarmUnread, key)
+	}
+	if checks&checkEntry != 0 {
+		// Only a store that keeps an entry past its invalidation can say the
+		// cache let go of it: any other drops what an invalidation reaches, and
+		// every key would read as gone.
+		if staleCache, ok := h.cache.(cache.StaleCache); ok {
+			if _, _, _, found := staleCache.GetStale(ctx, key); !found {
+				h.recipes.drop(key)
+				return fmt.Errorf("%w: %s", errWarmEvicted, key)
+			}
+		}
+	}
+	return nil
 }
 
 // warmCtxKey marks a warm request's context with its *warmState. Unexported, so
@@ -275,8 +331,13 @@ func (rc recipe) request(ctx context.Context) *http.Request {
 
 // recipeNode is one recipe in the store's recency list.
 type recipeNode struct {
-	key          string
-	recipe       recipe
+	key    string
+	recipe recipe
+	// read is set when a reader has had the key since its last warm: served it
+	// fresh or stale, or written it. A warm's write clears it, and a warm
+	// passes over a key whose flag is clear. Atomic, as it is set on a reader's
+	// hit under the store's read lock only.
+	read         atomic.Bool
 	newer, older *recipeNode
 }
 
@@ -285,7 +346,9 @@ type recipeNode struct {
 // an invalidation resolves no key until pages are written again, and so needs no
 // recipe either.
 type recipes struct {
-	mu             sync.Mutex
+	// mu is a read-write lock so the readers' hits that mark a key read, under
+	// its read lock, do not wait on one another.
+	mu             sync.RWMutex
 	max            int
 	byKey          map[string]*recipeNode
 	newest, oldest *recipeNode
@@ -301,16 +364,23 @@ func newRecipes(max int) *recipes {
 }
 
 // put records r as key's recipe, the newest one, evicting the oldest past the cap.
-func (s *recipes) put(key string, r recipe) {
+// read is true when a reader's render wrote the key, which marks it read; a warm's
+// write leaves the mark alone, for clearRead once the write has stood. A new
+// recipe is marked read either way.
+func (s *recipes) put(key string, r recipe, read bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if node, ok := s.byKey[key]; ok {
 		node.recipe = r
+		if read {
+			node.read.Store(true)
+		}
 		s.unlinkLocked(node)
 		s.pushNewestLocked(node)
 		return
 	}
 	node := &recipeNode{key: key, recipe: r}
+	node.read.Store(true)
 	s.byKey[key] = node
 	s.pushNewestLocked(node)
 	if len(s.byKey) > s.max {
@@ -320,10 +390,43 @@ func (s *recipes) put(key string, r recipe) {
 	}
 }
 
+// markRead marks key read by a reader. It is on every reader's hit, so it takes
+// the read lock only, and writes the flag only when it is not set already: a
+// popular key's flag is then only ever read.
+func (s *recipes) markRead(key string) {
+	s.mu.RLock()
+	node := s.byKey[key]
+	s.mu.RUnlock()
+	// A node evicted meanwhile is marked for nobody, harmlessly.
+	if node != nil && !node.read.Load() {
+		node.read.Store(true)
+	}
+}
+
+// clearRead clears key's read mark, once a warm's write of it has stood.
+func (s *recipes) clearRead(key string) {
+	s.mu.RLock()
+	node := s.byKey[key]
+	s.mu.RUnlock()
+	if node != nil {
+		node.read.Store(false)
+	}
+}
+
+// readSinceWarm reports whether a reader has had key since its last warm. A key
+// with no recipe answers true: there is nothing to pass over, and warmKey skips
+// it on its own.
+func (s *recipes) readSinceWarm(key string) bool {
+	s.mu.RLock()
+	node := s.byKey[key]
+	s.mu.RUnlock()
+	return node == nil || node.read.Load()
+}
+
 // get returns key's recipe, and whether there is one.
 func (s *recipes) get(key string) (recipe, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	node, ok := s.byKey[key]
 	if !ok {
 		return recipe{}, false
@@ -346,19 +449,26 @@ func (s *recipes) drop(key string) {
 // whose query is the one target's key is built from — its raw query on a route
 // that names no CacheParams, the canonical selection on one that does, exactly as
 // the cache key works it out.
-func (s *recipes) forURL(host string, target *url.URL) []string {
+//
+// The one whose vary entries are vary, if there is one, comes first, and matched
+// says there is: it is the variant a request declaring vary lands on.
+func (s *recipes) forURL(host string, target *url.URL, vary []string) (keys []string, matched bool) {
 	host = ascii.LowerString(host)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var keys []string
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	for node := s.newest; node != nil; node = node.older {
 		rc := node.recipe
 		if rc.path == target.Path && ascii.LowerString(rc.host) == host &&
 			strings.Join(queryVary(target, rc.cacheParams), "") == rc.query {
 			keys = append(keys, node.key)
+			if !matched && slices.Equal(rc.vary, vary) {
+				matched = true
+				last := len(keys) - 1
+				keys[0], keys[last] = keys[last], keys[0]
+			}
 		}
 	}
-	return keys
+	return keys, matched
 }
 
 // newestFirst returns those of keys that have a recipe, the most recently written
@@ -368,8 +478,8 @@ func (s *recipes) newestFirst(keys []string) []string {
 	for _, key := range keys {
 		wanted[key] = struct{}{}
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	ordered := make([]string, 0, len(wanted))
 	for node := s.newest; node != nil && len(ordered) < len(wanted); node = node.older {
 		if _, ok := wanted[node.key]; ok {
@@ -569,7 +679,9 @@ type warmer struct {
 	// leaves it when its render starts, not when it ends: an invalidation
 	// during that render keeps the render from being stored, and must be able
 	// to queue the key again.
-	pending map[string]struct{}
+	// Its value is what the key is checked for before it renders: queued by
+	// more than one call, the fewest checks of them.
+	pending map[string]warmChecks
 	// parked holds the keys whose warm an invalidation overlapped, waiting for
 	// no invalidation to be under way to be queued again: rendered while one
 	// is, they would be refused again. requeued is each such key's bound, kept
@@ -609,7 +721,7 @@ func newWarmer(limit int) *warmer {
 	w := &warmer{
 		limit:        limit,
 		targetBudget: actionWarmBudget,
-		pending:      make(map[string]struct{}),
+		pending:      make(map[string]warmChecks),
 		parked:       make(map[string]struct{}),
 		requeued:     make(map[string]requeueCount),
 		wake:         make(chan struct{}, 1),
@@ -646,8 +758,22 @@ type warmResult struct {
 // with no recipe, is not warmed, and renders on its first request as it would
 // have without warming. A run stops at its first failed render: see runWarm.
 //
+// Before it renders, a key is passed over when the cache no longer holds it (see
+// errWarmEvicted), or no reader has had it since its last warm (errWarmUnread).
+//
 // Warm does nothing when warming is off, and nothing after StopWarming.
 func (h *Handler) Warm(keys []string) {
+	h.warmKeys(keys, checksInvalidate)
+}
+
+// WarmPurged is Warm for the keys a purge reached, which removed their entries
+// itself: they are warmed though the cache no longer holds them.
+func (h *Handler) WarmPurged(keys []string) {
+	h.warmKeys(keys, checksPurge)
+}
+
+// warmKeys is Warm and WarmPurged, checking each key for checks.
+func (h *Handler) warmKeys(keys []string, checks warmChecks) {
 	w := h.warm
 	if w == nil {
 		return
@@ -670,10 +796,11 @@ func (h *Handler) Warm(keys []string) {
 		if len(run) == w.limit {
 			break
 		}
-		if _, queued := w.pending[key]; queued {
+		if queued, ok := w.pending[key]; ok {
+			w.pending[key] = queued & checks
 			continue
 		}
-		w.pending[key] = struct{}{}
+		w.pending[key] = checks
 		run = append(run, key)
 	}
 	if quiet {
@@ -692,7 +819,7 @@ func (h *Handler) queueRunLocked(run []string) {
 	w.runs = append(w.runs, run)
 	if !w.started {
 		w.started = true
-		jobs := make(chan string)
+		jobs := make(chan warmJob)
 		results := make(chan warmResult)
 		w.done.Add(1 + warmWorkers)
 		go h.coordinateWarm(w, jobs, results)
@@ -829,10 +956,14 @@ func (w *warmer) park(key string, mark invalidationMark, started uint64) bool {
 func (w *warmer) unparkLocked(run []string) []string {
 	for key := range w.parked {
 		delete(w.parked, key)
+		// Checked for nothing: it passed its checks before the render that
+		// was refused, whose drop of the entry and clearing of nothing are
+		// the overlap's, not the cache's or the readers'.
 		if _, queued := w.pending[key]; queued {
+			w.pending[key] = 0
 			continue
 		}
-		w.pending[key] = struct{}{}
+		w.pending[key] = 0
 		run = append(run, key)
 	}
 	return run
@@ -856,7 +987,7 @@ func (w *warmer) settleLocked(key string) {
 
 // coordinateWarm is the warmer's coordinator: it takes one run at a time until
 // StopWarming, and closes jobs when it leaves, which ends the workers.
-func (h *Handler) coordinateWarm(w *warmer, jobs chan<- string, results <-chan warmResult) {
+func (h *Handler) coordinateWarm(w *warmer, jobs chan<- warmJob, results <-chan warmResult) {
 	defer w.done.Done()
 	defer close(jobs)
 	for {
@@ -888,17 +1019,18 @@ func (h *Handler) coordinateWarm(w *warmer, jobs chan<- string, results <-chan w
 }
 
 // claim takes the next key of run at or after i that is still pending, and
-// returns it with the index after it; "" when there is none.
-func (w *warmer) claim(run []string, i int) (string, int) {
+// returns it, with its checks, and the index after it; a job with no key when
+// there is none.
+func (w *warmer) claim(run []string, i int) (warmJob, int) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	for ; i < len(run); i++ {
-		if _, queued := w.pending[run[i]]; queued {
+		if checks, queued := w.pending[run[i]]; queued {
 			delete(w.pending, run[i])
-			return run[i], i + 1
+			return warmJob{key: run[i], checks: checks}, i + 1
 		}
 	}
-	return "", i
+	return warmJob{}, i
 }
 
 // release lets go of the keys of run from i on that are still pending, and
@@ -925,14 +1057,14 @@ func (w *warmer) release(run []string, i int) int {
 // next one shares, and an upstream that is down is not to be hammered — and the
 // rest of it is dropped, stale until its first request, with one warn. The renders
 // already running are waited for: a worker's result has nowhere else to go.
-func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <-chan warmResult) {
+func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- warmJob, results <-chan warmResult) {
 	began := time.Now()
 	var warmed, skipped, failed int
 	outstanding, next := 0, 0
 	// probing holds the fan-out until a render has succeeded: a skipped key says
 	// nothing about the upstream either way.
 	probing, stopping := true, false
-	held := ""
+	var held warmJob
 	stop := w.stop
 	// stopped is what StopWarming does to the run, seen from either select:
 	// nothing more is handed out, and what was not, held key included, is
@@ -944,9 +1076,9 @@ func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <
 		}
 		stopping = true
 		skipped += len(run) - next
-		if held != "" {
+		if held.key != "" {
 			skipped++
-			held = ""
+			held = warmJob{}
 		}
 	}
 	for {
@@ -960,19 +1092,19 @@ func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <
 			default:
 			}
 		}
-		if held == "" && !stopping && (!probing || outstanding == 0) {
+		if held.key == "" && !stopping && (!probing || outstanding == 0) {
 			held, next = w.claim(run, next)
 		}
-		if held == "" && outstanding == 0 {
+		if held.key == "" && outstanding == 0 {
 			break
 		}
-		var send chan<- string
-		if held != "" {
+		var send chan<- warmJob
+		if held.key != "" {
 			send = jobs
 		}
 		select {
 		case send <- held:
-			held = ""
+			held = warmJob{}
 			outstanding++
 		case result := <-results:
 			outstanding--
@@ -987,9 +1119,9 @@ func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <
 				if !stopping {
 					stopping = true
 					dropped := w.release(run, next)
-					if held != "" {
+					if held.key != "" {
 						dropped++
-						held = ""
+						held = warmJob{}
 					}
 					skipped += dropped
 					h.logger.Warn("collage: warming stopped, a page failed to render",
@@ -1008,23 +1140,28 @@ func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <
 }
 
 // warmWorker warms the keys handed to it until jobs is closed.
-func (h *Handler) warmWorker(w *warmer, jobs <-chan string, results chan<- warmResult) {
+func (h *Handler) warmWorker(w *warmer, jobs <-chan warmJob, results chan<- warmResult) {
 	defer w.done.Done()
-	for key := range jobs {
-		results <- h.warmOne(w.ctx, key)
+	for job := range jobs {
+		results <- h.warmOne(w.ctx, job.key, job.checks)
 	}
 }
 
-// warmOne warms key and says how the run is to count it. A panic anywhere in it —
+// warmOne warms key, once it passes checks (see warmEligible), and says how the
+// run is to count it. A panic anywhere in it —
 // serveWarm guards the serve, but not the store check after it or the metric —
 // is a failed warm, never a worker lost with its result.
-func (h *Handler) warmOne(ctx context.Context, key string) (result warmResult) {
+func (h *Handler) warmOne(ctx context.Context, key string, checks warmChecks) (result warmResult) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			result = warmResult{outcome: warmFail, err: fmt.Errorf("%w: %w", ErrPanic,
 				&render.PanicError{Value: recovered, Stack: debug.Stack()})}
 		}
 	}()
+	if err := h.warmEligible(ctx, key, checks); err != nil {
+		h.warm.settle(key)
+		return warmResult{outcome: warmSkip, err: err}
+	}
 	ok, err := h.warmKey(ctx, key)
 	// Before the result is handed on, so a run is not over, nor the warmer
 	// idle, while the key is still to be queued again.
@@ -1109,12 +1246,23 @@ func (h *Handler) warmRedirectTarget(r *http.Request, action, location string) {
 	if !ok {
 		return
 	}
-	keys := h.recipes.forURL(r.Host, target)
+	// The variant the submitter lands on first: the redirected request carries
+	// the headers this one did, so it declares the same vary entries.
+	keys, matched := h.recipes.forURL(r.Host, target, requestVary(r))
 	if len(keys) == 0 {
 		return
 	}
 	if len(keys) > w.limit {
 		keys = keys[:w.limit]
+	}
+	jobs := make([]warmJob, len(keys))
+	for i, key := range keys {
+		jobs[i] = warmJob{key: key, checks: checksInvalidate}
+	}
+	if matched {
+		// Read next, by the reader following the redirect: warmed whether or
+		// not anyone read it since its last warm, or the cache still holds it.
+		jobs[0].checks = 0
 	}
 	deadline := time.Now().Add(w.targetBudget)
 	if requestDeadline, set := r.Context().Deadline(); set && requestDeadline.Before(deadline) {
@@ -1127,7 +1275,7 @@ func (h *Handler) warmRedirectTarget(r *http.Request, action, location string) {
 	go func() {
 		defer w.done.Done()
 		defer close(finished)
-		h.warmTargetKeys(w, action, target.Path, keys, deadline)
+		h.warmTargetKeys(w, action, target.Path, jobs, deadline)
 	}()
 	budget := time.NewTimer(time.Until(deadline))
 	defer budget.Stop()
@@ -1143,19 +1291,20 @@ func (h *Handler) warmRedirectTarget(r *http.Request, action, location string) {
 
 // warmTargetKeys is warmRedirectTarget's loop, run in a goroutine of its own so
 // the response need not outlast the budget even while a render does.
-func (h *Handler) warmTargetKeys(w *warmer, action, path string, keys []string, deadline time.Time) {
-	for _, key := range keys {
+func (h *Handler) warmTargetKeys(w *warmer, action, path string, jobs []warmJob, deadline time.Time) {
+	for _, job := range jobs {
+		key := job.key
 		if !time.Now().Before(deadline) || !w.take(key) {
 			return
 		}
-		result := h.warmOne(w.ctx, key)
+		result := h.warmOne(w.ctx, key, job.checks)
 		if result.outcome == warmSkip && w.ctx.Err() == nil && errors.Is(result.err, errWarmNotStored) &&
 			time.Now().Before(deadline) {
 			// It joined a render that began before this action's invalidation,
 			// whose write the invalidation then refused. That flight is over, so
 			// this one leads a render of its own; without it the key, out of the
 			// queue, stays stale.
-			result = h.warmOne(w.ctx, key)
+			result = h.warmOne(w.ctx, key, 0)
 		}
 		switch {
 		case result.outcome == warmFail, errors.Is(result.err, errWarmShared):

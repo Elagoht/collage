@@ -834,6 +834,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			// The only place cacheHit is ever reported true: what it times is the
 			// lookup that stood in for a render, not a render that did not happen.
 			h.metrics.RenderDuration(ctx, page.Name, time.Since(lookupStart), true)
+			h.readBy(ctx, key)
 			return h.serveCached(w, r, page, content, etag, cacheHit)
 		}
 		// A stale entry is a miss as far as the cache is concerned: the page
@@ -918,6 +919,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			// to personalise it, and then what was served is an error page.
 			status := h.serveCached(w, r, page, stale.content, stale.etag, cacheStale)
 			if status == http.StatusOK || status == http.StatusNotModified {
+				h.readBy(ctx, key)
 				h.reportStale(r, key, "page", page.Name, out)
 			}
 			return status
@@ -1501,14 +1503,33 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	// the key holds and nothing of the reader. See warmKey. Not with warming
 	// off, when nothing reads it.
 	if h.warm != nil {
-		h.recipes.put(key, newRecipe(r, page.CacheParams, false))
+		h.recipes.put(key, newRecipe(r, page.CacheParams, false), warmStateOf(ctx) == nil)
 	}
 
 	if err := h.tracker.Track(ctx, key, withRouteTags(tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
 	}
-	h.dropIfOverlapped(ctx, key, mark)
+	h.wroteForWarm(ctx, key, h.dropIfOverlapped(ctx, key, mark))
 	return etag
+}
+
+// wroteForWarm clears the read mark of a key a warm wrote, when the write stood:
+// until a reader has it, the next invalidation passes it over (see
+// errWarmUnread). A write an overlap dropped leaves the mark as it was.
+func (h *Handler) wroteForWarm(ctx context.Context, key string, dropped bool) {
+	if h.warm != nil && !dropped && warmStateOf(ctx) != nil {
+		h.recipes.clearRead(key)
+	}
+}
+
+// readBy marks key read when ctx is a reader's: a page or document served to
+// one, fresh or stale. Not for a warm's own lookup, nor a static build's
+// capture, and not with warming off, when nothing reads the mark.
+func (h *Handler) readBy(ctx context.Context, key string) {
+	if h.warm == nil || warmStateOf(ctx) != nil || types.IsCapture(ctx) {
+		return
+	}
+	h.recipes.markRead(key)
 }
 
 // overlapped records, on a warm's render, that an invalidation overlapped the
@@ -1526,11 +1547,15 @@ func (h *Handler) overlapped(ctx context.Context, mark invalidationMark) {
 // alone leaves that window, and the invalidation, finding nothing yet, would leave
 // the entry written after it fresh. Dropped rather than marked stale, because
 // which of the two it was is not known, and a purge leaves nothing behind.
-func (h *Handler) dropIfOverlapped(ctx context.Context, key string, mark invalidationMark) {
-	if h.invalidatedSince(mark) {
-		_ = h.cache.InvalidateKey(context.WithoutCancel(ctx), key)
-		h.overlapped(ctx, mark)
+//
+// It reports whether it dropped the entry.
+func (h *Handler) dropIfOverlapped(ctx context.Context, key string, mark invalidationMark) bool {
+	if !h.invalidatedSince(mark) {
+		return false
 	}
+	_ = h.cache.InvalidateKey(context.WithoutCancel(ctx), key)
+	h.overlapped(ctx, mark)
+	return true
 }
 
 // documentPattern is the pattern doc answers in locale: its own path there, or

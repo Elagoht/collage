@@ -1373,7 +1373,13 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	// pages are back before their first reader asks.
 	var reached []string
 	defer func() {
-		if handler := a.warmer.Load(); handler != nil {
+		handler := a.warmer.Load()
+		switch {
+		case handler == nil:
+		case purge:
+			// Warmed though gone: the purge removed them itself.
+			handler.WarmPurged(reached)
+		default:
 			handler.Warm(reached)
 		}
 	}()

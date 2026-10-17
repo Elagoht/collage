@@ -790,6 +790,16 @@ func TestActionWarm_DoesNotRetryAJoinedRenderThatFailed(t *testing.T) {
 	}
 }
 
+// jobsOf is keys as an action's warm hands them to warmTargetKeys, each checked
+// as an invalidation's.
+func jobsOf(keys []string) []warmJob {
+	jobs := make([]warmJob, len(keys))
+	for i, key := range keys {
+		jobs[i] = warmJob{key: key, checks: checksInvalidate}
+	}
+	return jobs
+}
+
 // isPending reports whether key is queued for the background run.
 func isPending(h *Handler, key string) bool {
 	h.warm.mu.Lock()
@@ -804,7 +814,7 @@ func queue(h *Handler, keys ...string) {
 	h.warm.mu.Lock()
 	defer h.warm.mu.Unlock()
 	for _, key := range keys {
-		h.warm.pending[key] = struct{}{}
+		h.warm.pending[key] = checksInvalidate
 	}
 }
 
@@ -978,7 +988,7 @@ func TestActionWarm_StopsAtAFailure(t *testing.T) {
 	queue(env.handler, keys...)
 	before := len(engine.rendered())
 
-	env.handler.warmTargetKeys(env.handler.warm, "save", "/posts/1", keys, time.Now().Add(time.Minute))
+	env.handler.warmTargetKeys(env.handler.warm, "save", "/posts/1", jobsOf(keys), time.Now().Add(time.Minute))
 	if got := engine.renderedSince(before); len(got) != 1 {
 		t.Fatalf("rendered %v, want one render and a stop", got)
 	}
@@ -1001,7 +1011,7 @@ func TestActionWarm_StopsAtAJoinedFailure(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		env.handler.warmTargetKeys(env.handler.warm, "save", "/posts", keys, time.Now().Add(time.Minute))
+		env.handler.warmTargetKeys(env.handler.warm, "save", "/posts", jobsOf(keys), time.Now().Add(time.Minute))
 	}()
 	waitJoined(t, env.handler, keys[0])
 	engine.mu.Lock()
@@ -1159,4 +1169,169 @@ func TestWarmer_RequeueBound(t *testing.T) {
 	inv.end(env.handler)
 	inv.end(env.handler)
 	waitWarmed(t, env.handler)
+}
+
+// An invalidation does not revive a key the cache let go of — evicted, expired,
+// dropped: with no stale entry left, nobody is being served it, and it is passed
+// over, its recipe forgotten. A purge, which removes every entry it reaches, warms
+// its keys all the same.
+func TestWarmer_AnInvalidationDoesNotReviveAGoneKey(t *testing.T) {
+	for _, purge := range []bool{false, true} {
+		env, engine, keys := postsEnv(t, 2)
+		markAllStale(t, env, keys)
+		if err := env.cache.InvalidateKey(context.Background(), keys[0]); err != nil {
+			t.Fatal(err)
+		}
+		engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+		if purge {
+			env.handler.WarmPurged(keys)
+		} else {
+			env.handler.Warm(keys)
+		}
+		waitWarmed(t, env.handler)
+		_, fresh := freshIn(t, env, keys[0])
+		_, kept := env.handler.recipes.get(keys[0])
+		if purge && !fresh {
+			t.Fatal("purge: the purged key was not warmed")
+		}
+		if !purge && (fresh || kept) {
+			t.Fatalf("invalidate: gone key warmed %v, recipe kept %v; want neither", fresh, kept)
+		}
+		if _, fresh := freshIn(t, env, keys[1]); !fresh {
+			t.Fatalf("purge %v: the stale key was not warmed", purge)
+		}
+	}
+}
+
+// A key is warmed again only when a reader has had it since its last warm —
+// served it fresh or stale, or written it — so a variant somebody asked for once
+// is not kept warm by every invalidation after. Passed over, it keeps its
+// recipe, and a later reader makes it worth warming again.
+func TestWarmer_OnlyKeysReadSinceTheirLastWarm(t *testing.T) {
+	env, engine, keys := postsEnv(t, 1)
+	key := keys[0]
+	invalidate := func() int {
+		t.Helper()
+		markAllStale(t, env, keys)
+		before := len(engine.rendered())
+		env.handler.Warm(keys)
+		waitWarmed(t, env.handler)
+		return len(engine.renderedSince(before))
+	}
+
+	// Written by its reader: warmed.
+	if got := invalidate(); got != 1 {
+		t.Fatalf("first invalidation rendered %d, want the reader's key warmed", got)
+	}
+	// Nobody read the warm: passed over, recipe kept.
+	if got := invalidate(); got != 0 {
+		t.Fatalf("an unread key rendered %d times, want none", got)
+	}
+	if _, kept := env.handler.recipes.get(key); !kept {
+		t.Fatal("an unread key's recipe was dropped")
+	}
+	// Served stale to a reader, while a render failed: warmed again.
+	engine.set("post", fakeRender{err: errors.New("cms down")})
+	if rec := env.get("/posts/1"); rec.Header().Get(CacheStatusHeader) != cacheStale {
+		t.Fatalf("%s = %q, want STALE", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	engine.set("post", fakeRender{html: "<html>page</html>", tags: []string{"posts"}})
+	if got := invalidate(); got != 1 {
+		t.Fatalf("after a STALE read rendered %d, want 1", got)
+	}
+	// Served fresh to a reader: warmed again.
+	if rec := env.get("/posts/1"); rec.Header().Get(CacheStatusHeader) != cacheHit {
+		t.Fatalf("%s = %q, want HIT", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if got := invalidate(); got != 1 {
+		t.Fatalf("after a HIT rendered %d, want 1", got)
+	}
+}
+
+// A document follows the same rule.
+func TestWarmer_ADocumentReadSinceItsLastWarm(t *testing.T) {
+	env, engine := staleDocEnv(t)
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	key := onlyKey(t, env, "feed")
+	engine.set(render.DocumentResult{Body: []byte("new"), Tags: []string{"feed"}}, nil)
+	invalidate := func() bool {
+		t.Helper()
+		if err := env.cache.MarkStaleKey(context.Background(), key); err != nil {
+			t.Fatal(err)
+		}
+		env.handler.Warm([]string{key})
+		waitWarmed(t, env.handler)
+		_, fresh := freshIn(t, env, key)
+		return fresh
+	}
+	if !invalidate() {
+		t.Fatal("the reader's document was not warmed")
+	}
+	if invalidate() {
+		t.Fatal("an unread document was warmed")
+	}
+	if rec := env.get("/feed.xml"); rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d", rec.Code)
+	}
+	// Re-written by that reader; read through a HIT next.
+	if rec := env.get("/feed.xml"); rec.Header().Get(CacheStatusHeader) != cacheHit {
+		t.Fatalf("%s = %q, want HIT", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if !invalidate() {
+		t.Fatal("a document read since its warm was not warmed")
+	}
+}
+
+// An action's warm takes first the variant its submitter lands on — the one
+// whose vary entries the action's request declared — and warms it even when no
+// reader has had it since its last warm, as the submitter is about to. Every
+// other variant is checked as the background run checks it.
+func TestActionWarm_TheSubmittersVariantFirst(t *testing.T) {
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)},
+		withVary("Accept-Language"),
+		func(d *Deps) { d.Renderer = varyEngine{fakeEngine: newFakeEngine(fakeRender{tags: []string{"posts"}})} })
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	for _, lang := range []string{"en", "tr"} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Accept-Language", lang)
+		if rec := env.do(req); rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d", lang, rec.Code)
+		}
+	}
+	keys, err := env.tracker.Resolve(context.Background(), []string{"posts"})
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("Resolve = %v, %v", keys, err)
+	}
+	variant := func(lang string) string {
+		for _, key := range keys {
+			if rcp, _ := env.handler.recipes.get(key); slices.Contains(rcp.vary, "Accept-Language="+lang) {
+				return key
+			}
+		}
+		t.Fatalf("no %s variant", lang)
+		return ""
+	}
+	en, tr := variant("en"), variant("tr")
+
+	// Warmed once, and nobody read either since.
+	markAllStale(t, env, keys)
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+	markAllStale(t, env, keys)
+
+	action := withVarySet(httptest.NewRequest(http.MethodPost, "/save", nil))
+	if err := Vary(action, "Accept-Language", "en"); err != nil {
+		t.Fatal(err)
+	}
+	target, _ := sameOriginTarget(action, "/")
+	if got, matched := env.handler.recipes.forURL(action.Host, target, requestVary(action)); !matched || got[0] != en {
+		t.Fatalf("forURL = %v matched %v, want %q first", got, matched, en)
+	}
+	env.handler.warmRedirectTarget(action, "save", "/")
+	if _, fresh := freshIn(t, env, en); !fresh {
+		t.Fatal("the submitter's variant was not warmed")
+	}
+	if _, fresh := freshIn(t, env, tr); fresh {
+		t.Fatal("a variant nobody read since its last warm was warmed")
+	}
 }
