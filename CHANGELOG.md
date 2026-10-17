@@ -1,5 +1,44 @@
 # Changelog
 
+## v0.64.0
+
+### Added
+
+- **Cache warming.** After every `InvalidateTags` and `PurgeTags`, the pages and
+  documents the invalidation reached are re-rendered in the background, with fresh
+  data, so the next visitor gets a fresh `HIT` instead of paying for the render.
+  Four workers, the first key alone as a probe. Only variants actually served are
+  warmed: recipes are recorded when an entry is written, in memory only, so there
+  are none after a restart until pages are written again. A run stops at the first
+  real render failure (one warning); skips (overlapped by another invalidation,
+  404, guarded pages, already fresh) do not stop it. One info line per run.
+  Warm renders skip `App.Use` and plugin middleware, request hooks,
+  personalisation, error hooks and per-request logs; `BeforeRender`,
+  `AfterRender` and `DocumentRendered` still run. Off in development, in static
+  builds and with the cache off; `Shutdown` stops it.
+- **`CacheConfig.WarmLimit`** caps the keys one invalidation warms, newest first.
+  Zero means 1000; negative turns warming off.
+- **`collage.CacheWarm`**, a metrics event per warmed key.
+
+### Changed
+
+- **An action's redirect target is warmed before the redirect is written.** An
+  action returning `InvalidateTags` and a same-origin `Location` has that
+  `Location`'s variants rendered again first, within 5 seconds (and the request's
+  deadline), so the redirect lands on the new page. Past the budget, or on a
+  failure, the redirect still goes out and the page is served `STALE`. Redirect
+  to a clean URL or declare `CacheParams`: a query that is not a cache dimension
+  of a route declaring none is a key of its own, which nothing warms.
+
+### Upgrade notes
+
+- A test that asserts `STALE` or `MISS` right after an invalidation races the
+  warmer. Set `WarmLimit: -1` in such tests.
+- Keep `Server.WriteTimeout` above 5 seconds, or an action's warm budget can
+  outlast it.
+- Expect extra CPU, and a burst of `CacheMiss`/`CacheSet` events, right after
+  large invalidations. Lower `WarmLimit` or set it negative to opt out.
+
 ## v0.63.0
 
 ### Changed
