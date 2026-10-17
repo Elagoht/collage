@@ -345,7 +345,9 @@ type CacheConfig struct {
 	// reader is served the stale page, never made to wait. The most recently
 	// written pages go first, and those past the cap render on their first
 	// request instead. Every variant a reader was actually served is warmed
-	// (each locale, query and Vary value); one nobody asked for is not. A warm
+	// (each locale, query and Vary value); one nobody asked for is not, nor one
+	// nobody read since its last warm, nor, after InvalidateTags, one the cache
+	// has evicted. A warm
 	// render runs no middleware and no guard — a guarded page is left to its
 	// first reader — and waits for fresh data. Should a warm render fail, the
 	// rest of that invalidation's pages are left stale, so a down upstream is
