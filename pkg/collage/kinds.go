@@ -22,8 +22,8 @@ const (
 // Built file kinds: what a static build wrote, as BuildFinishedEvent reports it
 // in BuiltFile.Kind. The set may grow.
 const (
-	// BuiltPage is a rendered page, the locale root redirect and the not-found
-	// page included.
+	// BuiltPage is a rendered page, the root copy of the home page and the
+	// not-found page included.
 	BuiltPage = types.BuiltPage
 	// BuiltDocument is a document's body.
 	BuiltDocument = types.BuiltDocument

@@ -490,7 +490,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		}
 	}
 
-	rootWritten, rootErr := b.writeRootRedirect(outDirResolved, tasks, written)
+	rootWritten, rootErr := b.writeRootHome(outDirResolved, tasks, written)
 	report.Written = append(report.Written, rootWritten...)
 	if rootErr != nil {
 		errs = append(errs, rootErr)
@@ -532,8 +532,8 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		event := &plugin.BuildFinishedEvent{OutDir: outDirResolved}
 		files := b.builtFiles(outDirResolved, tasks, written, docWritten, assetWritten, report.Written)
 		if captures {
-			// The root redirect and the 404 pages are the build's own: the
-			// application answers neither path with the file that was written.
+			// The root copy of the home page and the 404 pages are the build's own:
+			// the application answers neither path with the file that was written.
 			synthesized := make(map[string]bool, len(rootWritten)+len(notFoundWritten))
 			for _, f := range rootWritten {
 				synthesized[f] = true
@@ -949,7 +949,7 @@ func (b *Builder) builtFiles(outDir string, tasks []buildTask, pages, documents,
 		}
 		k := kind[f]
 		if k == "" {
-			k = types.BuiltPage // the root redirect, a not-found page
+			k = types.BuiltPage // the root copy of the home page, a not-found page
 		}
 		files = append(files, plugin.BuiltFile{Kind: k, Path: urlPathOf(outDir, f), File: f})
 	}
@@ -1150,30 +1150,33 @@ func (b *Builder) pageOutputPath(locale, defaultLocale, urlPath string) string {
 	return localeOutputPath(locale, defaultLocale, urlPath)
 }
 
-// writeRootRedirect writes, when the default locale's pages carry its prefix and
-// its home page was built, an index.html at the root that sends the reader there.
-// A static host has no redirects to configure, and without it the site's own
-// address is a 404.
+// writeRootHome writes, when the default locale's pages carry its prefix and its
+// home page was built, a copy of that home page at the root. A static host has no
+// redirects to configure; with the home page itself there, a visitor to the bare
+// domain sees the site at once rather than a page that sends them on.
 //
-// It is an HTML page that refreshes to the home page at once, names it as the
-// canonical address, asks not to be indexed, and links it for a client that does
-// not refresh. The target ends in "/", the address a static host answers a
-// directory at, whatever the application's own spelling.
-func (b *Builder) writeRootRedirect(outDirResolved string, tasks []buildTask, written []string) ([]string, error) {
+// The copy names the prefixed home as its canonical address — unless the page
+// already names one — so the two files are one page to a search engine. Links
+// and assets the application builds start at "/", and resolve the same from
+// either address.
+func (b *Builder) writeRootHome(outDirResolved string, tasks []buildTask, written []string) ([]string, error) {
 	if !b.app.PrefixDefault() {
 		return nil, nil
 	}
 	defaultLocale := b.app.DefaultLocale()
-	built := false
+	source := ""
 	for i, task := range tasks {
 		if written[i] != "" && task.path == "/" && (task.locale == "" || task.locale == defaultLocale) {
-			built = true
+			source = written[i]
 		}
 	}
-	if !built {
+	if source == "" {
 		return nil, nil
 	}
-	home := "/" + defaultLocale + "/"
+	page, err := os.ReadFile(source)
+	if err != nil {
+		return nil, fmt.Errorf("collage: read %q: %w", source, err)
+	}
 	target, err := resolveTarget(outDirResolved, "/")
 	if err != nil {
 		return nil, err
@@ -1181,22 +1184,40 @@ func (b *Builder) writeRootRedirect(outDirResolved string, tasks []buildTask, wr
 	if err := verifyNoSymlinksBeneath(outDirResolved, target); err != nil {
 		return nil, err
 	}
-	page := `<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta http-equiv="refresh" content="0; url=` + home + `">
-<meta name="robots" content="noindex">
-<link rel="canonical" href="` + home + `">
-<title>` + home + `</title>
-</head>
-<body><a href="` + home + `">` + home + `</a></body>
-</html>
-`
-	if err := os.WriteFile(target, []byte(page), 0o644); err != nil {
+	if err := os.WriteFile(target, withCanonical(page, "/"+defaultLocale+"/"), 0o644); err != nil {
 		return nil, fmt.Errorf("collage: write %q: %w", target, err)
 	}
 	return []string{target}, nil
+}
+
+// withCanonical adds a canonical link to href right after the page's opening
+// <head> tag. A page that already has a canonical link, or has no <head>, is
+// returned as it is.
+func withCanonical(page []byte, href string) []byte {
+	lower := ascii.Lower(page)
+	if bytes.Contains(lower, []byte(`rel="canonical"`)) {
+		return page
+	}
+	for offset := 0; ; {
+		i := bytes.Index(lower[offset:], []byte("<head"))
+		if i < 0 {
+			return page
+		}
+		i += offset + len("<head")
+		if i < len(lower) && (lower[i] == '>' || lower[i] == ' ' || lower[i] == '\t' || lower[i] == '\n' || lower[i] == '\r') {
+			end := bytes.IndexByte(page[i:], '>')
+			if end < 0 {
+				return page
+			}
+			end += i + 1
+			link := `<link rel="canonical" href="` + href + `">`
+			out := make([]byte, 0, len(page)+len(link))
+			out = append(out, page[:end]...)
+			out = append(out, link...)
+			return append(out, page[end:]...)
+		}
+		offset = i
+	}
 }
 
 // pathInstance is one concrete URL a route with a "{param}" pattern is built for,
