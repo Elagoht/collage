@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -168,6 +169,10 @@ type recipe struct {
 	header   http.Header
 	tls      bool
 	document bool
+	// cacheParams is the route's CacheParams the key was built with, nil for a
+	// route that names none, so the query a URL's key is made from can be
+	// worked out again for an action's redirect target (see forURL).
+	cacheParams []string
 }
 
 // newRecipe records how to rebuild r, the request whose render was just written
@@ -189,6 +194,9 @@ func newRecipe(r *http.Request, cacheParams []string, document bool) recipe {
 		header:   header,
 		tls:      r.TLS != nil,
 		document: document,
+		// Cloned, keeping a nil nil: queryVary tells "no CacheParams" from
+		// "an empty list" by it.
+		cacheParams: slices.Clone(cacheParams),
 	}
 }
 
@@ -307,6 +315,26 @@ func (s *recipes) forPath(host, path string) []string {
 	var keys []string
 	for node := s.newest; node != nil; node = node.older {
 		if node.recipe.path == path && ascii.LowerString(node.recipe.host) == host {
+			keys = append(keys, node.key)
+		}
+	}
+	return keys
+}
+
+// forURL returns the keys a GET of target on host would be looked up under,
+// every vary-header variant of it: those whose recipe is for target's path, and
+// whose query is the one target's key is built from — its raw query on a route
+// that names no CacheParams, the canonical selection on one that does, exactly as
+// the cache key works it out.
+func (s *recipes) forURL(host string, target *url.URL) []string {
+	host = ascii.LowerString(host)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var keys []string
+	for node := s.newest; node != nil; node = node.older {
+		rc := node.recipe
+		if rc.path == target.Path && ascii.LowerString(rc.host) == host &&
+			strings.Join(queryVary(target, rc.cacheParams), "") == rc.query {
 			keys = append(keys, node.key)
 		}
 	}
@@ -506,6 +534,8 @@ const defaultWarmLimit = 1000
 // invalidates never has them.
 type warmer struct {
 	limit int
+	// targetBudget is actionWarmBudget, a field so a test can shorten it.
+	targetBudget time.Duration
 
 	mu   sync.Mutex
 	idle *sync.Cond
@@ -532,7 +562,8 @@ type warmer struct {
 	// but StopWarming giving up on the renders still running.
 	ctx    context.Context
 	cancel context.CancelFunc
-	// done counts the coordinator and the workers.
+	// done counts the coordinator, the workers, and every action's warm of its
+	// redirect target under way.
 	done sync.WaitGroup
 }
 
@@ -544,12 +575,13 @@ func newWarmer(limit int) *warmer {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &warmer{
-		limit:   limit,
-		pending: make(map[string]struct{}),
-		wake:    make(chan struct{}, 1),
-		stop:    make(chan struct{}),
-		ctx:     ctx,
-		cancel:  cancel,
+		limit:        limit,
+		targetBudget: actionWarmBudget,
+		pending:      make(map[string]struct{}),
+		wake:         make(chan struct{}, 1),
+		stop:         make(chan struct{}),
+		ctx:          ctx,
+		cancel:       cancel,
 	}
 	w.idle = sync.NewCond(&w.mu)
 	return w
@@ -644,19 +676,18 @@ func (h *Handler) StopWarming(ctx context.Context) {
 		close(w.stop)
 		w.idle.Broadcast()
 	}
-	started := w.started
 	w.mu.Unlock()
 
-	if started {
-		finished := make(chan struct{})
-		go func() {
-			w.done.Wait()
-			close(finished)
-		}()
-		select {
-		case <-finished:
-		case <-ctx.Done():
-		}
+	// Waited for even when no run ever started: an action's warm of its
+	// redirect target is counted in done too (see begin).
+	finished := make(chan struct{})
+	go func() {
+		w.done.Wait()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-ctx.Done():
 	}
 	// The data cache closes after this, and a render still running would read
 	// from it: told to stop, it does.
@@ -861,6 +892,13 @@ func (h *Handler) warmOne(ctx context.Context, key string) (result warmResult) {
 	return warmResult{outcome: warmFail, err: err}
 }
 
+// actionWarmBudget is the longest an action's response waits for its redirect
+// target to be warmed. A request deadline, when the request has one, cuts it
+// shorter. Past it the redirect goes out, the render under way finishes on its
+// own, and the keys not yet taken are left to the background run: the submit is
+// the editor's, and is not to be held on a slow upstream.
+const actionWarmBudget = 5 * time.Second
+
 // take takes key out of the queue, so the background run passes it over, and
 // reports whether the warmer is still running: after StopWarming nothing is
 // warmed, not even an action's redirect target.
@@ -871,90 +909,141 @@ func (w *warmer) take(key string) bool {
 	return !w.stopped
 }
 
+// begin counts one action's warm of its redirect target among the goroutines
+// StopWarming waits for, and reports false, counting nothing, once the warmer is
+// stopped. Under w.mu, as Warm's own Add is: every Add then comes before
+// StopWarming's Wait.
+func (w *warmer) begin() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped {
+		return false
+	}
+	w.done.Add(1)
+	return true
+}
+
 // warmRedirectTarget warms the page an action's response redirects to, before the
 // response goes out, so the reader who submitted the form lands on a fresh HIT
-// with what they just changed rather than waiting on its render, or being handed a
-// stale copy when the background run has not got to it. It is called after the
-// action's invalidation, which has queued the same keys for the background run.
+// with what they just changed rather than waiting on its render. It is called
+// after the action's invalidation, which has queued the same keys for the
+// background run.
 //
-// Every key the target's path was written under is warmed — one per variant, as
-// the background run would — one at a time, each taken out of the queue just
-// before, so it is not rendered twice and, should a render fail, the rest stay
-// queued for the background run. Taking a key the background run has claimed
-// already is harmless: the two renders coalesce in warmFlight, or one finds the
-// other's entry fresh.
+// Only the keys the redirected request can land on are warmed: the target's path,
+// with the query that request's key will be built from (see recipes.forURL) —
+// every vary-header variant of it, since which one the reader is the request
+// alone does not say here. Every other variant of the path stays in the
+// background run.
 //
-// The renders run under the warmer's context, not the request's: detached from the
-// client going away, and carrying none of the values an auth middleware or the
-// action left on the request's, which must not reach a shared entry. What bounds
-// the wait is each fragment's own data timeout. A failure stops here and is logged
-// at debug only: the page stays stale, the background run reports the upstream,
-// and the redirect goes out all the same.
+// The keys are warmed one at a time, each taken out of the queue just before,
+// so it is not rendered twice; taking one the background run has claimed already
+// is harmless, as the two renders coalesce in warmFlight or one finds the
+// other's entry fresh. The wait is held to actionWarmBudget: past it the
+// response goes out and the keys not taken are left in the queue.
+//
+// The renders run under the warmer's context, not the request's: detached from
+// the client going away, and carrying none of the values an auth middleware or
+// the action left on the request's, which must not reach a shared entry. A failed
+// render, or a joined one that failed, ends it at once — the upstream is in
+// trouble, and the background run reports it — logged at debug only: the page
+// stays stale, and the redirect goes out all the same.
 func (h *Handler) warmRedirectTarget(r *http.Request, action, location string) {
 	w := h.warm
 	if w == nil {
 		return
 	}
-	path, ok := sameOriginPath(r, location)
+	target, ok := sameOriginTarget(r, location)
 	if !ok {
 		return
 	}
-	keys := h.recipes.forPath(r.Host, path)
+	keys := h.recipes.forURL(r.Host, target)
+	if len(keys) == 0 {
+		return
+	}
 	if len(keys) > w.limit {
 		keys = keys[:w.limit]
 	}
+	deadline := time.Now().Add(w.targetBudget)
+	if requestDeadline, set := r.Context().Deadline(); set && requestDeadline.Before(deadline) {
+		deadline = requestDeadline
+	}
+	if !w.begin() {
+		return
+	}
+	finished := make(chan struct{})
+	go func() {
+		defer w.done.Done()
+		defer close(finished)
+		h.warmTargetKeys(w, action, target.Path, keys, deadline)
+	}()
+	budget := time.NewTimer(time.Until(deadline))
+	defer budget.Stop()
+	select {
+	case <-finished:
+	case <-budget.C:
+		// The render under way goes on in the goroutine, which takes no
+		// further key: what is left is the background run's.
+		h.logger.Debug("collage: an action's redirect target was not warmed within its budget",
+			"action", action, "path", target.Path, "budget", w.targetBudget)
+	}
+}
+
+// warmTargetKeys is warmRedirectTarget's loop, run in a goroutine of its own so
+// the response need not outlast the budget even while a render does.
+func (h *Handler) warmTargetKeys(w *warmer, action, path string, keys []string, deadline time.Time) {
 	for _, key := range keys {
-		if !w.take(key) {
+		if !time.Now().Before(deadline) || !w.take(key) {
 			return
 		}
 		result := h.warmOne(w.ctx, key)
-		if result.outcome == warmSkip && w.ctx.Err() == nil && errors.Is(result.err, errWarmNotStored) {
+		if result.outcome == warmSkip && w.ctx.Err() == nil && errors.Is(result.err, errWarmNotStored) &&
+			time.Now().Before(deadline) {
 			// It joined a render that began before this action's invalidation,
 			// whose write the invalidation then refused. That flight is over, so
 			// this one leads a render of its own; without it the key, out of the
-			// queue, stays stale. A joined render that failed (errWarmShared) is
-			// not retried: that is the upstream in trouble, and a second render
-			// would hold the submit for a second fragment timeout.
+			// queue, stays stale.
 			result = h.warmOne(w.ctx, key)
 		}
-		switch result.outcome {
-		case warmFail:
+		switch {
+		case result.outcome == warmFail, errors.Is(result.err, errWarmShared):
+			// A joined render that failed is as much the upstream in trouble as a
+			// render of its own that did: rendering on would hold the submit for
+			// another fragment timeout each.
 			h.logger.Debug("collage: an action's redirect target was not warmed, it stays stale",
 				"action", action, "path", path, "err", result.err)
 			return
-		case warmSkip:
-			if result.err != nil {
-				h.logger.Debug("collage: an action's redirect target was skipped by warming",
-					"action", action, "path", path, "err", result.err)
-			}
+		case result.err != nil:
+			h.logger.Debug("collage: an action's redirect target was skipped by warming",
+				"action", action, "path", path, "err", result.err)
 		}
 	}
 }
 
-// sameOriginPath returns the path location names on r's own origin: a relative
+// sameOriginTarget returns the URL location names on r's own origin: a relative
 // reference resolved against r's URL, or an absolute http or https URL naming r's
 // host. Anything else — another host, another scheme, an unparsable location — is
-// no page of this cache, and ok is false. The query and fragment are dropped: a
-// recipe is found by its path, every variant of it.
-func sameOriginPath(r *http.Request, location string) (path string, ok bool) {
+// no page of this cache, and ok is false. The fragment is no part of any key, and
+// is dropped.
+func sameOriginTarget(r *http.Request, location string) (target *url.URL, ok bool) {
 	loc, err := url.Parse(location)
 	if err != nil || loc.Opaque != "" {
-		return "", false
+		return nil, false
 	}
 	if loc.Scheme != "" || loc.Host != "" {
 		// url.Parse lowercases the scheme; a host compares without case, as the
 		// cache key's does. A scheme with no host ("http:/p") is left alone:
 		// what a browser makes of it is not worth guessing at.
 		if loc.Scheme != "" && loc.Scheme != "http" && loc.Scheme != "https" {
-			return "", false
+			return nil, false
 		}
 		if loc.Host == "" || ascii.LowerString(loc.Host) != ascii.LowerString(r.Host) {
-			return "", false
+			return nil, false
 		}
 	}
-	path = r.URL.ResolveReference(loc).Path
-	if path == "" {
-		path = "/"
+	target = r.URL.ResolveReference(loc)
+	target.Fragment, target.RawFragment = "", ""
+	if target.Path == "" {
+		target.Path = "/"
 	}
-	return path, true
+	return target, true
 }

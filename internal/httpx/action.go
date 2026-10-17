@@ -226,7 +226,16 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		}
 		// After the invalidation, which queued the target for the background
 		// run, and before the redirect, so the reader following it is handed
-		// the fresh page at once. Only this action's own response waits for it.
+		// the fresh page at once. Only this action's own response waits for it,
+		// and no longer than actionWarmBudget.
+		//
+		// The Location is warmed under the key its GET will be looked up by. A
+		// query that is no cache dimension of the route it names is dropped
+		// from that key on a route declaring CacheParams; on one declaring
+		// none, the raw query is the key's, so "/post?saved=1" is a key of its
+		// own that no recipe holds, and nothing is warmed for it. A Location
+		// meant to land on a warm page is a clean URL, or names only declared
+		// CacheParams.
 		if result.Location != "" {
 			h.warmRedirectTarget(r, action.Name, result.Location)
 		}

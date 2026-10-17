@@ -789,3 +789,226 @@ func TestActionWarm_DoesNotRetryAJoinedRenderThatFailed(t *testing.T) {
 		t.Fatal("the target is fresh after a failed render")
 	}
 }
+
+// isPending reports whether key is queued for the background run.
+func isPending(h *Handler, key string) bool {
+	h.warm.mu.Lock()
+	defer h.warm.mu.Unlock()
+	_, ok := h.warm.pending[key]
+	return ok
+}
+
+// queue puts keys in the background queue by hand, as a run with nobody to work
+// it through: what an action's warm takes from it, or leaves, is then all there.
+func queue(h *Handler, keys ...string) {
+	h.warm.mu.Lock()
+	defer h.warm.mu.Unlock()
+	for _, key := range keys {
+		h.warm.pending[key] = struct{}{}
+	}
+}
+
+// On a route with no CacheParams the raw query is part of the key: an action
+// redirecting to the bare path warms the bare key only, and the query variant
+// stays in the background queue, to be warmed there.
+func TestActionWarm_OnlyTheLocationsQueryVariant(t *testing.T) {
+	env, engine, keys := postsEnv(t, 0)
+	for _, path := range []string{"/posts/1?page=2", "/posts/1", "/posts/2"} {
+		if rec := env.get(path); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, rec.Code)
+		}
+		keys = append(keys, flightKeyFor(t, env, path))
+	}
+	paged, bare, probe := keys[0], keys[1], keys[2]
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	// /posts/2 is the newest recipe, the run's probe: held, the run goes no
+	// further, and what the action leaves queued stays queued.
+	gate, entered := engine.holdPath("/posts/2")
+	// Closed on a failure too, or the cleanup's StopWarming waits on the held
+	// render forever.
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(gate) }) })
+	env.handler.Warm(keys)
+	<-entered
+
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1")
+	if content, fresh := freshIn(t, env, bare); !fresh || content != "<html>new</html>" {
+		t.Fatalf("bare key = %q fresh %v, want the new page", content, fresh)
+	}
+	if _, fresh := freshIn(t, env, paged); fresh {
+		t.Fatal("the ?page=2 variant was warmed by the action")
+	}
+	if !isPending(env.handler, paged) {
+		t.Fatal("the ?page=2 variant was taken out of the background queue")
+	}
+	release.Do(func() { close(gate) })
+	waitWarmed(t, env.handler)
+	for _, key := range []string{paged, probe} {
+		if _, fresh := freshIn(t, env, key); !fresh {
+			t.Fatalf("key %q not warmed by the background run", key)
+		}
+	}
+}
+
+// On a route with CacheParams the key holds the canonical selection: the action's
+// Location, with its parameters in another order and one that is no cache
+// dimension, lands on the key a reader's request wrote, and the bare variant is
+// not warmed.
+func TestActionWarm_CacheParamsSelectTheVariant(t *testing.T) {
+	engine := newOrderEngine()
+	page := testPage("list", "/list", types.StrategyIncremental)
+	page.CacheParams = []string{"page", "sort"}
+	env := newEnv(t, []*types.Page{page}, func(d *Deps) { d.Renderer = engine })
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	var keys []string
+	for _, path := range []string{"/list?utm=a&sort=new&page=2", "/list"} {
+		if rec := env.get(path); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, rec.Code)
+		}
+		keys = append(keys, flightKeyFor(t, env, path))
+	}
+	markAllStale(t, env, keys)
+
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save",
+		"/list?page=2&utm=z&sort=new")
+	if _, fresh := freshIn(t, env, keys[0]); !fresh {
+		t.Fatal("the page=2 variant was not warmed")
+	}
+	if _, fresh := freshIn(t, env, keys[1]); fresh {
+		t.Fatal("the bare variant was warmed")
+	}
+}
+
+// slowVaryEngine is a varyEngine whose every render takes delay.
+type slowVaryEngine struct {
+	varyEngine
+	delay time.Duration
+}
+
+func (e slowVaryEngine) Render(ctx context.Context, rc *types.RenderContext) (*render.Result, error) {
+	time.Sleep(e.delay)
+	return e.varyEngine.Render(ctx, rc)
+}
+
+// With a slow upstream the action's wait is held to its budget, even while a
+// render is under way: the redirect goes out, and the variants it did not take
+// are warmed by the background run.
+func TestActionWarm_HeldToItsBudget(t *testing.T) {
+	const delay, budget = 300 * time.Millisecond, 100 * time.Millisecond
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)},
+		withVary("Accept-Language"),
+		func(d *Deps) {
+			d.Renderer = slowVaryEngine{
+				varyEngine: varyEngine{fakeEngine: newFakeEngine(fakeRender{tags: []string{"posts"}})},
+				delay:      delay,
+			}
+		})
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	langs := []string{"tr", "en", "de", "fr", "es", "it"}
+	for _, lang := range langs {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Accept-Language", lang)
+		if rec := env.do(req); rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d", lang, rec.Code)
+		}
+	}
+	keys, err := env.tracker.Resolve(context.Background(), []string{"posts"})
+	if err != nil || len(keys) != len(langs) {
+		t.Fatalf("Resolve = %v, %v; want %d variants", keys, err, len(langs))
+	}
+	markAllStale(t, env, keys)
+	env.handler.warm.targetBudget = budget
+	env.handler.Warm(keys)
+
+	began := time.Now()
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/")
+	if took := time.Since(began); took > budget+150*time.Millisecond {
+		t.Fatalf("the action waited %v, want its budget of %v", took, budget)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for _, key := range keys {
+		for {
+			if _, fresh := freshIn(t, env, key); fresh {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("variant %q never warmed", key)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// A request deadline shorter than the budget cuts the wait shorter.
+func TestActionWarm_HeldToTheRequestDeadline(t *testing.T) {
+	env, engine, keys := postsEnv(t, 1)
+	markAllStale(t, env, keys)
+	gate, _ := engine.holdPath("/posts/1")
+	t.Cleanup(func() { close(gate) })
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil).WithContext(ctx), "save", "/posts/1")
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("the action waited past a 50ms request deadline")
+	}
+}
+
+// A failed render ends the action's warm at once: the next variant is not taken,
+// and stays in the background queue.
+func TestActionWarm_StopsAtAFailure(t *testing.T) {
+	env, engine, keys := postsEnv(t, 0)
+	for _, path := range []string{"/posts/1?b=1", "/posts/1?a=1"} {
+		env.get(path)
+		keys = append(keys, flightKeyFor(t, env, path))
+	}
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{err: errors.New("cms down")})
+	queue(env.handler, keys...)
+	before := len(engine.rendered())
+
+	env.handler.warmTargetKeys(env.handler.warm, "save", "/posts/1", keys, time.Now().Add(time.Minute))
+	if got := engine.renderedSince(before); len(got) != 1 {
+		t.Fatalf("rendered %v, want one render and a stop", got)
+	}
+	if !isPending(env.handler, keys[1]) {
+		t.Fatal("the key after the failure was taken out of the queue")
+	}
+}
+
+// So does joining a render that failed: the upstream is in trouble either way.
+func TestActionWarm_StopsAtAJoinedFailure(t *testing.T) {
+	env, engine, keys := postsEnv(t, 2)
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/1")
+	env.handler.Warm(keys[:1])
+	<-entered
+	engine.set("post", fakeRender{err: errors.New("cms down")})
+	queue(env.handler, keys[1])
+	before := len(engine.rendered())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmTargetKeys(env.handler.warm, "save", "/posts", keys, time.Now().Add(time.Minute))
+	}()
+	waitJoined(t, env.handler, keys[0])
+	engine.mu.Lock()
+	engine.hold = ""
+	engine.mu.Unlock()
+	close(gate)
+	<-done
+	if got := engine.renderedSince(before); len(got) != 0 {
+		t.Fatalf("rendered %v after the joined failure, want nothing", got)
+	}
+	if !isPending(env.handler, keys[1]) {
+		t.Fatal("the key after the joined failure was taken out of the queue")
+	}
+}

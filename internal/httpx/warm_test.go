@@ -374,31 +374,40 @@ func TestRecipes_BoundedNewestFirst(t *testing.T) {
 }
 
 // An action's Location names a page of this cache only on the request's own
-// origin; the query and fragment never pick the path.
-func TestSameOriginPath(t *testing.T) {
+// origin; the fragment is never part of the target, the query is.
+func TestSameOriginTarget(t *testing.T) {
 	for _, tc := range []struct {
-		location, path string
-		ok             bool
+		location, path, query string
+		ok                    bool
 	}{
-		{"/p/x", "/p/x", true},
-		{"/p/x?saved=1#top", "/p/x", true},
-		{"x", "/admin/x", true},
-		{"../p/x", "/p/x", true},
-		{"?page=2", "/admin/save", true},
-		{"/p/%C3%BC", "/p/ü", true},
-		{"http://Example.com/p/x", "/p/x", true},
-		{"https://example.com", "/", true},
-		{"https://other.example/p/x", "", false},
-		{"//other.example/p/x", "", false},
-		{"ftp://example.com/p/x", "", false},
-		{"http:/p/x", "", false},
-		{"mailto:x@example.com", "", false},
-		{"http://[::1", "", false},
+		{"/p/x", "/p/x", "", true},
+		{"/p/x?saved=1#top", "/p/x", "saved=1", true},
+		{"/p/x#top", "/p/x", "", true},
+		{"x", "/admin/x", "", true},
+		{"../p/x", "/p/x", "", true},
+		{"?page=2", "/admin/save", "page=2", true},
+		{"/p/%C3%BC", "/p/ü", "", true},
+		{"http://Example.com/p/x?b=2&a=1", "/p/x", "b=2&a=1", true},
+		{"https://example.com", "/", "", true},
+		{"https://other.example/p/x", "", "", false},
+		{"//other.example/p/x", "", "", false},
+		{"ftp://example.com/p/x", "", "", false},
+		{"http:/p/x", "", "", false},
+		{"mailto:x@example.com", "", "", false},
+		{"http://[::1", "", "", false},
 	} {
-		r := httptest.NewRequest(http.MethodPost, "/admin/save", nil)
-		path, ok := sameOriginPath(r, tc.location)
-		if path != tc.path || ok != tc.ok {
-			t.Errorf("sameOriginPath(%q) = %q, %v; want %q, %v", tc.location, path, ok, tc.path, tc.ok)
+		r := httptest.NewRequest(http.MethodPost, "/admin/save?from=form", nil)
+		target, ok := sameOriginTarget(r, tc.location)
+		var path, query string
+		if target != nil {
+			path, query = target.Path, target.RawQuery
+			if target.Fragment != "" {
+				t.Errorf("sameOriginTarget(%q) kept the fragment %q", tc.location, target.Fragment)
+			}
+		}
+		if path != tc.path || query != tc.query || ok != tc.ok {
+			t.Errorf("sameOriginTarget(%q) = %q ?%q, %v; want %q ?%q, %v",
+				tc.location, path, query, ok, tc.path, tc.query, tc.ok)
 		}
 	}
 }

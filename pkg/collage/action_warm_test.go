@@ -152,7 +152,7 @@ func TestAction_RedirectTargetIsFreshOnFirstLoad(t *testing.T) {
 		fetch          bool
 	}{
 		{name: "path", location: "/p/a"},
-		{name: "query and fragment", location: "/p/a?saved=1#top"},
+		{name: "fragment", location: "/p/a#top"},
 		{name: "relative", location: "p/a"},
 		{name: "absolute same host", location: "http://EXAMPLE.com/p/a"},
 		{name: "fetch", location: "/p/a", fetch: true},
