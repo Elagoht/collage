@@ -62,7 +62,8 @@ func sharedRequest(r *http.Request, cacheParams []string) *http.Request {
 
 // renderSafeContext wraps parent so a shared, cacheable render sees only the
 // context values that are the same for every reader of the page it produces:
-// the framework's own route, vary, external-chain state and origin resolver. A value an
+// the framework's own route, vary, external-chain state and origin resolver, and
+// whether it is a capture or a fresh-data render. A value an
 // application's middleware stored is hidden — read it back with collage.Varied,
 // from the vary set, which is in the cache key. Deadline, cancellation and Err
 // pass straight through to parent; only Value changes. In development it logs,
@@ -96,7 +97,11 @@ type renderSafe struct {
 
 func (c renderSafe) Value(key any) any {
 	switch key.(type) {
-	case routeCtxKey, varySetKey, chainStateKey, originsKey, types.CaptureKey:
+	// FreshDataKey with CaptureKey: whether stale data may be used is the
+	// render's, not a reader's, and a cache warm render is shared and fresh.
+	// warmCtxKey too: it is no reader's, and a cache write failing inside the
+	// render is reported through it, to the warmer rather than the logs.
+	case routeCtxKey, varySetKey, chainStateKey, originsKey, types.CaptureKey, types.FreshDataKey, warmCtxKey:
 		return c.Context.Value(key)
 	}
 	// Not one of ours: hidden. Tell the developer, but only when the value was

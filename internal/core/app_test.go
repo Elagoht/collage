@@ -128,6 +128,11 @@ func testConfig(root string) Config {
 			Enabled:    true,
 			Type:       "memory",
 			DefaultTTL: time.Minute,
+			// These tests count the renders and read the entries an
+			// invalidation leaves, which a background warm would race. Warming
+			// is tested where it is built and where it is configured:
+			// internal/httpx and pkg/collage, warm tests.
+			WarmLimit: -1,
 		},
 		Locale: LocaleConfig{
 			Default:   "en",
@@ -293,7 +298,9 @@ func TestApp_ServesRendersCachesAndInvalidates(t *testing.T) {
 // invalidation that cleared the whole cache would pass the test above.
 func TestApp_InvalidateTagsLeavesOtherPagesCached(t *testing.T) {
 	metrics := observability.NewRecordingMetrics()
-	app := newTestApp(t, func(cfg *Config) { cfg.Observability.Metrics = metrics })
+	app := newTestApp(t, func(cfg *Config) {
+		cfg.Observability.Metrics = metrics
+	})
 
 	home := newHomePage()
 	about := &types.Page{

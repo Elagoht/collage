@@ -55,6 +55,13 @@ the action (the form submit), never on the page view.
 - Warming renders from the recipe, so it writes exactly the cache key a visitor
   produced. Every variant that was actually served (i18n, tenant, query) is
   warmed. A variant nobody requested is not warmed.
+- Recipes are recorded only when warming is on.
+- A recipe carries a "read since last warm" flag (final-review ruling I4b). It is
+  set when the key is served `HIT` or `STALE` to a visitor, or written by a
+  visitor's render, and cleared when a warm's write of it stands. A warm skips
+  (counted skipped, recipe kept) a key whose flag is clear, so a variant nobody
+  read since its last warm is not warmed again. The flag is an atomic on the
+  recipe node, set under the store's read lock and only when clear.
 
 ### The warmer
 
@@ -82,8 +89,22 @@ the action (the form submit), never on the page view.
   - **On the first failed warm render, the run stops**, so a down upstream is
     not hammered. One warn line is logged, naming the error and how many keys
     were skipped.
-  - If a visitor asks for a page while it is being warmed, they join the same
-    flight and share the render.
+  - A warm render runs in its own flight namespace (ruling 2026-10-17): a visitor
+    never joins it, so no page view waits on the upstream, and a warm never joins
+    a visitor's non-fresh render. A page may render twice while being warmed.
+  - Guarded pages are not warmed (skipped). Warm requests skip personalisation and
+    plugin hooks, and log nothing per page; the warmer logs its own run lines.
+- For `InvalidateTags` (not `PurgeTags`), a key whose entry the cache no longer
+  holds (`GetStale` finds nothing) is skipped and its recipe dropped: warming
+  does not revive evicted keys (ruling I4a). `PurgeTags` keeps warming its keys.
+  The check applies only to a `cache.StaleCache`; any other store drops every
+  entry it invalidates.
+- A warm refused because another invalidation overlapped it (any tag) is queued
+  again (ruling I1): parked until no invalidation is under way, then queued by
+  the `Warm` every invalidation makes once finished (keys or none), or at once
+  when none is under way. At most once per invalidation not finished when the
+  key's first refused render began, so N overlapping invalidations cost at most
+  N extra renders. Only an overlap re-queues; a cache that drops a write does not.
 - Warming never runs in dev mode, in a static build, or when the cache is off.
 - It stops on `Shutdown`: the queue is dropped, and running renders finish
   under the shutdown context.
@@ -104,8 +125,16 @@ the action (the form submit), never on the page view.
   3. It renders those keys synchronously, with the same rules as the warmer.
   4. It then sends the redirect.
 - The editor's redirected page view is then a fresh `HIT`.
-- The wait is bounded by the fragments' own data timeouts. If the upstream is
-  slow or down, the redirect is still sent and the page is stale, as in v0.63.
+- The wait is bounded by the fragments' own data timeouts, and by a budget
+  (ruling I3): min(5s, write deadline − now − 500ms, context deadline). The write
+  deadline is the one the action's `BodyTimeout` set, else the request's start
+  plus `Server.WriteTimeout` (`httpx.Deps.WriteTimeout`). A non-positive budget
+  skips the synchronous warm, leaving the keys queued. If the upstream is slow
+  or down, the redirect is still sent and the page is stale, as in v0.63.
+- The variant whose vary entries equal the action request's goes first, and is
+  warmed past the read and evicted checks: its submitter is about to read it.
+- Only `ActionResult.InvalidateTags` warms synchronously; an action calling
+  `app.InvalidateTags` in its handler gets the background warm only.
 - These keys are also removed from the background queue, so they are not
   rendered twice.
 
@@ -115,6 +144,8 @@ the action (the form submit), never on the page view.
   invalidation. 0 means the default (1000), and a negative value turns warming
   off.
 - `collage.CacheWarm` metrics event.
+- `collagetest.Site.WaitWarmed()` (ruling I2), delegating to the handler's
+  `WaitWarmed`, which also waits for parked re-queued keys.
 - Nothing else is exported. The recipe store and the warmer are internal.
 
 ## Acceptance tests
@@ -132,7 +163,8 @@ the action (the form submit), never on the page view.
    `Accept-Language`) is warmed under its own key.
 6. `WarmLimit` caps a run, and the most recently written keys are warmed first.
    A negative value warms nothing.
-7. A visitor during warming joins the flight, so the page is rendered once.
+7. A visitor during warming is never made to wait on the warm render; it is
+   served at once (stale or fresh), and the warm render stores the fresh page.
 8. No warming in dev mode, in a static build, or with the cache off.
    `Shutdown` stops the warmer.
 9. Warm requests never pass through `App.Use` middleware or plugin middleware.

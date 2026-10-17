@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -86,6 +87,9 @@ type routeRef struct {
 	// "/blog/{slug}", without a locale prefix — or a mount's or handler's prefix;
 	// locale is the locale the request resolved to.
 	pattern, locale string
+	// start is when the handler took the request, which net/http's WriteTimeout
+	// counts from, near enough: an action works out its write deadline from it.
+	start time.Time
 }
 
 // at records the pattern and the locale the route matched with.

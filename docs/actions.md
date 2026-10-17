@@ -196,15 +196,40 @@ and then redirects must not have the reader follow that redirect into a cache en
 the change already made wrong.
 
 The pages are marked stale, and so are the `collage.Cached` values they were
-built from: both are kept. A page that reads `Cached` data is degraded right after the
-invalidation, since it read a stale value. So the redirect lands on the *old* page,
-served stale (`X-Collage-Cache: STALE`, `Cache-Control: no-store`) while the fetch
-that replaces the value runs in the background; the next request after that fetch
-has finished renders the new page and stores it. That is the price of a site that
-keeps answering while its upstream is down. When an action must show its
-own change at once, use `app.PurgeTags` from the handler for those tags instead.
-Nothing is then kept, so the redirect shows the change at once, and a failed fetch
-fails the page.
+built from: both are kept. The invalidated pages are then
+[warmed](caching.md#warming-after-an-invalidation), and the redirect's own page
+first: when `Location` is on the same origin, its variant (its query varied as the
+cache key varies it, and every `Vary` header variant of it) is rendered again
+with fresh data before the redirect is written, so the redirect lands on the new
+page, a fresh `HIT`. The variant the submitter lands on, the one whose `Vary`
+values their request declared, goes first, and is warmed even if nobody read it
+since its last warm. Only this action's response waits for that, and for no
+longer than the shortest of 5 seconds, the request's deadline, and what is left
+of the response's write deadline less half a second to write the redirect in.
+The write deadline is the action's own `BodyTimeout` when it sets one, and
+otherwise `Server.WriteTimeout` from when the request arrived. With no time left
+the response does not wait at all. The keys not warmed by then stay in the
+background run.
+
+Only `ActionResult.InvalidateTags` does this. An action that calls
+`app.InvalidateTags` (or `PurgeTags`) itself, inside its handler, has those pages
+warmed in the background like any other invalidation's, but its redirect is
+written without waiting for its page, so the submitter may land on it `STALE` or
+pay for its render.
+
+The page is served stale (`X-Collage-Cache: STALE`, `Cache-Control: no-store`)
+only when the render cannot finish in time: the upstream is slow or down, the
+budget is spent, or the render failed. The redirect still goes out then, and the
+fetch that replaces a `Cached` value runs in the background. That is the price of
+a site that keeps answering while its upstream is down. When an action must show
+its own change at once whatever happens, use `app.PurgeTags` from the handler for
+those tags instead. Nothing is then kept, so a failed fetch fails the page.
+
+Redirect to a clean URL, or to one whose query holds only declared `CacheParams`.
+A route that declares `CacheParams` drops any other query parameter from its key,
+so `/posts?saved=1` is warmed as `/posts`. A route that declares none keys on the
+raw query: `/posts?saved=1` is a key of its own that no recipe holds, and nothing
+is warmed for it.
 
 ## Request bodies are bounded
 

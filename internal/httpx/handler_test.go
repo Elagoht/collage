@@ -293,6 +293,10 @@ type logRecord struct {
 	message  string
 	stage    string
 	fragment string
+	// err and skipped are the "err" and "skipped" attributes, for the
+	// warmer's lines.
+	err     string
+	skipped string
 }
 
 // countingHandler is a slog.Handler that counts records by message and keeps their
@@ -323,6 +327,10 @@ func (h *countingHandler) Handle(_ context.Context, rec slog.Record) error {
 			entry.stage = attr.Value.String()
 		case "fragment":
 			entry.fragment = attr.Value.String()
+		case "err":
+			entry.err = attr.Value.String()
+		case "skipped":
+			entry.skipped = attr.Value.String()
 		}
 		return true
 	})

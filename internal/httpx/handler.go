@@ -243,6 +243,16 @@ type Deps struct {
 	// TrustedProxies are the proxies whose X-Forwarded-For ClientIP believes.
 	// Empty trusts none: the client is always RemoteAddr.
 	TrustedProxies []netip.Prefix
+	// MaxRecipes bounds the warm recipes kept, one per cache key written, the
+	// oldest evicted first. Zero or less means 10000.
+	MaxRecipes int
+	// WarmLimit caps how many keys one Warm call re-renders, the most recently
+	// written first. Zero means 1000; negative turns warming off, so Warm does
+	// nothing. Warming is off as well in development and with no Cache.
+	WarmLimit int
+	// WriteTimeout is the server's, so an action holds its wait for its
+	// redirect target to what is left of it. Zero means none.
+	WriteTimeout time.Duration
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
@@ -268,6 +278,7 @@ type Handler struct {
 	reload        *reloadHub
 	pageReady     func(*types.Page) bool
 	maxBodyBytes  int64
+	writeTimeout  time.Duration
 	invalidator   Invalidator
 	routes        types.Routes
 	csrf          *csrf.Guard
@@ -278,6 +289,16 @@ type Handler struct {
 	// popular page costs one render rather than one per request that arrives
 	// while it is being re-made.
 	flight *flight
+	// recipes records, per cache key written, how to rebuild the request that
+	// wrote it, so an invalidated key can be re-rendered before anyone asks.
+	recipes *recipes
+	// warmFlight coalesces warm renders, apart from flight: a visitor joining a
+	// warm render would wait on the upstream it waits for, and a warm joining a
+	// visitor's would take a render that may use stale data. See warmKey.
+	warmFlight *flight
+	// warm re-renders invalidated keys in the background. Nil when warming is
+	// off: in development, with no cache, or with a negative WarmLimit.
+	warm *warmer
 
 	// bodyTimeoutWarning logs, once, that an action's body timeout could not
 	// be set. See setBodyDeadlines.
@@ -322,6 +343,7 @@ func New(d Deps) (*Handler, error) {
 		handlers:     slices.Clone(d.Handlers),
 		pageReady:    d.PageReady,
 		maxBodyBytes: d.MaxBodyBytes,
+		writeTimeout: d.WriteTimeout,
 		invalidator:  d.Invalidator,
 		routes:       d.Routes,
 		csrf:         d.CSRF,
@@ -329,6 +351,11 @@ func New(d Deps) (*Handler, error) {
 		noSniff:      d.NoSniff,
 		trusted:      slices.Clone(d.TrustedProxies),
 		flight:       newFlight(),
+		recipes:      newRecipes(d.MaxRecipes),
+		warmFlight:   newFlight(),
+	}
+	if !d.DevMode && d.Cache != nil && d.WarmLimit >= 0 {
+		h.warm = newWarmer(d.WarmLimit)
 	}
 	// Composed once rather than per request: a middleware constructor is
 	// allowed to do setup work, and doing it on every request would be a cost
@@ -414,7 +441,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the raw path. See RouteInfo. Ahead of the request hooks: a hook keeps the
 	// context it was handed and reads the route from it once the response is
 	// written. A request answered before routing leaves it empty.
-	route := &routeRef{}
+	route := &routeRef{start: time.Now()}
 	r = r.WithContext(context.WithValue(r.Context(), routeCtxKey{}, route))
 	if h.origins != nil {
 		r = r.WithContext(WithOrigins(r.Context(), h.origins))
@@ -756,6 +783,15 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	pagePattern, _ := page.PathFor(match.Locale)
 	route.at(pagePattern, match.Locale)
 
+	// A warm is no reader, and a guard decides about a reader: asked about a
+	// warm, it would refuse it or let it through on nobody's credentials. The
+	// page is left to its first allowed reader, as before warming existed.
+	warm := warmStateOf(ctx)
+	if warm != nil && types.PageGuarded(page) {
+		warm.skip(errWarmGuarded)
+		return 0
+	}
+
 	// Guards before the cache: a blocked reader reaches neither the page's
 	// cached render nor the plugins that watch a page being rendered — the
 	// request never touched the page.
@@ -803,6 +839,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			// The only place cacheHit is ever reported true: what it times is the
 			// lookup that stood in for a render, not a render that did not happen.
 			h.metrics.RenderDuration(ctx, page.Name, time.Since(lookupStart), true)
+			h.readBy(ctx, key)
 			return h.serveCached(w, r, page, content, etag, cacheHit)
 		}
 		// A stale entry is a miss as far as the cache is concerned: the page
@@ -849,6 +886,14 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			// one, it would hand its mark to every reader waiting on it. It
 			// keeps its own deadline, too.
 			out = h.renderPage(h.renderSafeContext(ctx), shareable, page, match, key, cacheable)
+		} else if warm != nil {
+			// A warm renders in a flight of its own: see warmFlight. Under its
+			// own context, not detached from it, because the warmer's context
+			// is no reader's and ends only when shutdown gives up waiting.
+			renderCtx := h.renderSafeContext(ctx)
+			out, shared = h.warmFlight.do(ctx, key, func() *outcome {
+				return h.renderPage(renderCtx, shareable, page, match, key, cacheable)
+			})
 		} else {
 			renderCtx := h.renderSafeContext(context.WithoutCancel(ctx))
 			out, shared = h.flight.do(ctx, key, func() *outcome {
@@ -865,6 +910,9 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// like from the outside.
 		h.metrics.CacheEvent(ctx, observability.CacheCoalesced, key)
 	}
+	if warm != nil {
+		warm.observe(out, shared)
+	}
 
 	// Decided per request, after the flight: every request that joined a render
 	// made its own lookup, so each one falls back to the stale entry it found,
@@ -876,6 +924,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			// to personalise it, and then what was served is an error page.
 			status := h.serveCached(w, r, page, stale.content, stale.etag, cacheStale)
 			if status == http.StatusOK || status == http.StatusNotModified {
+				h.readBy(ctx, key)
 				h.reportStale(r, key, "page", page.Name, out)
 			}
 			return status
@@ -981,6 +1030,11 @@ type personalised struct {
 // not sent: the error page answering instead sends its own if it carries a form.
 func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []byte, etag string) (personalised, error) {
 	original := personalised{body: content, etag: etag}
+	// A warm's body is thrown away, so making it a reader's is work for nobody,
+	// and a hook would count a reader who was never there.
+	if warmStateOf(r.Context()) != nil {
+		return original, nil
+	}
 	var cookie *http.Cookie
 	if h.csrf != nil && h.csrf.Carries(content) {
 		token, _, err := h.csrf.TokenFor(r)
@@ -1250,6 +1304,12 @@ func (h *Handler) staleFallback(ctx context.Context, out *outcome) fallback {
 // logged and measured by the render engine, which is how a fragment failure is
 // reported whether or not the page is then served stale.
 func (h *Handler) reportStale(r *http.Request, key, kind, name string, out *outcome) {
+	// A warm's stale serve went to nobody, so it is no serve to count, and the
+	// warmer reports its failure itself, once per run rather than per page.
+	if warm := warmStateOf(r.Context()); warm != nil {
+		warm.record(out)
+		return
+	}
 	h.metrics.CacheEvent(r.Context(), observability.CacheStale, key)
 	if !out.staleReported.CompareAndSwap(false, true) {
 		return
@@ -1426,6 +1486,7 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 		return ""
 	}
 	if !h.storable(mark) {
+		h.overlapped(ctx, mark)
 		return ""
 	}
 
@@ -1443,12 +1504,47 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 		return ""
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
+	// r is the shared request the render was made from, so the recipe holds what
+	// the key holds and nothing of the reader. See warmKey. Not with warming
+	// off, when nothing reads it.
+	if h.warm != nil {
+		h.recipes.put(key, newRecipe(r, page.CacheParams, false), warmStateOf(ctx) == nil)
+	}
 
 	if err := h.tracker.Track(ctx, key, withRouteTags(tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
 	}
-	h.dropIfOverlapped(ctx, key, mark)
+	h.wroteForWarm(ctx, key, h.dropIfOverlapped(ctx, key, mark))
 	return etag
+}
+
+// wroteForWarm clears the read mark of a key a warm wrote, when the write stood:
+// until a reader has it, the next invalidation passes it over (see
+// errWarmUnread). A write an overlap dropped leaves the mark as it was.
+func (h *Handler) wroteForWarm(ctx context.Context, key string, dropped bool) {
+	if h.warm != nil && !dropped && warmStateOf(ctx) != nil {
+		h.recipes.clearRead(key)
+	}
+}
+
+// readBy marks key read when ctx is a reader's: a page or document served to
+// one, fresh or stale. Not for a warm's own lookup, nor a static build's
+// capture, and not with warming off, when nothing reads the mark.
+func (h *Handler) readBy(ctx context.Context, key string) {
+	if h.warm == nil || warmStateOf(ctx) != nil || types.IsCapture(ctx) {
+		return
+	}
+	h.recipes.markRead(key)
+}
+
+// overlapped records, on a warm's render, that an invalidation overlapped the
+// render begun at mark and its entry was not kept, so the warmer queues the key
+// again (see requeue). A reader's render records nothing: its key is rendered
+// again on its next request.
+func (h *Handler) overlapped(ctx context.Context, mark invalidationMark) {
+	if warm := warmStateOf(ctx); warm != nil {
+		warm.overlap(mark)
+	}
 }
 
 // dropIfOverlapped drops the entry just written for key when an invalidation or a
@@ -1456,10 +1552,15 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 // alone leaves that window, and the invalidation, finding nothing yet, would leave
 // the entry written after it fresh. Dropped rather than marked stale, because
 // which of the two it was is not known, and a purge leaves nothing behind.
-func (h *Handler) dropIfOverlapped(ctx context.Context, key string, mark invalidationMark) {
-	if h.invalidatedSince(mark) {
-		_ = h.cache.InvalidateKey(context.WithoutCancel(ctx), key)
+//
+// It reports whether it dropped the entry.
+func (h *Handler) dropIfOverlapped(ctx context.Context, key string, mark invalidationMark) bool {
+	if !h.invalidatedSince(mark) {
+		return false
 	}
+	_ = h.cache.InvalidateKey(context.WithoutCancel(ctx), key)
+	h.overlapped(ctx, mark)
+	return true
 }
 
 // documentPattern is the pattern doc answers in locale: its own path there, or

@@ -74,6 +74,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		if found && !isStale {
 			h.metrics.CacheEvent(ctx, observability.CacheHit, key)
 			h.metrics.RenderDuration(ctx, doc.Name, time.Since(lookupStart), true)
+			h.readBy(ctx, key)
 			return h.serveCachedDocument(w, r, doc, content, etag, cacheHit)
 		}
 		// Kept to fall back to, as a page's is: see serve.
@@ -165,11 +166,20 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	// Not a static build's header capture, which renders on its own: see the
 	// page path.
 	var out *outcome
+	warm := warmStateOf(ctx)
 	if key != "" && !types.IsCapture(ctx) {
+		// A warm in a flight of its own, as a page's: see warmFlight.
+		coalesce := h.flight
+		if warm != nil {
+			coalesce = h.warmFlight
+		}
 		var shared bool
-		out, shared = h.flight.do(ctx, key, produce)
+		out, shared = coalesce.do(ctx, key, produce)
 		if shared {
 			h.metrics.CacheEvent(ctx, observability.CacheCoalesced, key)
+		}
+		if warm != nil {
+			warm.observe(out, shared)
 		}
 	} else {
 		out = produce()
@@ -178,6 +188,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	if stale != nil {
 		switch h.staleFallback(ctx, out) {
 		case fallbackStale:
+			h.readBy(ctx, key)
 			h.reportStale(r, key, "document", doc.Name, out)
 			return h.serveCachedDocument(w, r, doc, stale.content, stale.etag, cacheStale)
 		case fallbackDrop:
@@ -264,6 +275,7 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 		return ""
 	}
 	if !h.storable(mark) {
+		h.overlapped(ctx, mark)
 		return ""
 	}
 
@@ -281,10 +293,16 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 		return ""
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
+	// r is the reader's own request here, not a shared one; newRecipe keeps only
+	// the query the key varies on and the declared vary headers of it. Not with
+	// warming off, as for a page.
+	if h.warm != nil {
+		h.recipes.put(key, newRecipe(r, doc.CacheParams, true), warmStateOf(ctx) == nil)
+	}
 
 	if err := h.tracker.Track(ctx, key, withRouteTags(result.Tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, route.failure(0, stageCacheWrite, fmt.Errorf("collage: track %q: %w", key, err)))
 	}
-	h.dropIfOverlapped(ctx, key, mark)
+	h.wroteForWarm(ctx, key, h.dropIfOverlapped(ctx, key, mark))
 	return etag
 }

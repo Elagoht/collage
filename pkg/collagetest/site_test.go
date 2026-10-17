@@ -269,3 +269,27 @@ func TestSite_FailureAfterInitLeavesNothingRunning(t *testing.T) {
 		t.Errorf("plugin Shutdown calls after the test = %d, want 1", plugin.shutdown.Load())
 	}
 }
+
+// WaitWarmed returns once the pages an invalidation reached are warmed again,
+// so the next request is a HIT rather than a race with the warmer.
+func TestSite_WaitWarmed(t *testing.T) {
+	site := collagetest.NewSite(t, collagetest.WithConfig(func(cfg *collage.Config) {
+		cfg.Cache = collage.CacheConfig{Enabled: true, Type: "memory"}
+	}))
+	site.Get("/").WantStatus(http.StatusOK)
+	if err := site.App.InvalidateTags(context.Background(), collage.PathTag("/")); err != nil {
+		t.Fatal(err)
+	}
+	site.WaitWarmed()
+	if got := site.Get("/").Header.Get(collage.CacheStatusHeader); got != "HIT" {
+		t.Fatalf("%s = %q after WaitWarmed, want HIT", collage.CacheStatusHeader, got)
+	}
+}
+
+// WaitWarmed returns at once when warming is off, and on a site with no cache.
+func TestSite_WaitWarmedWithWarmingOff(t *testing.T) {
+	collagetest.NewSite(t).WaitWarmed()
+	collagetest.NewSite(t, collagetest.WithConfig(func(cfg *collage.Config) {
+		cfg.Cache = collage.CacheConfig{Enabled: true, Type: "memory", WarmLimit: -1}
+	})).WaitWarmed()
+}

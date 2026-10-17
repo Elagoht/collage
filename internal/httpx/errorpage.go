@@ -61,6 +61,12 @@ type failure struct {
 // picks the writer, so no caller can pick the wrong one. See routeKind for why
 // that is worth a type.
 func (h *Handler) serveFailure(w http.ResponseWriter, r *http.Request, f failure) int {
+	// A warm's answer goes to nobody: no error page is rendered for it, and its
+	// failure is the warmer's to report, once per run. See warmState.
+	if warm := warmStateOf(r.Context()); warm != nil {
+		warm.fail(f.err)
+		return f.status
+	}
 	// A reader who went away is not a failure of the application's, and there
 	// is nobody to write an answer to. Reported as one, every closed tab on a
 	// slow page was an error-level log line and a call to every error hook —
@@ -160,6 +166,15 @@ func (h *Handler) ServeStatus(w http.ResponseWriter, r *http.Request, status int
 // document, since the event's Path already identifies the route, and widening a
 // public plugin struct just to carry a name for a log line is not worth it.
 func (h *Handler) reportError(r *http.Request, f failure) {
+	// A warm's failure, such as its cache write's, is the warmer's to report.
+	if warm := warmStateOf(r.Context()); warm != nil {
+		if f.stage == stageCacheWrite {
+			warm.writeFailed(f.err)
+		} else {
+			warm.fail(f.err)
+		}
+		return
+	}
 	h.logFailure(r, f)
 	h.dispatchError(r, f)
 }

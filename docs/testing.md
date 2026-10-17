@@ -86,6 +86,26 @@ the jar sends those cookies back.
 Redirects are not followed: a test usually wants to see the `303` and where it
 points. `Follow` takes it when the page behind it is what the test is about.
 
+## Invalidation and warming
+
+After an `InvalidateTags` or `PurgeTags`, the application re-renders the pages it
+reached in the background. A test that asserts `X-Collage-Cache: STALE` (or a
+`MISS`) right after an invalidation races that warmer; set `WarmLimit: -1` in
+`CacheConfig` for such a test. Warming is already off in development.
+
+A test that asserts the opposite, a `HIT` once the warmer has re-rendered the
+page, waits for it with `site.WaitWarmed()`, which returns once nothing is
+queued or rendering, and at once when warming is off:
+
+```go
+if err := site.App.InvalidateTags(ctx, "posts"); err != nil {
+	t.Fatal(err)
+}
+site.WaitWarmed()
+res := site.Get("/posts").WantStatus(http.StatusOK)
+// res.Header.Get(collage.CacheStatusHeader) == "HIT"
+```
+
 ## Test the application main builds
 
 The scaffolded `main.go` builds the application in `newApp`, which `main` calls to

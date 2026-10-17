@@ -396,7 +396,10 @@ restart or an eviction — where a CDN refetching it can pick it up again. A fle
 that must see one another's invalidations needs a shared `Cache.Store` that
 implements `collage.StaleCache` and `collage.TaggedCache`. And an invalidated page
 is kept, to be served if its re-render fails — see
-[caching](caching.md#stale-pages-and-x-collage-cache).
+[caching](caching.md#stale-pages-and-x-collage-cache) — and is re-rendered in the
+background right after the invalidation, which costs CPU for a moment; see
+[warming](caching.md#warming-after-an-invalidation). Keep `Server.WriteTimeout`
+above 5 seconds, so an action's redirect can wait for its page to warm.
 
 **`.cache` is relative to the working directory, and that is the one thing about a
 scaffolded project that is not.** Templates and static files are embedded, so the

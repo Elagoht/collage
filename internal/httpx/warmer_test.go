@@ -1,0 +1,1438 @@
+package httpx
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/datacache"
+	"github.com/Elagoht/collage/internal/dependency"
+	"github.com/Elagoht/collage/internal/observability"
+	"github.com/Elagoht/collage/internal/plugin"
+	"github.com/Elagoht/collage/internal/render"
+	"github.com/Elagoht/collage/internal/types"
+)
+
+const (
+	warmStoppedLog = "collage: warming stopped, a page failed to render"
+	warmRunLog     = "collage: warmed pages"
+)
+
+// withWarmLimit sets the handler's per-run warm cap.
+func withWarmLimit(limit int) envOption {
+	return func(d *Deps) { d.WarmLimit = limit }
+}
+
+// orderEngine is a fakeEngine that records the path of every render in order, and
+// can hold the render of one path until its gate is closed.
+type orderEngine struct {
+	*fakeEngine
+	mu      sync.Mutex
+	paths   []string
+	hold    string
+	gate    chan struct{}
+	entered chan struct{}
+}
+
+func newOrderEngine() *orderEngine {
+	return &orderEngine{fakeEngine: newFakeEngine(fakeRender{html: "<html>page</html>", tags: []string{"posts"}})}
+}
+
+// holdPath makes the next renders of path wait until the returned gate is closed,
+// and returns a channel that receives once per render of path entered.
+func (e *orderEngine) holdPath(path string) (gate chan struct{}, entered chan struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.hold, e.gate, e.entered = path, make(chan struct{}), make(chan struct{}, 16)
+	return e.gate, e.entered
+}
+
+func (e *orderEngine) Render(ctx context.Context, rc *types.RenderContext) (*render.Result, error) {
+	e.mu.Lock()
+	e.paths = append(e.paths, rc.Request.URL.Path)
+	var gate, entered chan struct{}
+	if e.hold == rc.Request.URL.Path {
+		gate, entered = e.gate, e.entered
+	}
+	e.mu.Unlock()
+	if gate != nil {
+		entered <- struct{}{}
+		<-gate
+	}
+	return e.fakeEngine.Render(ctx, rc)
+}
+
+func (e *orderEngine) rendered() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return slices.Clone(e.paths)
+}
+
+func (e *orderEngine) renderedSince(n int) []string {
+	return e.rendered()[n:]
+}
+
+// postsEnv is n posts at /posts/1 … /posts/n, each requested once in order, so
+// /posts/n has the newest recipe. It returns their keys, oldest first.
+func postsEnv(t *testing.T, n int, opts ...envOption) (*testEnv, *orderEngine, []string) {
+	t.Helper()
+	engine := newOrderEngine()
+	page := testPage("post", "/posts/{id}", types.StrategyIncremental)
+	opts = append([]envOption{func(d *Deps) { d.Renderer = engine }}, opts...)
+	env := newEnv(t, []*types.Page{page}, opts...)
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	keys := make([]string, n)
+	for i := range n {
+		path := fmt.Sprintf("/posts/%d", i+1)
+		if rec := env.get(path); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, rec.Code)
+		}
+		keys[i] = flightKeyFor(t, env, path)
+	}
+	return env, engine, keys
+}
+
+// markAllStale marks every key stale, as an invalidation leaves them.
+func markAllStale(t *testing.T, env *testEnv, keys []string) {
+	t.Helper()
+	for _, key := range keys {
+		if err := env.cache.MarkStaleKey(context.Background(), key); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// waitWarmed waits for the warmer to go idle, failing the test after a while.
+func waitWarmed(t *testing.T, h *Handler) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		h.WaitWarmed()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the warmer never went idle")
+	}
+}
+
+// After a run, every key is fresh again with the new content, and each was
+// rendered exactly once; the run is reported in one info line.
+func TestWarmer_WarmsEveryKeyOnce(t *testing.T) {
+	env, engine, keys := postsEnv(t, 12)
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	before := len(engine.rendered())
+
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+
+	if got := len(engine.renderedSince(before)); got != len(keys) {
+		t.Fatalf("renders = %d, want %d: one per key", got, len(keys))
+	}
+	for _, key := range keys {
+		if content, fresh := freshIn(t, env, key); !fresh || content != "<html>new</html>" {
+			t.Fatalf("key %q = %q fresh %v, want the new page, fresh", key, content, fresh)
+		}
+	}
+	if got := cacheEvents(env, observability.CacheWarm); got != len(keys) {
+		t.Fatalf("CacheWarm events = %d, want %d", got, len(keys))
+	}
+	if got := env.logs.count(warmRunLog); got != 1 {
+		t.Fatalf("%q logged %d times, want once", warmRunLog, got)
+	}
+}
+
+// A down upstream fails the first render of a run, and the run stops there: the
+// rest is not rendered, one warn says so, and every page stays stale for visitors.
+// The warm requests themselves are quiet: no stale-serve line, no request failure,
+// no CacheStale, no error hook.
+func TestWarmer_StopsAtTheFirstFailure(t *testing.T) {
+	recorder := &recordingPlugin{}
+	env, engine, keys := postsEnv(t, 10, withPlugins(t, recorder))
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{err: errors.New("cms down")})
+	before := len(engine.rendered())
+	hooksBefore := len(recorder.reportedErrors())
+
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+
+	if got := len(engine.renderedSince(before)); got != 1 {
+		t.Fatalf("renders = %d, want 1: the run stops at its first failure", got)
+	}
+	if got := env.logs.count(warmStoppedLog); got != 1 {
+		t.Fatalf("%q logged %d times, want once", warmStoppedLog, got)
+	}
+	if got := env.logs.count(warmRunLog); got != 1 {
+		t.Fatalf("%q logged %d times, want once", warmRunLog, got)
+	}
+	if got := env.logs.count(staleLog); got != 0 {
+		t.Fatalf("a warm logged %q %d times, want none", staleLog, got)
+	}
+	if got := env.logs.count("collage: request failed"); got != 0 {
+		t.Fatalf("a warm logged a request failure %d times, want none", got)
+	}
+	if got := cacheEvents(env, observability.CacheStale); got != 0 {
+		t.Fatalf("CacheStale = %d during the warm, want none", got)
+	}
+	if got := len(recorder.reportedErrors()); got != hooksBefore {
+		t.Fatalf("error hooks called %d times by the warm, want none", got-hooksBefore)
+	}
+	for _, key := range keys {
+		content, _, stale, found := env.cache.GetStale(context.Background(), key)
+		if !found || !stale || string(content) != "<html>page</html>" {
+			t.Fatalf("key %q = %q stale %v found %v, want the old page, stale", key, content, stale, found)
+		}
+	}
+	// A later run is not held back by the stopped one: its keys were let go.
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+	for _, key := range keys {
+		if _, fresh := freshIn(t, env, key); !fresh {
+			t.Fatalf("key %q not warmed by the run after the stopped one", key)
+		}
+	}
+}
+
+// A run takes at most WarmLimit keys, the most recently written first; the rest
+// stay stale for their first request.
+func TestWarmer_LimitAndOrder(t *testing.T) {
+	env, engine, keys := postsEnv(t, 6, withWarmLimit(3))
+	markAllStale(t, env, keys)
+	before := len(engine.rendered())
+
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+
+	rendered := engine.renderedSince(before)
+	if len(rendered) != 3 {
+		t.Fatalf("renders = %v, want three", rendered)
+	}
+	// The first key of a run renders on its own, so it is the newest for sure.
+	if rendered[0] != "/posts/6" {
+		t.Fatalf("first render = %q, want the newest, /posts/6", rendered[0])
+	}
+	slices.Sort(rendered)
+	if want := []string{"/posts/4", "/posts/5", "/posts/6"}; !slices.Equal(rendered, want) {
+		t.Fatalf("rendered = %v, want %v: the newest three", rendered, want)
+	}
+	for i, key := range keys {
+		_, fresh := freshIn(t, env, key)
+		if want := i >= 3; fresh != want {
+			t.Fatalf("/posts/%d fresh = %v, want %v", i+1, fresh, want)
+		}
+	}
+}
+
+// A negative WarmLimit turns warming off: Warm does nothing and starts nothing.
+func TestWarmer_NegativeLimitDisables(t *testing.T) {
+	env, engine, keys := postsEnv(t, 3, withWarmLimit(-1))
+	markAllStale(t, env, keys)
+	before := len(engine.rendered())
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+	if got := len(engine.renderedSince(before)); got != 0 {
+		t.Fatalf("renders = %d, want none", got)
+	}
+	if env.handler.warm != nil {
+		t.Fatal("a warmer exists with warming off")
+	}
+}
+
+// A key already queued is not queued again, and a key being rendered can be:
+// an invalidation during its render leaves it to warm once more.
+func TestWarmer_DedupesQueuedKeys(t *testing.T) {
+	env, engine, keys := postsEnv(t, 4)
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/1")
+	before := len(engine.rendered())
+
+	// The run of /posts/1 alone holds the coordinator, so what follows queues.
+	env.handler.Warm(keys[:1])
+	<-entered
+	env.handler.Warm(keys[1:3])
+	env.handler.Warm(keys[1:])
+	env.handler.Warm(keys[:1])
+	close(gate)
+	waitWarmed(t, env.handler)
+
+	counts := map[string]int{}
+	for _, path := range engine.renderedSince(before) {
+		counts[path]++
+	}
+	want := map[string]int{"/posts/1": 1, "/posts/2": 1, "/posts/3": 1, "/posts/4": 1}
+	for path, n := range want {
+		if counts[path] != n {
+			t.Fatalf("renders = %v, want %v", counts, want)
+		}
+	}
+	// /posts/1 was queued again while it rendered, and that second warm found it
+	// fresh: a skip, not a warm, so four CacheWarm for four renders.
+	if got := cacheEvents(env, observability.CacheWarm); got != 4 {
+		t.Fatalf("CacheWarm events = %d, want 4", got)
+	}
+	if recs := env.logs.recordsFor(warmRunLog); len(recs) != 4 || recs[3].skipped != "1" {
+		t.Fatalf("run lines = %+v, want four, the last with one skipped", recs)
+	}
+}
+
+// Dropped by StopWarming: the queue, and a render still running once ctx ends;
+// Shutdown returns on time, and the warmer's goroutines finish once the render
+// does. A Warm after it does nothing.
+func TestWarmer_ShutdownDropsTheQueue(t *testing.T) {
+	env, engine, keys := postsEnv(t, 6)
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/6")
+	before := len(engine.rendered())
+	env.handler.Warm(keys)
+	<-entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	stopped := make(chan struct{})
+	go func() {
+		env.handler.StopWarming(ctx)
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("StopWarming did not return when its context ended")
+	}
+	close(gate)
+	finished := make(chan struct{})
+	go func() {
+		env.handler.warm.done.Wait()
+		close(finished)
+	}()
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the warmer's goroutines did not finish")
+	}
+	waitWarmed(t, env.handler)
+	if got := engine.renderedSince(before); len(got) != 1 {
+		t.Fatalf("renders = %v, want only the one that was running", got)
+	}
+
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+	if got := engine.renderedSince(before); len(got) != 1 {
+		t.Fatalf("renders after a Warm past StopWarming = %v, want none more", got)
+	}
+}
+
+// A run queued behind the one running is dropped by StopWarming too, never
+// started.
+func TestWarmer_ShutdownWithAFullQueue(t *testing.T) {
+	env, engine, keys := postsEnv(t, 8)
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/6")
+	before := len(engine.rendered())
+	env.handler.Warm(keys[:6])
+	<-entered
+	env.handler.Warm(keys[6:])
+
+	stopped := make(chan struct{})
+	go func() {
+		env.handler.StopWarming(context.Background())
+		close(stopped)
+	}()
+	// StopWarming waits for the held render, so the queue is dropped while it
+	// is still held.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		env.handler.warm.mu.Lock()
+		dropped := env.handler.warm.stopped
+		env.handler.warm.mu.Unlock()
+		if dropped {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("StopWarming never dropped the queue")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	close(gate)
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("StopWarming did not return once the running render ended")
+	}
+	waitWarmed(t, env.handler)
+	if got := engine.renderedSince(before); len(got) != 1 {
+		t.Fatalf("renders = %v, want only the one that was running", got)
+	}
+}
+
+// With no cache there is nothing to warm into: no warmer, and Warm, WaitWarmed
+// and StopWarming do nothing.
+func TestWarmer_OffWithNoCache(t *testing.T) {
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)},
+		func(d *Deps) { d.Cache = nil })
+	if env.handler.warm != nil {
+		t.Fatal("a warmer exists with no cache")
+	}
+	env.get("/")
+	renders := env.engine.totalCalls()
+	env.handler.Warm([]string{"some-key"})
+	env.handler.WaitWarmed()
+	env.handler.StopWarming(context.Background())
+	if env.engine.totalCalls() != renders {
+		t.Fatal("rendered with no cache")
+	}
+}
+
+// StopWarming on a handler that never warmed returns at once, and a second call
+// is harmless.
+func TestWarmer_StopWithoutWarming(t *testing.T) {
+	env, _, _ := postsEnv(t, 1)
+	env.handler.StopWarming(context.Background())
+	env.handler.StopWarming(context.Background())
+	waitWarmed(t, env.handler)
+}
+
+// A guarded page is not warmed: its guard is not asked, and the key counts as
+// skipped, never as a failure.
+func TestWarmer_SkipsGuardedPages(t *testing.T) {
+	var asked atomic.Int32
+	page := testPage("private", "/private", types.StrategyIncremental)
+	page.ContentFragment.Guard = func(context.Context, *http.Request) (*types.GuardDecision, error) {
+		asked.Add(1)
+		return nil, nil
+	}
+	env := newEnv(t, []*types.Page{page})
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	env.engine.set("private", fakeRender{html: "<html>old</html>", tags: []string{"posts"}})
+	if rec := env.get("/private"); rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d", rec.Code)
+	}
+	key := onlyKey(t, env, "posts")
+	markAllStale(t, env, []string{key})
+	askedBefore, renders := asked.Load(), env.engine.totalCalls()
+
+	env.handler.Warm([]string{key})
+	waitWarmed(t, env.handler)
+
+	if asked.Load() != askedBefore {
+		t.Fatal("the warm asked the page's guard")
+	}
+	if env.engine.totalCalls() != renders {
+		t.Fatal("a guarded page was rendered by the warm")
+	}
+	if got := env.logs.count(warmStoppedLog); got != 0 {
+		t.Fatalf("a skipped guarded page stopped the run (%d warns)", got)
+	}
+	if _, found := env.handler.recipes.get(key); found {
+		t.Fatal("a guarded page's recipe was kept: every invalidation would queue it again")
+	}
+}
+
+// failingTagged is a memory cache whose SetTagged fails while fail is set.
+type failingTagged struct {
+	*cache.MemoryCache
+	fail atomic.Bool
+}
+
+func (c *failingTagged) SetTagged(ctx context.Context, key string, content []byte, ttl time.Duration, tags []string) (string, error) {
+	if c.fail.Load() {
+		return "", errors.New("disk full")
+	}
+	return c.MemoryCache.SetTagged(ctx, key, content, ttl, tags)
+}
+
+// failingTracker is a memory tracker whose Track fails while fail is set.
+type failingTracker struct {
+	*dependency.MemoryTracker
+	fail atomic.Bool
+}
+
+func (t *failingTracker) Track(ctx context.Context, key string, tags []string) error {
+	if t.fail.Load() {
+		return errors.New("tracker unavailable")
+	}
+	return t.MemoryTracker.Track(ctx, key, tags)
+}
+
+// A warm whose cache write or tracking fails is a failure, not a skip: the next
+// warm would fail the same way, and an entry written but untracked is out of
+// every invalidation's reach. The run stops, and its one warn names the error.
+func TestWarmer_AFailedCacheWriteStopsTheRun(t *testing.T) {
+	inner := cache.NewMemory(cache.MemoryConfig{})
+	store := &failingTagged{MemoryCache: inner}
+	tracker := &failingTracker{MemoryTracker: dependency.NewMemory()}
+	for name, failing := range map[string]*atomic.Bool{"write": &store.fail, "track": &tracker.fail} {
+		t.Run(name, func(t *testing.T) {
+			inner.Clear(context.Background())
+			store.fail.Store(false)
+			tracker.fail.Store(false)
+			env, engine, keys := postsEnv(t, 5, func(d *Deps) { d.Cache, d.Tracker = store, tracker })
+			env.cache = inner
+			markAllStale(t, env, keys)
+			failing.Store(true)
+			before := len(engine.rendered())
+
+			env.handler.Warm(keys)
+			waitWarmed(t, env.handler)
+
+			if got := len(engine.renderedSince(before)); got != 1 {
+				t.Fatalf("renders = %d, want 1: the run stops at the failed write", got)
+			}
+			warns := env.logs.recordsFor(warmStoppedLog)
+			want := map[string]string{"write": "disk full", "track": "tracker unavailable"}[name]
+			if len(warns) != 1 || !strings.Contains(warns[0].err, want) {
+				t.Fatalf("warns = %+v, want one naming %q", warns, want)
+			}
+			if got := cacheEvents(env, observability.CacheWarm); got != 0 {
+				t.Fatalf("CacheWarm = %d, want none", got)
+			}
+			if got := env.logs.count("collage: request failed"); got != 0 {
+				t.Fatalf("the warm logged %d request failures, want none", got)
+			}
+		})
+	}
+}
+
+// personaliseCounter counts the PersonaliseHook calls it is given.
+type personaliseCounter struct {
+	calls atomic.Int32
+}
+
+func (*personaliseCounter) Name() string                            { return "acme/personalise" }
+func (*personaliseCounter) Version() string                         { return "1.0.0" }
+func (*personaliseCounter) Init(context.Context, plugin.Host) error { return nil }
+func (*personaliseCounter) Shutdown(context.Context) error          { return nil }
+func (p *personaliseCounter) OnPersonalise(context.Context, *plugin.PersonaliseEvent) error {
+	p.calls.Add(1)
+	return nil
+}
+
+// A warm's body goes to nobody, so nothing personalises it.
+func TestWarmer_SkipsPersonalisation(t *testing.T) {
+	counter := &personaliseCounter{}
+	env, _, keys := postsEnv(t, 3, withPlugins(t, counter))
+	markAllStale(t, env, keys)
+	before := counter.calls.Load()
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+	if got := counter.calls.Load(); got != before {
+		t.Fatalf("PersonaliseHook called %d times by the warm, want none", got-before)
+	}
+	for _, key := range keys {
+		if _, fresh := freshIn(t, env, key); !fresh {
+			t.Fatalf("key %q not warmed", key)
+		}
+	}
+}
+
+// Content gone upstream is skipped: it does not say the upstream is down, so it
+// does not stop the run.
+func TestWarmer_GoneIsSkipped(t *testing.T) {
+	env, engine, keys := postsEnv(t, 4)
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{notFound: true, err: errors.New("no such post")})
+	before := len(engine.rendered())
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+	if got := len(engine.renderedSince(before)); got != len(keys) {
+		t.Fatalf("renders = %d, want %d: a gone page does not stop the run", got, len(keys))
+	}
+	if got := env.logs.count(warmStoppedLog); got != 0 {
+		t.Fatalf("%q logged %d times, want none", warmStoppedLog, got)
+	}
+}
+
+// gatedData renders one value loaded through a real data store, whose upstream
+// fetch can be held, so a test can hold a warm render on the upstream.
+type gatedData struct {
+	*fakeEngine
+	store    *datacache.Store
+	mu       sync.Mutex
+	upstream string
+	gate     chan struct{}
+	entered  chan struct{}
+	fetches  atomic.Int32
+}
+
+func (e *gatedData) set(value string, gate chan struct{}) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.upstream, e.gate = value, gate
+}
+
+func (e *gatedData) Render(ctx context.Context, rc *types.RenderContext) (*render.Result, error) {
+	fetch := func(context.Context) (types.CacheValue, error) {
+		e.fetches.Add(1)
+		e.mu.Lock()
+		gate, value := e.gate, e.upstream
+		e.mu.Unlock()
+		if gate != nil {
+			e.entered <- struct{}{}
+			<-gate
+		}
+		return strValue(value), nil
+	}
+	decode := func(raw []byte) (types.CacheValue, error) {
+		var s string
+		err := json.Unmarshal(raw, &s)
+		return strValue(s), err
+	}
+	metadata := &render.Metadata{Page: rc.Page.Name, Locale: rc.Locale}
+	value, stale, err := e.store.Load(rc.Context(), "posts", 0, []string{"posts"}, fetch, decode)
+	if err != nil {
+		return &render.Result{Metadata: metadata}, err
+	}
+	html := "<html>" + string(value.(strValue)) + "</html>"
+	return &render.Result{HTML: []byte(html), DependencyTags: []string{"posts"}, Metadata: metadata, Stale: stale}, nil
+}
+
+// A visitor who asks while a warm render waits on the upstream is never made to
+// wait with it: it does not join the warm's render, and is served the stale page
+// at once. The warm then stores the new page.
+func TestWarmer_AVisitorNeverWaitsOnAWarm(t *testing.T) {
+	engine := &gatedData{
+		fakeEngine: newFakeEngine(fakeRender{}),
+		store:      datacache.New(datacache.Options{}),
+		entered:    make(chan struct{}, 4),
+	}
+	engine.set("old", nil)
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)},
+		func(d *Deps) { d.Renderer = engine })
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	if rec := env.get("/"); rec.Body.String() != "<html>old</html>" {
+		t.Fatalf("first = %q", rec.Body.String())
+	}
+	key := onlyKey(t, env, "posts")
+	gate := make(chan struct{})
+	engine.set("new", gate)
+	engine.store.Invalidate([]string{"posts"})
+	markAllStale(t, env, []string{key})
+
+	env.handler.Warm([]string{key})
+	<-engine.entered
+
+	served := make(chan string, 1)
+	go func() {
+		rec := env.get("/")
+		served <- rec.Header().Get(CacheStatusHeader) + " " + rec.Body.String()
+	}()
+	select {
+	case got := <-served:
+		if got != "STALE <html>old</html>" {
+			t.Fatalf("visitor = %q, want the stale page", got)
+		}
+	case <-time.After(5 * time.Second):
+		close(gate)
+		t.Fatal("the visitor waited on the warm render")
+	}
+
+	close(gate)
+	waitWarmed(t, env.handler)
+	if rec := env.get("/"); rec.Header().Get(CacheStatusHeader) != cacheHit || rec.Body.String() != "<html>new</html>" {
+		t.Fatalf("after the warm = %q %s=%q, want a HIT on new",
+			rec.Body.String(), CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if got := engine.fetches.Load(); got != 2 {
+		t.Fatalf("upstream fetches = %d, want 2: the first page and the warm", got)
+	}
+}
+
+// Warming is off in development, where the page cache is not read.
+func TestWarmer_OffInDevMode(t *testing.T) {
+	env, engine, keys := postsEnv(t, 2, withDevMode())
+	before := len(engine.rendered())
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+	if got := len(engine.renderedSince(before)); got != 0 {
+		t.Fatalf("renders = %d in dev mode, want none", got)
+	}
+}
+
+// waitJoined waits until a render of key in the warm flight has a waiter.
+func waitJoined(t *testing.T, h *Handler, key string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for h.warmFlight.waitingOn(key) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("nothing joined the warm render")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// An action's redirect target the background run has claimed and is rendering
+// is not rendered a second time: the action's warm joins that render.
+func TestActionWarm_JoinsAClaimedRender(t *testing.T) {
+	env, engine, keys := postsEnv(t, 3)
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	// /posts/3 is the newest recipe, so the run's probe.
+	gate, entered := engine.holdPath("/posts/3")
+	before := len(engine.rendered())
+
+	env.handler.Warm(keys)
+	<-entered
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/3", time.Time{})
+	}()
+	waitJoined(t, env.handler, keys[2])
+	close(gate)
+	<-done
+	waitWarmed(t, env.handler)
+
+	counts := map[string]int{}
+	for _, path := range engine.renderedSince(before) {
+		counts[path]++
+	}
+	if counts["/posts/3"] != 1 {
+		t.Fatalf("renders = %v, want /posts/3 once", counts)
+	}
+	if content, fresh := freshIn(t, env, keys[2]); !fresh || content != "<html>new</html>" {
+		t.Fatalf("target = %q fresh %v, want the new page", content, fresh)
+	}
+}
+
+// A render that began before the action's invalidation is not stored, being
+// overlapped by it. The action's warm, having joined it and taken the key out
+// of the queue, renders the key again itself rather than leave it stale.
+func TestActionWarm_RetriesAJoinedRenderThatWasNotStored(t *testing.T) {
+	var epoch atomic.Uint64
+	env, engine, keys := postsEnv(t, 2, withEpoch(&epoch))
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/1")
+
+	// An earlier run, rendering /posts/1 with what the upstream said then.
+	env.handler.Warm(keys[:1])
+	<-entered
+	// The action's invalidation, during that render: it changes the page and
+	// queues /posts/1 again.
+	epoch.Add(1)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	env.handler.Warm(keys[:1])
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1", time.Time{})
+	}()
+	waitJoined(t, env.handler, keys[0])
+	// Later renders of /posts/1 are not held.
+	engine.mu.Lock()
+	engine.hold = ""
+	engine.mu.Unlock()
+	close(gate)
+	<-done
+
+	if content, fresh := freshIn(t, env, keys[0]); !fresh || content != "<html>new</html>" {
+		t.Fatalf("target = %q fresh %v right after the action, want the new page", content, fresh)
+	}
+	waitWarmed(t, env.handler)
+}
+
+// After StopWarming an action warms nothing.
+func TestActionWarm_NothingAfterStopWarming(t *testing.T) {
+	env, engine, keys := postsEnv(t, 1)
+	markAllStale(t, env, keys)
+	env.handler.StopWarming(context.Background())
+	before := len(engine.rendered())
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1", time.Time{})
+	if got := engine.renderedSince(before); len(got) != 0 {
+		t.Fatalf("rendered %v after StopWarming", got)
+	}
+}
+
+// A joined render that failed is upstream trouble, and the action's warm does
+// not render the key again: the submit waits for one render, not two, and the
+// target stays stale.
+func TestActionWarm_DoesNotRetryAJoinedRenderThatFailed(t *testing.T) {
+	env, engine, keys := postsEnv(t, 2)
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/2")
+
+	env.handler.Warm(keys[1:])
+	<-entered
+	engine.set("post", fakeRender{err: errors.New("cms down")})
+	before := len(engine.rendered())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/2", time.Time{})
+	}()
+	waitJoined(t, env.handler, keys[1])
+	engine.mu.Lock()
+	engine.hold = ""
+	engine.mu.Unlock()
+	close(gate)
+	<-done
+	waitWarmed(t, env.handler)
+
+	if got := engine.renderedSince(before); len(got) != 0 {
+		t.Fatalf("rendered %v after joining the failed render, want nothing more", got)
+	}
+	if _, fresh := freshIn(t, env, keys[1]); fresh {
+		t.Fatal("the target is fresh after a failed render")
+	}
+}
+
+// jobsOf is keys as an action's warm hands them to warmTargetKeys, each checked
+// as an invalidation's.
+func jobsOf(keys []string) []warmJob {
+	jobs := make([]warmJob, len(keys))
+	for i, key := range keys {
+		jobs[i] = warmJob{key: key, checks: checksInvalidate}
+	}
+	return jobs
+}
+
+// isPending reports whether key is queued for the background run.
+func isPending(h *Handler, key string) bool {
+	h.warm.mu.Lock()
+	defer h.warm.mu.Unlock()
+	_, ok := h.warm.pending[key]
+	return ok
+}
+
+// queue puts keys in the background queue by hand, as a run with nobody to work
+// it through: what an action's warm takes from it, or leaves, is then all there.
+func queue(h *Handler, keys ...string) {
+	h.warm.mu.Lock()
+	defer h.warm.mu.Unlock()
+	for _, key := range keys {
+		h.warm.pending[key] = checksInvalidate
+	}
+}
+
+// On a route with no CacheParams the raw query is part of the key: an action
+// redirecting to the bare path warms the bare key only, and the query variant
+// stays in the background queue, to be warmed there.
+func TestActionWarm_OnlyTheLocationsQueryVariant(t *testing.T) {
+	env, engine, keys := postsEnv(t, 0)
+	for _, path := range []string{"/posts/1?page=2", "/posts/1", "/posts/2"} {
+		if rec := env.get(path); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, rec.Code)
+		}
+		keys = append(keys, flightKeyFor(t, env, path))
+	}
+	paged, bare, probe := keys[0], keys[1], keys[2]
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	// /posts/2 is the newest recipe, the run's probe: held, the run goes no
+	// further, and what the action leaves queued stays queued.
+	gate, entered := engine.holdPath("/posts/2")
+	// Closed on a failure too, or the cleanup's StopWarming waits on the held
+	// render forever.
+	var release sync.Once
+	t.Cleanup(func() { release.Do(func() { close(gate) }) })
+	env.handler.Warm(keys)
+	<-entered
+
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1", time.Time{})
+	if content, fresh := freshIn(t, env, bare); !fresh || content != "<html>new</html>" {
+		t.Fatalf("bare key = %q fresh %v, want the new page", content, fresh)
+	}
+	if _, fresh := freshIn(t, env, paged); fresh {
+		t.Fatal("the ?page=2 variant was warmed by the action")
+	}
+	if !isPending(env.handler, paged) {
+		t.Fatal("the ?page=2 variant was taken out of the background queue")
+	}
+	release.Do(func() { close(gate) })
+	waitWarmed(t, env.handler)
+	for _, key := range []string{paged, probe} {
+		if _, fresh := freshIn(t, env, key); !fresh {
+			t.Fatalf("key %q not warmed by the background run", key)
+		}
+	}
+}
+
+// On a route with CacheParams the key holds the canonical selection: the action's
+// Location, with its parameters in another order and one that is no cache
+// dimension, lands on the key a reader's request wrote, and the bare variant is
+// not warmed.
+func TestActionWarm_CacheParamsSelectTheVariant(t *testing.T) {
+	engine := newOrderEngine()
+	page := testPage("list", "/list", types.StrategyIncremental)
+	page.CacheParams = []string{"page", "sort"}
+	env := newEnv(t, []*types.Page{page}, func(d *Deps) { d.Renderer = engine })
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	var keys []string
+	for _, path := range []string{"/list?utm=a&sort=new&page=2", "/list"} {
+		if rec := env.get(path); rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d", path, rec.Code)
+		}
+		keys = append(keys, flightKeyFor(t, env, path))
+	}
+	markAllStale(t, env, keys)
+
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save",
+		"/list?page=2&utm=z&sort=new", time.Time{})
+	if _, fresh := freshIn(t, env, keys[0]); !fresh {
+		t.Fatal("the page=2 variant was not warmed")
+	}
+	if _, fresh := freshIn(t, env, keys[1]); fresh {
+		t.Fatal("the bare variant was warmed")
+	}
+}
+
+// slowVaryEngine is a varyEngine whose every render takes delay.
+type slowVaryEngine struct {
+	varyEngine
+	delay time.Duration
+}
+
+func (e slowVaryEngine) Render(ctx context.Context, rc *types.RenderContext) (*render.Result, error) {
+	time.Sleep(e.delay)
+	return e.varyEngine.Render(ctx, rc)
+}
+
+// With a slow upstream the action's wait is held to its budget, even while a
+// render is under way: the redirect goes out, and the variants it did not take
+// are warmed by the background run.
+func TestActionWarm_HeldToItsBudget(t *testing.T) {
+	// A render longer than the margin below, so a budget checked only between
+	// keys, not while one renders, still fails the test.
+	const delay, budget = 2 * time.Second, 100 * time.Millisecond
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)},
+		withVary("Accept-Language"),
+		func(d *Deps) {
+			d.Renderer = slowVaryEngine{
+				varyEngine: varyEngine{fakeEngine: newFakeEngine(fakeRender{tags: []string{"posts"}})},
+				delay:      delay,
+			}
+		})
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	langs := []string{"tr", "en", "de", "fr", "es", "it"}
+	for _, lang := range langs {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Accept-Language", lang)
+		if rec := env.do(req); rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d", lang, rec.Code)
+		}
+	}
+	keys, err := env.tracker.Resolve(context.Background(), []string{"posts"})
+	if err != nil || len(keys) != len(langs) {
+		t.Fatalf("Resolve = %v, %v; want %d variants", keys, err, len(langs))
+	}
+	markAllStale(t, env, keys)
+	env.handler.warm.targetBudget = budget
+	env.handler.Warm(keys)
+
+	began := time.Now()
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/", time.Time{})
+	// A second of margin: under -race the redirect's own goroutines are slow
+	// to be scheduled, never two seconds slow.
+	if took := time.Since(began); took > budget+time.Second {
+		t.Fatalf("the action waited %v, want its budget of %v", took, budget)
+	}
+
+	deadline := time.Now().Add(20 * time.Second)
+	for _, key := range keys {
+		for {
+			if _, fresh := freshIn(t, env, key); fresh {
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("variant %q never warmed", key)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+// A request deadline shorter than the budget cuts the wait shorter.
+func TestActionWarm_HeldToTheRequestDeadline(t *testing.T) {
+	env, engine, keys := postsEnv(t, 1)
+	markAllStale(t, env, keys)
+	gate, _ := engine.holdPath("/posts/1")
+	t.Cleanup(func() { close(gate) })
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil).WithContext(ctx), "save", "/posts/1", time.Time{})
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("the action waited past a 50ms request deadline")
+	}
+}
+
+// A failed render ends the action's warm at once: the next variant is not taken,
+// and stays in the background queue.
+func TestActionWarm_StopsAtAFailure(t *testing.T) {
+	env, engine, keys := postsEnv(t, 0)
+	for _, path := range []string{"/posts/1?b=1", "/posts/1?a=1"} {
+		env.get(path)
+		keys = append(keys, flightKeyFor(t, env, path))
+	}
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{err: errors.New("cms down")})
+	queue(env.handler, keys...)
+	before := len(engine.rendered())
+
+	env.handler.warmTargetKeys(env.handler.warm, "save", "/posts/1", jobsOf(keys), time.Now().Add(time.Minute))
+	if got := engine.renderedSince(before); len(got) != 1 {
+		t.Fatalf("rendered %v, want one render and a stop", got)
+	}
+	if !isPending(env.handler, keys[1]) {
+		t.Fatal("the key after the failure was taken out of the queue")
+	}
+}
+
+// So does joining a render that failed: the upstream is in trouble either way.
+func TestActionWarm_StopsAtAJoinedFailure(t *testing.T) {
+	env, engine, keys := postsEnv(t, 2)
+	markAllStale(t, env, keys)
+	gate, entered := engine.holdPath("/posts/1")
+	env.handler.Warm(keys[:1])
+	<-entered
+	engine.set("post", fakeRender{err: errors.New("cms down")})
+	queue(env.handler, keys[1])
+	before := len(engine.rendered())
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		env.handler.warmTargetKeys(env.handler.warm, "save", "/posts", jobsOf(keys), time.Now().Add(time.Minute))
+	}()
+	waitJoined(t, env.handler, keys[0])
+	engine.mu.Lock()
+	engine.hold = ""
+	engine.mu.Unlock()
+	close(gate)
+	<-done
+	if got := engine.renderedSince(before); len(got) != 0 {
+		t.Fatalf("rendered %v after the joined failure, want nothing", got)
+	}
+	if !isPending(env.handler, keys[1]) {
+		t.Fatal("the key after the joined failure was taken out of the queue")
+	}
+}
+
+// manualInvalidations is the two counters core keeps around an invalidation,
+// driven by hand: begin and end one as dropTags does, the Warm it calls once
+// finished included — with no keys, as an invalidation that reached none.
+type manualInvalidations struct {
+	started, finished atomic.Uint64
+}
+
+func (m *manualInvalidations) counts() (started, finished uint64) {
+	finished = m.finished.Load()
+	return m.started.Load(), finished
+}
+
+func (m *manualInvalidations) begin() { m.started.Add(1) }
+
+func (m *manualInvalidations) end(h *Handler) {
+	m.finished.Add(1)
+	h.Warm(nil)
+}
+
+func withInvalidations(m *manualInvalidations) envOption {
+	return func(d *Deps) { d.Invalidations = m.counts }
+}
+
+// waitParked waits until key waits for an invalidation to end before it is
+// warmed again.
+func waitParked(t *testing.T, h *Handler, key string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		h.warm.mu.Lock()
+		_, parked := h.warm.parked[key]
+		h.warm.mu.Unlock()
+		if parked {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the key was never parked")
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+// A warm render that an unrelated invalidation overlapped is refused its write,
+// and the key, which the earlier invalidation's tracker had forgotten, would be
+// stale until its next reader. It is warmed again once that invalidation is
+// over: a HIT, with no reader's render.
+func TestWarmer_AnOverlappedWarmIsWarmedAgain(t *testing.T) {
+	inv := &manualInvalidations{}
+	env, engine, keys := postsEnv(t, 1, withInvalidations(inv))
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	gate, entered := engine.holdPath("/posts/1")
+
+	env.handler.Warm(keys)
+	<-entered
+	inv.begin() // another tag's, reaching nothing this run holds
+	engine.mu.Lock()
+	engine.hold = ""
+	engine.mu.Unlock()
+	close(gate)
+	waitParked(t, env.handler, keys[0])
+	if _, fresh := freshIn(t, env, keys[0]); fresh {
+		t.Fatal("an overlapped warm render was stored")
+	}
+
+	inv.end(env.handler)
+	waitWarmed(t, env.handler)
+	if content, fresh := freshIn(t, env, keys[0]); !fresh || content != "<html>new</html>" {
+		t.Fatalf("entry = %q fresh %v after the invalidation ended, want the new page", content, fresh)
+	}
+	renders := len(engine.rendered())
+	if rec := env.get("/posts/1"); rec.Header().Get(CacheStatusHeader) != cacheHit {
+		t.Fatalf("%s = %q, want a HIT", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if len(engine.rendered()) != renders {
+		t.Fatal("the reader's request rendered")
+	}
+}
+
+// A storm of invalidations, each overlapping the warm of one key, renders it at
+// most once more per invalidation, and it ends warmed.
+func TestWarmer_AnInvalidationStormIsBounded(t *testing.T) {
+	const storm = 5
+	inv := &manualInvalidations{}
+	env, engine, keys := postsEnv(t, 1, withInvalidations(inv))
+	markAllStale(t, env, keys)
+	engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+	before := len(engine.rendered())
+
+	for i := range storm {
+		gate, entered := engine.holdPath("/posts/1")
+		if i == 0 {
+			env.handler.Warm(keys)
+		}
+		select {
+		case <-entered:
+		case <-time.After(5 * time.Second):
+			close(gate)
+			t.Fatalf("render #%d never began: the overlapped warm was not re-queued", i+1)
+		}
+		inv.begin()
+		inv.end(env.handler)
+		if i == storm-1 {
+			engine.mu.Lock()
+			engine.hold = ""
+			engine.mu.Unlock()
+		}
+		close(gate)
+	}
+	waitWarmed(t, env.handler)
+	if got := len(engine.renderedSince(before)); got > storm+1 {
+		t.Fatalf("%d renders for %d invalidations, want at most %d", got, storm, storm+1)
+	}
+	if _, fresh := freshIn(t, env, keys[0]); !fresh {
+		t.Fatal("the key was not warmed in the end")
+	}
+}
+
+// The bound itself: a key is re-queued at most once per invalidation started
+// since its first refused render began, whatever refuses it.
+func TestWarmer_RequeueBound(t *testing.T) {
+	inv := &manualInvalidations{}
+	env, _, keys := postsEnv(t, 1, withInvalidations(inv))
+	w := env.handler.warm
+	mark := invalidationMark{started: 0, finished: 0}
+	inv.begin()
+	inv.begin()
+	// Two invalidations under way: two re-queues, not a third.
+	for i, want := range []bool{true, true, false} {
+		if got := w.park(keys[0], mark, 2); got != want {
+			t.Fatalf("park #%d = %v, want %v", i+1, got, want)
+		}
+	}
+	// A third invalidation allows one more.
+	inv.begin()
+	if !w.park(keys[0], mark, 3) {
+		t.Fatal("park after a new invalidation = false, want true")
+	}
+	inv.end(env.handler)
+	inv.end(env.handler)
+	inv.end(env.handler)
+	waitWarmed(t, env.handler)
+}
+
+// An invalidation does not revive a key the cache let go of — evicted, expired,
+// dropped: with no stale entry left, nobody is being served it, and it is passed
+// over, its recipe forgotten. A purge, which removes every entry it reaches, warms
+// its keys all the same.
+func TestWarmer_AnInvalidationDoesNotReviveAGoneKey(t *testing.T) {
+	for _, purge := range []bool{false, true} {
+		env, engine, keys := postsEnv(t, 2)
+		markAllStale(t, env, keys)
+		if err := env.cache.InvalidateKey(context.Background(), keys[0]); err != nil {
+			t.Fatal(err)
+		}
+		engine.set("post", fakeRender{html: "<html>new</html>", tags: []string{"posts"}})
+		if purge {
+			env.handler.WarmPurged(keys)
+		} else {
+			env.handler.Warm(keys)
+		}
+		waitWarmed(t, env.handler)
+		_, fresh := freshIn(t, env, keys[0])
+		_, kept := env.handler.recipes.get(keys[0])
+		if purge && !fresh {
+			t.Fatal("purge: the purged key was not warmed")
+		}
+		if !purge && (fresh || kept) {
+			t.Fatalf("invalidate: gone key warmed %v, recipe kept %v; want neither", fresh, kept)
+		}
+		if _, fresh := freshIn(t, env, keys[1]); !fresh {
+			t.Fatalf("purge %v: the stale key was not warmed", purge)
+		}
+	}
+}
+
+// A key is warmed again only when a reader has had it since its last warm —
+// served it fresh or stale, or written it — so a variant somebody asked for once
+// is not kept warm by every invalidation after. Passed over, it keeps its
+// recipe, and a later reader makes it worth warming again.
+func TestWarmer_OnlyKeysReadSinceTheirLastWarm(t *testing.T) {
+	env, engine, keys := postsEnv(t, 1)
+	key := keys[0]
+	invalidate := func() int {
+		t.Helper()
+		markAllStale(t, env, keys)
+		before := len(engine.rendered())
+		env.handler.Warm(keys)
+		waitWarmed(t, env.handler)
+		return len(engine.renderedSince(before))
+	}
+
+	// Written by its reader: warmed.
+	if got := invalidate(); got != 1 {
+		t.Fatalf("first invalidation rendered %d, want the reader's key warmed", got)
+	}
+	// Nobody read the warm: passed over, recipe kept.
+	if got := invalidate(); got != 0 {
+		t.Fatalf("an unread key rendered %d times, want none", got)
+	}
+	if _, kept := env.handler.recipes.get(key); !kept {
+		t.Fatal("an unread key's recipe was dropped")
+	}
+	// Served stale to a reader, while a render failed: warmed again.
+	engine.set("post", fakeRender{err: errors.New("cms down")})
+	if rec := env.get("/posts/1"); rec.Header().Get(CacheStatusHeader) != cacheStale {
+		t.Fatalf("%s = %q, want STALE", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	engine.set("post", fakeRender{html: "<html>page</html>", tags: []string{"posts"}})
+	if got := invalidate(); got != 1 {
+		t.Fatalf("after a STALE read rendered %d, want 1", got)
+	}
+	// Served fresh to a reader: warmed again.
+	if rec := env.get("/posts/1"); rec.Header().Get(CacheStatusHeader) != cacheHit {
+		t.Fatalf("%s = %q, want HIT", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if got := invalidate(); got != 1 {
+		t.Fatalf("after a HIT rendered %d, want 1", got)
+	}
+}
+
+// A document follows the same rule.
+func TestWarmer_ADocumentReadSinceItsLastWarm(t *testing.T) {
+	env, engine := staleDocEnv(t)
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	key := onlyKey(t, env, "feed")
+	engine.set(render.DocumentResult{Body: []byte("new"), Tags: []string{"feed"}}, nil)
+	invalidate := func() bool {
+		t.Helper()
+		if err := env.cache.MarkStaleKey(context.Background(), key); err != nil {
+			t.Fatal(err)
+		}
+		env.handler.Warm([]string{key})
+		waitWarmed(t, env.handler)
+		_, fresh := freshIn(t, env, key)
+		return fresh
+	}
+	if !invalidate() {
+		t.Fatal("the reader's document was not warmed")
+	}
+	if invalidate() {
+		t.Fatal("an unread document was warmed")
+	}
+	if rec := env.get("/feed.xml"); rec.Code != http.StatusOK {
+		t.Fatalf("GET = %d", rec.Code)
+	}
+	// Re-written by that reader; read through a HIT next.
+	if rec := env.get("/feed.xml"); rec.Header().Get(CacheStatusHeader) != cacheHit {
+		t.Fatalf("%s = %q, want HIT", CacheStatusHeader, rec.Header().Get(CacheStatusHeader))
+	}
+	if !invalidate() {
+		t.Fatal("a document read since its warm was not warmed")
+	}
+}
+
+// An action's warm takes first the variant its submitter lands on — the one
+// whose vary entries the action's request declared — and warms it even when no
+// reader has had it since its last warm, as the submitter is about to. Every
+// other variant is checked as the background run checks it.
+func TestActionWarm_TheSubmittersVariantFirst(t *testing.T) {
+	env := newEnv(t, []*types.Page{testPage("home", "/", types.StrategyIncremental)},
+		withVary("Accept-Language"),
+		func(d *Deps) { d.Renderer = varyEngine{fakeEngine: newFakeEngine(fakeRender{tags: []string{"posts"}})} })
+	t.Cleanup(func() { env.handler.StopWarming(context.Background()) })
+	for _, lang := range []string{"en", "tr"} {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Accept-Language", lang)
+		if rec := env.do(req); rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d", lang, rec.Code)
+		}
+	}
+	keys, err := env.tracker.Resolve(context.Background(), []string{"posts"})
+	if err != nil || len(keys) != 2 {
+		t.Fatalf("Resolve = %v, %v", keys, err)
+	}
+	variant := func(lang string) string {
+		for _, key := range keys {
+			if rcp, _ := env.handler.recipes.get(key); slices.Contains(rcp.vary, "Accept-Language="+lang) {
+				return key
+			}
+		}
+		t.Fatalf("no %s variant", lang)
+		return ""
+	}
+	en, tr := variant("en"), variant("tr")
+
+	// Warmed once, and nobody read either since.
+	markAllStale(t, env, keys)
+	env.handler.Warm(keys)
+	waitWarmed(t, env.handler)
+	markAllStale(t, env, keys)
+
+	action := withVarySet(httptest.NewRequest(http.MethodPost, "/save", nil))
+	if err := Vary(action, "Accept-Language", "en"); err != nil {
+		t.Fatal(err)
+	}
+	target, _ := sameOriginTarget(action, "/")
+	if got, matched := env.handler.recipes.forURL(action.Host, target, requestVary(action)); !matched || got[0] != en {
+		t.Fatalf("forURL = %v matched %v, want %q first", got, matched, en)
+	}
+	env.handler.warmRedirectTarget(action, "save", "/", time.Time{})
+	if _, fresh := freshIn(t, env, en); !fresh {
+		t.Fatal("the submitter's variant was not warmed")
+	}
+	if _, fresh := freshIn(t, env, tr); fresh {
+		t.Fatal("a variant nobody read since its last warm was warmed")
+	}
+}
+
+// budgetServer is posts with a slow /posts/1 and an action at /save that
+// invalidates and redirects there, served by a real server whose WriteTimeout is
+// writeTimeout, as Deps.WriteTimeout says. bodyTimeout, when set, is the action's
+// BodyTimeout. It returns the server's URL.
+func budgetServer(t *testing.T, writeTimeout, bodyTimeout time.Duration) string {
+	t.Helper()
+	save := action("save", "/save", []string{http.MethodPost},
+		func(context.Context, *types.RenderContext) (*types.ActionResult, error) {
+			return &types.ActionResult{Location: "/posts/1", InvalidateTags: []string{"posts"}}, nil
+		})
+	save.BodyTimeout = bodyTimeout
+	env, engine, keys := postsEnv(t, 1, func(d *Deps) {
+		d.WriteTimeout = writeTimeout
+		d.Invalidator = func(context.Context, []string) error { return nil }
+	})
+	if err := env.router.RegisterAction(save); err != nil {
+		t.Fatal(err)
+	}
+	markAllStale(t, env, keys)
+	gate, _ := engine.holdPath("/posts/1")
+	srv := httptest.NewUnstartedServer(env.handler)
+	srv.Config.WriteTimeout = writeTimeout
+	srv.Start()
+	// Registered after postsEnv's StopWarming, so they run before it: the held
+	// render is let go, then the server closed, then the warmer stopped.
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(gate) })
+	return srv.URL
+}
+
+// postSave posts to /save, not following the redirect, and returns the response
+// and how long it took.
+func postSave(t *testing.T, base string) (*http.Response, time.Duration) {
+	t.Helper()
+	client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	req, err := http.NewRequest(http.MethodPost, base+"/save", strings.NewReader("x=1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	// The host the posts were written for, which the action's warm looks
+	// their recipes up by.
+	req.Host = "example.com"
+	began := time.Now()
+	res, err := client.Do(req)
+	took := time.Since(began)
+	if err != nil {
+		t.Fatalf("POST /save after %v: %v; the redirect was not written", took, err)
+	}
+	_ = res.Body.Close()
+	return res, took
+}
+
+// An action's wait for its redirect target is held to what is left of its write
+// deadline, less a margin to write the redirect in: with a WriteTimeout shorter
+// than the budget the wait is shorter, and the redirect arrives.
+func TestActionWarm_HeldToTheWriteDeadline(t *testing.T) {
+	base := budgetServer(t, 1500*time.Millisecond, 0)
+	res, took := postSave(t, base)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", res.StatusCode)
+	}
+	if took < 700*time.Millisecond || took > 1400*time.Millisecond {
+		t.Fatalf("the action answered after %v, want its write deadline less the margin, about 1s", took)
+	}
+}
+
+// An action's own BodyTimeout replaces the server's write deadline, so it is
+// the one the wait is held to.
+func TestActionWarm_HeldToTheBodyDeadline(t *testing.T) {
+	base := budgetServer(t, 200*time.Millisecond, 1500*time.Millisecond)
+	res, took := postSave(t, base)
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", res.StatusCode)
+	}
+	if took < 700*time.Millisecond || took > 1400*time.Millisecond {
+		t.Fatalf("the action answered after %v, want its body deadline less the margin, about 1s", took)
+	}
+}
+
+// With no time left to wait in, the action does not wait at all: the target is
+// not taken, and stays in the background queue.
+func TestActionWarm_NoBudgetLeftSkipsTheWarm(t *testing.T) {
+	env, engine, keys := postsEnv(t, 1)
+	markAllStale(t, env, keys)
+	queue(env.handler, keys...)
+	before := len(engine.rendered())
+	began := time.Now()
+	env.handler.warmRedirectTarget(httptest.NewRequest(http.MethodPost, "/save", nil), "save", "/posts/1",
+		time.Now().Add(100*time.Millisecond))
+	if took := time.Since(began); took > 50*time.Millisecond {
+		t.Fatalf("the action waited %v with no budget left", took)
+	}
+	if got := engine.renderedSince(before); len(got) != 0 {
+		t.Fatalf("rendered %v with no budget left", got)
+	}
+	if !isPending(env.handler, keys[0]) {
+		t.Fatal("the target was taken out of the background queue")
+	}
+}

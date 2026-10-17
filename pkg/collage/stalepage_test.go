@@ -43,6 +43,8 @@ type newsOptions struct {
 	// plugins and logger, when set, go into the Config.
 	plugins []collage.Plugin
 	logger  *slog.Logger
+	// warm leaves warming on.
+	warm bool
 }
 
 func newNewsSite(t *testing.T, opts newsOptions) *newsSite {
@@ -52,6 +54,12 @@ func newNewsSite(t *testing.T, opts newsOptions) *newsSite {
 	}
 	if opts.ttl == 0 {
 		opts.ttl = time.Hour
+	}
+	// These are what a reader sees of an invalidated page nothing has re-made
+	// yet: the warmer, which would race the reader to it, is off unless asked
+	// for. See warm_test.go.
+	if !opts.warm {
+		opts.cache.WarmLimit = -1
 	}
 	site := &newsSite{text: "Old headline", aside: "Old aside"}
 	app, err := collage.New(&collage.Config{
