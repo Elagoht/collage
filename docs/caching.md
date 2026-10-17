@@ -325,7 +325,8 @@ visitor would pay for that render. So after every `InvalidateTags` and
 `PurgeTags` — yours, a plugin's, an action's — the pages and documents the
 invalidation reached are rendered again in the background, with fresh data, and
 stored: the next visitor is handed a fresh `HIT`. Four workers do it, and the
-first key alone goes first, as a probe.
+first key alone goes first, as a probe; the workers start only after the first
+successful warm, so skips keep the run one key at a time until one succeeds.
 
 - **Only what was served is warmed.** An entry written to the cache records how to
   ask for it again — its path, query, locale and `Vary` header values. Every
@@ -374,7 +375,7 @@ the same flight as any miss, so concurrent requests still share one render:
 - **A good render** is stored and served in place of the stale one. The response
   is a `MISS`.
 - **A render that fails, or comes out degraded**, is not stored. Reading a stale
-  `collage.Cached` value is one cause of degraded, and the usual one right after an
+  `collage.Cached` value is one cause of degraded, and, without warming, the usual one right after an
   invalidation: the page's data is stale until the background fetch replaces it. The stale bytes
   are served instead, with `Cache-Control: no-store` so that no browser or CDN
   keeps them, and the response says `X-Collage-Cache: STALE`. A visitor sees an
@@ -465,9 +466,12 @@ Tags stay plain strings — `"author:" + id` here — because they are what
   fetched wait for that fetch rather than starting their own.
 - **Invalidation keeps the old value, to serve until a new one arrives.**
   `InvalidateTags` and a passed `ttl` mark a value stale rather than removing it.
-  The next render is served the stale value at once, and one fetch in the
+  When no warm render reached the page (warming off, over `WarmLimit`, the run
+  stopped on a failure, or a visitor arrived before the warmer got there; see
+  [Warming](#warming-after-an-invalidation)), the next render is served the stale
+  value at once, and one fetch in the
   background replaces it, so a request after that fetch has finished sees the
-  change. A fetch that was still running when its tags were invalidated hands its
+  change. A warm render instead waits for fresh data and stores a fresh page. A fetch that was still running when its tags were invalidated hands its
   result to whoever was waiting and is kept, but as stale; one overtaken by
   `PurgeTags` is not kept at all. If the background fetch fails, the stale value
   stays and keeps being served, however long the upstream is down, and the key

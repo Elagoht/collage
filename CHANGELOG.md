@@ -7,7 +7,7 @@
 - **Cache warming.** After every `InvalidateTags` and `PurgeTags`, the pages and
   documents the invalidation reached are re-rendered in the background, with fresh
   data, so the next visitor gets a fresh `HIT` instead of paying for the render.
-  Four workers, the first key alone as a probe. Only variants actually served are
+  Four workers, started after the first key warms successfully, as a probe. Only variants actually served are
   warmed: recipes are recorded when an entry is written, in memory only, so there
   are none after a restart until pages are written again. A run stops at the first
   real render failure (one warning); skips (overlapped by another invalidation,
