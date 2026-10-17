@@ -490,7 +490,7 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 		}
 	}
 
-	rootWritten, rootErr := b.writeRootHome(outDirResolved, tasks, written)
+	rootWritten, rootSource, rootErr := b.writeRootHome(outDirResolved, tasks, written)
 	report.Written = append(report.Written, rootWritten...)
 	if rootErr != nil {
 		errs = append(errs, rootErr)
@@ -547,6 +547,11 @@ func (b *Builder) Build(ctx context.Context) (*Report, error) {
 			}
 			if err := captureHeaders(ctx, capturer, files, synthesized, devMode, event); err != nil {
 				errs = append(errs, err)
+			}
+			// The root copy is the home page, served from the same bytes, so it
+			// carries what the home page was answered with.
+			for _, f := range rootWritten {
+				copyCapture(files, rootSource, f)
 			}
 		}
 		event.Files = files
@@ -1150,6 +1155,18 @@ func (b *Builder) pageOutputPath(locale, defaultLocale, urlPath string) string {
 	return localeOutputPath(locale, defaultLocale, urlPath)
 }
 
+// copyCapture gives the built file at to what the file at from was captured with.
+func copyCapture(files []plugin.BuiltFile, from, to string) {
+	src := slices.IndexFunc(files, func(f plugin.BuiltFile) bool { return f.File == from })
+	dst := slices.IndexFunc(files, func(f plugin.BuiltFile) bool { return f.File == to })
+	if src < 0 || dst < 0 {
+		return
+	}
+	files[dst].Captured = files[src].Captured
+	files[dst].Status = files[src].Status
+	files[dst].Headers = files[src].Headers.Clone()
+}
+
 // writeRootHome writes, when the default locale's pages carry its prefix and its
 // home page was built, a copy of that home page at the root. A static host has no
 // redirects to configure; with the home page itself there, a visitor to the bare
@@ -1158,10 +1175,11 @@ func (b *Builder) pageOutputPath(locale, defaultLocale, urlPath string) string {
 // The copy names the prefixed home as its canonical address — unless the page
 // already names one — so the two files are one page to a search engine. Links
 // and assets the application builds start at "/", and resolve the same from
-// either address.
-func (b *Builder) writeRootHome(outDirResolved string, tasks []buildTask, written []string) ([]string, error) {
+// either address. It returns the files it wrote and the home page's file they
+// were copied from.
+func (b *Builder) writeRootHome(outDirResolved string, tasks []buildTask, written []string) ([]string, string, error) {
 	if !b.app.PrefixDefault() {
-		return nil, nil
+		return nil, "", nil
 	}
 	defaultLocale := b.app.DefaultLocale()
 	source := ""
@@ -1171,23 +1189,23 @@ func (b *Builder) writeRootHome(outDirResolved string, tasks []buildTask, writte
 		}
 	}
 	if source == "" {
-		return nil, nil
+		return nil, "", nil
 	}
 	page, err := os.ReadFile(source)
 	if err != nil {
-		return nil, fmt.Errorf("collage: read %q: %w", source, err)
+		return nil, "", fmt.Errorf("collage: read %q: %w", source, err)
 	}
 	target, err := resolveTarget(outDirResolved, "/")
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := verifyNoSymlinksBeneath(outDirResolved, target); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := os.WriteFile(target, withCanonical(page, "/"+defaultLocale+"/"), 0o644); err != nil {
-		return nil, fmt.Errorf("collage: write %q: %w", target, err)
+		return nil, "", fmt.Errorf("collage: write %q: %w", target, err)
 	}
-	return []string{target}, nil
+	return []string{target}, source, nil
 }
 
 // withCanonical adds a canonical link to href right after the page's opening
