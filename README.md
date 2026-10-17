@@ -2,6 +2,15 @@
 
 # collage
 
+<p align="center">
+  <a href="https://github.com/Elagoht/collage/tags"><img src="https://img.shields.io/github/v/tag/Elagoht/collage?sort=semver&label=version&color=4c7d5d" alt="Latest version"></a>
+  <a href="https://github.com/Elagoht/collage/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Elagoht/collage/ci.yml?branch=main&label=ci" alt="CI status"></a>
+  <a href="https://pkg.go.dev/github.com/Elagoht/collage/pkg/collage"><img src="https://img.shields.io/badge/go.dev-reference-007d9c?logo=go&logoColor=white" alt="Go reference"></a>
+  <img src="https://img.shields.io/github/go-mod/go-version/Elagoht/collage" alt="Go version">
+  <a href="https://collage.furkanbaytekin.dev"><img src="https://img.shields.io/badge/docs-collage.furkanbaytekin.dev-4c7d5d" alt="Documentation"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/Elagoht/collage" alt="License: MIT"></a>
+</p>
+
 A Go framework for server-side, component-based rendering.
 
 **Documentation: [collage.furkanbaytekin.dev](https://collage.furkanbaytekin.dev)** — the guide,
