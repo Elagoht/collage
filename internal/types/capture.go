@@ -51,13 +51,17 @@ func IsCapture(ctx context.Context) bool {
 	return marked
 }
 
-type freshDataKey struct{}
+// FreshDataKey is the context key WithFreshData sets. It is exported for the
+// reason CaptureKey is: a context that hides request values from a shared render
+// must still let it through, because whether a render may use stale data is about
+// the render, not about a reader. A cache warm render is shared and fresh at once.
+type FreshDataKey struct{}
 
 // WithFreshData returns ctx marked as a render that must not be built from
 // stale cached data: a static export, which writes what it renders to files
 // nobody re-renders, waits for the upstream instead.
 func WithFreshData(ctx context.Context) context.Context {
-	return context.WithValue(ctx, freshDataKey{}, true)
+	return context.WithValue(ctx, FreshDataKey{}, true)
 }
 
 // WantsFreshData reports whether ctx was marked by WithFreshData, or is a static
@@ -66,6 +70,6 @@ func WantsFreshData(ctx context.Context) bool {
 	if IsCapture(ctx) {
 		return true
 	}
-	fresh, _ := ctx.Value(freshDataKey{}).(bool)
+	fresh, _ := ctx.Value(FreshDataKey{}).(bool)
 	return fresh
 }

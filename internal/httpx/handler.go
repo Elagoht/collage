@@ -243,6 +243,9 @@ type Deps struct {
 	// TrustedProxies are the proxies whose X-Forwarded-For ClientIP believes.
 	// Empty trusts none: the client is always RemoteAddr.
 	TrustedProxies []netip.Prefix
+	// MaxRecipes bounds the warm recipes kept, one per cache key written, the
+	// oldest evicted first. Zero or less means 10000.
+	MaxRecipes int
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
@@ -278,6 +281,9 @@ type Handler struct {
 	// popular page costs one render rather than one per request that arrives
 	// while it is being re-made.
 	flight *flight
+	// recipes records, per cache key written, how to rebuild the request that
+	// wrote it, so an invalidated key can be re-rendered before anyone asks.
+	recipes *recipes
 
 	// bodyTimeoutWarning logs, once, that an action's body timeout could not
 	// be set. See setBodyDeadlines.
@@ -329,6 +335,7 @@ func New(d Deps) (*Handler, error) {
 		noSniff:      d.NoSniff,
 		trusted:      slices.Clone(d.TrustedProxies),
 		flight:       newFlight(),
+		recipes:      newRecipes(d.MaxRecipes),
 	}
 	// Composed once rather than per request: a middleware constructor is
 	// allowed to do setup work, and doing it on every request would be a cost
@@ -1443,6 +1450,9 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 		return ""
 	}
 	h.metrics.CacheEvent(ctx, observability.CacheSet, key)
+	// r is the shared request the render was made from, so the recipe holds what
+	// the key holds and nothing of the reader. See warmKey.
+	h.recipes.put(key, newRecipe(r, page.CacheParams, false))
 
 	if err := h.tracker.Track(ctx, key, withRouteTags(tags, r.Host, r.URL.Path)); err != nil {
 		h.reportError(r, failure{err: fmt.Errorf("collage: track %q: %w", key, err), page: page, stage: stageCacheWrite})
