@@ -10,9 +10,11 @@ import (
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cache"
+	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/render"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -31,6 +33,93 @@ var errWarmNotStored = errors.New("collage: warm render was not stored")
 // render was a not found, which drops the entry, so its recipe goes too. A deleted
 // post is the common case, and it is no sign that the upstream is down.
 var errWarmGone = errors.New("collage: warmed content no longer exists")
+
+// errWarmGuarded is warmKey's error for a guarded page, which is not warmed: a
+// guard decides about a reader, and a warm is none.
+var errWarmGuarded = errors.New("collage: a guarded page is not warmed")
+
+// errWarmNotAPage is warmKey's error for a URL that now answers with a redirect
+// or a refusal rather than the page its key holds: the routes changed, which is
+// nothing to stop a run over.
+var errWarmNotAPage = errors.New("collage: warmed URL no longer answers with its page")
+
+// errWarmShared is warmKey's error for a warm that joined another warm's render
+// of the same key and found it failed: the warm that led it reports it.
+var errWarmShared = errors.New("collage: warm joined a render that did not store")
+
+// warmSkipped reports whether err, a false warmKey's reason, says nothing about
+// the upstream, so a run goes on past it.
+func warmSkipped(err error) bool {
+	return err == nil || errors.Is(err, errWarmNotStored) || errors.Is(err, errWarmGone) ||
+		errors.Is(err, errWarmGuarded) || errors.Is(err, errWarmNotAPage) || errors.Is(err, errWarmShared)
+}
+
+// warmCtxKey marks a warm request's context with its *warmState. Unexported, so
+// it is set only by warmKey, and no request from the wire can carry it.
+type warmCtxKey struct{}
+
+// warmState is what one warm request's quiet paths leave for warmKey to judge it
+// by. A warm logs nothing per page and calls no error hook — the warmer reports
+// its run as a whole — so the cause of a failure is kept here instead.
+type warmState struct {
+	mu       sync.Mutex
+	cause    error
+	skipped  error
+	degraded bool
+	shared   bool
+}
+
+// warmStateOf returns ctx's warm state, or nil for any request but a warm.
+func warmStateOf(ctx context.Context) *warmState {
+	state, _ := ctx.Value(warmCtxKey{}).(*warmState)
+	return state
+}
+
+// fail records err as the warm's failure, keeping the first: it is the cause,
+// and what follows from it — an error page that could not be served — is not.
+func (s *warmState) fail(err error) {
+	if err == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cause == nil {
+		s.cause = err
+	}
+}
+
+// skip records that the warm was not attempted, and why.
+func (s *warmState) skip(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.skipped = err
+}
+
+// observe records the outcome of the render the warm was answered from: whether
+// it was degraded, which the response alone cannot say once there is no stale
+// entry to serve in its place, and whether it was another warm's.
+func (s *warmState) observe(out *outcome, shared bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.degraded = out.fail == nil && out.degraded
+	s.shared = shared
+	if out.fail != nil && out.fail.err != nil && s.cause == nil {
+		s.cause = out.fail.err
+	}
+}
+
+// record records the failure behind a stale serve, for reportStale.
+func (s *warmState) record(out *outcome) {
+	if out.fail != nil {
+		s.fail(out.fail.err)
+	}
+}
+
+func (s *warmState) result() (cause, skipped error, degraded, shared bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cause, s.skipped, s.degraded, s.shared
+}
 
 // recipe is how to rebuild the request that wrote one cache key: exactly what the
 // key was made of, so a warm render built from it writes that key and no other.
@@ -272,16 +361,23 @@ func (w *warmWriter) Write(p []byte) (int, error) {
 // entry an invalidation left stale is replaced before a visitor asks for it. ok is
 // true when key is fresh in the cache afterwards. A key with no recipe, or a
 // handler that does not read its cache (development, or no cache), is skipped with
-// false and no error; a render that failed, or was served stale, is false with the
-// reason.
+// false and no error.
+//
+// Otherwise a false comes with the reason, and the reason says whether the run
+// should stop (see warmSkipped): a render that failed, or was degraded, says the
+// upstream is in trouble; content that is gone, a guarded page, a page that no
+// longer answers with itself, or a render another invalidation overlapped says
+// nothing about it.
 //
 // The render goes through serve, not ServeHTTP: ServeHTTP would run the request
 // hooks and the application's and plugins' middleware, which must never see a
 // request no reader sent — a rate limit, an access log, an auth check — and it
 // gives every request a new, empty vary set, where a warm render needs the one the
-// recipe holds. The rest of the lifecycle is a visitor's: the lookup, the flight,
-// the stale fallback and the write rules. Its context is marked for fresh data, so
-// the render waits for the upstream rather than storing a page made from stale
+// recipe holds. The rest of the lifecycle is a visitor's: the lookup, the stale
+// fallback and the write rules, but in a flight of its own (see warmFlight), with
+// no personalisation, and quiet: its failures are recorded in its warmState for
+// the warmer to report, not logged per page. Its context is marked for fresh data,
+// so the render waits for the upstream rather than storing a page made from stale
 // data.
 func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) {
 	if h.devMode || h.cache == nil {
@@ -293,7 +389,9 @@ func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) 
 	}
 
 	route := &routeRef{}
+	state := &warmState{}
 	ctx = context.WithValue(ctx, routeCtxKey{}, route)
+	ctx = context.WithValue(ctx, warmCtxKey{}, state)
 	if h.origins != nil {
 		ctx = WithOrigins(ctx, h.origins)
 	}
@@ -302,18 +400,31 @@ func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) 
 	status := h.serveWarm(w, req, route)
 
 	where := rcp.host + rcp.path
-	if status == http.StatusNotFound {
+	cause, skip, degraded, shared := state.result()
+	switch {
+	case skip != nil:
+		return false, fmt.Errorf("%w: %s", skip, where)
+	case status == http.StatusNotFound:
 		h.recipes.drop(key)
 		return false, fmt.Errorf("%w: %s", errWarmGone, where)
+	case status != http.StatusOK && status < http.StatusInternalServerError:
+		// A redirect, a refusal: the URL no longer answers with the page the key
+		// holds, and its recipe can never warm it again.
+		h.recipes.drop(key)
+		return false, fmt.Errorf("%w: %s: status %d", errWarmNotAPage, where, status)
+	case status != http.StatusOK || w.header.Get(CacheStatusHeader) == cacheStale || degraded:
+		if shared {
+			// Another warm's render, which that warm reports.
+			return false, fmt.Errorf("%w: %s", errWarmShared, where)
+		}
+		if cause == nil {
+			cause = errors.New("a fragment failed")
+		}
+		return false, fmt.Errorf("collage: warm %s: the render failed or was degraded, the stale entry stays: %w", where, cause)
 	}
-	if status != http.StatusOK {
-		return false, fmt.Errorf("collage: warm %s: status %d", where, status)
-	}
-	if w.header.Get(CacheStatusHeader) == cacheStale {
-		return false, fmt.Errorf("collage: warm %s: the render failed or was degraded, the stale entry stays", where)
-	}
-	// Judged by the store, not the header: a degraded render goes out as a MISS
-	// all the same, and only the entry says whether the key was written.
+	// Judged by the store, not the header: a render another invalidation
+	// overlapped goes out as a MISS all the same, and only the entry says
+	// whether the key was written.
 	var stored bool
 	if staleCache, isStale := h.cache.(cache.StaleCache); isStale {
 		_, _, stale, inCache := staleCache.GetStale(ctx, key)
@@ -322,6 +433,9 @@ func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) 
 		_, _, stored = h.cache.Get(ctx, key)
 	}
 	if !stored {
+		if cause != nil {
+			return false, fmt.Errorf("%w: %s: %w", errWarmNotStored, where, cause)
+		}
 		return false, fmt.Errorf("%w: %s", errWarmNotStored, where)
 	}
 	return true, nil
@@ -344,4 +458,355 @@ func (h *Handler) serveWarm(w http.ResponseWriter, r *http.Request, route *route
 		))
 	}()
 	return h.serve(w, r, route)
+}
+
+// warmWorkers is how many warm renders run at once. Enough to re-make a few
+// hundred pages in well under a second when their data is cached, few enough
+// that a warm never crowds the visitors it is warming for.
+const warmWorkers = 4
+
+// defaultWarmLimit is a run's cap when Deps.WarmLimit is zero.
+const defaultWarmLimit = 1000
+
+// warmer re-renders invalidated keys in the background: one coordinator takes
+// runs, one per Warm call, in order, and hands each run's keys to warmWorkers
+// workers. The goroutines start with the first Warm, so an application that never
+// invalidates never has them.
+type warmer struct {
+	limit int
+
+	mu   sync.Mutex
+	idle *sync.Cond
+	// pending holds every key queued and not yet handed to a worker. A key
+	// leaves it when its render starts, not when it ends: an invalidation
+	// during that render keeps the render from being stored, and must be able
+	// to queue the key again.
+	pending map[string]struct{}
+	// runs are the runs not yet started, oldest first. A key of a run that is no
+	// longer pending — dropped by a stop — is passed over.
+	runs [][]string
+	// running is true while the coordinator works through a run.
+	running bool
+	started bool
+	stopped bool
+
+	// wake tells the coordinator a run was queued. Buffered by one, and sent
+	// to without blocking: Warm runs on an invalidating caller's goroutine,
+	// often an action's request, which must never wait on the warmer.
+	wake chan struct{}
+	// stop is closed by StopWarming.
+	stop chan struct{}
+	// ctx is the warm renders' context. It is no reader's, so nothing ends it
+	// but StopWarming giving up on the renders still running.
+	ctx    context.Context
+	cancel context.CancelFunc
+	// done counts the coordinator and the workers.
+	done sync.WaitGroup
+}
+
+// newWarmer returns a warmer capping each run at limit keys, defaultWarmLimit
+// when limit is zero.
+func newWarmer(limit int) *warmer {
+	if limit == 0 {
+		limit = defaultWarmLimit
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	w := &warmer{
+		limit:   limit,
+		pending: make(map[string]struct{}),
+		wake:    make(chan struct{}, 1),
+		stop:    make(chan struct{}),
+		ctx:     ctx,
+		cancel:  cancel,
+	}
+	w.idle = sync.NewCond(&w.mu)
+	return w
+}
+
+// warmOutcome is how one key's warm ended, as a run counts it.
+type warmOutcome int
+
+const (
+	warmDone warmOutcome = iota
+	warmSkip
+	warmFail
+)
+
+// warmResult is one key's warm, from a worker to the coordinator.
+type warmResult struct {
+	outcome warmOutcome
+	err     error
+}
+
+// Warm queues keys to be re-rendered in the background, and returns at once. It
+// is what an invalidation calls, after it has finished, with the keys it reached,
+// so each page is fresh again before its first reader asks — who is meanwhile
+// served the stale page, never made to wait for this.
+//
+// The keys become one run: those with a recipe, the most recently written first,
+// less those already queued, capped at the warm limit. A key over the cap, or
+// with no recipe, is not warmed, and renders on its first request as it would
+// have without warming. A run stops at its first failed render: see runWarm.
+//
+// Warm does nothing when warming is off, and nothing after StopWarming.
+func (h *Handler) Warm(keys []string) {
+	w := h.warm
+	if w == nil || len(keys) == 0 {
+		return
+	}
+	// Before the warmer's lock, which the coordinator takes between renders: the
+	// recipe store has a lock of its own.
+	ordered := h.recipes.newestFirst(keys)
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopped {
+		return
+	}
+	run := make([]string, 0, min(len(ordered), w.limit))
+	for _, key := range ordered {
+		if len(run) == w.limit {
+			break
+		}
+		if _, queued := w.pending[key]; queued {
+			continue
+		}
+		w.pending[key] = struct{}{}
+		run = append(run, key)
+	}
+	if len(run) == 0 {
+		return
+	}
+	w.runs = append(w.runs, run)
+	if !w.started {
+		w.started = true
+		jobs := make(chan string)
+		results := make(chan warmResult)
+		w.done.Add(1 + warmWorkers)
+		go h.coordinateWarm(w, jobs, results)
+		for range warmWorkers {
+			go h.warmWorker(w, jobs, results)
+		}
+	}
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+
+// StopWarming stops the warmer, for shutdown: the queue is dropped, no run is
+// started again, and every later Warm does nothing. It waits for the renders
+// still running to finish, or for ctx to end, whichever is first; past ctx, the
+// renders' context is cancelled, and they end on their own after it returns. It
+// is safe to call more than once, and on a handler that never warmed.
+func (h *Handler) StopWarming(ctx context.Context) {
+	w := h.warm
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	if !w.stopped {
+		w.stopped = true
+		clear(w.pending)
+		w.runs = nil
+		close(w.stop)
+		w.idle.Broadcast()
+	}
+	started := w.started
+	w.mu.Unlock()
+
+	if started {
+		finished := make(chan struct{})
+		go func() {
+			w.done.Wait()
+			close(finished)
+		}()
+		select {
+		case <-finished:
+		case <-ctx.Done():
+		}
+	}
+	// The data cache closes after this, and a render still running would read
+	// from it: told to stop, it does.
+	w.cancel()
+}
+
+// WaitWarmed blocks until the warmer has nothing queued and no run under way. It
+// is for tests and tools that must see the cache after a warm, and returns at once
+// when warming is off.
+func (h *Handler) WaitWarmed() {
+	w := h.warm
+	if w == nil {
+		return
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for len(w.runs) > 0 || w.running {
+		w.idle.Wait()
+	}
+}
+
+// coordinateWarm is the warmer's coordinator: it takes one run at a time until
+// StopWarming, and closes jobs when it leaves, which ends the workers.
+func (h *Handler) coordinateWarm(w *warmer, jobs chan<- string, results <-chan warmResult) {
+	defer w.done.Done()
+	defer close(jobs)
+	for {
+		w.mu.Lock()
+		if w.stopped {
+			w.mu.Unlock()
+			return
+		}
+		if len(w.runs) == 0 {
+			w.mu.Unlock()
+			select {
+			case <-w.wake:
+			case <-w.stop:
+			}
+			continue
+		}
+		run := w.runs[0]
+		w.runs = w.runs[1:]
+		w.running = true
+		w.mu.Unlock()
+
+		h.runWarm(w, run, jobs, results)
+
+		w.mu.Lock()
+		w.running = false
+		w.idle.Broadcast()
+		w.mu.Unlock()
+	}
+}
+
+// claim takes the next key of run at or after i that is still pending, and
+// returns it with the index after it; "" when there is none.
+func (w *warmer) claim(run []string, i int) (string, int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for ; i < len(run); i++ {
+		if _, queued := w.pending[run[i]]; queued {
+			delete(w.pending, run[i])
+			return run[i], i + 1
+		}
+	}
+	return "", i
+}
+
+// release lets go of the keys of run from i on that are still pending, and
+// returns how many there were.
+func (w *warmer) release(run []string, i int) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n := 0
+	for ; i < len(run); i++ {
+		if _, queued := w.pending[run[i]]; queued {
+			delete(w.pending, run[i])
+			n++
+		}
+	}
+	return n
+}
+
+// runWarm warms run's keys with the workers.
+//
+// The first key renders on its own, and the rest only once it is fresh: a down
+// upstream then costs one failed render, not one per worker. At the first
+// failure the run stops — a page that failed most likely failed for a reason the
+// next one shares, and an upstream that is down is not to be hammered — and the
+// rest of it is dropped, stale until its first request, with one warn. The renders
+// already running are waited for: a worker's result has nowhere else to go.
+func (h *Handler) runWarm(w *warmer, run []string, jobs chan<- string, results <-chan warmResult) {
+	began := time.Now()
+	var warmed, skipped, failed int
+	outstanding, next := 0, 0
+	// probing holds the fan-out until a render has succeeded: a skipped key says
+	// nothing about the upstream either way.
+	probing, stopping := true, false
+	held := ""
+	stop := w.stop
+	for {
+		if held == "" && !stopping && (!probing || outstanding == 0) {
+			held, next = w.claim(run, next)
+		}
+		if held == "" && outstanding == 0 {
+			break
+		}
+		var send chan<- string
+		if held != "" {
+			send = jobs
+		}
+		select {
+		case send <- held:
+			held = ""
+			outstanding++
+		case result := <-results:
+			outstanding--
+			switch result.outcome {
+			case warmDone:
+				warmed++
+				probing = false
+			case warmSkip:
+				skipped++
+			case warmFail:
+				failed++
+				if !stopping {
+					stopping = true
+					dropped := w.release(run, next)
+					if held != "" {
+						dropped++
+						held = ""
+					}
+					skipped += dropped
+					h.logger.Warn("collage: warming stopped, a page failed to render",
+						"err", result.err, "remaining", dropped, "run", len(run))
+				}
+			}
+		case <-stop:
+			// Shutdown: what is not running is dropped, without a warn — it is
+			// no failure — and StopWarming has let go of the queue already. The
+			// renders running are still waited for, above.
+			stop = nil
+			if !stopping {
+				stopping = true
+				skipped += len(run) - next
+				if held != "" {
+					skipped++
+					held = ""
+				}
+			}
+		}
+	}
+	h.logger.Info("collage: warmed pages", "warmed", warmed, "skipped", skipped, "failed", failed,
+		"run", len(run), "duration", time.Since(began))
+}
+
+// warmWorker warms the keys handed to it until jobs is closed.
+func (h *Handler) warmWorker(w *warmer, jobs <-chan string, results chan<- warmResult) {
+	defer w.done.Done()
+	for key := range jobs {
+		results <- h.warmOne(w.ctx, key)
+	}
+}
+
+// warmOne warms key and says how the run is to count it. A panic anywhere in it —
+// serveWarm guards the serve, but not the store check after it or the metric —
+// is a failed warm, never a worker lost with its result.
+func (h *Handler) warmOne(ctx context.Context, key string) (result warmResult) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result = warmResult{outcome: warmFail, err: fmt.Errorf("%w: %w", ErrPanic,
+				&render.PanicError{Value: recovered, Stack: debug.Stack()})}
+		}
+	}()
+	ok, err := h.warmKey(ctx, key)
+	switch {
+	case ok:
+		h.metrics.CacheEvent(ctx, observability.CacheWarm, key)
+		return warmResult{outcome: warmDone}
+	case warmSkipped(err), ctx.Err() != nil:
+		// A warm StopWarming cut short is no failure of the page's.
+		return warmResult{outcome: warmSkip, err: err}
+	}
+	return warmResult{outcome: warmFail, err: err}
 }

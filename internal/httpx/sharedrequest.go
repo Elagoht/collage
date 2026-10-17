@@ -99,7 +99,9 @@ func (c renderSafe) Value(key any) any {
 	switch key.(type) {
 	// FreshDataKey with CaptureKey: whether stale data may be used is the
 	// render's, not a reader's, and a cache warm render is shared and fresh.
-	case routeCtxKey, varySetKey, chainStateKey, originsKey, types.CaptureKey, types.FreshDataKey:
+	// warmCtxKey too: it is no reader's, and a cache write failing inside the
+	// render is reported through it, to the warmer rather than the logs.
+	case routeCtxKey, varySetKey, chainStateKey, originsKey, types.CaptureKey, types.FreshDataKey, warmCtxKey:
 		return c.Context.Value(key)
 	}
 	// Not one of ours: hidden. Tell the developer, but only when the value was

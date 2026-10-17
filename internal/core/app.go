@@ -245,6 +245,9 @@ type CacheConfig struct {
 	// MaxBytes caps the total size of a built-in cache's content. Zero means the
 	// cache type's own default; negative, unlimited.
 	MaxBytes int64
+	// WarmLimit caps how many keys one invalidation warms. Zero means 1000;
+	// negative turns warming off. See pkg/collage.CacheConfig.WarmLimit.
+	WarmLimit int
 	// Dir is where a "disk" cache stores its entries.
 	Dir string
 	// Version identifies the build whose output a "disk" cache holds. Entries live
@@ -288,6 +291,11 @@ type App struct {
 	// of one.
 	invalidationsStarted  atomic.Uint64
 	invalidationsFinished atomic.Uint64
+	// warmer is the built handler, which warms what an invalidation reached. It
+	// is read without buildMu: a plugin's Init, which runs while buildMu is
+	// held, may invalidate, and finds nil here — nothing has been written to
+	// warm yet.
+	warmer atomic.Pointer[httpx.Handler]
 	// invalidOrigins records, in development, the plugin+origin pairs already
 	// reported by invalidOrigin.
 	invalidOrigins sync.Map
@@ -926,12 +934,16 @@ func (a *App) buildHandler() (http.Handler, error) {
 		NoSniff:        a.noSniff,
 		TrustedProxies: a.cfg.Server.TrustedProxies,
 		DevHosts:       a.devHosts(),
+		// A recipe is only worth keeping for a key the cache can still hold.
+		MaxRecipes: a.cfg.Cache.MaxEntries,
+		WarmLimit:  a.cfg.Cache.WarmLimit,
 	})
 	if err != nil {
 		return a.failedAfterInit(err)
 	}
 
 	a.handler = handler
+	a.warmer.Store(handler)
 	return handler, nil
 }
 
@@ -1252,6 +1264,12 @@ func (a *App) shutdown(ctx context.Context) error {
 			err = errors.Join(err, fmt.Errorf("collage: server shutdown: %w", serverErr))
 		}
 	}
+	// After the server, so no request's invalidation queues more, and before
+	// the data cache closes, which a warm render reads from: the queue is
+	// dropped, and the renders running are waited for under ctx.
+	if handler, ok := current.(*httpx.Handler); ok {
+		handler.StopWarming(ctx)
+	}
 	// The data cache's refreshes outlive the requests that started them, and
 	// fetch through what plugins provide: they are waited for, and their writes
 	// to disk made, before the plugins stop.
@@ -1349,6 +1367,17 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 		return 0, nil
 	}
 
+	// The keys reached are warmed once this call is over: deferred before the
+	// finished count is, so it runs after it, because a warm render that began
+	// while this was under way would not be stored. A purge warms too, so its
+	// pages are back before their first reader asks.
+	var reached []string
+	defer func() {
+		if handler := a.warmer.Load(); handler != nil {
+			handler.Warm(reached)
+		}
+	}()
+
 	// Started before the store is touched and finished after everything is, so
 	// a render that began before this call, or during it, is seen by the handler
 	// to have overlapped it. See invalidations.
@@ -1359,6 +1388,7 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	if err != nil {
 		return 0, fmt.Errorf("collage: resolve tags: %w", err)
 	}
+	reached = keys
 
 	// A store that can keep an entry past its invalidation has its pages marked
 	// stale rather than dropped, so a failing re-render can still be answered

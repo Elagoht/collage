@@ -165,11 +165,20 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	// Not a static build's header capture, which renders on its own: see the
 	// page path.
 	var out *outcome
+	warm := warmStateOf(ctx)
 	if key != "" && !types.IsCapture(ctx) {
+		// A warm in a flight of its own, as a page's: see warmFlight.
+		coalesce := h.flight
+		if warm != nil {
+			coalesce = h.warmFlight
+		}
 		var shared bool
-		out, shared = h.flight.do(ctx, key, produce)
+		out, shared = coalesce.do(ctx, key, produce)
 		if shared {
 			h.metrics.CacheEvent(ctx, observability.CacheCoalesced, key)
+		}
+		if warm != nil {
+			warm.observe(out, shared)
 		}
 	} else {
 		out = produce()

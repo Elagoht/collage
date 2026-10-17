@@ -336,6 +336,22 @@ type CacheConfig struct {
 	// entries of a 500 KB page is 5 GB. This is the bound that holds whatever
 	// the pages weigh.
 	MaxBytes int64
+	// WarmLimit caps how many pages and documents are re-rendered in the
+	// background after one InvalidateTags or PurgeTags call. Zero means the
+	// default, 1000; a negative value turns warming off.
+	//
+	// After an invalidation the pages it reached are rendered again right away,
+	// four at a time, so each is fresh before its next reader asks; until then a
+	// reader is served the stale page, never made to wait. The most recently
+	// written pages go first, and those past the cap render on their first
+	// request instead. Every variant a reader was actually served is warmed
+	// (each locale, query and Vary value); one nobody asked for is not. A warm
+	// render runs no middleware and no guard — a guarded page is left to its
+	// first reader — and waits for fresh data. Should a warm render fail, the
+	// rest of that invalidation's pages are left stale, so a down upstream is
+	// not asked again for each of them, and one warning says so. Warming never
+	// runs in development, and stops at Shutdown.
+	WarmLimit int
 	// Dir is where a "disk" cache stores its entries. Required for that type.
 	Dir string
 	// Version identifies the build whose rendered output a "disk" cache holds.

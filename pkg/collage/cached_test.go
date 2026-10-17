@@ -43,7 +43,9 @@ type authorSite struct {
 
 func newAuthorSite(t *testing.T, devMode bool) *authorSite {
 	t.Helper()
-	return newAuthorSiteWith(t, devMode, collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour})
+	// What a reader sees after an invalidation, before anything re-made the
+	// page: the warmer would race the reader to it. See warm_test.go.
+	return newAuthorSiteWith(t, devMode, collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour, WarmLimit: -1})
 }
 
 func newAuthorSiteWith(t *testing.T, devMode bool, cacheConfig collage.CacheConfig) *authorSite {

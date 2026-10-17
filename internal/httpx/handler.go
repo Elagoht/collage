@@ -246,6 +246,10 @@ type Deps struct {
 	// MaxRecipes bounds the warm recipes kept, one per cache key written, the
 	// oldest evicted first. Zero or less means 10000.
 	MaxRecipes int
+	// WarmLimit caps how many keys one Warm call re-renders, the most recently
+	// written first. Zero means 1000; negative turns warming off, so Warm does
+	// nothing. Warming is off as well in development and with no Cache.
+	WarmLimit int
 }
 
 // Handler serves rendered pages over HTTP. It holds no per-request state, so one
@@ -284,6 +288,13 @@ type Handler struct {
 	// recipes records, per cache key written, how to rebuild the request that
 	// wrote it, so an invalidated key can be re-rendered before anyone asks.
 	recipes *recipes
+	// warmFlight coalesces warm renders, apart from flight: a visitor joining a
+	// warm render would wait on the upstream it waits for, and a warm joining a
+	// visitor's would take a render that may use stale data. See warmKey.
+	warmFlight *flight
+	// warm re-renders invalidated keys in the background. Nil when warming is
+	// off: in development, with no cache, or with a negative WarmLimit.
+	warm *warmer
 
 	// bodyTimeoutWarning logs, once, that an action's body timeout could not
 	// be set. See setBodyDeadlines.
@@ -336,6 +347,10 @@ func New(d Deps) (*Handler, error) {
 		trusted:      slices.Clone(d.TrustedProxies),
 		flight:       newFlight(),
 		recipes:      newRecipes(d.MaxRecipes),
+		warmFlight:   newFlight(),
+	}
+	if !d.DevMode && d.Cache != nil && d.WarmLimit >= 0 {
+		h.warm = newWarmer(d.WarmLimit)
 	}
 	// Composed once rather than per request: a middleware constructor is
 	// allowed to do setup work, and doing it on every request would be a cost
@@ -763,6 +778,15 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	pagePattern, _ := page.PathFor(match.Locale)
 	route.at(pagePattern, match.Locale)
 
+	// A warm is no reader, and a guard decides about a reader: asked about a
+	// warm, it would refuse it or let it through on nobody's credentials. The
+	// page is left to its first allowed reader, as before warming existed.
+	warm := warmStateOf(ctx)
+	if warm != nil && types.PageGuarded(page) {
+		warm.skip(errWarmGuarded)
+		return 0
+	}
+
 	// Guards before the cache: a blocked reader reaches neither the page's
 	// cached render nor the plugins that watch a page being rendered — the
 	// request never touched the page.
@@ -856,6 +880,14 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			// one, it would hand its mark to every reader waiting on it. It
 			// keeps its own deadline, too.
 			out = h.renderPage(h.renderSafeContext(ctx), shareable, page, match, key, cacheable)
+		} else if warm != nil {
+			// A warm renders in a flight of its own: see warmFlight. Under its
+			// own context, not detached from it, because the warmer's context
+			// is no reader's and ends only when shutdown gives up waiting.
+			renderCtx := h.renderSafeContext(ctx)
+			out, shared = h.warmFlight.do(ctx, key, func() *outcome {
+				return h.renderPage(renderCtx, shareable, page, match, key, cacheable)
+			})
 		} else {
 			renderCtx := h.renderSafeContext(context.WithoutCancel(ctx))
 			out, shared = h.flight.do(ctx, key, func() *outcome {
@@ -871,6 +903,9 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		// separately — a large coalesced count is what a too-short TTL looks
 		// like from the outside.
 		h.metrics.CacheEvent(ctx, observability.CacheCoalesced, key)
+	}
+	if warm != nil {
+		warm.observe(out, shared)
 	}
 
 	// Decided per request, after the flight: every request that joined a render
@@ -988,6 +1023,11 @@ type personalised struct {
 // not sent: the error page answering instead sends its own if it carries a form.
 func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []byte, etag string) (personalised, error) {
 	original := personalised{body: content, etag: etag}
+	// A warm's body is thrown away, so making it a reader's is work for nobody,
+	// and a hook would count a reader who was never there.
+	if warmStateOf(r.Context()) != nil {
+		return original, nil
+	}
 	var cookie *http.Cookie
 	if h.csrf != nil && h.csrf.Carries(content) {
 		token, _, err := h.csrf.TokenFor(r)
@@ -1257,6 +1297,12 @@ func (h *Handler) staleFallback(ctx context.Context, out *outcome) fallback {
 // logged and measured by the render engine, which is how a fragment failure is
 // reported whether or not the page is then served stale.
 func (h *Handler) reportStale(r *http.Request, key, kind, name string, out *outcome) {
+	// A warm's stale serve went to nobody, so it is no serve to count, and the
+	// warmer reports its failure itself, once per run rather than per page.
+	if warm := warmStateOf(r.Context()); warm != nil {
+		warm.record(out)
+		return
+	}
 	h.metrics.CacheEvent(r.Context(), observability.CacheStale, key)
 	if !out.staleReported.CompareAndSwap(false, true) {
 		return

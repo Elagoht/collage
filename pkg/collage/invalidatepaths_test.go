@@ -41,9 +41,11 @@ func TestInvalidation_NamesThePaths(t *testing.T) {
 	app, err := collage.New(&collage.Config{
 		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
 		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>{{.}}</p>`)}}, Root: "t"},
-		Cache:    collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour},
-		Locale:   collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
-		Plugins:  []collage.Plugin{p},
+		// Off: a warm writes the pages again, and tracks them again, so which
+		// paths a later invalidation names would depend on whether it ran yet.
+		Cache:   collage.CacheConfig{Enabled: true, Type: "memory", DefaultTTL: time.Hour, WarmLimit: -1},
+		Locale:  collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
+		Plugins: []collage.Plugin{p},
 	})
 	if err != nil {
 		t.Fatal(err)

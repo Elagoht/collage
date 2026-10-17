@@ -66,6 +66,12 @@ const (
 	// document served from an entry kept past an invalidation or its TTL because
 	// the render replacing it failed or was degraded.
 	CacheStale CacheEvent = "stale"
+	// CacheWarm means a page or document entry an invalidation left stale, or a
+	// purge removed, was rendered again in the background before anyone asked
+	// for it, and is fresh in the cache. It is reported once per key warmed,
+	// with the page cache key. A count well under the invalidated count is a
+	// warm limit reached, or warming stopped by a failing upstream.
+	CacheWarm CacheEvent = "warm"
 )
 
 // Timing records where a render spent its time. The render engine fills one of

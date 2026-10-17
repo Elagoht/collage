@@ -477,6 +477,10 @@ const (
 	// reports it too, with the page cache key, for a page or document served
 	// stale because the render replacing it failed or was degraded.
 	CacheStale = observability.CacheStale
+	// CacheWarm means a page or document an invalidation or a purge reached was
+	// rendered again in the background, before anyone asked for it, and is
+	// fresh in the cache. See CacheConfig.WarmLimit.
+	CacheWarm = observability.CacheWarm
 )
 
 // ETag returns the strong HTTP ETag the framework itself computes for content: the
@@ -543,6 +547,7 @@ func toCoreConfig(cfg *Config) core.Config {
 			DefaultTTL: cfg.Cache.DefaultTTL,
 			MaxEntries: cfg.Cache.MaxEntries,
 			MaxBytes:   cfg.Cache.MaxBytes,
+			WarmLimit:  cfg.Cache.WarmLimit,
 			Dir:        cfg.Cache.Dir,
 			Version:    cfg.Cache.Version,
 		},
