@@ -330,6 +330,11 @@ type App struct {
 	// concrete type to Config.Cache.Store defeats that, and this package cannot
 	// tell the difference without reflection; see that field's own documentation.
 	store cache.Cache
+	// sharedHealth is whether a Store that is a cache.SharedCache is answering,
+	// for the log; nil for any other store. It is one per App, handed to the
+	// data cache and to the handler alike, so the store failing under pages
+	// and data is one warning per window, not one per path.
+	sharedHealth *cache.SharedHealth
 	// tracker resolves dependency tags back to the cache keys built from them.
 	tracker dependency.Tracker
 	// routes resolves a request to a page, a redirect, or a not-found result.
@@ -612,8 +617,11 @@ func New(cfg Config) (*App, error) {
 	// On when the page cache is, and never in development: there the page cache
 	// is not read either, because what a developer is changing must show on the
 	// next request.
+	if _, ok := store.(cache.SharedCache); ok {
+		app.sharedHealth = cache.NewSharedHealth(logger, nil)
+	}
 	if cfg.Cache.Enabled && !devMode {
-		app.data = buildDataCache(cfg, logger, metrics)
+		app.data = buildDataCache(cfg, logger, metrics, app.sharedHealth)
 	}
 
 	app.renderer = render.New(tmpl, render.Options{
@@ -940,6 +948,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		// An action's wait for its redirect target is held to what is left of
 		// the response's write deadline.
 		WriteTimeout: a.cfg.Server.WriteTimeout,
+		SharedHealth: a.sharedHealth,
 	})
 	if err != nil {
 		return a.failedAfterInit(err)
@@ -1321,6 +1330,17 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 // never saw. SetTagged already hands it those tags on every write; this is the call
 // that finally reads them back.
 //
+// A store that is a cache.SharedCache goes further: the per-key walk and the
+// tag-level call are replaced by one DropTags, which marks stale (or, for
+// PurgeTags, removes) every page and collage.Cached value under the tags on the
+// store, and advances each tag's generation so a render or fetch any instance
+// had under way as it ran is not stored as fresh. It returns the pages it
+// reached, with what each was written with, so the keys every instance wrote —
+// not only this one's — are counted, named in the plugin event (a CDN purge
+// covers a page only another instance served) and warmed here, as far as
+// Cache.WarmLimit goes. The tracker's keys and the store's are merged, each key
+// once.
+//
 // The count is the number of keys the tracker resolved from tags and the cache
 // accepted an invalidation for — not a count of entries that were live at the time,
 // and not a count of what the store's own tag index dropped, since
@@ -1329,7 +1349,10 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 // succeed on a key that holds no entry, and reports no distinction either way, so a
 // key whose entry had already expired is counted like any other. The count is
 // therefore exactly what the tag reached according to the authority on that
-// question, and an upper bound on live entries removed.
+// question, and an upper bound on live entries removed. With a SharedCache the
+// store's index is that authority too, and it keeps an invalidated page under its
+// tags until it is re-rendered or expires, so a second invalidation before then
+// counts it again. A DropTags that fails dropped nothing, and counts nothing.
 //
 // A key that the cache fails to drop is not counted and does not stop the rest:
 // every other key is still invalidated and the failures are joined into the
@@ -1347,7 +1370,8 @@ func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) 
 // A page that InvalidateTags already marked stale is reached through the store's
 // own tag index (cache.TaggedCache), since the tracker has forgotten it. A custom
 // cache.StaleCache that is not also a TaggedCache therefore cannot have such
-// pages purged by tag; every built-in store can.
+// pages purged by tag; every built-in store can, and so does every
+// cache.SharedCache, whose DropTags purges what any instance wrote.
 func (a *App) PurgeTags(ctx context.Context, tags ...string) error {
 	_, err := a.dropTags(ctx, tags, true)
 	return err
@@ -1363,6 +1387,26 @@ func (a *App) invalidations() (started, finished uint64) {
 	return started, finished
 }
 
+// sharedDropTimeout bounds a SharedCache's DropTags. Ten times a page's read or
+// write budget (httpx's sharedStoreTimeout): one call covers a whole
+// invalidation, every tag and every entry under them in one step, and it is
+// made for a webhook or an action, not on a reader's way to a page. Past it the
+// store is treated as down for this invalidation, which is reported, rather
+// than let a stalled connection hold the caller.
+const sharedDropTimeout = 5 * time.Second
+
+// dropShared is dropTags's call to a SharedCache: one DropTags, bounded by
+// sharedDropTimeout, returning the page entries it reached.
+func (a *App) dropShared(ctx context.Context, shared cache.SharedCache, tags []string, purge bool) ([]cache.Reached, error) {
+	dropCtx, cancel := context.WithTimeout(ctx, sharedDropTimeout)
+	defer cancel()
+	reached, err := shared.DropTags(dropCtx, tags, purge)
+	if err != nil {
+		return nil, fmt.Errorf("collage: drop tags %v: %w", tags, err)
+	}
+	return reached, nil
+}
+
 // dropTags is InvalidateTagsN and PurgeTags: they differ only in what becomes of
 // the data store's values, marked stale or removed.
 func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, error) {
@@ -1375,14 +1419,25 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	// while this was under way would not be stored. A purge warms too, so its
 	// pages are back before their first reader asks.
 	var reached []string
+	// sharedReached are the page entries a SharedCache's DropTags reached, which
+	// any instance may have written: their recipes are adopted before the warm,
+	// so this instance can re-render a page only another served.
+	var sharedReached []cache.Reached
 	defer func() {
 		handler := a.warmer.Load()
-		switch {
-		case handler == nil:
-		case purge:
+		if handler == nil {
+			return
+		}
+		// Adopted only as far as one run warms: past the cap a recipe would be
+		// held for a key no run gets to, and every one adopted can evict one of
+		// this instance's own. Off, there is nothing to adopt for.
+		if limit, on := handler.WarmCap(); on && len(sharedReached) > 0 {
+			handler.AdoptShared(sharedReached[:min(len(sharedReached), limit)])
+		}
+		if purge {
 			// Warmed though gone: the purge removed them itself.
 			handler.WarmPurged(reached)
-		default:
+		} else {
 			handler.Warm(reached)
 		}
 	}()
@@ -1402,8 +1457,10 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	// A store that can keep an entry past its invalidation has its pages marked
 	// stale rather than dropped, so a failing re-render can still be answered
 	// with the last good copy. A purge, and a store that cannot, drop outright.
+	// A SharedCache does either itself, in its one DropTags call below.
+	shared, _ := a.store.(cache.SharedCache)
 	var staleStore cache.StaleCache
-	if !purge {
+	if !purge && shared == nil {
 		staleStore, _ = a.store.(cache.StaleCache)
 	}
 
@@ -1423,6 +1480,12 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	// one naming the host it was cached for.
 	var entries []plugin.InvalidatedEntry
 	seenEntry := make(map[plugin.InvalidatedEntry]bool)
+	addEntry := func(entry plugin.InvalidatedEntry) {
+		if entry.Path != "" && !seenEntry[entry] {
+			seenEntry[entry] = true
+			entries = append(entries, entry)
+		}
+	}
 	for _, key := range keys {
 		keyTags, err := a.tracker.Tags(ctx, key)
 		if err != nil {
@@ -1436,13 +1499,37 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 				entry.Host = host
 			}
 		}
-		if entry.Path == "" {
-			continue
+		addEntry(entry)
+	}
+
+	var failures error
+	dropped := true
+	if shared != nil {
+		var err error
+		sharedReached, err = a.dropShared(ctx, shared, tags, purge)
+		if err != nil {
+			failures = errors.Join(failures, err)
+			dropped = false
 		}
-		if !seenEntry[entry] {
-			seenEntry[entry] = true
-			entries = append(entries, entry)
+		// The store's index reaches the keys every instance wrote; the tracker
+		// only this one's. Both, once each, the tracker's first: a key in both
+		// is one this instance wrote, and is counted, warmed and named once.
+		seenKey := make(map[string]bool, len(keys)+len(sharedReached))
+		for _, key := range keys {
+			seenKey[key] = true
 		}
+		for _, entry := range sharedReached {
+			if !seenKey[entry.Key] {
+				seenKey[entry.Key] = true
+				keys = append(keys, entry.Key)
+			}
+			if host, path, ok := httpx.DecodeSharedMeta(entry.Meta); ok {
+				// Lowered as the host tag the tracker's entries come from is,
+				// so a page both know is one entry.
+				addEntry(plugin.InvalidatedEntry{Host: ascii.LowerString(host), Path: path})
+			}
+		}
+		reached = keys
 	}
 	slices.SortFunc(entries, func(x, y plugin.InvalidatedEntry) int {
 		if c := strings.Compare(x.Host, y.Host); c != 0 {
@@ -1451,33 +1538,43 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 		return strings.Compare(x.Path, y.Path)
 	})
 
-	var failures error
 	invalidated := 0
-	for _, key := range keys {
-		if staleStore != nil {
-			if err := staleStore.MarkStaleKey(ctx, key); err != nil {
-				failures = errors.Join(failures, fmt.Errorf("collage: mark %q stale: %w", key, err))
-				continue
+	if shared != nil {
+		// DropTags dropped every key in one step or, failing, none: then none is
+		// counted.
+		if dropped {
+			for _, key := range keys {
+				a.metrics.CacheEvent(ctx, observability.CacheInvalidate, key)
 			}
-		} else if a.store != nil {
-			if err := a.store.InvalidateKey(ctx, key); err != nil {
-				failures = errors.Join(failures, fmt.Errorf("collage: invalidate %q: %w", key, err))
-				continue
-			}
+			invalidated = len(keys)
 		}
-		a.metrics.CacheEvent(ctx, observability.CacheInvalidate, key)
-		invalidated++
+	} else {
+		for _, key := range keys {
+			if staleStore != nil {
+				if err := staleStore.MarkStaleKey(ctx, key); err != nil {
+					failures = errors.Join(failures, fmt.Errorf("collage: mark %q stale: %w", key, err))
+					continue
+				}
+			} else if a.store != nil {
+				if err := a.store.InvalidateKey(ctx, key); err != nil {
+					failures = errors.Join(failures, fmt.Errorf("collage: invalidate %q: %w", key, err))
+					continue
+				}
+			}
+			a.metrics.CacheEvent(ctx, observability.CacheInvalidate, key)
+			invalidated++
+		}
 	}
 
 	// After the per-key walk, so a store that indexes tags itself and a tracker
 	// that indexes them separately cannot disagree about a key both of them know:
 	// the key-level invalidation has already run by the time the tag-level one
-	// does, and both are idempotent.
+	// does, and both are idempotent. A SharedCache's DropTags has done both.
 	if staleStore != nil {
 		if err := staleStore.MarkStale(ctx, tags); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("collage: mark tags %v stale: %w", tags, err))
 		}
-	} else if tagged, ok := a.store.(cache.TaggedCache); ok {
+	} else if tagged, ok := a.store.(cache.TaggedCache); ok && shared == nil {
 		if err := tagged.Invalidate(ctx, tags); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("collage: invalidate tags %v: %w", tags, err))
 		}

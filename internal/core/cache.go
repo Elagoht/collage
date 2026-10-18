@@ -175,9 +175,18 @@ func (a *App) BuildID() string {
 // buildDataCache constructs the store collage.Cached keeps values in: on disk
 // beside a built-in disk cache, so a restart starts warm and a deploy with its
 // upstream down renders from what the last one fetched; in memory otherwise. A
-// directory it cannot use costs persistence, not the start.
-func buildDataCache(cfg Config, logger *slog.Logger, metrics observability.Metrics) *datacache.Store {
+// directory it cannot use costs persistence, not the start. A Store a fleet
+// shares holds the data as well, so one instance's invalidation reaches every
+// instance's next load; any other Store leaves data in this process's memory.
+// health is where that shared store's failures are logged: the App's, which
+// the page paths share.
+func buildDataCache(cfg Config, logger *slog.Logger, metrics observability.Metrics, health *cache.SharedHealth) *datacache.Store {
 	opts := datacache.Options{MaxEntries: cfg.Cache.MaxEntries, Logger: logger, Metrics: metrics}
+	if shared, ok := cfg.Cache.Store.(cache.SharedCache); ok {
+		opts.Backend = shared
+		opts.Health = health
+		return datacache.New(opts)
+	}
 	if cfg.Cache.Store != nil || cfg.Cache.Type != "disk" || cfg.Cache.Dir == "" {
 		return datacache.New(opts)
 	}

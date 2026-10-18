@@ -370,6 +370,11 @@ func newRecipes(max int) *recipes {
 func (s *recipes) put(key string, r recipe, read bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.putLocked(key, r, read)
+}
+
+// putLocked is put, under s.mu.
+func (s *recipes) putLocked(key string, r recipe, read bool) {
 	if node, ok := s.byKey[key]; ok {
 		node.recipe = r
 		if read {
@@ -388,6 +393,18 @@ func (s *recipes) put(key string, r recipe, read bool) {
 		s.unlinkLocked(evicted)
 		delete(s.byKey, evicted.key)
 	}
+}
+
+// putIfAbsent records r as key's recipe, marked read, unless key has one: the
+// check and the insert are one step, so a recipe a concurrent write put between
+// them is not replaced by an older one. See AdoptShared.
+func (s *recipes) putIfAbsent(key string, r recipe) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.byKey[key]; ok {
+		return
+	}
+	s.putLocked(key, r, true)
 }
 
 // markRead marks key read by a reader. It is on every reader's hit, so it takes
@@ -766,6 +783,17 @@ func (h *Handler) Warm(keys []string) {
 	h.warmKeys(keys, checksInvalidate)
 }
 
+// WarmCap returns how many keys one Warm call re-renders at most, and whether
+// warming is on at all. An invalidation through a SharedCache reads it to bound
+// how many recipes it adopts (see AdoptShared): adopting past it would evict
+// recipes this instance holds for keys it will never get to warm.
+func (h *Handler) WarmCap() (limit int, on bool) {
+	if h.warm == nil {
+		return 0, false
+	}
+	return h.warm.limit, true
+}
+
 // WarmPurged is Warm for the keys a purge reached, which removed their entries
 // itself: they are warmed though the cache no longer holds them.
 func (h *Handler) WarmPurged(keys []string) {
@@ -896,7 +924,7 @@ type requeueCount struct {
 
 // noInvalidationUnderWay reports whether no invalidation is under way now.
 func (h *Handler) noInvalidationUnderWay() bool {
-	m := h.invalidationMark()
+	m := h.localMark()
 	return m.started == m.finished
 }
 
@@ -914,7 +942,7 @@ func (h *Handler) noInvalidationUnderWay() bool {
 // Bounded, so a storm of invalidations cannot keep one key rendering: see park.
 func (h *Handler) requeue(key string, mark invalidationMark) {
 	w := h.warm
-	if !w.park(key, mark, h.invalidationMark().started) {
+	if !w.park(key, mark, h.localMark().started) {
 		return
 	}
 	if !h.noInvalidationUnderWay() {

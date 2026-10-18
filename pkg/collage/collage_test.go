@@ -538,3 +538,21 @@ func (*parityPlugin) Name() string                     { return "parity/plugin" 
 func (*parityPlugin) Version() string                  { return "0.0.1" }
 func (*parityPlugin) Init(context.Context, Host) error { return nil }
 func (*parityPlugin) Shutdown(context.Context) error   { return nil }
+
+// TestSharedCacheAliases pins the public names a shared store is written against:
+// a SharedCache is a TaggedCache and a StaleCache, and its three write outcomes
+// are distinct values.
+func TestSharedCacheAliases(t *testing.T) {
+	var _ StaleCache = SharedCache(nil)
+	var _ TaggedCache = SharedCache(nil)
+	var _ []Reached
+
+	outcomes := map[WriteOutcome]string{
+		WriteFresh:   "WriteFresh",
+		WriteStale:   "WriteStale",
+		WriteSkipped: "WriteSkipped",
+	}
+	if len(outcomes) != 3 {
+		t.Fatalf("write outcomes collide: %v", outcomes)
+	}
+}

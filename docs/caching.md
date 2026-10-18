@@ -237,6 +237,12 @@ also calling `TaggedCache.Invalidate(ctx, tags)` whenever your store implements
 tracker never saw — but with a store that does not, tag invalidation reaches only
 what the running process happens to remember.
 
+A store that is a [`collage.SharedCache`](#a-cache-a-fleet-shares) closes it
+completely. Its own tag index names every page and data value any instance
+wrote, so an invalidation on one instance reaches the pages another served, and
+the returned count, the warming and `CacheInvalidateEvent.Entries` cover the
+fleet's pages, not only this process's.
+
 **It is bounded by `MaxEntries`.** Nothing removes a key from the tracker when
 the cache evicts or expires it, and the cache key carries the request's query
 string, so any client can mint unlimited distinct keys for one page. Without a
@@ -564,6 +570,21 @@ Tags stay plain strings — `"author:" + id` here — because they are what
   of a multi-instance deployment keeps its own store in memory, but instances
   sharing one `Cache.Dir` share one data directory, and each prunes it to its
   own `MaxEntries` at startup.
+- **In a store a fleet shares.** When `Cache.Store` is a
+  [`collage.SharedCache`](#a-cache-a-fleet-shares), the values live in that store
+  beside the pages, and no instance keeps a copy: every `Cached` call reads the
+  store, so an `InvalidateTags` or `PurgeTags` on any instance reaches the next
+  load on every other. The price is one round trip and one JSON decode per load.
+  A value JSON cannot bring back as it was (the types listed above) is not
+  cached across renders at all, as `Once` would have it, because keeping it in
+  memory would bring back the per-instance copy; the one log line per type says
+  so. A store that errors, or takes longer than 500 milliseconds, is a miss: the
+  value is fetched and returned, and the failure is logged, at most once every 30
+  seconds and together with the pages' ("shared page and data cache
+  unavailable"), rather than once per load. What stays
+  in each process is the single fetch per key (N instances missing one key at
+  once make up to N upstream fetches), the background refresh and the failure
+  cooldown.
 - **Where it keeps nothing.** With `Cache.Enabled` false, in development, for a
   request that called `SkipCache`, and in an action's own handler, `Cached` behaves
   as `Once`: shared within the render, fetched fresh by the next. A preview therefore
@@ -838,6 +859,127 @@ keeps such a page until it is evicted or its key is purged.
 var _ collage.StaleCache = (*memoStore)(nil)
 ```
 
+### A cache a fleet shares
+
+Instances behind a load balancer each have their own memory, and an invalidation
+reaches only the instance that received the webhook. A store they all share fixes
+that, and `collage.SharedCache` is what a store implements to be one. It is
+discovered by type assertion, as `TaggedCache` and `StaleCache` are, and it
+includes both of them, so everything above still applies to it:
+
+```go
+type SharedCache interface {
+	TaggedCache
+	StaleCache
+	Epoch(ctx context.Context) (uint64, error)
+	SetSince(ctx context.Context, key string, content []byte, ttl time.Duration,
+		tags []string, meta []byte, since uint64) (etag string, outcome WriteOutcome, err error)
+	DropTags(ctx context.Context, tags []string, purge bool) ([]Reached, error)
+	GetData(ctx context.Context, key string) (value []byte, stale, found bool, err error)
+	SetData(ctx context.Context, key string, value []byte, ttl time.Duration,
+		tags []string, since uint64) (WriteOutcome, error)
+	DeleteData(ctx context.Context, key string) error
+}
+```
+
+**Redis.** [collage-redis](https://github.com/Elagoht/collage-redis) implements it:
+
+```go
+store, err := redis.New(redis.Config{URL: os.Getenv("REDIS_URL")})
+if err != nil {
+	log.Fatal(err)
+}
+app, err := collage.New(&collage.Config{
+	Cache: collage.CacheConfig{Enabled: true, Store: store},
+})
+```
+
+**What core does with one.** Pages and `collage.Cached` data both live in the
+store, and nothing is kept per instance in front of it: a copy in front would be
+the inconsistency this exists to remove.
+
+- *Ordering by an epoch.* The store owns a counter that only grows. A render, or
+  a data fetch, reads `Epoch` before it starts and hands that number to
+  `SetSince` or `SetData` when it writes. Each tag has a generation, the epoch at
+  its last invalidation, and a purge generation likewise. A write is
+  `WriteSkipped` if any tag it carries was purged after `since`, `WriteStale` if
+  any was invalidated after it, and `WriteFresh` otherwise. This is the rule a
+  single process keeps with its own counters, held across instances: a page that
+  B rendered from data A was invalidating is stored stale (still the best copy
+  for the stale fallback) and never as a fresh page that would stay until the
+  next invalidation, which for a `Static` page is for ever.
+- *One call to invalidate.* `InvalidateTags` and `PurgeTags` make one `DropTags`
+  call each, whatever the number of tags or entries, bounded by five seconds. It
+  advances the epoch, records the generations, marks stale (or removes) every page
+  and data value under the tags, and returns the pages it reached, all as one
+  atomic step. If it fails, the error is returned and nothing is counted.
+- *The fleet's pages are reached.* Each page is written with meta that records
+  its host and path, and `DropTags` returns it with the pages. The count, the
+  `CacheInvalidateEvent.Entries` a CDN purge or deploy adapter acts on, and the
+  warming therefore cover pages only another instance served. The tracker's keys
+  and the store's are merged, each once.
+- *A failing store is a miss.* An epoch read or write that fails or takes longer
+  than 500 milliseconds is a page rendered and served without being stored. It is
+  never a failed request, so it is not reported as one: no `"cache_write"` error
+  log and no `OnError` event, which a full Redis (epoch and reads answer, every
+  write fails) would otherwise send on every cacheable miss. Instead every call
+  the App makes to the store — the page's epoch read, write and stale mark, and
+  every `Cached` read, epoch and write — reports into one health per App, logged
+  at warn at most once every 30 seconds with how many failures went unlogged
+  (`collage: shared page and data cache unavailable`), and at info once when a
+  call succeeds after a logged failure (`… available again`). A store that fails
+  and answers by turns gets one of each per 30 seconds, not one per request.
+- *A late overlapped write does not replace a newer one.* When A invalidates and
+  its warm writes a page fresh, and then B finishes a render that began before
+  the invalidation, B's write is `WriteStale`; if the entry it would replace is
+  fresh and was written by a render that began after the invalidation, the store
+  keeps that entry and does not write B's. The same holds for data values.
+
+A custom `Store` that is not a `SharedCache` behaves exactly as before, and so do
+the memory cache and `Type: "disk"`.
+
+**Things to know.**
+
+- *The invalidating instance warms for the fleet.* Every instance has its own
+  warmer, and only the one that ran the invalidation re-renders, within its own
+  `WarmLimit`; the keys beyond it are served by whichever instance gets the next
+  visitor, a `MISS` once. The plugin event gets every entry, not a trimmed list.
+- *A page that was invalidated and not yet re-rendered stays in the store's tag
+  index.* A second invalidation of its tags before that re-render counts it
+  again, names it again in the event, and offers it for warming again.
+- *Single fetch per key is per instance.* The concurrent loads of one key in a
+  process wait for one fetch; N instances missing it at once make up to N.
+- *Values JSON cannot round-trip are not shared*, as described under
+  [caching data](#caching-data-not-only-pages).
+- *How long the store keeps what it holds is the store's.* collage-redis bounds
+  every key by a maximum age (seven days by default), so a stale copy is gone
+  after that long without a successful re-render, even during an outage, and it
+  starts every deploy from an empty namespace, so a rolling deploy's old and new
+  builds never read each other's pages. Another implementation sets its own
+  rules.
+
+**Checking your own.** `collagetest.SharedCacheSuite` runs the whole contract
+against a store, so you can find out that you got it wrong before a fleet does:
+
+```go
+func TestMySharedStore(t *testing.T) {
+	collagetest.SharedCacheSuite(t, func(t *testing.T) (a, b collage.SharedCache) {
+		// Two handles on one empty store, as two instances hold two
+		// connections to one Redis.
+		return newHandle(t, backend), newHandle(t, backend)
+	})
+}
+```
+
+It runs `CacheSuite` on the first handle, which checks the `Cache`, `TaggedCache`
+and `StaleCache` contracts a store implements (`CacheSuite` is also what you call
+for a store that is not shared), then a `Shared` section that writes through one
+handle and checks through the other: the epoch ordering, overlapped writes landing
+stale or skipped, what `DropTags` reaches, data values, and concurrent use, which
+means something under `-race`. To test an application that runs as a fleet,
+`collagetest.NewSharedCache()` is an in-memory `SharedCache`; two Apps given the
+same one behave as two instances on one store.
+
 ## Which query parameters are part of the key
 
 By default, the whole raw query string is a cache dimension. That is the
@@ -934,8 +1076,10 @@ the copy in its memory as a fresh `HIT` until that copy expires — for a `Stati
 page, which has no TTL, that can be until the instance restarts or evicts it. A CDN
 that refetches the page meanwhile can be handed the old copy and keep it. Give
 each instance its own `Dir`. For a fleet that must see one another's
-invalidations, use a shared `Cache.Store` that implements `collage.StaleCache` and
-`collage.TaggedCache` instead of `Type: "disk"`.
+invalidations, use a shared `Cache.Store` instead of `Type: "disk"`: one that
+implements [`collage.SharedCache`](#a-cache-a-fleet-shares), such as
+[collage-redis](https://github.com/Elagoht/collage-redis), keeps pages and data
+consistent across the fleet.
 
 The `collage.Cached` data store lives beside the pages, in `Dir/data/`. Unlike
 the pages it is shared across builds: see
