@@ -1096,7 +1096,12 @@ func (h *Handler) renderPage(
 ) *outcome {
 	// Read before anything renders, so an invalidation under way as it begins,
 	// or begun at any point during it, keeps it out of the cache. See writeCache.
-	mark := h.invalidationMark()
+	// A shared store's epoch only for a render that may be written, so a page
+	// that never is costs it no round trip.
+	mark := h.localMark()
+	if cacheable && r.Method == http.MethodGet && !types.IsCapture(ctx) {
+		mark = h.invalidationMark(ctx)
+	}
 
 	// Deliberately after the cache lookup: BeforeRenderHook documents that it
 	// does not fire when a cached render is served instead of a fresh one.
@@ -1356,19 +1361,44 @@ func (h *Handler) reportsCacheStatus(ctx context.Context) bool {
 }
 
 // invalidationMark is the invalidations counted started and finished when a
-// render began.
+// render began, and, when the cache is a SharedCache, the store's epoch then.
 type invalidationMark struct {
 	started, finished uint64
+	// shared is the SharedCache's epoch, which the write is weighed against
+	// (see writeShared), valid when sharedOK is: false when the cache is not a
+	// SharedCache, when the mark is local only, or when the epoch could not be
+	// read.
+	shared   uint64
+	sharedOK bool
 }
 
-// invalidationMark reads the invalidation counts now, or zeros when there is no
-// such rule.
-func (h *Handler) invalidationMark() invalidationMark {
+// localMark reads this process's invalidation counts now, or zeros when there
+// is no such rule. It never reaches the cache: it is what the checks after a
+// write and the warmer's bookkeeping compare against.
+func (h *Handler) localMark() invalidationMark {
 	if h.invalidations == nil {
 		return invalidationMark{}
 	}
 	started, finished := h.invalidations()
 	return invalidationMark{started: started, finished: finished}
+}
+
+// invalidationMark reads the mark a render that may be written begins at: the
+// local counts, and a SharedCache's epoch, under sharedStoreTimeout. A failed
+// read leaves sharedOK false, which skips the write; it is not reported, as
+// the store being down is not this request's failure.
+func (h *Handler) invalidationMark(ctx context.Context) invalidationMark {
+	m := h.localMark()
+	shared, ok := h.cache.(cache.SharedCache)
+	if !ok {
+		return m
+	}
+	epochCtx, cancel := context.WithTimeout(ctx, sharedStoreTimeout)
+	defer cancel()
+	if epoch, err := shared.Epoch(epochCtx); err == nil {
+		m.shared, m.sharedOK = epoch, true
+	}
+	return m
 }
 
 // storable reports whether a render that began at m may be stored now: no
@@ -1379,7 +1409,7 @@ func (h *Handler) storable(m invalidationMark) bool {
 
 // invalidatedSince reports whether an invalidation has begun since m was read.
 func (h *Handler) invalidatedSince(m invalidationMark) bool {
-	return h.invalidationMark().started != m.started
+	return h.localMark().started != m.started
 }
 
 // foreignMarker matches the forgery-token marker of any key.
@@ -1477,6 +1507,9 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 // write — may have read what was invalidated, so it is not written: stored, it
 // would be served as fresh for its whole TTL, and the invalidation would be lost.
 // It is still served to the requests it was made for.
+//
+// A SharedCache is written through writeShared instead, which weighs the write
+// against the store's epoch as well, so an invalidation on any instance counts.
 func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string, mark invalidationMark) string {
 	ctx := r.Context()
 	// A static build asking what it answers is not a reader: the build has
@@ -1484,6 +1517,13 @@ func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, cont
 	// state the build left behind.
 	if types.IsCapture(ctx) {
 		return ""
+	}
+	if shared, ok := h.cache.(cache.SharedCache); ok {
+		report := func(err error) {
+			h.reportError(r, failure{err: err, page: page, stage: stageCacheWrite})
+		}
+		return h.writeShared(r, shared, key, content, h.ttlFor(page.Strategy, page.CacheTTL), tags,
+			newRecipe(r, page.CacheParams, false), mark, report)
 	}
 	if !h.storable(mark) {
 		h.overlapped(ctx, mark)
@@ -1553,8 +1593,24 @@ func (h *Handler) overlapped(ctx context.Context, mark invalidationMark) {
 // the entry written after it fresh. Dropped rather than marked stale, because
 // which of the two it was is not known, and a purge leaves nothing behind.
 //
+// A SharedCache's entry is marked stale instead, and on any local overlap,
+// under way as the render began as well as begun since — the check the other
+// stores make before the write, which writeShared leaves to the store's epoch
+// and to this. The store has already dropped what another instance's purge
+// reached; what is left is the best copy to fall back on.
+//
 // It reports whether it dropped the entry.
 func (h *Handler) dropIfOverlapped(ctx context.Context, key string, mark invalidationMark) bool {
+	if shared, ok := h.cache.(cache.SharedCache); ok {
+		if h.storable(mark) {
+			return false
+		}
+		markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedStoreTimeout)
+		defer cancel()
+		_ = shared.MarkStaleKey(markCtx, key)
+		h.overlapped(ctx, mark)
+		return true
+	}
 	if !h.invalidatedSince(mark) {
 		return false
 	}

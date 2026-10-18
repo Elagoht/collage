@@ -88,7 +88,12 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 	produce := func() *outcome {
 		// Before the handler runs, so an invalidation during it keeps its body
 		// out of the cache. See writeCache.
-		mark := h.invalidationMark()
+		// A shared store's epoch only when the body may be written; see
+		// renderPage.
+		mark := h.localMark()
+		if cacheable && r.Method == http.MethodGet && !types.IsCapture(ctx) {
+			mark = h.invalidationMark(ctx)
+		}
 		docRenderer, ok := h.renderer.(documentRenderer)
 		if !ok {
 			err := fmt.Errorf("%w: %T", ErrDocumentRenderingUnsupported, h.renderer)
@@ -273,6 +278,13 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 	// Not for a static build's header capture; see writeCache.
 	if types.IsCapture(ctx) {
 		return ""
+	}
+	if shared, ok := h.cache.(cache.SharedCache); ok {
+		report := func(err error) {
+			h.reportError(r, route.failure(0, stageCacheWrite, err))
+		}
+		return h.writeShared(r, shared, key, result.Body, h.ttlFor(doc.Strategy, doc.CacheTTL), result.Tags,
+			newRecipe(r, doc.CacheParams, true), mark, report)
 	}
 	if !h.storable(mark) {
 		h.overlapped(ctx, mark)
