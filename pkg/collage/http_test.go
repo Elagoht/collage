@@ -122,8 +122,8 @@ func TestVary_OutsideARequest(t *testing.T) {
 	}
 }
 
-// A mounted handler sees the full path, runs after middleware, and is answered
-// with whatever it writes.
+// A mounted handler sees the full path and is answered with whatever it writes:
+// outside the middleware by default, after it WithMiddleware.
 func TestHandle_ServesUnderItsPrefix(t *testing.T) {
 	api := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		lang, _ := r.Context().Value(langKey{}).(string)
@@ -131,25 +131,37 @@ func TestHandle_ServesUnderItsPrefix(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot)
 		io.WriteString(w, `{"path":"`+r.URL.Path+`","lang":"`+lang+`"}`)
 	})
-	// vary=true so the page can read the language back with collage.Varied; the
-	// mounted handler below still reads it straight from the context, which a
-	// per-request handler (unlike a shared page render) is free to do.
-	h := langApp(t, true, func(app *collage.App) {
-		if err := app.Handle("/api/", api); err != nil {
-			t.Fatalf("Handle: %v", err)
-		}
-	}).Handler()
+	for _, c := range []struct {
+		name string
+		opts []collage.HandleOption
+		want string
+	}{
+		{"bare", nil, `{"path":"/api/users/7","lang":""}`},
+		{"WithMiddleware", []collage.HandleOption{collage.WithMiddleware()}, `{"path":"/api/users/7","lang":"tr"}`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// vary=true so the page can read the language back with
+			// collage.Varied; the mounted handler below still reads it
+			// straight from the context, which a per-request handler (unlike
+			// a shared page render) is free to do.
+			h := langApp(t, true, func(app *collage.App) {
+				if err := app.Handle("/api/", api, c.opts...); err != nil {
+					t.Fatalf("Handle: %v", err)
+				}
+			}).Handler()
 
-	rec := getWith(h, "/api/users/7", "tr")
-	if rec.Code != http.StatusTeapot {
-		t.Fatalf("status = %d, want the handler's own 418", rec.Code)
-	}
-	if body := rec.Body.String(); body != `{"path":"/api/users/7","lang":"tr"}` {
-		t.Errorf("body = %q, want the full path and the middleware's value", body)
-	}
-	// The page is still the page.
-	if rec := getWith(h, "/", ""); !strings.Contains(rec.Body.String(), "lang=en") {
-		t.Errorf("GET / = %q, want the page", rec.Body.String())
+			rec := getWith(h, "/api/users/7", "tr")
+			if rec.Code != http.StatusTeapot {
+				t.Fatalf("status = %d, want the handler's own 418", rec.Code)
+			}
+			if body := rec.Body.String(); body != c.want {
+				t.Errorf("body = %q, want %q", body, c.want)
+			}
+			// The page is still the page, middleware and all.
+			if rec := getWith(h, "/", "tr"); !strings.Contains(rec.Body.String(), "lang=tr") {
+				t.Errorf("GET / = %q, want the page in the middleware's language", rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -236,7 +248,9 @@ func TestUse_OrderAndShortCircuit(t *testing.T) {
 				next.ServeHTTP(w, r)
 			})
 		})
-		_ = app.Handle("/private/", http.NotFoundHandler())
+		// WithMiddleware, because the middleware is what guards it: a bare
+		// mount brings its own.
+		_ = app.Handle("/private/", http.NotFoundHandler(), collage.WithMiddleware())
 	}).Handler()
 
 	if rec := getWith(h, "/private/", ""); rec.Code != http.StatusUnauthorized {

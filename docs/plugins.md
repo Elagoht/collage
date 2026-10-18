@@ -149,9 +149,9 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `ConfigReader` (embedded) | What `collage.PluginConfig(host, defaults)` reads this plugin's section of `Config.PluginConfig` through — see [Configuration](#configuration) |
 | `RegisterDocument(*Document) error` | Contribute a document |
 | `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
-| `Handle(prefix, http.Handler) error` | Serve a handler under a prefix ending in `/`, or at one exact path without it (`/metrics`), as `App.Handle` does — an event stream, a WebSocket |
+| `Handle(prefix, http.Handler) error` | Serve a handler under a prefix ending in `/`, or at one exact path without it (`/metrics`), as `App.Handle` does — an event stream, a WebSocket — but always inside the middleware chain, as `App.Handle` does only with `WithMiddleware()` |
 | `RenderFragment(r, FragmentRequest) (*FragmentRender, error)` | Render a fragment a page opened with `WithFragmentPath`, in parts — see below |
-| `Use(middleware) error` | Wrap every request, where the plugin was registered: for one in `Config.Plugins`, outside the application's own middleware — see [http.md](http.md) |
+| `Use(middleware) error` | Wrap every request, where the plugin was registered: for one in `Config.Plugins`, outside the application's own middleware — but not one for a handler the application mounted with `App.Handle` without `WithMiddleware()`; see [http.md](http.md) |
 | `URL(name, locale, params) (string, error)` | The path of a page or document, as `App.URL` builds it |
 | `OriginFor(ctx, host) string` | The public origin of a host: an `OriginResolver`'s, else `Config.BaseURL` |
 | `MultiOrigin() bool` | Whether an `OriginResolver` is registered, so origins vary by host |

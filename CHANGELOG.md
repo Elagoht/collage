@@ -1,5 +1,51 @@
 # Changelog
 
+## v0.67.0
+
+### Changed
+
+- **A handler mounted with `App.Handle` runs with no middleware.** Neither the
+  application's `app.Use` middleware nor any plugin's (session, flash, i18n,
+  consent, secure, ratelimit, basicauth, fail2ban, accesslog, redirects, tenant,
+  compress, the development toolbar, …) runs for a request to it any more: the handler is the application's own, and
+  wraps itself in the middleware it wants. What still applies is what happens
+  before routing: the plugins' `RequestHook`s, the request span, the metrics
+  (with `RouteInfo` naming the handler), the panic guard, the clean-path redirect
+  and encoded-slash 404, the baseline `X-Content-Type-Options` and
+  `X-Frame-Options` headers, and draining on shutdown. Which requests skip the
+  middleware is decided on the cleaned path by the same match routing uses, so
+  only that handler can be reached that way.
+
+  **An application that relied on `app.Use` or plugin middleware — basicauth,
+  ratelimit, session, secure, … — to protect or shape a `Handle` mount must add
+  `collage.WithMiddleware()` to that call to keep it:**
+  `app.Handle("/api/", api, collage.WithMiddleware())`. Without it, a mount a
+  basicauth or rate limit used to guard is now open. A middleware that rewrites a
+  request's path into a `Handle` prefix reaches the handler only
+  `WithMiddleware()` as well; otherwise the rewritten request is a 404. One that
+  rewrites a path *out of* a bare prefix — `/api/legacy` to a page — no longer
+  runs for it, since the mount claims the request first.
+
+  No plugin can answer for a bare mount: a ban, an IP allowlist, a maintenance
+  page or an access log over the whole site does not cover it. Mount it
+  `WithMiddleware()` for that, or put your own middleware around your mux. In
+  particular: fail2ban still counts a bare mount's probes in its `RequestHook`,
+  but its 403 is middleware, so a banned client keeps full access to `/api/` —
+  where login brute force usually happens; accesslog no longer logs its traffic;
+  a redirects rule under its prefix no longer fires; and tenant's context is not
+  in its requests.
+
+  A plugin's `Host.Handle` is unchanged: a plugin's endpoints (live, oauth,
+  ogimage, prometheus, uploads, websocket, …) still run inside the middleware.
+
+### Added
+
+- **`collage.HandleOption`** and **`collage.WithMiddleware()`**, its first
+  option. `App.Handle`'s signature gained a variadic `...HandleOption`: existing
+  calls compile unchanged (source-compatible), though apidiff reports the
+  changed method signature, which a method value or an interface typed
+  `func(string, http.Handler) error` no longer matches.
+
 ## v0.66.0
 
 ### Added

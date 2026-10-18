@@ -232,11 +232,13 @@ written the way you already would. `app.Use` takes standard `net/http` middlewar
 which runs before routing and inside the framework's panic guard and metrics, and
 whatever it puts in the request context is what data handlers read. `app.Handle`
 mounts any `http.Handler` under a prefix — collage applies no forgery check, body
-limit or cache to it.
+limit or cache to it, and no middleware: it brings its own, unless mounted
+`collage.WithMiddleware()`.
 
 ```go
-app.Use(requireAuth)
-app.Handle("/api/", apiRouter) // chi, echo, http.ServeMux, a gRPC gateway
+app.Use(requireSession)                         // pages, documents, actions
+app.Handle("/api/", requireToken(apiRouter))    // chi, echo, http.ServeMux, a gRPC gateway
+app.Handle("/admin/api/", adminAPI, collage.WithMiddleware()) // inside the site's middleware
 ```
 
 [docs/http.md](docs/http.md) has both, and `collage.Vary` for a cached page whose

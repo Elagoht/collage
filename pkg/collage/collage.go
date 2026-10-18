@@ -91,13 +91,20 @@ type Host = interface {
 	// App.Handle: a prefix ending in "/", refused when it shadows a registered
 	// route. It is for what a file system cannot answer — an event stream, a
 	// WebSocket.
+	//
+	// Unlike App.Handle's default, it runs inside the middleware chain, the
+	// application's and every plugin's, as if mounted WithMiddleware: a
+	// plugin's endpoint is part of the site, and may read the session or tenant
+	// a middleware resolved, or rely on a basicauth guarding /metrics.
 	Handle(prefix string, handler http.Handler) error
 
 	// --- Wrapping requests ---
 	//
 	// Use adds middleware around the handling of every request, as App.Use does,
 	// after the application's: a plugin's headers, limits and cookies wrap what
-	// the application's middleware produced.
+	// the application's middleware produced. Like App.Use's, it does not
+	// run for a handler the application mounted with App.Handle without
+	// WithMiddleware: that one brings its own.
 	Use(middleware func(http.Handler) http.Handler) error
 
 	// --- Reading the site map ---

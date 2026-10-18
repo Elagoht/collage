@@ -107,15 +107,24 @@ func (a *App) Actions() []*Action { return a.c.Actions() }
 
 // Handle serves handler under prefix: an API, a webhook receiver, anything written
 // against net/http. A prefix ending in "/" claims every path beneath it, one
-// without is a single path. The request reaches handler unchanged, through the
-// middleware registered with Use but with no forgery check, body limit or cache.
-func (a *App) Handle(prefix string, handler http.Handler) error {
-	return a.c.Handle(prefix, handler)
+// without is a single path. The request reaches handler unchanged, with no
+// forgery check, body limit or cache, and with no middleware: neither what Use
+// added nor any plugin's — session, ratelimit, basicauth, compress — runs for it.
+// The handler is the application's, and wraps itself in the middleware it wants.
+// The request hooks, span, metrics, panic guard and the clean-path redirect still
+// apply.
+//
+// WithMiddleware runs one mount inside the middleware chain instead, as every
+// mount was before v0.67.0; a middleware that rewrites a path into prefix reaches
+// the handler only then. A plugin's Host.Handle always runs inside the chain.
+func (a *App) Handle(prefix string, handler http.Handler, opts ...HandleOption) error {
+	return a.c.Handle(prefix, handler, opts...)
 }
 
-// Use adds middleware around every request — pages, documents, actions, mounts and
-// handlers alike — inside the framework's tracing, metrics and panic guard. The
-// first registered is the outermost.
+// Use adds middleware around every request — pages, documents, actions, mounts, a
+// plugin's handlers and a handler mounted WithMiddleware — inside the framework's
+// tracing, metrics and panic guard. A handler mounted with Handle alone is not
+// wrapped: it brings its own. The first registered is the outermost.
 func (a *App) Use(middleware func(http.Handler) http.Handler) error {
 	return a.c.Use(middleware)
 }
