@@ -165,6 +165,11 @@ func cacheRoundTrip(t *testing.T, c collage.Cache) {
 	if _, _, found := c.Get(ctx, "other"); found {
 		t.Error("Get found a key that was never Set")
 	}
+	otherEtag, err := c.Set(ctx, "k2", []byte("different page"), time.Minute)
+	must(t, "Set", err)
+	if otherEtag == etag {
+		t.Errorf("Set returned etag %q for different content, want an etag that changes with the content", otherEtag)
+	}
 }
 
 func cacheNotAliased(t *testing.T, c collage.Cache) {
@@ -341,7 +346,7 @@ func sharedOverlap(t *testing.T, a, b collage.SharedCache, purge bool, want coll
 	ctx := context.Background()
 	since := sharedEpoch(t, a)
 	drop(t, b, []string{"t"}, purge)
-	_, outcome, err := a.SetSince(ctx, "k", []byte("body"), time.Minute, []string{"t"}, nil, since)
+	etag, outcome, err := a.SetSince(ctx, "k", []byte("body"), time.Minute, []string{"t"}, nil, since)
 	must(t, "SetSince", err)
 	if outcome != want {
 		t.Errorf("SetSince outcome = %v, want %v: a tag dropped (purge=%v) after since decides the write", outcome, want, purge)
@@ -350,22 +355,50 @@ func sharedOverlap(t *testing.T, a, b collage.SharedCache, purge bool, want coll
 		if _, _, _, found := b.GetStale(ctx, "k"); found {
 			t.Error("a skipped write left an entry behind")
 		}
-		return
+	} else {
+		wantStale(t, b, "k", []byte("body"), etag)
 	}
-	if _, _, found := b.Get(ctx, "k"); found {
-		t.Error("Get found an entry written stale")
+	// The boundary is strict: a generation equal to since is not "after" it, so a
+	// write that began once the drop had happened is fresh.
+	since = sharedEpoch(t, a)
+	_, outcome, err = a.SetSince(ctx, "k2", []byte("body"), time.Minute, []string{"t"}, nil, since)
+	must(t, "SetSince", err)
+	if outcome != collage.WriteFresh {
+		t.Errorf("SetSince outcome = %v with since read after the drop (purge=%v), want WriteFresh: only a generation greater than since counts", outcome, purge)
 	}
-	if _, _, stale, found := b.GetStale(ctx, "k"); !found || !stale {
-		t.Errorf("GetStale found=%v stale=%v for an entry written stale, want both true", found, stale)
+	if _, _, found := b.Get(ctx, "k2"); !found {
+		t.Errorf("Get missed a write that began after the drop (purge=%v)", purge)
 	}
 }
 
 func sharedOverlapStale(t *testing.T, a, b collage.SharedCache) {
 	sharedOverlap(t, a, b, false, collage.WriteStale)
+	// A write is stale when any one of its tags was invalidated, not all of them.
+	ctx := context.Background()
+	since := sharedEpoch(t, a)
+	drop(t, b, []string{"t1"}, false)
+	_, outcome, err := a.SetSince(ctx, "any", []byte("body"), time.Minute, []string{"t1", "z"}, nil, since)
+	must(t, "SetSince", err)
+	if outcome != collage.WriteStale {
+		t.Errorf("SetSince outcome = %v for tags [t1 z] with only t1 invalidated, want WriteStale: any one tag decides", outcome)
+	}
 }
 
 func sharedOverlapPurgeSkipped(t *testing.T, a, b collage.SharedCache) {
 	sharedOverlap(t, a, b, true, collage.WriteSkipped)
+	// Skipped outranks stale: a purge of one tag wins over an invalidation of
+	// another, whatever order the tags are listed in.
+	ctx := context.Background()
+	since := sharedEpoch(t, a)
+	drop(t, b, []string{"t1"}, false)
+	drop(t, b, []string{"t2"}, true)
+	for _, tags := range [][]string{{"t1", "t2"}, {"t2", "t1"}} {
+		_, outcome, err := a.SetSince(ctx, "both", []byte("body"), time.Minute, tags, nil, since)
+		must(t, "SetSince", err)
+		if outcome != collage.WriteSkipped {
+			t.Errorf("SetSince outcome = %v for tags %v with t1 invalidated and t2 purged, want WriteSkipped", outcome, tags)
+		}
+	}
 }
 
 func sharedUnrelatedTagFresh(t *testing.T, a, b collage.SharedCache) {
@@ -393,9 +426,17 @@ func sharedDropReachesOtherHandle(t *testing.T, a, b collage.SharedCache) {
 	if _, _, found := b.Get(ctx, "k"); !found {
 		t.Fatal("Get through the other handle missed a page written through this one")
 	}
+	// A page under another tag and a data value under this one must survive: the
+	// drop reaches pages under its tags only, and never lists data entries.
+	_, _, err = a.SetSince(ctx, "other", []byte("other body"), time.Minute, []string{"o"}, nil, sharedEpoch(t, a))
+	must(t, "SetSince", err)
+	setData(t, a, "d", "value", time.Minute, []string{"t"}, sharedEpoch(t, a))
 	reached := drop(t, b, []string{"t"}, false)
 	if len(reached) != 1 || reached[0].Key != "k" || !bytes.Equal(reached[0].Meta, meta) {
-		t.Fatalf("DropTags reached %+v, want exactly key k with meta %q", reached, meta)
+		t.Fatalf("DropTags reached %+v, want exactly key k with meta %q: not pages under other tags, not data entries", reached, meta)
+	}
+	if _, _, found := b.Get(ctx, "other"); !found {
+		t.Error("DropTags([t]) made a page under tag o stale: it must touch only entries under its tags")
 	}
 	if _, _, found := a.Get(ctx, "k"); found {
 		t.Error("Get through the writing handle found the page after the other handle dropped its tag")
@@ -496,8 +537,8 @@ func sharedDataOverlap(t *testing.T, a, b collage.SharedCache) {
 	if o := setData(t, a, "stale", "v", time.Minute, []string{"t"}, since); o != collage.WriteStale {
 		t.Errorf("SetData outcome = %v after an invalidation past since, want WriteStale", o)
 	}
-	if _, stale, found := getData(t, b, "stale"); !found || !stale {
-		t.Errorf("GetData of a value written stale: found=%v stale=%v, want both true", found, stale)
+	if v, stale, found := getData(t, b, "stale"); !found || !stale || v != "v" {
+		t.Errorf("GetData of a value written stale = %q found=%v stale=%v, want the value kept, found and stale", v, found, stale)
 	}
 	drop(t, b, []string{"u"}, true)
 	if o := setData(t, a, "skipped", "v", time.Minute, []string{"u"}, since); o != collage.WriteSkipped {
@@ -508,6 +549,14 @@ func sharedDataOverlap(t *testing.T, a, b collage.SharedCache) {
 	}
 	if o := setData(t, a, "unrelated", "v", time.Minute, []string{"w"}, since); o != collage.WriteFresh {
 		t.Errorf("SetData outcome = %v with a tag nothing dropped, want WriteFresh", o)
+	}
+	// The boundary is strict: with since read after the drops, a generation equal
+	// to it is not "after", so the writes are fresh.
+	since = sharedEpoch(t, a)
+	for _, tag := range []string{"t", "u"} {
+		if o := setData(t, a, "after-"+tag, "v", time.Minute, []string{tag}, since); o != collage.WriteFresh {
+			t.Errorf("SetData outcome = %v for tag %s with since read after its drop, want WriteFresh: only a generation greater than since counts", o, tag)
+		}
 	}
 }
 
