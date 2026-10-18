@@ -18,6 +18,9 @@ type sharedEntry struct {
 	// stale is set by an invalidation and cleared by the next write to the key,
 	// which builds a new entry.
 	stale bool
+	// since is the epoch the write that made the entry began at; 0 for an
+	// unconditional write, which no overlapped write then defers to.
+	since uint64
 }
 
 // SharedMemory is the reference in-memory SharedCache. It holds everything under
@@ -124,7 +127,7 @@ func (c *SharedMemory) SetTagged(ctx context.Context, key string, content []byte
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.putPageLocked(key, content, ttl, tags, nil, false), nil
+	return c.putPageLocked(key, content, ttl, tags, nil, false, 0), nil
 }
 
 // SetSince stores a page entry unless, or stale if, a tag was dropped after since.
@@ -134,30 +137,46 @@ func (c *SharedMemory) SetSince(ctx context.Context, key string, content []byte,
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	outcome := c.outcomeLocked(tags, since)
-	if outcome == WriteSkipped {
+	outcome, generation := c.outcomeLocked(tags, since)
+	switch {
+	case outcome == WriteSkipped:
 		return "", WriteSkipped, nil
+	case outcome == WriteStale && c.newerFresh(c.pages[key], generation):
+		return "", WriteStale, nil
 	}
-	return c.putPageLocked(key, content, ttl, tags, meta, outcome == WriteStale), outcome, nil
+	return c.putPageLocked(key, content, ttl, tags, meta, outcome == WriteStale, since), outcome, nil
 }
 
 // outcomeLocked is the rule SetSince and SetData share: a purge after since
 // skips the write, else an invalidation after since stores it stale.
-func (c *SharedMemory) outcomeLocked(tags []string, since uint64) WriteOutcome {
+// generation is the highest invalidation generation among tags, which a stale
+// outcome compares the entry already stored with (see newerFresh).
+func (c *SharedMemory) outcomeLocked(tags []string, since uint64) (outcome WriteOutcome, generation uint64) {
 	for _, t := range tags {
 		if c.purged[t] > since {
-			return WriteSkipped
+			return WriteSkipped, 0
 		}
 	}
 	for _, t := range tags {
-		if c.invalidated[t] > since {
-			return WriteStale
-		}
+		generation = max(generation, c.invalidated[t])
 	}
-	return WriteFresh
+	if generation > since {
+		return WriteStale, generation
+	}
+	return WriteFresh, generation
 }
 
-func (c *SharedMemory) putPageLocked(key string, content []byte, ttl time.Duration, tags []string, meta []byte, stale bool) string {
+// newerFresh reports whether e, the entry a stale write would replace, is
+// fresh and was written by a render that began at or after generation — after
+// the drop that makes the new write stale. It holds newer content than the
+// overlapped write, which began before that drop, and is kept: replaced, a
+// fleet would serve the older render, stale, where it had a fresh copy of the
+// newer one.
+func (c *SharedMemory) newerFresh(e *sharedEntry, generation uint64) bool {
+	return e != nil && !e.stale && !c.expired(e) && e.since >= generation
+}
+
+func (c *SharedMemory) putPageLocked(key string, content []byte, ttl time.Duration, tags []string, meta []byte, stale bool, since uint64) string {
 	etag := ETag(content)
 	var expiresAt time.Time
 	if ttl > 0 {
@@ -171,6 +190,7 @@ func (c *SharedMemory) putPageLocked(key string, content []byte, ttl time.Durati
 		expiresAt: expiresAt,
 		tags:      slices.Clone(tags),
 		stale:     stale,
+		since:     since,
 	}
 	indexTags(c.pageTags, key, tags)
 	return etag
@@ -364,9 +384,12 @@ func (c *SharedMemory) SetData(ctx context.Context, key string, value []byte, tt
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	outcome := c.outcomeLocked(tags, since)
-	if outcome == WriteSkipped {
+	outcome, generation := c.outcomeLocked(tags, since)
+	switch {
+	case outcome == WriteSkipped:
 		return WriteSkipped, nil
+	case outcome == WriteStale && c.newerFresh(c.data[key], generation):
+		return WriteStale, nil
 	}
 	var expiresAt time.Time
 	if ttl > 0 {
@@ -378,6 +401,7 @@ func (c *SharedMemory) SetData(ctx context.Context, key string, value []byte, tt
 		expiresAt: expiresAt,
 		tags:      slices.Clone(tags),
 		stale:     outcome == WriteStale,
+		since:     since,
 	}
 	indexTags(c.dataTags, key, tags)
 	return outcome, nil

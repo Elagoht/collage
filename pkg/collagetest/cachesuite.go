@@ -99,6 +99,8 @@ func SharedCacheSuite(t *testing.T, newPair func(t *testing.T) (a, b collage.Sha
 			{"DataInvalidateStale", sharedDataInvalidateStale},
 			{"DataDelete", sharedDataDelete},
 			{"DataOverlap", sharedDataOverlap},
+			{"StaleWriteKeepsNewerFresh", sharedStaleWriteKeepsNewerFresh},
+			{"DataStaleWriteKeepsNewerFresh", sharedDataStaleWriteKeepsNewerFresh},
 			{"WideDrop", sharedWideDrop},
 			{"Concurrent", sharedConcurrent},
 		} {
@@ -557,6 +559,76 @@ func sharedDataOverlap(t *testing.T, a, b collage.SharedCache) {
 		if o := setData(t, a, "after-"+tag, "v", time.Minute, []string{tag}, since); o != collage.WriteFresh {
 			t.Errorf("SetData outcome = %v for tag %s with since read after its drop, want WriteFresh: only a generation greater than since counts", o, tag)
 		}
+	}
+}
+
+// sharedStaleWriteKeepsNewerFresh: a render that began before a drop (since0)
+// and writes after a render that began after it (since1) has written fresh
+// lands stale — but must not replace the newer fresh entry with its older
+// content. With no fresh entry under the key, or a stale one, it is stored
+// stale as before.
+func sharedStaleWriteKeepsNewerFresh(t *testing.T, a, b collage.SharedCache) {
+	ctx := context.Background()
+	since0 := sharedEpoch(t, a)
+	drop(t, b, []string{"t"}, false)
+	since1 := sharedEpoch(t, a)
+	newEtag, outcome, err := a.SetSince(ctx, "k", []byte("new"), time.Minute, []string{"t"}, nil, since1)
+	must(t, "SetSince", err)
+	if outcome != collage.WriteFresh {
+		t.Fatalf("SetSince after the drop = %v, want WriteFresh", outcome)
+	}
+	_, outcome, err = b.SetSince(ctx, "k", []byte("old"), time.Minute, []string{"t"}, nil, since0)
+	must(t, "SetSince", err)
+	if outcome != collage.WriteStale {
+		t.Errorf("SetSince from before the drop = %v, want WriteStale", outcome)
+	}
+	content, etag, found := a.Get(ctx, "k")
+	if !found || string(content) != "new" || etag != newEtag {
+		t.Errorf("Get after an overlapped write = %q etag %q found=%v, want the newer fresh %q kept: an older render must not replace it", content, etag, found, "new")
+	}
+
+	// No entry: the stale write lands. A stale entry: the stale write replaces it.
+	_, outcome, err = b.SetSince(ctx, "none", []byte("old"), time.Minute, []string{"t"}, nil, since0)
+	must(t, "SetSince", err)
+	if outcome != collage.WriteStale {
+		t.Errorf("SetSince with no entry = %v, want WriteStale", outcome)
+	}
+	wantStale(t, a, "none", []byte("old"), collage.ETag([]byte("old")))
+	_, outcome, err = b.SetSince(ctx, "none", []byte("older"), time.Minute, []string{"t"}, nil, since0)
+	must(t, "SetSince", err)
+	if outcome != collage.WriteStale {
+		t.Errorf("SetSince over a stale entry = %v, want WriteStale", outcome)
+	}
+	wantStale(t, a, "none", []byte("older"), collage.ETag([]byte("older")))
+}
+
+// sharedDataStaleWriteKeepsNewerFresh is sharedStaleWriteKeepsNewerFresh for
+// data values.
+func sharedDataStaleWriteKeepsNewerFresh(t *testing.T, a, b collage.SharedCache) {
+	since0 := sharedEpoch(t, a)
+	drop(t, b, []string{"t"}, false)
+	since1 := sharedEpoch(t, a)
+	if o := setData(t, a, "d", "new", time.Minute, []string{"t"}, since1); o != collage.WriteFresh {
+		t.Fatalf("SetData after the drop = %v, want WriteFresh", o)
+	}
+	if o := setData(t, b, "d", "old", time.Minute, []string{"t"}, since0); o != collage.WriteStale {
+		t.Errorf("SetData from before the drop = %v, want WriteStale", o)
+	}
+	if v, stale, found := getData(t, a, "d"); !found || stale || v != "new" {
+		t.Errorf("GetData after an overlapped write = %q stale=%v found=%v, want the newer fresh %q kept", v, stale, found, "new")
+	}
+
+	if o := setData(t, b, "none", "old", time.Minute, []string{"t"}, since0); o != collage.WriteStale {
+		t.Errorf("SetData with no value = %v, want WriteStale", o)
+	}
+	if v, stale, found := getData(t, a, "none"); !found || !stale || v != "old" {
+		t.Errorf("GetData of a value written stale = %q stale=%v found=%v, want old, stale", v, stale, found)
+	}
+	if o := setData(t, b, "none", "older", time.Minute, []string{"t"}, since0); o != collage.WriteStale {
+		t.Errorf("SetData over a stale value = %v, want WriteStale", o)
+	}
+	if v, stale, found := getData(t, a, "none"); !found || !stale || v != "older" {
+		t.Errorf("GetData after a stale write over a stale value = %q stale=%v found=%v, want older, stale", v, stale, found)
 	}
 }
 

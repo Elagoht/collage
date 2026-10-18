@@ -15,14 +15,30 @@
   (five-second budget), and the pages it reaches, which any instance wrote, count
   toward the result, are named in `CacheInvalidateEvent.Entries` and are warmed,
   within `WarmLimit`. A store that errors or takes longer than 500 milliseconds
-  is a miss or a skipped write, never a failed request. A store that is not a
-  `SharedCache`, the memory cache and `Type: "disk"` behave as before.
+  is a miss or a skipped write, never a failed request, and is logged at most
+  once every 30 seconds per App, for pages and data together, with no error log
+  or `OnError` event per request. A stale write does not replace a fresh entry
+  written by a render that began after the invalidation that made it stale. A
+  store that is not a `SharedCache`, the memory cache and `Type: "disk"` behave
+  as before.
 - **`collagetest.SharedCacheSuite`**, which runs the `SharedCache` contract
   against a store through two handles on one backend, and
   **`collagetest.CacheSuite`** for the `Cache`, `TaggedCache` and `StaleCache`
   contracts of any store.
 - **`collagetest.NewSharedCache`**, an in-memory `SharedCache`, so a test can run
   two Apps as two instances on one store.
+
+### Fixed
+
+- **A data load that joins a fetch an invalidation overtook gets the value
+  stale.** A render that began after an invalidation, and found a `Cached` fetch
+  that began before it still running, shared that fetch's value as fresh: its
+  page was not degraded, and was stored fresh from the data the invalidation
+  replaced, until its TTL, or for good on a `Static` page. The joiner now gets
+  the value as the store keeps it, stale, so the render is served `no-store`
+  and not stored, as one served a stale value is. This changes the in-memory and
+  disk data caches too, not only a `SharedCache`. A load that wants fresh data
+  and joins such a fetch now fetches again, as documented.
 
 ### Known behaviour
 

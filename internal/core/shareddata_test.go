@@ -26,7 +26,7 @@ func TestBuildDataCache_ASharedStoreHoldsTheData(t *testing.T) {
 	cfg.Cache.Store = shared
 	cfg.Cache.Type = "disk"
 	cfg.Cache.Dir = dir
-	store := buildDataCache(cfg, slog.New(slog.DiscardHandler), observability.MetricsOrNoop(nil))
+	store := buildDataCache(cfg, slog.New(slog.DiscardHandler), observability.MetricsOrNoop(nil), nil)
 	t.Cleanup(func() { store.Close(context.Background()) })
 
 	fetch := func(context.Context) (types.CacheValue, error) { return sharedDataValue("v"), nil }

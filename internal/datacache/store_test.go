@@ -683,3 +683,55 @@ func TestStore_AnInvalidationEndsTheCooldown(t *testing.T) {
 		t.Errorf("down was called %d more times", attempts.Load()-before)
 	}
 }
+
+// joinAfterInvalidation runs a load whose fetch an invalidation overtakes,
+// and a second load that begins after the invalidation and joins that fetch
+// rather than starting its own. It returns what the joiner was given.
+func joinAfterInvalidation(t *testing.T, s *Store, invalidate func()) (types.CacheValue, bool) {
+	t.Helper()
+	started, release := make(chan struct{}), make(chan struct{})
+	slow := func(context.Context) (types.CacheValue, error) {
+		close(started)
+		<-release
+		return str("old"), nil
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.Load(bg, "k", 0, []string{"t"}, slow, decodeStr)
+	}()
+	<-started
+	invalidate()
+	type result struct {
+		value types.CacheValue
+		stale bool
+	}
+	joined := make(chan result, 1)
+	go func() {
+		v, stale, err := s.Load(bg, "k", 0, []string{"t"}, func(context.Context) (types.CacheValue, error) { return str("new"), nil }, decodeStr)
+		if err != nil {
+			t.Errorf("joining Load: %v", err)
+		}
+		joined <- result{v, stale}
+	}()
+	// The joiner is waiting on the running fetch once it is in the map's call;
+	// there is no hook for that, so give it time to get there. Too short a wait
+	// only makes the joiner find the stored value instead, which is stale too
+	// (and refreshes it in the background with "new").
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	<-done
+	r := <-joined
+	return r.value, r.stale
+}
+
+// A load that joins a fetch an invalidation overtook gets the fetch's value
+// stale, as the store holds it: its render is degraded and not stored, rather
+// than written fresh from what the invalidation replaced.
+func TestStore_JoinerOfOvertakenFetchIsStale(t *testing.T) {
+	s := New(Options{})
+	v, stale := joinAfterInvalidation(t, s, func() { s.Invalidate([]string{"t"}) })
+	if v != str("old") || !stale {
+		t.Errorf("joiner got %v, stale %v; want old, stale", v, stale)
+	}
+}

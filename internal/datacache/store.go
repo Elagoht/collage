@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -66,6 +67,11 @@ type Options struct {
 	// shares, so one instance's invalidation is every instance's. MaxEntries
 	// does not apply; the backend bounds itself.
 	Backend Backend
+	// Health, with a Backend, is where the backend's failures are reported: the
+	// App's one SharedHealth, which the page paths report into as well, so the
+	// store failing under both is one warning per window. Nil gives the store
+	// one of its own, logging to Logger.
+	Health *cache.SharedHealth
 }
 
 // Store is a bounded, tag-invalidated cache of fetched values. It is safe for
@@ -125,7 +131,7 @@ type Store struct {
 	backendTimeout time.Duration
 	cooling        map[string]*cooldown
 	coolSeq        uint64
-	health         backendHealth
+	health         *cache.SharedHealth
 }
 
 type entry struct {
@@ -154,8 +160,10 @@ type call struct {
 	abandoned bool
 	// epoch is the store's epoch when the fetch started.
 	epoch uint64
-	// overtaken reports a fetch whose write a backend stored stale or not at
-	// all: an invalidation on some instance came after it started.
+	// overtaken reports a fetch whose value was stored stale or not at all:
+	// an invalidation or a purge came after it started — in this process, by
+	// the store's epoch, or on any instance, by the backend's answer to the
+	// write. It is set before done is closed.
 	overtaken bool
 }
 
@@ -185,6 +193,12 @@ func New(opts Options) *Store {
 		s.backendTimeout = BackendTimeout
 		s.cooling = make(map[string]*cooldown)
 		s.unencodable = make(map[string]bool)
+		s.health = opts.Health
+		if s.health == nil {
+			// Read through s.now at each call, so a test that replaces the
+			// store's clock moves the window too.
+			s.health = cache.NewSharedHealth(logger, func() time.Time { return s.now() })
+		}
 	}
 	return s
 }
@@ -207,7 +221,8 @@ func New(opts Options) *Store {
 // never stored. A ctx marked with types.WantsFreshData waits the same way on a
 // stale value, cooling down or not, and gets the upstream's error rather than
 // the value. It shares a running fetch only if no invalidation came after that
-// fetch started.
+// fetch started. Any other load that shares a fetch an invalidation overtook
+// gets its value stale, as the store keeps it.
 //
 // decode is not used by a store kept in memory. A store with a Backend keeps
 // nothing in process but the fetches running and the cooldowns: each Load reads
@@ -269,8 +284,7 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 		// until a successful fetch replaces it.
 	}
 	if running, ok := s.inflight[key]; ok {
-		value, err, again = s.awaitLocked(ctx, running)
-		return value, false, err, again
+		return s.awaitLocked(ctx, running)
 	}
 	started := &call{done: make(chan struct{}), epoch: s.epoch}
 	s.inflight[key] = started
@@ -304,6 +318,10 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 	if element, ok := s.entries[key]; ok && err == nil {
 		failures = element.Value.(*entry).failures
 	}
+	// Under s.mu and before done is closed, so every load that joined this
+	// fetch reads it: they get the value as the store keeps it, stale if an
+	// invalidation came after the fetch began.
+	started.overtaken = epoch != s.epoch
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
 	s.mu.Unlock()
 	close(started.done)
@@ -315,7 +333,15 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 
 // awaitLocked waits on running, a fetch of the key ctx's load wants, and
 // releases s.mu, which it must be called with.
-func (s *Store) awaitLocked(ctx context.Context, running *call) (value types.CacheValue, err error, again bool) {
+//
+// A load that joins a fetch gets its value as the store keeps it: stale when an
+// invalidation overtook the fetch, whenever the joiner began. Given as fresh, a
+// joiner that began after the invalidation would render undegraded from what
+// the invalidation replaced, and its page — whose own mark the invalidation
+// predates, so no overlap guard sees it — would be stored fresh: until its TTL,
+// or for good on a Static page. Stale, the render is served no-store and not
+// stored, as one served a stale value is.
+func (s *Store) awaitLocked(ctx context.Context, running *call) (value types.CacheValue, stale bool, err error, again bool) {
 	// A fetch that started before an invalidation may have read what it
 	// invalidated. That is good enough for a reader served stale anyway, not
 	// for one that wants fresh data: it waits the old fetch out, so as not to
@@ -327,16 +353,16 @@ func (s *Store) awaitLocked(ctx context.Context, running *call) (value types.Cac
 	select {
 	case <-running.done:
 		if (outdated || wantsFresh && running.overtaken) && ctx.Err() == nil {
-			return nil, nil, true
+			return nil, false, nil, true
 		}
 		// Not the starter's cancellation: one reader disconnecting, on purpose
 		// or not, would fail every reader who shared its fetch.
 		if running.abandoned && ctx.Err() == nil {
-			return nil, nil, true
+			return nil, false, nil, true
 		}
-		return running.value, running.err, false
+		return running.value, running.err == nil && running.overtaken, running.err, false
 	case <-ctx.Done():
-		return nil, ctx.Err(), false
+		return nil, false, ctx.Err(), false
 	}
 }
 
@@ -378,6 +404,8 @@ func (s *Store) refresh(ctx context.Context, key string, ttl time.Duration, tags
 		target.failures++
 		target.retryAt = now.Add(retryBackoff(target.failures))
 	}
+	// As in load: what a fresh-data load that joined this refresh is told.
+	started.overtaken = epoch != s.epoch
 	s.settleLocked(key, value, err, ttl, tags, epoch, purges)
 	s.mu.Unlock()
 	close(started.done)

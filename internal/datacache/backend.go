@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"slices"
-	"sync"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
@@ -41,9 +40,9 @@ var _ Backend = cache.SharedCache(nil)
 // refresh, which nobody waits on, keeps its own, longer budget.
 const BackendTimeout = 500 * time.Millisecond
 
-// backendQuiet is how long a backend that keeps failing is not reported again:
-// down, it fails on every load, and one line per load would drown the log.
-const backendQuiet = 30 * time.Second
+// backendQuiet is how long a backend that keeps failing is not reported again;
+// see cache.SharedHealth.
+const backendQuiet = cache.SharedQuiet
 
 // cooldown is a key whose refreshes failed, failures times in a row: no refresh
 // starts for it before retryAt. tags are the ones it was loaded with, so an
@@ -56,46 +55,13 @@ type cooldown struct {
 	seq      uint64
 }
 
-// backendHealth is whether the backend is answering, for the log: the first
-// failure warns, later ones within backendQuiet are only counted, and the next
-// warning, or the first success, says how many there were.
-type backendHealth struct {
-	mu         sync.Mutex
-	down       bool
-	warnedAt   time.Time
-	suppressed int
-}
-
-// backendDone records how a call to the backend made for parent went. A
-// failure while parent is done is the caller leaving, not news about the
-// backend, and is not counted either way.
+// backendDone records how a call to the backend made for parent went, in the
+// store's SharedHealth: the App's, shared with the page paths, so a backend
+// failing under both is reported once per window, not once per path or per
+// load. A failure while parent is done is the caller leaving, not news about
+// the backend, and is not counted either way.
 func (s *Store) backendDone(parent context.Context, op, key string, err error) {
-	if err != nil && parent.Err() != nil {
-		return
-	}
-	h := &s.health
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err == nil {
-		if h.down {
-			s.logger.Info("collage: shared data cache available again", "suppressed", h.suppressed)
-			h.down, h.suppressed = false, 0
-		}
-		return
-	}
-	now := s.now()
-	switch {
-	case !h.down:
-		h.down, h.warnedAt = true, now
-		s.logger.Warn("collage: shared data cache unavailable, loads fetch and nothing is shared",
-			"op", op, "key", keyName(key), "err", err)
-	case now.Sub(h.warnedAt) >= backendQuiet:
-		s.logger.Warn("collage: shared data cache still unavailable",
-			"op", op, "key", keyName(key), "err", err, "suppressed", h.suppressed)
-		h.warnedAt, h.suppressed = now, 0
-	default:
-		h.suppressed++
-	}
+	s.health.Done(parent, "data "+op, keyName(key), err)
 }
 
 // loadShared is load for a store with a backend.
@@ -119,8 +85,7 @@ func (s *Store) loadShared(ctx context.Context, key string, ttl time.Duration, t
 
 	s.mu.Lock()
 	if running, ok := s.inflight[key]; ok {
-		value, err, again = s.awaitLocked(ctx, running)
-		return value, false, err, again
+		return s.awaitLocked(ctx, running)
 	}
 	started := &call{done: make(chan struct{}), epoch: s.epoch}
 	s.inflight[key] = started

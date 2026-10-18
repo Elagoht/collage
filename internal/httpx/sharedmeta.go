@@ -192,7 +192,14 @@ func (h *Handler) AdoptShared(reached []cache.Reached) []string {
 // invalidates by — carries them as the tracker does. rcp is how to rebuild the
 // request, written into the entry's meta whether or not this instance warms, as
 // another that does may adopt it (see AdoptShared). report reports a failure
-// the way the caller's path does.
+// of the tracker the way the caller's path does.
+//
+// The store's own failures — the write, and the mark of an overlapped one —
+// go to the Handler's SharedHealth instead, not to report: a SharedCache's
+// failure is a write not made, never the request's, and a full Redis, which
+// answers the epoch read and fails every write, would otherwise log an error
+// and send plugins an ErrorEvent on every cacheable miss. The health logs it
+// once per window, with the data cache's failures.
 //
 // mark.shared is the store's epoch read before the render began. Without one —
 // the store was unreachable then — the write cannot be weighed, so it is not
@@ -209,11 +216,14 @@ func (h *Handler) writeShared(r *http.Request, shared cache.SharedCache, key str
 
 	// Not cancelled with the request: the render is done, and the reader who
 	// waited for it leaving is no reason to lose it for the next one.
-	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedStoreTimeout)
+	// detached, not writeCtx, is whose end would make a failure no news: the
+	// write's own budget running out is the store failing.
+	detached := context.WithoutCancel(ctx)
+	writeCtx, cancel := context.WithTimeout(detached, sharedStoreTimeout)
 	defer cancel()
 	etag, outcome, err := shared.SetSince(writeCtx, key, content, ttl, routeTags, encodeSharedMeta(r.Host, r.URL.Path, rcp), mark.shared)
+	h.sharedHealth.Done(detached, "page write", key, err)
 	if err != nil {
-		report(fmt.Errorf("collage: cache write: %w", err))
 		return ""
 	}
 	switch outcome {
@@ -234,7 +244,7 @@ func (h *Handler) writeShared(r *http.Request, shared cache.SharedCache, key str
 	if err := h.tracker.Track(ctx, key, routeTags); err != nil {
 		report(fmt.Errorf("collage: track %q: %w", key, err))
 	}
-	if h.staleIfOverlapped(ctx, shared, key, mark, report) {
+	if h.staleIfOverlapped(ctx, shared, key, mark) {
 		h.wroteForWarm(ctx, key, true)
 		return ""
 	}
@@ -249,20 +259,20 @@ func (h *Handler) writeShared(r *http.Request, shared cache.SharedCache, key str
 // The store has already dropped what any instance's purge reached; what is left
 // is the best copy to fall back on.
 //
-// A failure to mark it is reported as a cache write failure is: the entry would
-// otherwise stay fresh for its TTL, forever for a Static page, and nothing else
-// would say so. Bounded and not cancelled with the request, as the write is.
+// A failure to mark it goes to the SharedHealth, as a failed write does: the
+// entry would otherwise stay fresh for its TTL, forever for a Static page, so
+// it is logged, but once per window, as the store failing, not as a request's
+// error. Bounded and not cancelled with the request, as the write is.
 //
 // It reports whether the write was overlapped.
-func (h *Handler) staleIfOverlapped(ctx context.Context, shared cache.SharedCache, key string, mark invalidationMark, report func(error)) bool {
+func (h *Handler) staleIfOverlapped(ctx context.Context, shared cache.SharedCache, key string, mark invalidationMark) bool {
 	if h.storable(mark) {
 		return false
 	}
-	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedStoreTimeout)
+	detached := context.WithoutCancel(ctx)
+	markCtx, cancel := context.WithTimeout(detached, sharedStoreTimeout)
 	defer cancel()
-	if err := shared.MarkStaleKey(markCtx, key); err != nil {
-		report(fmt.Errorf("collage: cache write: mark overlapped %q stale: %w", key, err))
-	}
+	h.sharedHealth.Done(detached, "page mark stale", key, shared.MarkStaleKey(markCtx, key))
 	h.overlapped(ctx, mark)
 	return true
 }

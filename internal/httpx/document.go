@@ -280,6 +280,7 @@ func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Doc
 		return ""
 	}
 	if shared, ok := h.cache.(cache.SharedCache); ok {
+		// For the tracker's failures only: the store's go to its SharedHealth.
 		report := func(err error) {
 			h.reportError(r, route.failure(0, stageCacheWrite, err))
 		}

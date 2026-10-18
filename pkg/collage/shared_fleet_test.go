@@ -277,3 +277,43 @@ func TestFleet_LocalPurgeOverlappingRenderNotStored(t *testing.T) {
 		t.Errorf("the store holds %q after a purge overlapped its render", key)
 	}
 }
+
+// A render on B that begins after A's invalidation, while a fetch that
+// invalidation overtook is still running on B, joins that fetch rather than
+// starting its own. What it is given is the old value, so its page must not be
+// stored fresh: its own mark postdates the drop, and only the data being stale
+// keeps it out. /p/y is another page key on the same data key, so the second
+// render is not coalesced into the first one's page render.
+func TestFleet_JoinerOfOvertakenFetchNotStoredFresh(t *testing.T) {
+	f := newFleet(t, -1)
+	first := f.getHeld(t, f.hb)
+	f.setName("grace")
+	if _, err := f.a.InvalidateTagsN(context.Background(), "author"); err != nil {
+		t.Fatal(err)
+	}
+	second := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		rec := httptest.NewRecorder()
+		f.hb.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/p/y", nil))
+		second <- rec
+	}()
+	// Nothing tells when the second render is waiting on the running fetch;
+	// give it time to get there. Its body below says whether it did.
+	time.Sleep(200 * time.Millisecond)
+	f.release()
+	<-first
+	rec := <-second
+	if !strings.Contains(rec.Body.String(), "ada") {
+		t.Fatalf("the second render did not join the overtaken fetch (body %q); the test needs it to", rec.Body.String())
+	}
+
+	ctx := context.Background()
+	f.store.mu.Lock()
+	keys := slices.Clone(f.store.keys)
+	f.store.mu.Unlock()
+	for _, key := range keys {
+		if content, _, ok := f.store.Get(ctx, key); ok && strings.Contains(string(content), "ada") {
+			t.Errorf("the store holds %q fresh with the data A's invalidation replaced: %s", key, content)
+		}
+	}
+}

@@ -551,7 +551,10 @@ A page's failed cache write (`"cache_write"`) happens inside the render shared b
 every reader waiting on the same cache key, so its `Request` is that shared
 render's stripped request, not a particular reader's: no cookies, only the headers
 middleware declared with `collage.Vary`, no `RemoteAddr`. A document's cache write
-carries the request of the reader whose miss started the shared render.
+carries the request of the reader whose miss started the shared render. A
+`collage.SharedCache` store failing a write sends no event: the store's own
+failures are logged, rate-limited, instead (see
+[A cache a fleet shares](caching.md#a-cache-a-fleet-shares)).
 
 ## Dispatch and error semantics
 

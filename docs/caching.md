@@ -579,8 +579,9 @@ Tags stay plain strings — `"author:" + id` here — because they are what
   cached across renders at all, as `Once` would have it, because keeping it in
   memory would bring back the per-instance copy; the one log line per type says
   so. A store that errors, or takes longer than 500 milliseconds, is a miss: the
-  value is fetched and returned, and the failed write is logged, at most once
-  every 30 seconds ("backend unavailable") rather than once per load. What stays
+  value is fetched and returned, and the failure is logged, at most once every 30
+  seconds and together with the pages' ("shared page and data cache
+  unavailable"), rather than once per load. What stays
   in each process is the single fetch per key (N instances missing one key at
   once make up to N upstream fetches), the background refresh and the failure
   cooldown.
@@ -917,9 +918,22 @@ the inconsistency this exists to remove.
   `CacheInvalidateEvent.Entries` a CDN purge or deploy adapter acts on, and the
   warming therefore cover pages only another instance served. The tracker's keys
   and the store's are merged, each once.
-- *A failing store is a miss.* An epoch or write that fails or takes longer than
-  500 milliseconds is a page rendered and served without being stored, and logged.
-  It is never a failed request.
+- *A failing store is a miss.* An epoch read or write that fails or takes longer
+  than 500 milliseconds is a page rendered and served without being stored. It is
+  never a failed request, so it is not reported as one: no `"cache_write"` error
+  log and no `OnError` event, which a full Redis (epoch and reads answer, every
+  write fails) would otherwise send on every cacheable miss. Instead every call
+  the App makes to the store — the page's epoch read, write and stale mark, and
+  every `Cached` read, epoch and write — reports into one health per App, logged
+  at warn at most once every 30 seconds with how many failures went unlogged
+  (`collage: shared page and data cache unavailable`), and at info once when a
+  call succeeds after a logged failure (`… available again`). A store that fails
+  and answers by turns gets one of each per 30 seconds, not one per request.
+- *A late overlapped write does not replace a newer one.* When A invalidates and
+  its warm writes a page fresh, and then B finishes a render that began before
+  the invalidation, B's write is `WriteStale`; if the entry it would replace is
+  fresh and was written by a render that began after the invalidation, the store
+  keeps that entry and does not write B's. The same holds for data values.
 
 A custom `Store` that is not a `SharedCache` behaves exactly as before, and so do
 the memory cache and `Type: "disk"`.

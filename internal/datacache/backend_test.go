@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -572,5 +573,59 @@ func TestBackend_CloseRacesARefresh(t *testing.T) {
 	s.mu.Unlock()
 	if inflight != 0 {
 		t.Errorf("%d fetches still in flight after Close and the loads returned", inflight)
+	}
+}
+
+// With a backend, a load that joins a fetch another instance's invalidation
+// overtook gets its value stale, as the backend stored it.
+func TestBackend_JoinerOfOvertakenFetchIsStale(t *testing.T) {
+	backend := cache.NewSharedMemory()
+	s := shared(t, backend, Options{})
+	v, stale := joinAfterInvalidation(t, s, func() { markStale(t, backend, "t") })
+	if v != str("old") || !stale {
+		t.Errorf("joiner got %v, stale %v; want old, stale", v, stale)
+	}
+}
+
+// A backend that fails and answers by turns, as a full Redis under noeviction
+// does — the epoch and reads answer, every write fails with OOM — logs at most
+// one warning and one recovery per backendQuiet, not one of each per load.
+func TestBackend_LogsFlapping(t *testing.T) {
+	backend := &flaky{SharedMemory: cache.NewSharedMemory()}
+	var logs strings.Builder
+	var logsMu sync.Mutex
+	s := shared(t, backend, Options{Logger: slog.New(slog.NewTextHandler(lockedWriter{&logsMu, &logs}, nil))})
+	clk := newClock(s)
+	count := func(level string) int {
+		logsMu.Lock()
+		defer logsMu.Unlock()
+		return strings.Count(logs.String(), "level="+level)
+	}
+	backend.failSet.Store(true)
+	var calls atomic.Int32
+	for i := range 1000 {
+		if i%100 == 0 {
+			clk.advance(100 * time.Millisecond)
+		}
+		// A key of its own each time, so every load misses, fetches and
+		// writes: an epoch read that answers, then a write that fails.
+		key := "k" + strconv.Itoa(i)
+		if v, _, err := s.Load(bg, key, 0, nil, counting(&calls, "v"), decodeStr); err != nil || v != str("v") {
+			t.Fatalf("Load = %v, %v; want the fetched value", v, err)
+		}
+	}
+	if n := count("WARN"); n != 1 {
+		t.Fatalf("1,000 failed writes between successful reads logged %d warnings, want 1:\n%s", n, logs.String())
+	}
+	if n := count("INFO"); n > 1 {
+		t.Fatalf("1,000 recoveries logged %d infos, want at most 1:\n%s", n, logs.String())
+	}
+	clk.advance(backendQuiet)
+	s.Load(bg, "last", 0, nil, counting(&calls, "v"), decodeStr)
+	if n := count("WARN"); n != 2 {
+		t.Fatalf("a failure after %v logged %d warnings in all, want 2:\n%s", backendQuiet, n, logs.String())
+	}
+	if n := strings.Count(logs.String(), "suppressed=999"); n != 1 {
+		t.Errorf("the second warning does not count the 999 failures between the warnings:\n%s", logs.String())
 	}
 }

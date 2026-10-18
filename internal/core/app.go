@@ -330,6 +330,11 @@ type App struct {
 	// concrete type to Config.Cache.Store defeats that, and this package cannot
 	// tell the difference without reflection; see that field's own documentation.
 	store cache.Cache
+	// sharedHealth is whether a Store that is a cache.SharedCache is answering,
+	// for the log; nil for any other store. It is one per App, handed to the
+	// data cache and to the handler alike, so the store failing under pages
+	// and data is one warning per window, not one per path.
+	sharedHealth *cache.SharedHealth
 	// tracker resolves dependency tags back to the cache keys built from them.
 	tracker dependency.Tracker
 	// routes resolves a request to a page, a redirect, or a not-found result.
@@ -612,8 +617,11 @@ func New(cfg Config) (*App, error) {
 	// On when the page cache is, and never in development: there the page cache
 	// is not read either, because what a developer is changing must show on the
 	// next request.
+	if _, ok := store.(cache.SharedCache); ok {
+		app.sharedHealth = cache.NewSharedHealth(logger, nil)
+	}
 	if cfg.Cache.Enabled && !devMode {
-		app.data = buildDataCache(cfg, logger, metrics)
+		app.data = buildDataCache(cfg, logger, metrics, app.sharedHealth)
 	}
 
 	app.renderer = render.New(tmpl, render.Options{
@@ -940,6 +948,7 @@ func (a *App) buildHandler() (http.Handler, error) {
 		// An action's wait for its redirect target is held to what is left of
 		// the response's write deadline.
 		WriteTimeout: a.cfg.Server.WriteTimeout,
+		SharedHealth: a.sharedHealth,
 	})
 	if err != nil {
 		return a.failedAfterInit(err)

@@ -362,16 +362,20 @@ func (f failingSetSince) SetSince(context.Context, string, []byte, time.Duration
 	return "", cache.WriteSkipped, errors.New("redis down")
 }
 
-// A write the store refuses with an error is reported as any cache write
-// failure is, and the reader still gets the page.
+// A write the store refuses with an error is the store failing, not the
+// request: it is logged as a warning through the SharedHealth, not as a cache
+// write error, and the reader still gets the page.
 func TestShared_SetSinceErrorIsReported(t *testing.T) {
 	page := testPage("home", "/", types.StrategyIncremental)
 	env := newEnv(t, []*types.Page{page}, withSharedCache(failingSetSince{cache.NewSharedMemory()}))
 	if rec := env.get("/"); rec.Code != http.StatusOK || rec.Body.String() != "<html>page</html>" {
 		t.Fatalf("response = %d %q, want the page", rec.Code, rec.Body.String())
 	}
-	if n := levelCount(env.logs, slog.LevelError); n != 1 {
-		t.Errorf("error records = %d, want the cache write failure reported once", n)
+	if n := levelCount(env.logs, slog.LevelWarn); n != 1 {
+		t.Errorf("warning records = %d, want the failed write logged once", n)
+	}
+	if n := levelCount(env.logs, slog.LevelError); n != 0 {
+		t.Errorf("error records = %d, want 0: the store's failure is not the request's", n)
 	}
 }
 
@@ -408,9 +412,9 @@ func (f failingMarkStale) MarkStaleKey(context.Context, string) error {
 	return errors.New("redis down")
 }
 
-// A local overlap whose entry cannot be marked stale is reported as a cache
-// write failure: on a network store the entry would otherwise stay fresh for
-// its TTL, and nothing would say so.
+// A local overlap whose entry cannot be marked stale is logged, through the
+// SharedHealth as a failed write is: on a network store the entry would
+// otherwise stay fresh for its TTL, and nothing would say so.
 func TestShared_MarkStaleFailureIsReported(t *testing.T) {
 	store := failingMarkStale{cache.NewSharedMemory()}
 	page := testPage("home", "/", types.StrategyIncremental)
@@ -428,7 +432,10 @@ func TestShared_MarkStaleFailureIsReported(t *testing.T) {
 	if rec := <-done; rec.Code != http.StatusOK || rec.Body.String() != "<html>home</html>" {
 		t.Fatalf("response = %d %q, want the page", rec.Code, rec.Body.String())
 	}
-	if n := levelCount(env.logs, slog.LevelError); n != 1 {
-		t.Errorf("error records = %d, want the failed mark reported once", n)
+	if n := levelCount(env.logs, slog.LevelWarn); n != 1 {
+		t.Errorf("warning records = %d, want the failed mark logged once", n)
+	}
+	if n := levelCount(env.logs, slog.LevelError); n != 0 {
+		t.Errorf("error records = %d, want 0: the store's failure is not the request's", n)
 	}
 }

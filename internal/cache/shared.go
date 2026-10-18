@@ -49,7 +49,11 @@ type SharedCache interface {
 	// far as no tag was dropped after since: WriteSkipped if any tag's purge
 	// generation is greater than since; else WriteStale if any tag's invalidation
 	// generation is greater than since; else WriteFresh. A ttl of zero or less is
-	// the default TTL, as Set.
+	// the default TTL, as Set. A write whose outcome is WriteStale leaves in place,
+	// unwritten, an entry under key that is fresh and was written by a SetSince
+	// whose since is at least the highest invalidation generation among the new
+	// write's tags — a newer render's — and still returns WriteStale; an entry
+	// from an unconditional write counts as written at since 0.
 	SetSince(ctx context.Context, key string, content []byte, ttl time.Duration, tags []string, meta []byte, since uint64) (etag string, outcome WriteOutcome, err error)
 	// DropTags advances the epoch once, sets each tag's invalidation generation
 	// (purge false) or purge generation (purge true) to the new epoch, marks stale
@@ -60,7 +64,8 @@ type SharedCache interface {
 	// and stale; found is false only when key has no value at all.
 	GetData(ctx context.Context, key string) (value []byte, stale, found bool, err error)
 	// SetData stores a data value under key with tags, subject to since exactly as
-	// SetSince is. A ttl of zero means the value never expires.
+	// SetSince is, including leaving a newer fresh value in place. A ttl of zero
+	// means the value never expires.
 	SetData(ctx context.Context, key string, value []byte, ttl time.Duration, tags []string, since uint64) (WriteOutcome, error)
 	// DeleteData removes the data value stored under key. Deleting a key that has
 	// no value is not an error.
