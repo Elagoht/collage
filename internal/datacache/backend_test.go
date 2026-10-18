@@ -310,3 +310,21 @@ func TestBackend_AValueThatNoLongerDecodesIsAMiss(t *testing.T) {
 		t.Errorf("backend holds %q, want the fetched value in place of the broken one", v)
 	}
 }
+
+// A reader who leaves once the value is fetched does not cost the write: the
+// value is as good as it was, for the next reader on any instance.
+func TestBackend_AReaderWhoLeftStillWritesTheValue(t *testing.T) {
+	backend := cache.NewSharedMemory()
+	s := shared(t, backend, Options{})
+	ctx, cancel := context.WithCancel(bg)
+	fetch := func(context.Context) (types.CacheValue, error) {
+		cancel()
+		return str("v"), nil
+	}
+	if v, _, err := s.Load(ctx, "k", 0, nil, fetch, decodeStr); err != nil || v != str("v") {
+		t.Fatalf("Load = %v, %v; want the fetched value", v, err)
+	}
+	if v, _, found := backendHolds(t, backend, "k"); !found || v != "v" {
+		t.Errorf("backend holds %q, found %v; want the value written", v, found)
+	}
+}

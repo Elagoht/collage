@@ -92,8 +92,12 @@ func (s *Store) loadShared(ctx context.Context, key string, ttl time.Duration, t
 	started.abandoned = err != nil && ctx.Err() != nil
 
 	// Written before the key is given up, so a load that comes after the
-	// waiters are answered finds the value rather than fetching it again.
-	s.settleShared(ctx, key, value, err, ttl, tags, since, sinceErr)
+	// waiters are answered finds the value rather than fetching it again. The
+	// value is good whether or not the reader is still there to take it, so a
+	// reader who left once it was fetched does not cost the write.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.refreshTimeout)
+	s.settleShared(writeCtx, key, value, err, ttl, tags, since, sinceErr)
+	cancel()
 	s.mu.Lock()
 	delete(s.inflight, key)
 	// A fresh-data load replacing a value whose refreshes failed is the
@@ -119,7 +123,10 @@ func (s *Store) loadShared(ctx context.Context, key string, ttl time.Duration, t
 func (s *Store) readShared(ctx context.Context, key string, decode func([]byte) (types.CacheValue, error)) (value types.CacheValue, stale, found bool) {
 	raw, stale, found, err := s.backend.GetData(ctx, key)
 	if err != nil {
-		s.logger.Warn("collage: shared data cache read failed, fetching", "key", keyName(key), "err", err)
+		// A reader who left is no news about the backend.
+		if ctx.Err() == nil {
+			s.logger.Warn("collage: shared data cache read failed, fetching", "key", keyName(key), "err", err)
+		}
 		return nil, false, false
 	}
 	if !found {
