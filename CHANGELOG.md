@@ -1,5 +1,40 @@
 # Changelog
 
+## v0.66.0
+
+### Added
+
+- **`collage.SharedCache`**, an optional extension of `Cache` for a store a fleet
+  of instances shares, such as one backed by Redis. When `Cache.Store` is one,
+  pages and `collage.Cached` data live in it, with no per-instance copy in front,
+  so an invalidation or purge on any instance reaches every instance's next read.
+  A write is ordered against invalidations by an epoch the store owns: a render or
+  fetch that an invalidation on any instance overlapped is stored stale, and one
+  that a purge overlapped is not stored (`WriteFresh`, `WriteStale`,
+  `WriteSkipped`). `InvalidateTags` and `PurgeTags` make one `DropTags` call
+  (five-second budget), and the pages it reaches, which any instance wrote, count
+  toward the result, are named in `CacheInvalidateEvent.Entries` and are warmed,
+  within `WarmLimit`. A store that errors or takes longer than 500 milliseconds
+  is a miss or a skipped write, never a failed request. A store that is not a
+  `SharedCache`, the memory cache and `Type: "disk"` behave as before.
+- **`collagetest.SharedCacheSuite`**, which runs the `SharedCache` contract
+  against a store through two handles on one backend, and
+  **`collagetest.CacheSuite`** for the `Cache`, `TaggedCache` and `StaleCache`
+  contracts of any store.
+- **`collagetest.NewSharedCache`**, an in-memory `SharedCache`, so a test can run
+  two Apps as two instances on one store.
+
+### Known behaviour
+
+- The instance that invalidates warms for the fleet, within its `WarmLimit`.
+- A page invalidated and not yet re-rendered stays in the shared store's tag
+  index, so a second invalidation before its re-render counts it, names it in the
+  plugin event and offers it for warming again.
+- The single fetch per `Cached` key is per instance: N instances missing one key
+  at once make up to N fetches.
+- A `Cached` value JSON cannot round-trip is not cached across renders in a
+  shared store.
+
 ## v0.65.0
 
 ### Changed

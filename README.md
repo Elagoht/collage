@@ -252,7 +252,7 @@ app, err := collage.New(&collage.Config{
 	Template: collage.TemplateConfig{Root: "templates"},
 	Cache: collage.CacheConfig{
 		Enabled: true,
-		Store:   newRedisCache(client), // implements collage.Cache
+		Store:   newCache(), // implements collage.Cache
 	},
 })
 ```
@@ -260,6 +260,25 @@ app, err := collage.New(&collage.Config{
 Five methods, no framework internals, and `collage.ETag(content)` if you have no
 reason to derive your own ETags. [docs/caching.md](docs/caching.md) has a complete
 implementation.
+
+**A cache a fleet shares.** Instances behind a load balancer each have their
+own memory, so an invalidation reaches one of them. A store that implements
+`collage.SharedCache` is shared by all: pages and `collage.Cached` data live in
+it, and an invalidation on any instance reaches every one.
+[collage-redis](https://github.com/Elagoht/collage-redis) is one:
+
+```go
+store, err := redis.New(redis.Config{URL: os.Getenv("REDIS_URL")})
+if err != nil {
+	log.Fatal(err)
+}
+app, err := collage.New(&collage.Config{
+	Cache: collage.CacheConfig{Enabled: true, Store: store},
+})
+```
+
+[docs/caching.md](docs/caching.md#a-cache-a-fleet-shares) says what core does
+with it and has `collagetest.SharedCacheSuite` for checking your own.
 
 **Template functions of your own.** `TemplateConfig.Funcs` is merged over the
 built-ins at construction, so an entry under a built-in name replaces it. It has
