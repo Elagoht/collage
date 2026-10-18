@@ -1593,24 +1593,10 @@ func (h *Handler) overlapped(ctx context.Context, mark invalidationMark) {
 // the entry written after it fresh. Dropped rather than marked stale, because
 // which of the two it was is not known, and a purge leaves nothing behind.
 //
-// A SharedCache's entry is marked stale instead, and on any local overlap,
-// under way as the render began as well as begun since — the check the other
-// stores make before the write, which writeShared leaves to the store's epoch
-// and to this. The store has already dropped what another instance's purge
-// reached; what is left is the best copy to fall back on.
+// A SharedCache's write goes through staleIfOverlapped instead.
 //
 // It reports whether it dropped the entry.
 func (h *Handler) dropIfOverlapped(ctx context.Context, key string, mark invalidationMark) bool {
-	if shared, ok := h.cache.(cache.SharedCache); ok {
-		if h.storable(mark) {
-			return false
-		}
-		markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedStoreTimeout)
-		defer cancel()
-		_ = shared.MarkStaleKey(markCtx, key)
-		h.overlapped(ctx, mark)
-		return true
-	}
 	if !h.invalidatedSince(mark) {
 		return false
 	}

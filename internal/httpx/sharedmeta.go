@@ -23,9 +23,13 @@ const sharedStoreTimeout = 500 * time.Millisecond
 // SharedCache: where the entry lives, so any instance can purge it from a CDN,
 // and its recipe, so any instance can render it again. The store keeps it
 // opaque and hands it back with each entry a DropTags reached.
+//
+// Every string is carried as bytes, which JSON writes as base64: a JSON string
+// replaces invalid UTF-8 with U+FFFD, and a path such as /a%FF, a query or a
+// header value with obs-text would come back as another URL, so another key.
 type sharedMeta struct {
-	Host   string `json:"host"`
-	Path   string `json:"path"`
+	Host   []byte `json:"host"`
+	Path   []byte `json:"path"`
 	Recipe recipe `json:"recipe"`
 }
 
@@ -34,7 +38,7 @@ type sharedMeta struct {
 func encodeSharedMeta(host, path string, rcp recipe) []byte {
 	// Nothing in a sharedMeta can fail to marshal: strings, bools, and slices
 	// and a map of strings.
-	meta, _ := json.Marshal(sharedMeta{Host: host, Path: path, Recipe: rcp})
+	meta, _ := json.Marshal(sharedMeta{Host: []byte(host), Path: []byte(path), Recipe: rcp})
 	return meta
 }
 
@@ -45,7 +49,7 @@ func decodeSharedMeta(meta []byte) (sharedMeta, error) {
 	if err := json.Unmarshal(meta, &m); err != nil {
 		return sharedMeta{}, err
 	}
-	if m.Path == "" {
+	if len(m.Path) == 0 {
 		return sharedMeta{}, fmt.Errorf("collage: shared meta names no path")
 	}
 	return m, nil
@@ -59,37 +63,71 @@ func DecodeSharedMeta(meta []byte) (host, path string, ok bool) {
 	if err != nil {
 		return "", "", false
 	}
-	return m.Host, m.Path, true
+	return string(m.Host), string(m.Path), true
 }
 
-// recipeJSON is a recipe's wire form. Every field is written, cacheParams with
-// no omitempty: queryVary tells a route that names no CacheParams (nil, null)
-// from one that names an empty list ([]), and so must the round trip.
+// recipeJSON is a recipe's wire form. Every field is written, and every string
+// as bytes, byte-exact (see sharedMeta). cacheParams has no omitempty: queryVary
+// tells a route that names no CacheParams (nil, null) from one that names an
+// empty list ([]), and so must the round trip. Header names stay strings: a
+// request cannot carry one that is not a token, which is ASCII.
 type recipeJSON struct {
-	Host        string      `json:"host"`
-	Path        string      `json:"path"`
-	RawPath     string      `json:"rawPath"`
-	Query       string      `json:"query"`
-	Vary        []string    `json:"vary"`
-	Header      http.Header `json:"header"`
-	TLS         bool        `json:"tls"`
-	Document    bool        `json:"document"`
-	CacheParams []string    `json:"cacheParams"`
+	Host        []byte              `json:"host"`
+	Path        []byte              `json:"path"`
+	RawPath     []byte              `json:"rawPath"`
+	Query       []byte              `json:"query"`
+	Vary        [][]byte            `json:"vary"`
+	Header      map[string][][]byte `json:"header"`
+	TLS         bool                `json:"tls"`
+	Document    bool                `json:"document"`
+	CacheParams [][]byte            `json:"cacheParams"`
+}
+
+// toBytes returns each of values as bytes, keeping a nil nil and an empty list
+// empty.
+func toBytes(values []string) [][]byte {
+	if values == nil {
+		return nil
+	}
+	out := make([][]byte, len(values))
+	for i, v := range values {
+		out[i] = []byte(v)
+	}
+	return out
+}
+
+// fromBytes is toBytes's inverse.
+func fromBytes(values [][]byte) []string {
+	if values == nil {
+		return nil
+	}
+	out := make([]string, len(values))
+	for i, v := range values {
+		out[i] = string(v)
+	}
+	return out
 }
 
 // MarshalJSON writes every field of the recipe. On the value, so a recipe held
 // by value in a sharedMeta is written through it.
 func (rc recipe) MarshalJSON() ([]byte, error) {
+	var header map[string][][]byte
+	if rc.header != nil {
+		header = make(map[string][][]byte, len(rc.header))
+		for name, values := range rc.header {
+			header[name] = toBytes(values)
+		}
+	}
 	return json.Marshal(recipeJSON{
-		Host:        rc.host,
-		Path:        rc.path,
-		RawPath:     rc.rawPath,
-		Query:       rc.query,
-		Vary:        rc.vary,
-		Header:      rc.header,
+		Host:        []byte(rc.host),
+		Path:        []byte(rc.path),
+		RawPath:     []byte(rc.rawPath),
+		Query:       []byte(rc.query),
+		Vary:        toBytes(rc.vary),
+		Header:      header,
 		TLS:         rc.tls,
 		Document:    rc.document,
-		CacheParams: rc.cacheParams,
+		CacheParams: toBytes(rc.cacheParams),
 	})
 }
 
@@ -99,16 +137,23 @@ func (rc *recipe) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
 	}
+	var header http.Header
+	if wire.Header != nil {
+		header = make(http.Header, len(wire.Header))
+		for name, values := range wire.Header {
+			header[name] = fromBytes(values)
+		}
+	}
 	*rc = recipe{
-		host:        wire.Host,
-		path:        wire.Path,
-		rawPath:     wire.RawPath,
-		query:       wire.Query,
-		vary:        wire.Vary,
-		header:      wire.Header,
+		host:        string(wire.Host),
+		path:        string(wire.Path),
+		rawPath:     string(wire.RawPath),
+		query:       string(wire.Query),
+		vary:        fromBytes(wire.Vary),
+		header:      header,
 		tls:         wire.TLS,
 		document:    wire.Document,
-		cacheParams: wire.CacheParams,
+		cacheParams: fromBytes(wire.CacheParams),
 	}
 	return nil
 }
@@ -189,10 +234,35 @@ func (h *Handler) writeShared(r *http.Request, shared cache.SharedCache, key str
 	if err := h.tracker.Track(ctx, key, routeTags); err != nil {
 		report(fmt.Errorf("collage: track %q: %w", key, err))
 	}
-	if h.dropIfOverlapped(ctx, key, mark) {
+	if h.staleIfOverlapped(ctx, shared, key, mark, report) {
 		h.wroteForWarm(ctx, key, true)
 		return ""
 	}
 	h.wroteForWarm(ctx, key, false)
 	return etag
+}
+
+// staleIfOverlapped is dropIfOverlapped for a SharedCache's fresh write: on any
+// local overlap — under way as the render began as well as begun since, the
+// check the other stores make before the write, which writeShared leaves to the
+// store's epoch and to this — the entry is marked stale rather than dropped.
+// The store has already dropped what any instance's purge reached; what is left
+// is the best copy to fall back on.
+//
+// A failure to mark it is reported as a cache write failure is: the entry would
+// otherwise stay fresh for its TTL, forever for a Static page, and nothing else
+// would say so. Bounded and not cancelled with the request, as the write is.
+//
+// It reports whether the write was overlapped.
+func (h *Handler) staleIfOverlapped(ctx context.Context, shared cache.SharedCache, key string, mark invalidationMark, report func(error)) bool {
+	if h.storable(mark) {
+		return false
+	}
+	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedStoreTimeout)
+	defer cancel()
+	if err := shared.MarkStaleKey(markCtx, key); err != nil {
+		report(fmt.Errorf("collage: cache write: mark overlapped %q stale: %w", key, err))
+	}
+	h.overlapped(ctx, mark)
+	return true
 }

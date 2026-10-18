@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/dependency"
 	"github.com/Elagoht/collage/internal/render"
@@ -246,27 +247,35 @@ func TestShared_DocumentWriteWeighsTheStore(t *testing.T) {
 // same request — URL, headers and vary set — as the one it was made from.
 func TestShared_RecipeRoundTrip(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		cacheParams []string
+		name                 string
+		path, rawPath, query string
+		theme                string
+		cacheParams          []string
 	}{
-		{"nil cacheParams", nil},
-		{"empty cacheParams", []string{}},
-		{"named cacheParams", []string{"page"}},
+		{"nil cacheParams", "/blog/a b", "/blog/a%20b", "page=2", "dark", nil},
+		{"empty cacheParams", "/blog/a b", "/blog/a%20b", "page=2", "dark", []string{}},
+		{"named cacheParams", "/blog/a b", "/blog/a%20b", "page=2", "dark", []string{"page"}},
+		// Bytes that are not UTF-8, which a JSON string would replace with
+		// U+FFFD and so turn into another URL and another key.
+		{"invalid UTF-8", "/a\xff", "", "q=\xff", "d\xffrk", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			original := recipe{
 				host:        "Example.com:8443",
-				path:        "/blog/a b",
-				rawPath:     "/blog/a%20b",
-				query:       "page=2",
-				vary:        []string{"Accept-Language=tr", "X-Theme=dark"},
-				header:      http.Header{"Accept-Language": {"tr-TR", "tr"}, "X-Theme": {"dark"}},
+				path:        tc.path,
+				rawPath:     tc.rawPath,
+				query:       tc.query,
+				vary:        []string{"Accept-Language=tr", "X-Theme=" + tc.theme},
+				header:      http.Header{"Accept-Language": {"tr-TR", "tr"}, "X-Theme": {tc.theme}},
 				tls:         true,
 				document:    true,
 				cacheParams: tc.cacheParams,
 			}
 			env := newEnv(t, nil, withSharedCache(cache.NewSharedMemory()))
-			meta := encodeSharedMeta("example.com", "/blog/a b", original)
+			meta := encodeSharedMeta("example.com", tc.path, original)
+			if _, path, ok := DecodeSharedMeta(meta); !ok || path != tc.path {
+				t.Errorf("DecodeSharedMeta path = %q %v, want %q", path, ok, tc.path)
+			}
 
 			held := env.handler.AdoptShared([]cache.Reached{
 				{Key: "k1", Meta: meta},
@@ -307,8 +316,22 @@ func TestShared_RecipeRoundTrip(t *testing.T) {
 			if !slices.Equal(requestVary(have), requestVary(want)) {
 				t.Errorf("vary = %q, want %q", requestVary(have), requestVary(want))
 			}
+			if got, want := sharedRecipeKey(have, got.cacheParams), sharedRecipeKey(want, original.cacheParams); got != want {
+				t.Errorf("cache key = %q, want %q", got, want)
+			}
 		})
 	}
+}
+
+// sharedRecipeKey is the page cache key req is looked up under, for a route
+// with no locale or path parameters built with cacheParams.
+func sharedRecipeKey(req *http.Request, cacheParams []string) string {
+	return cache.Key(cache.KeyInput{
+		Path:    req.URL.Path,
+		Vary:    queryVary(req.URL, cacheParams),
+		Request: requestVary(req),
+		Host:    ascii.LowerString(req.Host),
+	})
 }
 
 // A recipe this instance already holds is not replaced by the store's: its own
@@ -375,5 +398,37 @@ func TestShared_LocalOverlapLandsStale(t *testing.T) {
 	key := flightKeyFor(t, env, "/")
 	if _, _, stale, found := store.GetStale(context.Background(), key); !found || !stale {
 		t.Errorf("GetStale stale=%v found=%v, want the render kept stale", stale, found)
+	}
+}
+
+// failingMarkStale is a SharedMemory whose MarkStaleKey fails.
+type failingMarkStale struct{ *cache.SharedMemory }
+
+func (f failingMarkStale) MarkStaleKey(context.Context, string) error {
+	return errors.New("redis down")
+}
+
+// A local overlap whose entry cannot be marked stale is reported as a cache
+// write failure: on a network store the entry would otherwise stay fresh for
+// its TTL, and nothing would say so.
+func TestShared_MarkStaleFailureIsReported(t *testing.T) {
+	store := failingMarkStale{cache.NewSharedMemory()}
+	page := testPage("home", "/", types.StrategyIncremental)
+	inner := newFakeEngine(fakeRender{html: "<html>home</html>"})
+	blocking := newBlockingEngine(inner)
+	var epoch atomic.Uint64
+	env := newEnv(t, []*types.Page{page}, withSharedCache(store), withEpoch(&epoch),
+		func(d *Deps) { d.Renderer = blocking })
+
+	done := make(chan *httptest.ResponseRecorder)
+	go func() { done <- env.get("/") }()
+	<-blocking.started
+	epoch.Add(1)
+	close(blocking.release)
+	if rec := <-done; rec.Code != http.StatusOK || rec.Body.String() != "<html>home</html>" {
+		t.Fatalf("response = %d %q, want the page", rec.Code, rec.Body.String())
+	}
+	if n := levelCount(env.logs, slog.LevelError); n != 1 {
+		t.Errorf("error records = %d, want the failed mark reported once", n)
 	}
 }
