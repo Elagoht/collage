@@ -783,6 +783,17 @@ func (h *Handler) Warm(keys []string) {
 	h.warmKeys(keys, checksInvalidate)
 }
 
+// WarmCap returns how many keys one Warm call re-renders at most, and whether
+// warming is on at all. An invalidation through a SharedCache reads it to bound
+// how many recipes it adopts (see AdoptShared): adopting past it would evict
+// recipes this instance holds for keys it will never get to warm.
+func (h *Handler) WarmCap() (limit int, on bool) {
+	if h.warm == nil {
+		return 0, false
+	}
+	return h.warm.limit, true
+}
+
 // WarmPurged is Warm for the keys a purge reached, which removed their entries
 // itself: they are warmed though the cache no longer holds them.
 func (h *Handler) WarmPurged(keys []string) {

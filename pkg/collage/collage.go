@@ -446,7 +446,9 @@ type StaleCache = cache.StaleCache
 // StaleCache whose invalidation is ordered by an epoch the store owns, so a write
 // that raced an invalidation is stored stale or skipped instead of served fresh.
 // It also keeps data-handler values, which the in-process stores keep per
-// instance. A store that is not a SharedCache behaves exactly as before.
+// instance. InvalidateTags and PurgeTags on any instance reach every
+// instance's pages and values through it. A store that is not a SharedCache
+// behaves exactly as before.
 type SharedCache = cache.SharedCache
 
 // Reached is one page entry a SharedCache's DropTags reached, with the meta it

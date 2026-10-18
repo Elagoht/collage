@@ -162,7 +162,9 @@ func (a *App) InvalidateTags(ctx context.Context, tags ...string) error {
 
 // InvalidateTagsN is InvalidateTags returning how many cached renders it
 // invalidated. A failure to remove one entry does not stop the rest; the
-// failures are joined into the returned error.
+// failures are joined into the returned error. With a SharedCache store the
+// count, the plugin event and the warm cover the renders every instance cached,
+// not only this one's.
 func (a *App) InvalidateTagsN(ctx context.Context, tags ...string) (int, error) {
 	return a.c.InvalidateTagsN(ctx, tags...)
 }
