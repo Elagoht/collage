@@ -201,6 +201,7 @@ jobs:
           - collage-prometheus
           - collage-ratelimit
           - collage-redirects
+          - collage-redis
           - collage-robots
           - collage-search
           - collage-secure
@@ -255,7 +256,7 @@ jobs:
 
       # The contract "collage plugin add" enforces: a manifest, a New that can be
       # called with nothing configured, and a Name() that matches it. A library
-      # (collage-paginate) has no collage.json and is not a plugin.
+      # (collage-paginate, collage-redis) has no collage.json and is not a plugin.
       - name: plugin contract
         working-directory: ${{ matrix.plugin }}
         run: |
