@@ -62,6 +62,10 @@ type Options struct {
 	// Metrics receives a CacheStale event for each stale value served. Nil
 	// means none.
 	Metrics observability.Metrics
+	// Backend, when set, holds the values instead of the store: a store a fleet
+	// shares, so one instance's invalidation is every instance's. MaxEntries
+	// does not apply; the backend bounds itself.
+	Backend Backend
 }
 
 // Store is a bounded, tag-invalidated cache of fetched values. It is safe for
@@ -115,6 +119,10 @@ type Store struct {
 	// the log, and the map, grow with the application's types, not its keys;
 	// guarded by diskMu.
 	unencodable map[string]bool
+	// backend is nil for a store that keeps its own values. With one, entries
+	// stays empty and cooling holds the only per-key state kept in process.
+	backend Backend
+	cooling map[string]*cooldown
 }
 
 type entry struct {
@@ -155,7 +163,7 @@ func New(opts Options) *Store {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Store{
+	s := &Store{
 		max:            maxEntries,
 		entries:        make(map[string]*list.Element),
 		order:          list.New(),
@@ -166,6 +174,12 @@ func New(opts Options) *Store {
 		metrics:        observability.MetricsOrNoop(opts.Metrics),
 		refreshTimeout: RefreshTimeout,
 	}
+	if opts.Backend != nil {
+		s.backend = opts.Backend
+		s.cooling = make(map[string]*cooldown)
+		s.unencodable = make(map[string]bool)
+	}
+	return s
 }
 
 // Load returns the value stored under key, fetching it when there is none.
@@ -188,7 +202,9 @@ func New(opts Options) *Store {
 // the value. It shares a running fetch only if no invalidation came after that
 // fetch started.
 //
-// decode is not used by a store kept in memory.
+// decode is not used by a store kept in memory. A store with a Backend keeps
+// nothing in process but the fetches running and the cooldowns: each Load reads
+// the backend, and a backend that fails is a miss, never the caller's error.
 func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), decode func([]byte) (types.CacheValue, error)) (types.CacheValue, bool, error) {
 	for {
 		value, stale, err, again := s.load(ctx, key, ttl, tags, fetch, decode)
@@ -202,6 +218,9 @@ func (s *Store) Load(ctx context.Context, key string, ttl time.Duration, tags []
 // answer is not its own — one its starter abandoned, or, for fresh data, one an
 // invalidation overtook — and the caller should try once more.
 func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), decode func([]byte) (types.CacheValue, error)) (value types.CacheValue, stale bool, err error, again bool) {
+	if s.backend != nil {
+		return s.loadShared(ctx, key, ttl, tags, fetch, decode)
+	}
 	s.mu.Lock()
 	if element, ok := s.entries[key]; ok && element.Value.(*entry).raw != nil {
 		// Decoded outside the lock: a large value must not stall every other
@@ -243,26 +262,8 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 		// until a successful fetch replaces it.
 	}
 	if running, ok := s.inflight[key]; ok {
-		// A fetch that started before an invalidation may have read what it
-		// invalidated. That is good enough for a reader served stale anyway,
-		// not for one that wants fresh data: it waits the old fetch out, so
-		// as not to race it, and then fetches again.
-		outdated := types.WantsFreshData(ctx) && running.epoch != s.epoch
-		s.mu.Unlock()
-		select {
-		case <-running.done:
-			if outdated && ctx.Err() == nil {
-				return nil, false, nil, true
-			}
-			// Not the starter's cancellation: one reader disconnecting, on
-			// purpose or not, would fail every reader who shared its fetch.
-			if running.abandoned && ctx.Err() == nil {
-				return nil, false, nil, true
-			}
-			return running.value, false, running.err, false
-		case <-ctx.Done():
-			return nil, false, ctx.Err(), false
-		}
+		value, err, again = s.awaitLocked(ctx, running)
+		return value, false, err, again
 	}
 	started := &call{done: make(chan struct{}), epoch: s.epoch}
 	s.inflight[key] = started
@@ -303,6 +304,31 @@ func (s *Store) load(ctx context.Context, key string, ttl time.Duration, tags []
 		s.logger.Info("collage: data refreshed after failures", "key", keyName(key), "failures", failures)
 	}
 	return value, false, err, false
+}
+
+// awaitLocked waits on running, a fetch of the key ctx's load wants, and
+// releases s.mu, which it must be called with.
+func (s *Store) awaitLocked(ctx context.Context, running *call) (value types.CacheValue, err error, again bool) {
+	// A fetch that started before an invalidation may have read what it
+	// invalidated. That is good enough for a reader served stale anyway, not
+	// for one that wants fresh data: it waits the old fetch out, so as not to
+	// race it, and then fetches again.
+	outdated := types.WantsFreshData(ctx) && running.epoch != s.epoch
+	s.mu.Unlock()
+	select {
+	case <-running.done:
+		if outdated && ctx.Err() == nil {
+			return nil, nil, true
+		}
+		// Not the starter's cancellation: one reader disconnecting, on purpose
+		// or not, would fail every reader who shared its fetch.
+		if running.abandoned && ctx.Err() == nil {
+			return nil, nil, true
+		}
+		return running.value, running.err, false
+	case <-ctx.Done():
+		return nil, ctx.Err(), false
+	}
 }
 
 // refreshLocked starts the background fetch replacing target, key's stale
@@ -394,6 +420,10 @@ func guarded(ctx context.Context, fetch func(context.Context) (types.CacheValue,
 // Invalidate marks every value stored under any of tags stale and returns how
 // many it marked. They are still served until a fetch replaces them. A fetch
 // running when it is called stores what it brings back as stale.
+//
+// With a Backend it marks nothing and returns 0: the values are the backend's,
+// and the App drops their tags there, in one call with the pages'. It still
+// ends the cooldowns of keys under tags and orders a fresh-data load after it.
 func (s *Store) Invalidate(tags []string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -413,11 +443,14 @@ func (s *Store) Invalidate(tags []string) int {
 			}
 		}
 	}
+	s.endCooldownsLocked(tags, false)
 	return marked
 }
 
 // Purge removes every value stored under any of tags and returns how many it
 // removed. A fetch running when it is called stores nothing.
+//
+// With a Backend it removes nothing and returns 0, as Invalidate does.
 func (s *Store) Purge(tags []string) int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -432,6 +465,7 @@ func (s *Store) Purge(tags []string) int {
 			}
 		}
 	}
+	s.endCooldownsLocked(tags, true)
 	return removed
 }
 
