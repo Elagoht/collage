@@ -188,7 +188,8 @@ business.
 
 Since v0.67.0 **no middleware runs for it**: neither what `app.Use` added nor any
 plugin's — session, flash, i18n, consent, secure, ratelimit, basicauth, compress,
-the development toolbar. Your handler, your middleware: an API has its own idea of
+fail2ban, accesslog, redirects, tenant, the development toolbar. Your handler, your
+middleware: an API has its own idea of
 auth (a bearer token, not the site's session cookie), its own rate limit, its own
 error format, and the site's consent banner, HTML toolbar or `Vary: Cookie` are
 nothing it asked for. So wrap the handler in what it wants, the way you would
@@ -222,6 +223,15 @@ exactly as a page does, in the same order:
 app.Handle("/admin/api/", adminAPI, collage.WithMiddleware())
 ```
 
+**No plugin can answer for a bare mount: a ban, an IP allowlist, a maintenance
+page or an access log over the whole site does not cover it. Mount it
+`WithMiddleware()` for that, or put your own middleware around your mux.** For
+one, fail2ban still counts a bare mount's probes — its `RequestHook` runs for every
+request — but the 403 it answers a banned client with is middleware, so that client
+keeps full access to `/api/`, which is where login brute force usually happens.
+Likewise accesslog does not log a bare mount's traffic, a redirects rule under its
+prefix does not fire, and tenant's context is not in its requests.
+
 Which requests skip the middleware is decided on the path as it is after the
 cleaning [below](#paths-are-cleaned-first), by the same match routing uses: a
 prefix ending in `/` claims what begins with it, one without its exact path alone
@@ -230,7 +240,10 @@ share a handler's prefix, a request that skips the middleware can only reach tha
 handler. One consequence: a middleware that rewrites a request's path *into* a
 plain `Handle` prefix no longer reaches it — the request comes out of the chain,
 and is routed as everything else the chain hands on, to a 404. Mount the target
-`WithMiddleware` if you rewrite into it.
+`WithMiddleware` if you rewrite into it. The other way round, a middleware that
+rewrites a path *out of* a plain `Handle` prefix — `/api/legacy` to a page — no
+longer runs for it at all: the mount claims the request first, before any
+middleware. Mount it `WithMiddleware` if a middleware should see its requests.
 
 A plugin's own endpoints — a live-reload stream, an OAuth callback, `/metrics`
 from a Prometheus plugin, an upload endpoint — are mounted with `Host.Handle`, and
