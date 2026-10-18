@@ -101,7 +101,9 @@ See [documents.md](documents.md) and [assets.md](assets.md).
 For one GET on a page, in order — middleware runs first, the plugins' and
 `app.Use`'s in the order they were registered, a mount or a handler registered with `app.Handle` claims the request before
 step 1 if its prefix matches, and a document runs the same steps with its handler
-and `OnDocumentRendered` in place of 3, 4 and 5:
+and `OnDocumentRendered` in place of 3, 4 and 5. A handler mounted with plain
+`app.Handle` claims its request before the middleware, too, and runs without it;
+one mounted `WithMiddleware()`, or by a plugin's `Host.Handle`, claims it after:
 
 1. **Route.** The router resolves the locale from the path prefix — or the
    default, when there is none — and matches the remaining path in that locale's

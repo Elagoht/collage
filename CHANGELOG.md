@@ -1,5 +1,38 @@
 # Changelog
 
+## v0.67.0
+
+### Changed
+
+- **A handler mounted with `App.Handle` runs with no middleware.** Neither the
+  application's `app.Use` middleware nor any plugin's (session, flash, i18n,
+  consent, secure, ratelimit, basicauth, compress, the development toolbar, …)
+  runs for a request to it any more: the handler is the application's own, and
+  wraps itself in the middleware it wants. What still applies is what happens
+  before routing: the plugins' `RequestHook`s, the request span, the metrics
+  (with `RouteInfo` naming the handler), the panic guard, the clean-path redirect
+  and encoded-slash 404, the baseline `X-Content-Type-Options` and
+  `X-Frame-Options` headers, and draining on shutdown. Which requests skip the
+  middleware is decided on the cleaned path by the same match routing uses, so
+  only that handler can be reached that way.
+
+  **An application that relied on `app.Use` or plugin middleware — basicauth,
+  ratelimit, session, secure, … — to protect or shape a `Handle` mount must add
+  `collage.WithMiddleware()` to that call to keep it:**
+  `app.Handle("/api/", api, collage.WithMiddleware())`. Without it, a mount a
+  basicauth or rate limit used to guard is now open. A middleware that rewrites a
+  request's path into a `Handle` prefix reaches the handler only
+  `WithMiddleware()` as well; otherwise the rewritten request is a 404.
+
+  A plugin's `Host.Handle` is unchanged: a plugin's endpoints (live, oauth,
+  ogimage, prometheus, uploads, websocket, …) still run inside the middleware.
+
+### Added
+
+- **`collage.HandleOption`** and **`collage.WithMiddleware()`**, its first
+  option. `App.Handle` takes options variadically, so existing calls compile
+  unchanged.
+
 ## v0.66.0
 
 ### Added
