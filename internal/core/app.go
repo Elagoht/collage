@@ -400,7 +400,8 @@ type App struct {
 	// startAttempted is set as soon as the application tries to start; see
 	// RegisterPlugin.
 	startAttempted bool
-	// handlers holds every http.Handler mounted with Handle, and middleware
+	// handlers holds every http.Handler mounted with Handle — bare, outside
+	// the chain, unless mounted WithMiddleware or by a plugin — and middleware
 	// every wrapper registered with Use and every place a plugin was
 	// registered, both in registration order. See handle.go.
 	handlers []httpx.HandlerMount

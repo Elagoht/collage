@@ -116,9 +116,13 @@ func (h *hostView) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error 
 }
 
 // Handle serves handler under prefix, on the same terms as the application's own
-// Handle.
+// Handle but one: inside the middleware chain, always. A plugin's endpoint is
+// part of the site — an event stream reading the reader's session or tenant, a
+// /metrics a basicauth was registered to guard — not an application's own API
+// that brings its own middleware, so it keeps what every mount had before
+// v0.67.0, and the Host interface keeps its shape.
 func (h *hostView) Handle(prefix string, handler http.Handler) error {
-	return h.app.Handle(prefix, handler)
+	return h.app.Handle(prefix, handler, WithMiddleware())
 }
 
 // RenderFragment renders one fragment a page opened at its own URL, in parts.

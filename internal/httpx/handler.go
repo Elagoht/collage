@@ -630,6 +630,25 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request, route *ro
 			fmt.Errorf("%w: %w", ErrPanic, &render.PanicError{Value: recovered, Stack: debug.Stack()}),
 		))
 	}()
+	// A handler the application mounted bare is answered here, outside the
+	// middleware: it is the application's own http.Handler, and what wraps it is
+	// the application's to choose — its own auth, its own rate limit — not the
+	// site's session, consent banner or compression. Inside the panic guard
+	// still, and inside ServeHTTP's span and metric, which have run by now, as
+	// have the request hooks and the path checks: a dirty path never gets this
+	// far, so the path matched here is the clean one serve would dispatch on.
+	//
+	// Checked whether or not there is a chain, so that a bare mount is served
+	// by this one frame either way, and serve, which passes bare mounts over,
+	// never has to know which.
+	if mount, ok := h.bareHandler(r.URL.Path); ok {
+		// What serve settles on entry, settled here for the same reason: a
+		// Vary from the handler itself is after the fact.
+		freezeDeclarations(r)
+		route.resolved(routeKindHandler, mount.Prefix)
+		route.at(mount.Prefix, "")
+		return h.serveHandler(w, r, mount, route)
+	}
 	if h.chain == nil {
 		return h.serve(w, r, route)
 	}
@@ -689,6 +708,15 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		}
 	}
 	for _, mount := range h.handlers {
+		// A bare mount was answered in serveGuarded, before the chain, if it
+		// was going to be answered at all. A request reaching it here is one a
+		// middleware rewrote into its prefix, and the mount is not the
+		// middleware's to hand requests to: it falls through to the router,
+		// where nothing answers it, since no route may share a handler's
+		// prefix. A rewrite into a mount wants that mount WithMiddleware.
+		if mount.Bare {
+			continue
+		}
 		if mount.Matches(r.URL.Path) {
 			route.resolved(routeKindHandler, mount.Prefix)
 			route.at(mount.Prefix, "")

@@ -15,9 +15,9 @@ import (
 // webhook receiver.
 //
 // Collage does not look inside it. No forgery check, no body limit, no cache —
-// whoever mounts it owns what it does. What it gets from the framework is what
-// every request gets: the span, the metrics, the panic guard, the middleware,
-// and the shutdown drain.
+// whoever mounts it owns what it does. What it gets from the framework is the
+// request hooks, the span, the metrics, the panic guard and the shutdown drain,
+// and the middleware unless it is Bare.
 type HandlerMount struct {
 	// Prefix begins with "/". Ending in "/", it claims every path beneath it;
 	// otherwise it is one exact path, "/metrics". The request is passed on
@@ -26,6 +26,18 @@ type HandlerMount struct {
 	Prefix string
 	// Handler answers every request whose path begins with Prefix.
 	Handler http.Handler
+	// Bare serves the mount outside the middleware chain: a request it Matches,
+	// on the path as it is once the pre-routing checks have passed it, goes
+	// straight to Handler, and serve, which is where the chain ends, passes it
+	// over. It is what App.Handle mounts by default — the application's own
+	// handler, which brings its own middleware — and what a plugin's
+	// Host.Handle never is: a plugin's endpoint is part of the site, and may
+	// need the session, or the basicauth in front of /metrics.
+	//
+	// The zero value is the chain, deliberately: a mount whoever builds it
+	// forgot to describe is one the site's middleware still guards, rather than
+	// one an authentication middleware silently stops covering.
+	Bare bool
 }
 
 // Matches reports whether the mount answers path.
@@ -40,6 +52,23 @@ func (m HandlerMount) Matches(path string) bool {
 // some path.
 func (m HandlerMount) Overlaps(other string) bool {
 	return m.Matches(other) || HandlerMount{Prefix: other}.Matches(m.Prefix)
+}
+
+// bareHandler returns the Bare mount that answers path, if one does: a request
+// for it is served without the middleware chain. See serveGuarded.
+//
+// It is Matches, the very test serve dispatches a handler mount by, on the same
+// path serve will read, so the request it lets past the chain is one only that
+// mount answers. Asset mounts are not asked first, as serve asks them: the
+// close-out check refuses a handler prefix overlapping a mount, a route or
+// another handler, so no path is both a bare mount's and anything else's.
+func (h *Handler) bareHandler(path string) (HandlerMount, bool) {
+	for _, mount := range h.handlers {
+		if mount.Bare && mount.Matches(path) {
+			return mount, true
+		}
+	}
+	return HandlerMount{}, false
 }
 
 // ErrHandlerFailed is reported to the error hooks when a mounted handler answers
