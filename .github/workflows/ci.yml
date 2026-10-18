@@ -171,6 +171,7 @@ jobs:
           - collage-basicauth
           - collage-bundle
           - collage-cdnpurge
+          - collage-client
           - collage-compress
           - collage-consent
           - collage-deploy
