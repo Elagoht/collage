@@ -161,6 +161,9 @@ func cacheTestApp(t *testing.T, store Cache, enabled bool) (*App, http.Handler) 
 			Enabled:    enabled,
 			Store:      store,
 			DefaultTTL: time.Minute,
+			// Warming re-renders an invalidated page into the store in the
+			// background; it would race the request that asserts a fresh render.
+			WarmLimit: -1,
 		},
 	})
 	if err != nil {
