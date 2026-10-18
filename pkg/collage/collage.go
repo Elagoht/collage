@@ -441,6 +441,34 @@ type TaggedCache = cache.TaggedCache
 // on invalidation, as before. The built-in memory and disk caches implement it.
 type StaleCache = cache.StaleCache
 
+// SharedCache is the optional extension a Cache implements when a fleet of
+// instances share it, such as a store backed by Redis. It is a TaggedCache and a
+// StaleCache whose invalidation is ordered by an epoch the store owns, so a write
+// that raced an invalidation is stored stale or skipped instead of served fresh.
+// It also keeps data-handler values, which the in-process stores keep per
+// instance. A store that is not a SharedCache behaves exactly as before.
+type SharedCache = cache.SharedCache
+
+// Reached is one page entry a SharedCache's DropTags reached, with the meta it
+// was written with.
+type Reached = cache.Reached
+
+// WriteOutcome is what a SharedCache's conditional write did: stored fresh,
+// stored stale, or skipped.
+type WriteOutcome = cache.WriteOutcome
+
+// The outcomes of a SharedCache's conditional write (SetSince, SetData).
+const (
+	// WriteFresh means the entry was stored as a fresh entry.
+	WriteFresh = cache.WriteFresh
+	// WriteStale means the entry was stored but marked stale, because a tag it
+	// carries was invalidated after the write began.
+	WriteStale = cache.WriteStale
+	// WriteSkipped means the entry was not stored, because a tag it carries was
+	// purged after the write began.
+	WriteSkipped = cache.WriteSkipped
+)
+
 // Metrics receives the framework's counters and timings. Implement it to bridge the
 // framework into a metrics backend; a nil Metrics means no-op.
 type Metrics = observability.Metrics
