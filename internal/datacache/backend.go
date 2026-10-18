@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"sync"
 	"time"
 
 	"github.com/Elagoht/collage/internal/cache"
@@ -33,13 +34,68 @@ type Backend interface {
 
 var _ Backend = cache.SharedCache(nil)
 
+// BackendTimeout bounds each call a load makes to the backend on a request's
+// behalf. A cache is there to make a page faster: one slower than this is
+// treated as down for that call — a miss, or a write not made — rather than
+// let a stalled connection hold every page that reads data. A background
+// refresh, which nobody waits on, keeps its own, longer budget.
+const BackendTimeout = 500 * time.Millisecond
+
+// backendQuiet is how long a backend that keeps failing is not reported again:
+// down, it fails on every load, and one line per load would drown the log.
+const backendQuiet = 30 * time.Second
+
 // cooldown is a key whose refreshes failed, failures times in a row: no refresh
 // starts for it before retryAt. tags are the ones it was loaded with, so an
 // invalidation of one of them ends the cooldown as it does for a stored entry.
+// seq orders the cooldowns by when they began, for eviction.
 type cooldown struct {
 	failures int
 	retryAt  time.Time
 	tags     []string
+	seq      uint64
+}
+
+// backendHealth is whether the backend is answering, for the log: the first
+// failure warns, later ones within backendQuiet are only counted, and the next
+// warning, or the first success, says how many there were.
+type backendHealth struct {
+	mu         sync.Mutex
+	down       bool
+	warnedAt   time.Time
+	suppressed int
+}
+
+// backendDone records how a call to the backend made for parent went. A
+// failure while parent is done is the caller leaving, not news about the
+// backend, and is not counted either way.
+func (s *Store) backendDone(parent context.Context, op, key string, err error) {
+	if err != nil && parent.Err() != nil {
+		return
+	}
+	h := &s.health
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if err == nil {
+		if h.down {
+			s.logger.Info("collage: shared data cache available again", "suppressed", h.suppressed)
+			h.down, h.suppressed = false, 0
+		}
+		return
+	}
+	now := s.now()
+	switch {
+	case !h.down:
+		h.down, h.warnedAt = true, now
+		s.logger.Warn("collage: shared data cache unavailable, loads fetch and nothing is shared",
+			"op", op, "key", keyName(key), "err", err)
+	case now.Sub(h.warnedAt) >= backendQuiet:
+		s.logger.Warn("collage: shared data cache still unavailable",
+			"op", op, "key", keyName(key), "err", err, "suppressed", h.suppressed)
+		h.warnedAt, h.suppressed = now, 0
+	default:
+		h.suppressed++
+	}
 }
 
 // loadShared is load for a store with a backend.
@@ -85,7 +141,10 @@ func (s *Store) loadShared(ctx context.Context, key string, ttl time.Duration, t
 	}()
 	// Read before the fetch, so an invalidation that comes while it runs, on
 	// any instance, is after since.
-	since, sinceErr := s.backend.Epoch(ctx)
+	epochCtx, cancel := context.WithTimeout(ctx, s.backendTimeout)
+	since, sinceErr := s.backend.Epoch(epochCtx)
+	cancel()
+	s.backendDone(ctx, "epoch", key, sinceErr)
 	value, err = fetch(ctx)
 	finished = true
 	started.value, started.err = value, err
@@ -95,8 +154,9 @@ func (s *Store) loadShared(ctx context.Context, key string, ttl time.Duration, t
 	// waiters are answered finds the value rather than fetching it again. The
 	// value is good whether or not the reader is still there to take it, so a
 	// reader who left once it was fetched does not cost the write.
-	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.refreshTimeout)
-	s.settleShared(writeCtx, key, value, err, ttl, tags, since, sinceErr)
+	detached := context.WithoutCancel(ctx)
+	writeCtx, cancel := context.WithTimeout(detached, s.backendTimeout)
+	started.overtaken = s.settleShared(detached, writeCtx, key, value, err, ttl, tags, since, sinceErr)
 	cancel()
 	s.mu.Lock()
 	delete(s.inflight, key)
@@ -121,15 +181,11 @@ func (s *Store) loadShared(ctx context.Context, key string, ttl time.Duration, t
 // that fails is a miss, and a value that no longer decodes is deleted and is
 // one as well.
 func (s *Store) readShared(ctx context.Context, key string, decode func([]byte) (types.CacheValue, error)) (value types.CacheValue, stale, found bool) {
-	raw, stale, found, err := s.backend.GetData(ctx, key)
-	if err != nil {
-		// A reader who left is no news about the backend.
-		if ctx.Err() == nil {
-			s.logger.Warn("collage: shared data cache read failed, fetching", "key", keyName(key), "err", err)
-		}
-		return nil, false, false
-	}
-	if !found {
+	readCtx, cancel := context.WithTimeout(ctx, s.backendTimeout)
+	raw, stale, found, err := s.backend.GetData(readCtx, key)
+	cancel()
+	s.backendDone(ctx, "read", key, err)
+	if err != nil || !found {
 		return nil, false, false
 	}
 	decoded, err := guardedDecode(decode, raw)
@@ -137,9 +193,9 @@ func (s *Store) readShared(ctx context.Context, key string, decode func([]byte) 
 		// The type changed between builds in a way its identity did not
 		// catch, or another build wrote it. A miss, never the page's error.
 		s.logger.Warn("collage: dropping a stored value that no longer decodes", "key", keyName(key), "err", err)
-		if err := s.backend.DeleteData(ctx, key); err != nil {
-			s.logger.Warn("collage: shared data cache delete failed", "key", keyName(key), "err", err)
-		}
+		deleteCtx, cancel := context.WithTimeout(ctx, s.backendTimeout)
+		s.backendDone(ctx, "delete", key, s.backend.DeleteData(deleteCtx, key))
+		cancel()
 		return nil, false, false
 	}
 	return decoded, stale, true
@@ -157,14 +213,17 @@ func (s *Store) refreshSharedLocked(ctx context.Context, key string, ttl time.Du
 	go s.refreshShared(context.WithoutCancel(ctx), key, ttl, tags, fetch, started)
 }
 
-func (s *Store) refreshShared(ctx context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), started *call) {
+func (s *Store) refreshShared(detached context.Context, key string, ttl time.Duration, tags []string, fetch func(context.Context) (types.CacheValue, error), started *call) {
 	defer s.refreshes.Done()
-	ctx, cancel := context.WithTimeout(ctx, s.refreshTimeout)
+	// detached never ends, so a backend call that runs out of the refresh's
+	// budget counts as the backend's failure.
+	ctx, cancel := context.WithTimeout(detached, s.refreshTimeout)
 	defer cancel()
 	since, sinceErr := s.backend.Epoch(ctx)
+	s.backendDone(detached, "epoch", key, sinceErr)
 	value, err := guarded(ctx, fetch)
 	started.value, started.err = value, err
-	s.settleShared(ctx, key, value, err, ttl, tags, since, sinceErr)
+	started.overtaken = s.settleShared(detached, ctx, key, value, err, ttl, tags, since, sinceErr)
 
 	s.mu.Lock()
 	delete(s.inflight, key)
@@ -181,7 +240,9 @@ func (s *Store) refreshShared(ctx context.Context, key string, ttl time.Duration
 		// still there is not known here: the key cools down either way, and a
 		// load that finds nothing fetches and meets the error itself.
 		if cooling == nil {
-			cooling = &cooldown{}
+			s.makeRoomForCooldownLocked()
+			s.coolSeq++
+			cooling = &cooldown{seq: s.coolSeq}
 			s.cooling[key] = cooling
 		}
 		cooling.tags = slices.Clone(tags)
@@ -204,18 +265,43 @@ func (s *Store) refreshShared(ctx context.Context, key string, ttl time.Duration
 	}
 }
 
+// makeRoomForCooldownLocked keeps the cooldowns within the store's bound, as
+// entries are in memory: keys can come from requests, and a failing upstream
+// would otherwise grow the map with every key it fails. A cooldown already
+// over goes first, as it no longer holds anything back; else the oldest. It
+// must be called with s.mu held.
+func (s *Store) makeRoomForCooldownLocked() {
+	if s.max <= 0 || len(s.cooling) < s.max {
+		return
+	}
+	now := s.now()
+	var oldest string
+	var oldestSeq uint64
+	for key, cooling := range s.cooling {
+		if !now.Before(cooling.retryAt) {
+			delete(s.cooling, key)
+			return
+		}
+		if oldest == "" || cooling.seq < oldestSeq {
+			oldest, oldestSeq = key, cooling.seq
+		}
+	}
+	delete(s.cooling, oldest)
+}
+
 // settleShared records in the backend what a fetch brought back: a value is
 // written, which the backend stores stale or not at all if an invalidation or a
 // purge came after since; not found deletes what was there; any other error
 // leaves it. Without since there is no telling an invalidation that overlapped
 // the fetch, so nothing is written. A backend that fails costs the write, not
-// the value, which the caller still returns.
-func (s *Store) settleShared(ctx context.Context, key string, value types.CacheValue, err error, ttl time.Duration, tags []string, since uint64, sinceErr error) {
+// the value, which the caller still returns. overtaken reports a write the
+// backend stored stale or skipped. ctx bounds the backend calls; parent is
+// whose leaving makes a failed one no news about the backend.
+func (s *Store) settleShared(parent, ctx context.Context, key string, value types.CacheValue, err error, ttl time.Duration, tags []string, since uint64, sinceErr error) (overtaken bool) {
 	switch {
 	case err == nil:
 		if sinceErr != nil {
-			s.logger.Warn("collage: shared data cache epoch read failed, value not shared", "key", keyName(key), "err", sinceErr)
-			return
+			return false
 		}
 		encoded, encodeErr := encode(value)
 		if encodeErr != nil {
@@ -227,23 +313,23 @@ func (s *Store) settleShared(ctx context.Context, key string, value types.CacheV
 				s.logger.Warn("collage: data cache value not shared, it cannot be encoded", "key", keyName(key), "err", encodeErr)
 			}
 			s.diskMu.Unlock()
-			return
+			return false
 		}
-		if _, setErr := s.backend.SetData(ctx, key, encoded, max(ttl, 0), tags, since); setErr != nil {
-			s.logger.Warn("collage: shared data cache write failed", "key", keyName(key), "err", setErr)
-		}
+		outcome, setErr := s.backend.SetData(ctx, key, encoded, max(ttl, 0), tags, since)
+		s.backendDone(parent, "write", key, setErr)
+		return setErr == nil && outcome != cache.WriteFresh
 	case errors.Is(err, types.ErrNotFound):
-		if delErr := s.backend.DeleteData(ctx, key); delErr != nil {
-			s.logger.Warn("collage: shared data cache delete failed", "key", keyName(key), "err", delErr)
-		}
+		s.backendDone(parent, "delete", key, s.backend.DeleteData(ctx, key))
 	}
+	return false
 }
 
 // endCooldownsLocked ends the cooldown of every key under any of tags: an
 // invalidation is news that the upstream is answering, so the key tries on its
 // next load, its failures kept so one more backs off from there. A purge
 // forgets the key's failures too, as it removes a stored entry. It must be
-// called with s.mu held; a store without a backend has no cooldowns here.
+// called with s.mu held. Only a store with a backend keeps cooldowns here; for
+// one without, cooling is empty and this does nothing.
 func (s *Store) endCooldownsLocked(tags []string, purge bool) {
 	for key, cooling := range s.cooling {
 		if !slices.ContainsFunc(cooling.tags, func(tag string) bool { return slices.Contains(tags, tag) }) {

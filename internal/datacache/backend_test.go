@@ -328,3 +328,249 @@ func TestBackend_AReaderWhoLeftStillWritesTheValue(t *testing.T) {
 		t.Errorf("backend holds %q, found %v; want the value written", v, found)
 	}
 }
+
+// A backend that is down fails on every load. It is reported once, then once
+// per backendQuiet with how many failures went unreported, and its recovery once.
+func TestBackend_AnUnavailableBackendIsReportedOnce(t *testing.T) {
+	backend := &flaky{SharedMemory: cache.NewSharedMemory()}
+	var logs strings.Builder
+	var logsMu sync.Mutex
+	s := shared(t, backend, Options{Logger: slog.New(slog.NewTextHandler(lockedWriter{&logsMu, &logs}, nil))})
+	clk := newClock(s)
+	count := func(msg string) int {
+		logsMu.Lock()
+		defer logsMu.Unlock()
+		return strings.Count(logs.String(), msg)
+	}
+	backend.failGet.Store(true)
+	backend.failEpoch.Store(true)
+	backend.failSet.Store(true)
+	var calls atomic.Int32
+	for range 1000 {
+		if v, _, err := s.Load(bg, "k", 0, nil, counting(&calls, "v"), decodeStr); err != nil || v != str("v") {
+			t.Fatalf("Load = %v, %v; want the fetched value", v, err)
+		}
+	}
+	if n := count("data cache unavailable"); n != 1 {
+		t.Fatalf("warned %d times for 1000 failing loads, want 1:\n%s", n, logs.String())
+	}
+	if n := count("still unavailable"); n != 0 {
+		t.Fatalf("repeated the warning %d times within the quiet period, want 0", n)
+	}
+
+	clk.advance(backendQuiet)
+	s.Load(bg, "k", 0, nil, counting(&calls, "v"), decodeStr)
+	if n := count("still unavailable"); n != 1 {
+		t.Fatalf("after the quiet period warned %d times, want 1", n)
+	}
+	if n := count("suppressed=1999"); n != 1 {
+		t.Errorf("the repeated warning does not count the 1999 unreported failures:\n%s", logs.String())
+	}
+
+	backend.failGet.Store(false)
+	backend.failEpoch.Store(false)
+	backend.failSet.Store(false)
+	for range 3 {
+		s.Load(bg, "k", 0, nil, counting(&calls, "v"), decodeStr)
+	}
+	if n := count("available again"); n != 1 {
+		t.Errorf("logged the recovery %d times, want 1:\n%s", n, logs.String())
+	}
+}
+
+// blocking is a backend whose chosen calls hang until their ctx ends: a
+// stalled connection.
+type blocking struct {
+	*cache.SharedMemory
+	reads, writes bool
+}
+
+func (b *blocking) Epoch(ctx context.Context) (uint64, error) {
+	if b.reads {
+		<-ctx.Done()
+		return 0, ctx.Err()
+	}
+	return b.SharedMemory.Epoch(ctx)
+}
+
+func (b *blocking) GetData(ctx context.Context, key string) ([]byte, bool, bool, error) {
+	if b.reads {
+		<-ctx.Done()
+		return nil, false, false, ctx.Err()
+	}
+	return b.SharedMemory.GetData(ctx, key)
+}
+
+func (b *blocking) SetData(ctx context.Context, key string, value []byte, ttl time.Duration, tags []string, since uint64) (cache.WriteOutcome, error) {
+	if b.writes {
+		<-ctx.Done()
+		return cache.WriteSkipped, ctx.Err()
+	}
+	return b.SharedMemory.SetData(ctx, key, value, ttl, tags, since)
+}
+
+// A stalled backend costs a load BackendTimeout per call, not the request's
+// whole deadline: the page gets the fetched value.
+func TestBackend_AStalledBackendDoesNotHoldTheLoad(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		backend *blocking
+		within  time.Duration
+	}{
+		// The read and the epoch time out; with no epoch nothing is written.
+		{"reads", &blocking{SharedMemory: cache.NewSharedMemory(), reads: true}, 2*BackendTimeout + 250*time.Millisecond},
+		{"writes", &blocking{SharedMemory: cache.NewSharedMemory(), writes: true}, BackendTimeout + 250*time.Millisecond},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := shared(t, tc.backend, Options{Logger: slog.New(slog.DiscardHandler)})
+			ctx, cancel := context.WithTimeout(bg, time.Minute)
+			defer cancel()
+			began := time.Now()
+			var calls atomic.Int32
+			v, _, err := s.Load(ctx, "k", 0, nil, counting(&calls, "v"), decodeStr)
+			if err != nil || v != str("v") {
+				t.Fatalf("Load = %v, %v; want the fetched value", v, err)
+			}
+			if took := time.Since(began); took > tc.within {
+				t.Errorf("Load took %v, want within %v", took, tc.within)
+			}
+		})
+	}
+}
+
+// Cooldowns are bounded like entries: past MaxEntries the map stays at it,
+// giving up a cooldown already over first and else the oldest.
+func TestBackend_CooldownsAreBounded(t *testing.T) {
+	backend := cache.NewSharedMemory()
+	s := shared(t, backend, Options{MaxEntries: 3, Logger: slog.New(slog.DiscardHandler)})
+	clk := newClock(s)
+	fail := failing(errors.New("upstream down"))
+	cool := func(key string) {
+		t.Helper()
+		if _, err := backend.SetData(bg, key, []byte(`"v"`), 0, []string{"t"}, 0); err != nil {
+			t.Fatal(err)
+		}
+		markStale(t, backend, "t")
+		if _, stale, _ := s.Load(bg, key, 0, []string{"t"}, fail, decodeStr); !stale {
+			t.Fatalf("Load %s not stale", key)
+		}
+		s.refreshes.Wait()
+	}
+	cooling := func() map[string]bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		keys := make(map[string]bool)
+		for k := range s.cooling {
+			keys[k] = true
+		}
+		return keys
+	}
+	for _, k := range []string{"k0", "k1", "k2", "k3", "k4"} {
+		cool(k)
+	}
+	if got := cooling(); len(got) != 3 || !got["k2"] || !got["k3"] || !got["k4"] {
+		t.Fatalf("cooling %v; want the newest three", got)
+	}
+
+	// Every cooldown is over; k2, the oldest, fails again and cools down anew.
+	clk.advance(retryBackoffMin)
+	cool("k2")
+	cool("k5")
+	if got := cooling(); len(got) != 3 || !got["k2"] || !got["k5"] {
+		t.Errorf("cooling %v; want k2, still cooling, kept over one already over", got)
+	}
+}
+
+// A fresh-data waiter does not take a fetch another instance's invalidation
+// overtook: the backend stored it stale, and the waiter fetches again.
+func TestBackend_AFreshDataWaiterRetriesAFetchAnotherInstanceOvertook(t *testing.T) {
+	backend := cache.NewSharedMemory()
+	s1 := shared(t, backend, Options{})
+	s2 := shared(t, backend, Options{})
+	started, release := make(chan struct{}), make(chan struct{})
+	slow := func(context.Context) (types.CacheValue, error) {
+		close(started)
+		<-release
+		return str("old"), nil
+	}
+	var wg sync.WaitGroup
+	wg.Go(func() { s2.Load(bg, "k", 0, []string{"t"}, slow, decodeStr) })
+	<-started
+	var fresh types.CacheValue
+	wg.Go(func() {
+		var calls atomic.Int32
+		v, _, err := s2.Load(types.WithFreshData(bg), "k", 0, []string{"t"}, counting(&calls, "new"), decodeStr)
+		if err != nil {
+			t.Errorf("fresh-data Load: %v", err)
+		}
+		fresh = v
+	})
+	// Let the waiter join the running fetch, then invalidate on the other
+	// instance: in its backend, as the App does, and in its own store.
+	time.Sleep(50 * time.Millisecond)
+	markStale(t, backend, "t")
+	s1.Invalidate([]string{"t"})
+	close(release)
+	wg.Wait()
+	if fresh != str("new") {
+		t.Errorf("fresh-data Load = %v; want new, not the overtaken fetch's old", fresh)
+	}
+}
+
+// Concurrent loads of one key on one instance share one fetch.
+func TestBackend_ConcurrentLoadsShareOneFetch(t *testing.T) {
+	backend := cache.NewSharedMemory()
+	s := shared(t, backend, Options{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	fetch := func(context.Context) (types.CacheValue, error) {
+		calls.Add(1)
+		<-release
+		return str("v"), nil
+	}
+	var wg sync.WaitGroup
+	for range 20 {
+		wg.Go(func() {
+			if v, _, err := s.Load(bg, "k", 0, nil, fetch, decodeStr); err != nil || v != str("v") {
+				t.Errorf("Load = %v, %v", v, err)
+			}
+		})
+	}
+	time.Sleep(50 * time.Millisecond)
+	close(release)
+	wg.Wait()
+	if calls.Load() != 1 {
+		t.Errorf("fetches = %d, want 1", calls.Load())
+	}
+}
+
+// Close racing loads that start refreshes waits for those that started and
+// lets no more start.
+func TestBackend_CloseRacesARefresh(t *testing.T) {
+	backend := cache.NewSharedMemory()
+	s := New(Options{Backend: backend})
+	var calls atomic.Int32
+	s.Load(bg, "k", 0, []string{"t"}, counting(&calls, "v1"), decodeStr)
+	markStale(t, backend, "t")
+	slow := func(context.Context) (types.CacheValue, error) {
+		calls.Add(1)
+		time.Sleep(10 * time.Millisecond)
+		return str("v2"), nil
+	}
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Go(func() { s.Load(bg, "k", 0, []string{"t"}, slow, decodeStr) })
+	}
+	wg.Go(func() {
+		if err := s.Close(bg); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	wg.Wait()
+	s.mu.Lock()
+	inflight := len(s.inflight)
+	s.mu.Unlock()
+	if inflight != 0 {
+		t.Errorf("%d fetches still in flight after Close and the loads returned", inflight)
+	}
+}

@@ -121,8 +121,11 @@ type Store struct {
 	unencodable map[string]bool
 	// backend is nil for a store that keeps its own values. With one, entries
 	// stays empty and cooling holds the only per-key state kept in process.
-	backend Backend
-	cooling map[string]*cooldown
+	backend        Backend
+	backendTimeout time.Duration
+	cooling        map[string]*cooldown
+	coolSeq        uint64
+	health         backendHealth
 }
 
 type entry struct {
@@ -151,6 +154,9 @@ type call struct {
 	abandoned bool
 	// epoch is the store's epoch when the fetch started.
 	epoch uint64
+	// overtaken reports a fetch whose write a backend stored stale or not at
+	// all: an invalidation on some instance came after it started.
+	overtaken bool
 }
 
 // New returns an empty store kept in memory only.
@@ -176,6 +182,7 @@ func New(opts Options) *Store {
 	}
 	if opts.Backend != nil {
 		s.backend = opts.Backend
+		s.backendTimeout = BackendTimeout
 		s.cooling = make(map[string]*cooldown)
 		s.unencodable = make(map[string]bool)
 	}
@@ -312,12 +319,14 @@ func (s *Store) awaitLocked(ctx context.Context, running *call) (value types.Cac
 	// A fetch that started before an invalidation may have read what it
 	// invalidated. That is good enough for a reader served stale anyway, not
 	// for one that wants fresh data: it waits the old fetch out, so as not to
-	// race it, and then fetches again.
-	outdated := types.WantsFreshData(ctx) && running.epoch != s.epoch
+	// race it, and then fetches again. With a backend the invalidation may be
+	// another instance's, which only the backend's answer to the write tells.
+	wantsFresh := types.WantsFreshData(ctx)
+	outdated := wantsFresh && running.epoch != s.epoch
 	s.mu.Unlock()
 	select {
 	case <-running.done:
-		if outdated && ctx.Err() == nil {
+		if (outdated || wantsFresh && running.overtaken) && ctx.Err() == nil {
 			return nil, nil, true
 		}
 		// Not the starter's cancellation: one reader disconnecting, on purpose
