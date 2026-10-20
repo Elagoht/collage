@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.68.0
+
+From building a real site on collage: what was hard to find, hard to read, or
+did not start.
+
+### Added
+
+- **`collage.Main(newApp)` runs the program `collage new` scaffolds.** It owns
+  `-collage-build`, `-out`, `-clean` and `-port`, a plugin's command after the
+  flags, the static build, serving, and the shutdown after a build or a command.
+  `newApp` gets a `collage.Env`: `Dev`, `Host`, `Port`, `CacheDir`, and
+  `env.PluginConfig(files)` / `env.Static(files, "static")`, which read the
+  embedded `plugins-config.json` and static directory (from disk in
+  development). A scaffolded `main.go` is now about fifty lines. An existing
+  project keeps working as it is; to move, copy the new `main.go`, `embed.go`
+  and `embed_dev.go` from `collage new`, and call `newApp(collage.Env{CacheDir:
+  t.TempDir()})` in tests.
+- **`collage.SeeOtherPage(rc, name, params)`** redirects to a page by its name,
+  its path built by `rc.URL`.
+- **`collage plugin add` says what each plugin needs from you**: after its setup
+  note, the template functions it adds and where its documentation is. With
+  several plugins — a bundle, `new --with` — they come together at the end.
+
+### Changed
+
+- **`collage add fragment a/b` writes `fragments/a/b.go`**, with its template at
+  `a/b` under the template root, instead of under `fragments/pages/`. Its package
+  is the directory's, or named after it. A page's content stays in
+  `fragments/pages/`.
+- **`collage add` names are Go names, kept as written.** `blog/storyDetail` is
+  `pages/blog/storyDetail.go`, `StoryDetail()`, the page `"storyDetail"` at
+  `/blog/storyDetail`. A dashed name is refused.
+- **A new project's `files` is the project directory in development**
+  (`embed_dev.go`), so a plugin given `files` — ogimage's card templates, a
+  favicon source, markdown posts — reads the copy you are editing instead of an
+  empty filesystem. Every project now ships `.env.example`.
+
+### Fixed
+
+- **`collage dev` gives the program `BASE_URL`** — its own address — when
+  neither the shell nor the environment file sets one. A project made with
+  `--with @site` did not start: sitemap and meta refuse to without an origin.
+
 ## v0.67.0
 
 ### Changed
