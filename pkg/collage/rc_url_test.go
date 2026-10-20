@@ -59,12 +59,9 @@ func rcURLApp(t *testing.T) http.Handler {
 	})).
 		Build()
 
+	// Through SeeOtherPage, so every case below is also its test.
 	goStory := func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
-		location, err := rc.URL("story", map[string]string{"id": rc.Request.FormValue("id")})
-		if err != nil {
-			return nil, err
-		}
-		return collage.SeeOther(location), nil
+		return collage.SeeOtherPage(rc, "story", map[string]string{"id": rc.Request.FormValue("id")})
 	}
 	page := func(name string) *collage.Fragment { return collage.NewFragment(name, "page.html").Build() }
 	for _, p := range []*collage.Page{

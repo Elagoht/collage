@@ -163,6 +163,21 @@ func SeeOther(location string) *ActionResult {
 	return &ActionResult{Status: http.StatusSeeOther, Location: location}
 }
 
+// SeeOtherPage is SeeOther to the page or document registered as name, its path
+// built by rc.URL in the request's locale:
+//
+//	return collage.SeeOtherPage(rc, "story", map[string]string{"id": id})
+//
+// An unknown name or params that do not fill the pattern are rc.URL's error, so
+// a handler can return both values as they are.
+func SeeOtherPage(rc *RenderContext, name string, params map[string]string) (*ActionResult, error) {
+	location, err := rc.URL(name, params)
+	if err != nil {
+		return nil, err
+	}
+	return SeeOther(location), nil
+}
+
 // RenderFragment answers with one fragment's markup: the changed part of a page,
 // rather than the page.
 func RenderFragment(f *Fragment) *ActionResult {
