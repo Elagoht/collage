@@ -75,16 +75,13 @@ destination does not submit the form again.
 return collage.SeeOther("/posts/" + slug), nil
 ```
 
-Or by name, so a renamed path cannot leave the redirect pointing at the old one.
-`rc.URL` builds in the request's locale and keeps a value inside its path
-segment; see [Links by name](fragments.md#links-by-name):
+Or by the page's name, with `SeeOtherPage`, so a renamed path cannot leave the
+redirect pointing at the old one. It builds the path with `rc.URL`, in the
+request's locale and with each value kept inside its path segment (see
+[Links by name](fragments.md#links-by-name)), and an unknown name is its error:
 
 ```go
-target, err := rc.URL("post", map[string]string{"slug": slug})
-if err != nil {
-	return nil, err
-}
-return collage.SeeOther(target), nil
+return collage.SeeOtherPage(rc, "post", map[string]string{"slug": slug})
 ```
 
 **`Fragment`** answers with one fragment's markup — the changed part, not the page.
