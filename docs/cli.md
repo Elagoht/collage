@@ -219,7 +219,10 @@ it in `routes.go`:
 ```
 collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
 collage add page blog/post --file   # its template in templates/pages/blog/post.html
-collage add fragment blog/sidebar   # fragments/pages/blog/sidebar.go, for a slot
+collage add fragment blog/sidebar   # fragments/blog/sidebar.go, for a slot
+collage add fragment layouts/partials/newsletterForm --file
+                                    # fragments/layouts/partials/newsletterForm.go
+                                    # + templates/layouts/partials/newsletterForm.html
 collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
 collage add action blog/ping --path /api/ping
 collage add document feed --path /feed.xml --type application/xml
@@ -236,10 +239,18 @@ collage add document feed --path /feed.xml --type application/xml
   page it is attached to, and the command prints the `.WithActionFor(...)` to add.
 - **A document** is `documents/<name>.go`, `text/plain` unless `--type` says
   otherwise.
-- **A fragment** is a page's content without the page, for a slot.
+- **A fragment** is a page's content without the page, for a slot of a page or a
+  layout. It goes where its path says, `fragments/<area>/<name>.go`, with its
+  template at `<area>/<name>` under the template root. Its package is the one
+  already in that directory, or one named after it: `fragments/layouts/partials`
+  is `partials`.
 
-What it writes is named after the last segment — `blog/post` is the page `"post"`,
-built by `Post()` — unless `--name` gives another. The locale of its path is
+Every segment is a Go name, written the way you want it: `blog/storyDetail`,
+`layouts/partials/newsletterForm`. What it writes is named after the last one —
+the file, the default URL and the page, `blog/storyDetail` is the page
+`"storyDetail"` at `/blog/storyDetail` — unless `--name` gives another, and its
+function is that name with the first letter capitalised, `StoryDetail()`. A
+dashed name is refused: it is no Go name. The locale of its path is
 `Locale.Default` as `main.go` writes it, `en` when it is not a literal there, or
 `--locale`; a template file goes under `Template.Root` with its `Extension`, read
 the same way. The command says which locale it used.

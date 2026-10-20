@@ -11,10 +11,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ErrAddUsage is returned by the "add" command for arguments it cannot act on.
@@ -27,15 +28,17 @@ Writes a page, a fragment, an action or a document into the current project, in
 the layout "collage new" scaffolds, and registers it in routes.go:
 
   page       pages/<area>/<name>.go, and its content in fragments/pages/<area>/<name>.go
-  fragment   fragments/pages/<area>/<name>.go alone, for a slot of a page
+  fragment   fragments/<area>/<name>.go alone, for a slot of a page or a layout
   action     a builder in actions/<area>.go and its handler in actions/funcs/<area>.go;
              registered when it has a --path, attached to a page otherwise
   document   documents/<name>.go
 
-A name is lowercase letters, digits and dashes: "blog/post", "story-detail". The
-page, action or document is named after its last segment, unless --name says
-otherwise, and a name the project already uses is refused before anything is
-written. Constructors take no arguments; add the services they need by hand.
+Each segment is a Go name, written as you want it: "blog/post",
+"layouts/partials/newsletterForm". The last one names the file, the default URL
+and the page, action or document (unless --name says otherwise); its function is
+the same name with its first letter capitalised, NewsletterForm. A name the
+project already uses is refused before anything is written. Constructors take no
+arguments; add the services they need by hand.
 
   --file          keep the template in a file under the template root, not inline
   --path pattern  the URL (default: /<area>/<name> for a page and a document; an
@@ -53,10 +56,12 @@ package a file goes into, stops the command before it writes anything.
 // argument, for splitPositional.
 var addValueFlags = map[string]bool{"path": true, "name": true, "locale": true, "type": true, "dir": true}
 
-// segmentPattern is what each segment of an add target may be: lowercase, a
-// letter first, so it is a directory name, a URL segment and — once its dashes
-// are folded — a Go identifier all at once.
-var segmentPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+// validSegment reports whether segment may be a segment of an add target: a Go
+// identifier that is exported once its first letter is capitalised, so it is a
+// directory name, a URL segment and a function's name at once.
+func validSegment(segment string) bool {
+	return token.IsIdentifier(segment) && token.IsExported(upperFirst(segment))
+}
 
 // addKinds are the things "add" writes.
 var addKinds = []string{"page", "fragment", "action", "document"}
@@ -176,8 +181,8 @@ func (c *CLI) runAdd(args []string) int {
 func (r *addRequest) parseTarget(target string) error {
 	segments := strings.Split(strings.Trim(target, "/"), "/")
 	for _, segment := range segments {
-		if !segmentPattern.MatchString(segment) {
-			return fmt.Errorf("%w: %q is not a name: lowercase letters, digits and dashes, a letter first", ErrAddUsage, segment)
+		if !validSegment(segment) {
+			return fmt.Errorf("%w: %q is not a Go name: letters, digits and underscores, a letter first", ErrAddUsage, segment)
 		}
 	}
 	r.area, r.name = segments[:len(segments)-1], segments[len(segments)-1]
@@ -353,8 +358,10 @@ func plan(req addRequest, proj project) ([]fileChange, []string, error) {
 	case "page":
 		changes, notes, err = g.page(notes)
 	case "fragment":
-		changes, err = g.fragment(false)
-		notes = append(notes, fmt.Sprintf("bind it into a page's slot: .WithSlotFragment(\"<slot>\", fragments.%s())", g.pascal))
+		var pkg string
+		if changes, pkg, err = g.fragment(false); err == nil {
+			notes = append(notes, fmt.Sprintf("bind it into a slot: .WithSlotFragment(\"<slot>\", %s.%s()), importing %q", pkg, g.pascal, g.importPath("fragments")))
+		}
 	case "action":
 		changes, notes, err = g.action(notes)
 	case "document":
@@ -439,14 +446,28 @@ func (g generator) importPath(base string) string {
 	return strings.Join(append([]string{g.proj.module, base}, g.req.area...), "/")
 }
 
-// title is the name as words, for a heading: "story-detail" is "Story detail".
+// title is the name as words, for a heading: "storyDetail" is "Story detail".
+// A run of capitals is kept as one word: "aboutOSE" is "About OSE".
 func (g generator) title() string {
-	return upperFirst(strings.ReplaceAll(g.req.name, "-", " "))
+	var words []string
+	start := 0
+	runes := []rune(strings.ReplaceAll(g.req.name, "_", " "))
+	for i := 1; i <= len(runes); i++ {
+		if i < len(runes) && !(unicode.IsUpper(runes[i]) && !unicode.IsUpper(runes[i-1])) {
+			continue
+		}
+		word := string(runes[start:i])
+		if w := []rune(word); len(w) < 2 || !unicode.IsUpper(w[1]) {
+			word = strings.ToLower(word)
+		}
+		words, start = append(words, strings.TrimSpace(word)), i
+	}
+	return upperFirst(strings.Join(words, " "))
 }
 
 // page writes the page and its content, and registers the page.
 func (g generator) page(notes []string) ([]fileChange, []string, error) {
-	changes, err := g.fragment(true)
+	changes, _, err := g.fragment(true)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -479,7 +500,7 @@ func (g generator) page(notes []string) ([]fileChange, []string, error) {
 	pkgPath := strings.Join(append([]string{g.proj.module, "pages"}, g.req.area...), "/")
 	alias := ""
 	if len(g.req.area) > 0 {
-		alias = identStem(g.req.area[len(g.req.area)-1]) + "pages"
+		alias = strings.ToLower(g.req.area[len(g.req.area)-1]) + "pages"
 	}
 	routes, note, err := registerInRoutes(g.proj, "page", pkgPath, alias, "pages", func(ident string) string {
 		return ident + "." + g.pascal + "()"
@@ -497,13 +518,38 @@ func (g generator) page(notes []string) ([]fileChange, []string, error) {
 	return changes, notes, nil
 }
 
-// fragment writes a fragment into fragments/pages/<area>, inline or with its
-// template in a file. forPage says it is a page's content rather than a piece
-// for a slot, which is only a matter of its comments.
-func (g generator) fragment(forPage bool) ([]fileChange, error) {
-	dir := g.areaDir("fragments", "pages")
+// fragmentPackage returns the package a fragment added on its own goes into:
+// the one its directory already holds, or one named after the directory —
+// fragments/layouts/partials is partials — or fragments at the top.
+func (g generator) fragmentPackage() (string, error) {
+	files, err := parseDir(g.areaDir("fragments"))
+	if err != nil {
+		return "", err
+	}
+	for _, f := range files {
+		return f.ast.Name.Name, nil
+	}
+	if len(g.req.area) == 0 {
+		return "fragments", nil
+	}
+	return strings.ToLower(g.req.area[len(g.req.area)-1]), nil
+}
+
+// fragment writes a fragment, inline or with its template in a file: a page's
+// content into fragments/pages/<area>, with its template under pages/<area>,
+// and a fragment added on its own into fragments/<area>, with its template
+// under <area>.
+func (g generator) fragment(forPage bool) ([]fileChange, string, error) {
+	pkg, dir, templateDir := "fragments", g.areaDir("fragments", "pages"), append([]string{"pages"}, g.req.area...)
+	if !forPage {
+		var err error
+		if pkg, err = g.fragmentPackage(); err != nil {
+			return nil, "", err
+		}
+		dir, templateDir = g.areaDir("fragments"), g.req.area
+	}
 	if err := checkIdentifiers(g.proj, dir, g.pascal, g.camel+"View", g.camel+"Block", g.camel+"Data"); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 
 	what, data := "fragment", "this fragment"
@@ -513,13 +559,13 @@ func (g generator) fragment(forPage bool) ([]fileChange, error) {
 	markup := "<main>\n  <h1>{{.Title}}</h1>\n</main>\n"
 
 	var b strings.Builder
-	b.WriteString("package fragments\n\nimport (\n\t\"context\"\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\n")
+	fmt.Fprintf(&b, "package %s\n\nimport (\n\t\"context\"\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\n", pkg)
 	fmt.Fprintf(&b, "// Types data used on %s.\ntype %sView struct {\n\tTitle string\n}\n\n", data, g.camel)
 	fmt.Fprintf(&b, "// Returns the %s %s.\nfunc %s() *collage.Fragment {\n", g.req.name, what, g.pascal)
 
 	var changes []fileChange
 	if g.req.file {
-		rel := strings.Join(append(append([]string{"pages"}, g.req.area...), g.req.name+g.proj.templateExt), "/")
+		rel := strings.Join(append(slices.Clone(templateDir), g.req.name+g.proj.templateExt), "/")
 		fmt.Fprintf(&b, "\treturn collage.NewFragment(%q, %q).\n", g.req.ident, rel)
 		changes = append(changes, fileChange{
 			path:    filepath.Join(g.proj.dir, g.proj.templateRoot, filepath.FromSlash(rel)),
@@ -542,7 +588,7 @@ func (g generator) fragment(forPage bool) ([]fileChange, error) {
 	}
 	fmt.Fprintf(&b, "\treturn %sView{Title: %q}, nil\n}\n", g.camel, g.title())
 
-	return append([]fileChange{{path: filepath.Join(dir, g.req.name+".go"), content: []byte(b.String())}}, changes...), nil
+	return append([]fileChange{{path: filepath.Join(dir, g.req.name+".go"), content: []byte(b.String())}}, changes...), pkg, nil
 }
 
 // action adds a builder to actions/<area>.go and its handler to
@@ -649,38 +695,27 @@ func (g generator) document(notes []string) ([]fileChange, []string, error) {
 // collageImport is the package every generated file builds with.
 const collageImport = "github.com/Elagoht/collage/pkg/collage"
 
-// pascal returns a dashed name as an exported identifier: "story-detail" is
+// pascal returns a name as an exported identifier: "storyDetail" is
 // StoryDetail.
 func pascal(name string) string {
-	var b strings.Builder
-	for part := range strings.SplitSeq(name, "-") {
-		b.WriteString(upperFirst(part))
-	}
-	return b.String()
+	return upperFirst(name)
 }
 
-// camel returns a dashed name as an unexported identifier's stem:
-// "story-detail" is storyDetail. It is only ever used with a suffix, so a name
-// that is a Go keyword — "type" — still makes a valid identifier.
+// camel returns a name as an unexported identifier's stem: "StoryDetail" is
+// storyDetail. It is only ever used with a suffix, so a name that is close to a
+// Go keyword — "Type" — still makes a valid identifier.
 func camel(name string) string {
-	p := pascal(name)
-	return string(p[0]-'A'+'a') + p[1:]
+	r, size := utf8.DecodeRuneInString(name)
+	return string(unicode.ToLower(r)) + name[size:]
 }
 
-// upperFirst returns s with its first byte uppercased when it is an ASCII
-// lowercase letter. A name has passed segmentPattern, so it starts with one;
-// nothing here folds anything that is not ASCII.
+// upperFirst returns s with its first letter capitalised.
 func upperFirst(s string) string {
-	if s == "" || s[0] < 'a' || s[0] > 'z' {
+	r, size := utf8.DecodeRuneInString(s)
+	if size == 0 {
 		return s
 	}
-	return string(s[0]-'a'+'A') + s[1:]
-}
-
-// identStem returns a dashed segment with its dashes dropped, for an import
-// alias: "user-settings" is usersettings.
-func identStem(segment string) string {
-	return strings.ReplaceAll(segment, "-", "")
+	return string(unicode.ToUpper(r)) + s[size:]
 }
 
 // checkIdentifiers refuses names that a package in dir already declares at its

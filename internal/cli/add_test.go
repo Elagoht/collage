@@ -77,6 +77,8 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		{"page", "blog/archive", "--file", "--path", "/arşiv"},
 		{"page", "about"},
 		{"fragment", "blog/sidebar"},
+		{"fragment", "layouts/partials/newsletterForm", "--file"},
+		{"page", "blog/storyDetail"},
 		{"action", "blog/comment"},
 		{"action", "blog/ping", "--path", "/api/ping"},
 		{"document", "feed", "--path", "/feed.xml", "--type", "application/xml"},
@@ -98,6 +100,15 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(target, "templates", "pages", "blog", "archive.html")); err != nil {
 		t.Errorf("--file wrote no template: %v", err)
 	}
+	// A fragment goes where its path says, not under pages/, in a package named
+	// after its directory, with its name as it was written.
+	wantInOrder(t, readFile(t, target, "fragments/blog/sidebar.go"), "package blog", "func Sidebar() *collage.Fragment")
+	wantInOrder(t, readFile(t, target, "fragments/layouts/partials/newsletterForm.go"),
+		"package partials", "func NewsletterForm() *collage.Fragment", `collage.NewFragment("newsletterForm", "layouts/partials/newsletterForm.html")`)
+	if _, err := os.Stat(filepath.Join(target, "templates", "layouts", "partials", "newsletterForm.html")); err != nil {
+		t.Errorf("the fragment's template is not beside its path: %v", err)
+	}
+	wantInOrder(t, readFile(t, target, "pages/blog/storyDetail.go"), "func StoryDetail() *collage.Page", `collage.NewPage("storyDetail")`, `WithPath("en", "/blog/storyDetail")`)
 
 	writeFiles(t, target, map[string]string{"added_test.go": `package main
 
@@ -109,7 +120,7 @@ import (
 
 func TestAdded(t *testing.T) {
 	c := client(t)
-	for target, want := range map[string]string{"/blog/post": "<h1>Post</h1>", "/ar%C5%9Fiv": "<h1>Archive</h1>", "/about": "<h1>About</h1>"} {
+	for target, want := range map[string]string{"/blog/post": "<h1>Post</h1>", "/ar%C5%9Fiv": "<h1>Archive</h1>", "/about": "<h1>About</h1>", "/blog/storyDetail": "<h1>Story detail</h1>"} {
 		if res := c.Get(target).WantStatus(http.StatusOK); !strings.Contains(res.Body, want) {
 			t.Errorf("%s: %s", target, res.Body)
 		}
@@ -355,7 +366,8 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 		"a page name the project uses": {args: []string{"page", "account/login"}, want: `a page named "login" already exists, in pages/auth/login.go`},
 		"an existing file":             {args: []string{"page", "panel/settings"}, setup: map[string]string{"pages/panel/settings.go": "package pages\n"}, want: "exists; collage add does not overwrite"},
 		"a declared identifier":        {args: []string{"action", "auth/logout", "--name", "sign-out"}, want: "actions/auth.go already declares Logout"},
-		"a name that is not one":       {args: []string{"page", "Blog/post"}, want: "is not a name"},
+		"a name that is not one":       {args: []string{"page", "blog/story-detail"}, want: `"story-detail" is not a Go name`},
+		"a name that cannot export":    {args: []string{"fragment", "_hidden"}, want: "is not a Go name"},
 		"a path without a slash":       {args: []string{"page", "blog", "--path", "blog"}, want: "must start with /"},
 		"a document in an area":        {args: []string{"document", "feeds/rss"}, want: "a document has no area"},
 		"no kind":                      {args: []string{"widget", "x"}, want: "want a kind"},
@@ -398,14 +410,18 @@ func treeSnapshot(t *testing.T, dir string) string {
 }
 
 func TestNames(t *testing.T) {
-	for name, want := range map[string][2]string{
-		"post":         {"Post", "post"},
-		"story-detail": {"StoryDetail", "storyDetail"},
-		"type":         {"Type", "type"},
-		"a2-b3":        {"A2B3", "a2B3"},
+	for name, want := range map[string][3]string{
+		"post":           {"Post", "post", "Post"},
+		"storyDetail":    {"StoryDetail", "storyDetail", "Story detail"},
+		"NewsletterForm": {"NewsletterForm", "newsletterForm", "Newsletter form"},
+		"aboutOSE":       {"AboutOSE", "aboutOSE", "About OSE"},
+		"type":           {"Type", "type", "Type"},
+		"a2_b3":          {"A2_b3", "a2_b3", "A2 b3"},
+		"çay":            {"Çay", "çay", "Çay"},
 	} {
-		if got := [2]string{pascal(name), camel(name)}; got != want {
-			t.Errorf("%s = %v, want %v", name, got, want)
+		g := generator{req: addRequest{name: name}}
+		if got := [3]string{pascal(name), camel(name), g.title()}; got != want {
+			t.Errorf("%s = %q, want %q", name, got, want)
 		}
 	}
 }
