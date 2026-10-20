@@ -344,8 +344,9 @@ tool to install:
   the compiler's error on screen.
 - **Development builds embed nothing.** They are built with `-tags collage_dev`,
   and the scaffold keeps its `//go:embed` line in `embed.go`, constrained with
-  `//go:build !collage_dev`; `embed_dev.go` declares the same `files`, empty, for
-  the development build. Every build that embeds files stores another copy of them
+  `//go:build !collage_dev`; `embed_dev.go` declares the same `files` as the
+  project directory on disk, for the development build — so a plugin given
+  `files` reads the copy you are editing. Every build that embeds files stores another copy of them
   in the Go build cache — a change anywhere recompiles `main`, so that is one copy
   per save, kept for days: a 50 MB `static/` and a few hundred saves fill gigabytes.
   Development mode reads both directories from disk anyway, so there is nothing to

@@ -313,7 +313,7 @@ func TestRun_New_Minimal(t *testing.T) {
 		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
 	}
 
-	want := []string{".gitignore", "README.md", "go.mod", "main.go", "embed.go", "embed_dev.go", "routes.go", "plugins.go", "plugins-config.json",
+	want := []string{".env.example", ".gitignore", "README.md", "go.mod", "main.go", "embed.go", "embed_dev.go", "routes.go", "plugins.go", "plugins-config.json",
 		"fragments/layouts/main.go", "fragments/pages/home.go", "pages/home.go",
 		"templates/layouts/default.html", "templates/pages/home.html", "static/app.css"}
 	var got []string
