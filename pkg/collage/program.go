@@ -30,16 +30,18 @@ type Env struct {
 	CacheDir string
 }
 
-// PluginConfig returns plugins-config.json, keyed by plugin name: from the
-// files the binary embeds, or in development — and when they hold no such
-// file — from the working directory. A file in neither place is no error;
-// every plugin then runs on its defaults.
-//
-// Embedded, so a binary deployed without the file still has its settings.
+// PluginConfig returns plugins-config.json, keyed by plugin name: the file in
+// the working directory when there is one — so a deployment can change a
+// setting without a rebuild — and otherwise the copy files embeds, so a binary
+// deployed without the file still has its settings. In development it is only
+// ever the file on disk. A file in neither place is no error; every plugin
+// then runs on its defaults.
 func (e Env) PluginConfig(files fs.FS) (map[string]json.RawMessage, error) {
 	if !e.Dev && files != nil {
-		if raw, err := fs.ReadFile(files, pluginConfigFile); err == nil {
-			return parsePluginConfig(pluginConfigFile, raw)
+		if _, err := os.Stat(pluginConfigFile); errors.Is(err, fs.ErrNotExist) {
+			if raw, err := fs.ReadFile(files, pluginConfigFile); err == nil {
+				return parsePluginConfig(pluginConfigFile, raw)
+			}
 		}
 	}
 	return LoadPluginConfig(pluginConfigFile)

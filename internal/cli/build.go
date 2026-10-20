@@ -286,13 +286,13 @@ func (c *CLI) stdinOrDefault() io.Reader {
 const pluginConfigFile = "plugins-config.json"
 
 func dockerfileFor(name string, pluginConfig bool) string {
-	// Read from the working directory rather than embedded, so a container
-	// without it runs every plugin on its defaults, silently. Copied when the
-	// project has one.
+	// Read from the working directory before any copy the binary embeds, and a
+	// project made before collage v0.68.0 embeds none: copied when the project
+	// has one, so the container runs on the settings that were built.
 	copyConfig := ""
 	if pluginConfig {
-		copyConfig = "# Read from the working directory, not the binary: without it every plugin\n" +
-			"# runs on its defaults.\nCOPY --from=build /src/" + pluginConfigFile + " /srv/" + pluginConfigFile + "\n"
+		copyConfig = "# Read from the working directory before the copy the binary embeds, if it\n" +
+			"# embeds one; without either every plugin runs on its defaults.\nCOPY --from=build /src/" + pluginConfigFile + " /srv/" + pluginConfigFile + "\n"
 	}
 	return `# Built by "collage build -i".
 #

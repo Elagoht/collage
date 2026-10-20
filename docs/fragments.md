@@ -395,18 +395,18 @@ name, a menu, the footer's links — are loaded the way a page's content is: wit
 layout, so each loads only what it shows and fails alone:
 
 ```go
-func Master(site *content.Client) *collage.Fragment {
-	return collage.NewFragment("layout", "layouts/master.html").
-		WithData(collage.Load(headData(site))). // title, meta tags: hoisted into the head
-		WithSlotFragment("header", partials.Header(site)).
-		WithSlotFragment("footer", partials.Footer(site)).
+func Master(api *backend.API) *collage.Fragment {
+	return collage.NewFragment("layout", "layouts/default.html").
+		WithData(collage.Load(headData(api))). // title, meta tags: hoisted into the head
+		WithSlotFragment("header", Header(api)).
+		WithSlotFragment("footer", Footer(api)).
 		Build()
 }
 
-func Footer(site *content.Client) *collage.Fragment {
-	return collage.NewFragment("footer", "layouts/partials/footer.html").
+func Footer(api *backend.API) *collage.Fragment {
+	return collage.NewFragment("footer", "layouts/footer.html").
 		WithData(collage.Load(func(ctx context.Context, rc *collage.RenderContext) (footerView, error) {
-			menu, err := collage.Cached(rc, menuKey, time.Hour, []string{"menu"}, site.Menu)
+			menu, err := collage.Cached(rc, menuKey, time.Hour, []string{"menu"}, api.Menu)
 			return footerView{Menu: menu}, err
 		})).
 		Build()
@@ -414,7 +414,7 @@ func Footer(site *content.Client) *collage.Fragment {
 ```
 
 ```html
-<!-- layouts/master.html -->
+<!-- layouts/default.html -->
 <body>
   {{slot "header"}}
   {{slot "content"}}

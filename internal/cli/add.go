@@ -34,9 +34,9 @@ the layout "collage new" scaffolds, and registers it in routes.go:
   document   documents/<name>.go
 
 Each segment is a Go name, written as you want it: "blog/post",
-"layouts/partials/newsletterForm". The last one names the file, the default URL
+"layouts/partials/siteFooter". The last one names the file, the default URL
 and the page, action or document (unless --name says otherwise); its function is
-the same name with its first letter capitalised, NewsletterForm. A name the
+the same name with its first letter capitalised, SiteFooter. A name the
 project already uses is refused before anything is written. Constructors take no
 arguments; add the services they need by hand.
 
@@ -447,7 +447,7 @@ func (g generator) importPath(base string) string {
 }
 
 // title is the name as words, for a heading: "storyDetail" is "Story detail".
-// A run of capitals is kept as one word: "aboutOSE" is "About OSE".
+// A run of capitals is kept as one word: "aboutAPI" is "About API".
 func (g generator) title() string {
 	var words []string
 	start := 0

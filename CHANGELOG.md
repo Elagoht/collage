@@ -11,9 +11,11 @@ did not start.
   `-collage-build`, `-out`, `-clean` and `-port`, a plugin's command after the
   flags, the static build, serving, and the shutdown after a build or a command.
   `newApp` gets a `collage.Env`: `Dev`, `Host`, `Port`, `CacheDir`, and
-  `env.PluginConfig(files)` / `env.Static(files, "static")`, which read the
-  embedded `plugins-config.json` and static directory (from disk in
-  development). A scaffolded `main.go` is now about fifty lines. An existing
+  `env.PluginConfig(files)` / `env.Static(files, "static")`.
+  `PluginConfig` reads `plugins-config.json` from the working directory when it
+  is there, as before, and otherwise the copy the binary now embeds, so a binary
+  deployed without the file keeps its settings. `Static` serves the static
+  directory from disk in development and embedded otherwise. A scaffolded `main.go` is now about fifty lines. An existing
   project keeps working as it is; to move, copy the new `main.go`, `embed.go`
   and `embed_dev.go` from `collage new`, and call `newApp(collage.Env{CacheDir:
   t.TempDir()})` in tests.

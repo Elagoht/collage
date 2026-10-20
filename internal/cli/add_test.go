@@ -77,7 +77,7 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		{"page", "blog/archive", "--file", "--path", "/arşiv"},
 		{"page", "about"},
 		{"fragment", "blog/sidebar"},
-		{"fragment", "layouts/partials/newsletterForm", "--file"},
+		{"fragment", "layouts/partials/siteFooter", "--file"},
 		{"page", "blog/storyDetail"},
 		{"action", "blog/comment"},
 		{"action", "blog/ping", "--path", "/api/ping"},
@@ -103,9 +103,9 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 	// A fragment goes where its path says, not under pages/, in a package named
 	// after its directory, with its name as it was written.
 	wantInOrder(t, readFile(t, target, "fragments/blog/sidebar.go"), "package blog", "func Sidebar() *collage.Fragment")
-	wantInOrder(t, readFile(t, target, "fragments/layouts/partials/newsletterForm.go"),
-		"package partials", "func NewsletterForm() *collage.Fragment", `collage.NewFragment("newsletterForm", "layouts/partials/newsletterForm.html")`)
-	if _, err := os.Stat(filepath.Join(target, "templates", "layouts", "partials", "newsletterForm.html")); err != nil {
+	wantInOrder(t, readFile(t, target, "fragments/layouts/partials/siteFooter.go"),
+		"package partials", "func SiteFooter() *collage.Fragment", `collage.NewFragment("siteFooter", "layouts/partials/siteFooter.html")`)
+	if _, err := os.Stat(filepath.Join(target, "templates", "layouts", "partials", "siteFooter.html")); err != nil {
 		t.Errorf("the fragment's template is not beside its path: %v", err)
 	}
 	wantInOrder(t, readFile(t, target, "pages/blog/storyDetail.go"), "func StoryDetail() *collage.Page", `collage.NewPage("storyDetail")`, `WithPath("en", "/blog/storyDetail")`)
@@ -411,13 +411,13 @@ func treeSnapshot(t *testing.T, dir string) string {
 
 func TestNames(t *testing.T) {
 	for name, want := range map[string][3]string{
-		"post":           {"Post", "post", "Post"},
-		"storyDetail":    {"StoryDetail", "storyDetail", "Story detail"},
-		"NewsletterForm": {"NewsletterForm", "newsletterForm", "Newsletter form"},
-		"aboutOSE":       {"AboutOSE", "aboutOSE", "About OSE"},
-		"type":           {"Type", "type", "Type"},
-		"a2_b3":          {"A2_b3", "a2_b3", "A2 b3"},
-		"çay":            {"Çay", "çay", "Çay"},
+		"post":        {"Post", "post", "Post"},
+		"storyDetail": {"StoryDetail", "storyDetail", "Story detail"},
+		"SiteFooter":  {"SiteFooter", "siteFooter", "Site footer"},
+		"aboutAPI":    {"AboutAPI", "aboutAPI", "About API"},
+		"type":        {"Type", "type", "Type"},
+		"a2_b3":       {"A2_b3", "a2_b3", "A2 b3"},
+		"çay":         {"Çay", "çay", "Çay"},
 	} {
 		g := generator{req: addRequest{name: name}}
 		if got := [3]string{pascal(name), camel(name), g.title()}; got != want {

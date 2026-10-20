@@ -92,31 +92,32 @@ func TestRunMain_BuildsStaticFiles(t *testing.T) {
 	}
 }
 
-func TestEnv_PluginConfigPrefersEmbeddedOutsideDevelopment(t *testing.T) {
+func TestEnv_PluginConfigPrefersTheFileOnDisk(t *testing.T) {
 	t.Chdir(t.TempDir())
+	files := fstest.MapFS{pluginConfigFile: {Data: []byte(`{"embedded": {}}`)}}
+
+	// No file beside the binary: the embedded copy.
+	if config, err := (Env{}).PluginConfig(files); err != nil || config["embedded"] == nil {
+		t.Errorf("no file on disk: config = %v, %v; want the embedded one", config, err)
+	}
+	if config, err := (Env{Dev: true}).PluginConfig(files); err != nil || config != nil {
+		t.Errorf("development, no file: config = %v, %v; want none", config, err)
+	}
+	if _, err := (Env{}).PluginConfig(fstest.MapFS{pluginConfigFile: {Data: []byte(`{`)}}); err == nil {
+		t.Error("a malformed embedded file was accepted")
+	}
+
+	// A file on disk wins everywhere: a deployment changes a setting without a rebuild.
 	if err := os.WriteFile(pluginConfigFile, []byte(`{"disk": {}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	files := fstest.MapFS{pluginConfigFile: {Data: []byte(`{"embedded": {}}`)}}
-
 	for _, c := range []struct {
 		env   Env
 		files fs.FS
-		want  string
-	}{
-		{Env{}, files, "embedded"},
-		{Env{Dev: true}, files, "disk"},
-		{Env{}, fstest.MapFS{}, "disk"},
-		{Env{}, nil, "disk"},
-	} {
-		config, err := c.env.PluginConfig(c.files)
-		if _, ok := config[c.want]; err != nil || !ok {
-			t.Errorf("Dev %v, files %v: config = %v, %v; want %q's", c.env.Dev, c.files, config, err, c.want)
+	}{{Env{}, files}, {Env{Dev: true}, files}, {Env{}, nil}} {
+		if config, err := c.env.PluginConfig(c.files); err != nil || config["disk"] == nil {
+			t.Errorf("Dev %v, files %v: config = %v, %v; want the file on disk", c.env.Dev, c.files, config, err)
 		}
-	}
-
-	if _, err := (Env{}).PluginConfig(fstest.MapFS{pluginConfigFile: {Data: []byte(`{`)}}); err == nil {
-		t.Error("a malformed embedded file was accepted")
 	}
 }
 

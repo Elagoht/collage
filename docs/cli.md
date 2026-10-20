@@ -220,9 +220,9 @@ it in `routes.go`:
 collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
 collage add page blog/post --file   # its template in templates/pages/blog/post.html
 collage add fragment blog/sidebar   # fragments/blog/sidebar.go, for a slot
-collage add fragment layouts/partials/newsletterForm --file
-                                    # fragments/layouts/partials/newsletterForm.go
-                                    # + templates/layouts/partials/newsletterForm.html
+collage add fragment layouts/partials/siteFooter --file
+                                    # fragments/layouts/partials/siteFooter.go
+                                    # + templates/layouts/partials/siteFooter.html
 collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
 collage add action blog/ping --path /api/ping
 collage add document feed --path /feed.xml --type application/xml
@@ -246,7 +246,7 @@ collage add document feed --path /feed.xml --type application/xml
   is `partials`.
 
 Every segment is a Go name, written the way you want it: `blog/storyDetail`,
-`layouts/partials/newsletterForm`. What it writes is named after the last one —
+`layouts/partials/siteFooter`. What it writes is named after the last one —
 the file, the default URL and the page, `blog/storyDetail` is the page
 `"storyDetail"` at `/blog/storyDetail` — unless `--name` gives another, and its
 function is that name with the first letter capitalised, `StoryDetail()`. A
@@ -323,8 +323,9 @@ server. A `main.go` written without it must keep both halves working, or these
 two commands stop doing anything useful in your project.
 
 `Env` also reads the two things a deployed binary must carry with it:
-`env.PluginConfig(files)` is `plugins-config.json`, embedded (from disk in
-development), and `env.Static(files, "static")` the static directory. Its
+`env.PluginConfig(files)` is `plugins-config.json` — the file in the working
+directory when there is one, so a deployment can change a setting without a
+rebuild, and otherwise the copy the binary embeds — and `env.Static(files, "static")` the static directory. Its
 `CacheDir` is `.cache`; a test passes a directory of its own.
 
 ### Rebuilding on change
