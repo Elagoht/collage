@@ -387,6 +387,56 @@ layout twice, and `collage.ErrConflictingLayout` when called a second time.
 A layout can also say who may see the pages it wraps; see
 [Guards](routing.md#guards).
 
+### A layout with data of its own
+
+A layout is a fragment, so the parts of it that come from a CMS — the site's
+name, a menu, the footer's links — are loaded the way a page's content is: with
+`WithData`. Give each part a fragment of its own, bound into a slot of the
+layout, so each loads only what it shows and fails alone:
+
+```go
+func Master(site *content.Client) *collage.Fragment {
+	return collage.NewFragment("layout", "layouts/master.html").
+		WithData(collage.Load(headData(site))). // title, meta tags: hoisted into the head
+		WithSlotFragment("header", partials.Header(site)).
+		WithSlotFragment("footer", partials.Footer(site)).
+		Build()
+}
+
+func Footer(site *content.Client) *collage.Fragment {
+	return collage.NewFragment("footer", "layouts/partials/footer.html").
+		WithData(collage.Load(func(ctx context.Context, rc *collage.RenderContext) (footerView, error) {
+			menu, err := collage.Cached(rc, menuKey, time.Hour, []string{"menu"}, site.Menu)
+			return footerView{Menu: menu}, err
+		})).
+		Build()
+}
+```
+
+```html
+<!-- layouts/master.html -->
+<body>
+  {{slot "header"}}
+  {{slot "content"}}
+  {{slot "footer"}}
+</body>
+```
+
+The client the data comes from is passed to the layout's constructor, as to any
+page's, from where `routes.go` builds them. Three things follow from the layout
+being part of every page:
+
+- **Fetch it once, not once per page.** Every page renders the menu, so read it
+  through [`collage.Cached`](caching.md#caching-data-not-only-pages): thirty
+  pages then fetch it once, and a static export does too.
+- **The tags make a change reach every page.** The tags given to `Cached` are
+  added to every page that rendered the layout, so `app.InvalidateTags(ctx,
+  "menu")` — from the CMS's webhook — refreshes the menu and drops every cached
+  page that showed it.
+- **A slow CMS slows every page.** Give the part a `WithTimeout` and a
+  `WithFallback`, so a menu that does not arrive is a page without a menu rather
+  than a page that does not arrive; see [Failure policy](#failure-policy).
+
 ## Data handlers
 
 A fragment's data is set with `WithData`, which takes a `collage.Data`. Only four
