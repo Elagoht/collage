@@ -461,6 +461,7 @@ func (fakeHost) Logger() *slog.Logger                                        { r
 func (fakeHost) RegisterCommand(cmd Command) error                           { return nil }
 func (fakeHost) RegisterDocument(doc *types.Document) error                  { return nil }
 func (fakeHost) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error { return nil }
+func (fakeHost) OpenMounted(string) (fs.File, error)                         { return nil, fs.ErrNotExist }
 func (fakeHost) Handle(prefix string, handler http.Handler) error            { return nil }
 func (fakeHost) RenderFragment(*http.Request, FragmentRequest) (*FragmentRender, error) {
 	return nil, nil

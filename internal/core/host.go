@@ -115,6 +115,12 @@ func (h *hostView) Mount(prefix string, fsys fs.FS, opts ...asset.Option) error 
 	return h.app.Mount(prefix, fsys, opts...)
 }
 
+// OpenMounted opens the file a URL path under one of the application's mounts
+// is served from.
+func (h *hostView) OpenMounted(urlPath string) (fs.File, error) {
+	return h.app.OpenMounted(urlPath)
+}
+
 // Handle serves handler under prefix, on the same terms as the application's own
 // Handle but one: inside the middleware chain, always. A plugin's endpoint is
 // part of the site — an event stream reading the reader's session or tenant, a

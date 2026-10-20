@@ -118,6 +118,17 @@ func (m *Mount) Handles(urlPath string) bool {
 	return strings.HasPrefix(urlPath, m.prefix)
 }
 
+// Open opens the file urlPath names under the mount, as a request for it would
+// find it — the literal name, not a fingerprinted one — without serving it. A
+// path outside the mount, or one a request could not reach, is fs.ErrNotExist.
+func (m *Mount) Open(urlPath string) (fs.File, error) {
+	name := path.Clean(strings.TrimPrefix(urlPath, m.prefix))
+	if !m.Handles(urlPath) || !fs.ValidPath(name) || name == "." || Hidden(name) {
+		return nil, &fs.PathError{Op: "open", Path: urlPath, Err: fs.ErrNotExist}
+	}
+	return m.fsys.Open(name)
+}
+
 // ServeHTTP implements http.Handler.
 func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {

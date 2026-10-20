@@ -149,6 +149,7 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `ConfigReader` (embedded) | What `collage.PluginConfig(host, defaults)` reads this plugin's section of `Config.PluginConfig` through — see [Configuration](#configuration) |
 | `RegisterDocument(*Document) error` | Contribute a document |
 | `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
+| `OpenMounted(urlPath) (fs.File, error)` | Read one of the site's own files by the URL it is served at — `/static/icon.png`: from disk in development, embedded in a built binary |
 | `Handle(prefix, http.Handler) error` | Serve a handler under a prefix ending in `/`, or at one exact path without it (`/metrics`), as `App.Handle` does — an event stream, a WebSocket — but always inside the middleware chain, as `App.Handle` does only with `WithMiddleware()` |
 | `RenderFragment(r, FragmentRequest) (*FragmentRender, error)` | Render a fragment a page opened with `WithFragmentPath`, in parts — see below |
 | `Use(middleware) error` | Wrap every request, where the plugin was registered: for one in `Config.Plugins`, outside the application's own middleware — but not one for a handler the application mounted with `App.Handle` without `WithMiddleware()`; see [http.md](http.md) |
@@ -675,7 +676,7 @@ app, err := collage.New(&collage.Config{
 | `WrapMount` | yes | — |
 | `Pages`, `Page`, `InvalidateTags` | — | yes |
 | `URL`, `Locales`, `PageURLs`, `OriginFor`, `MultiOrigin` | — | yes |
-| `RegisterDocument`, `Mount`, `Handle`, `Use` | — | yes |
+| `RegisterDocument`, `Mount`, `OpenMounted`, `Handle`, `Use` | — | yes |
 | `RenderFragment` | — | yes |
 | `RegisterCommand` | — | yes |
 

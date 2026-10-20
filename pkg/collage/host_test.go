@@ -147,7 +147,7 @@ func TestHost_ExternalPluginCompiles(t *testing.T) {
 
 func TestHost_MethodSet(t *testing.T) {
 	want := []string{"BaseURL", "BuildID", "DevMode", "Handle", "InvalidateTags", "Locales", "Logger",
-		"Mount", "MultiOrigin", "OriginFor", "Page", "PageURLs", "Pages", "RegisterCommand",
+		"Mount", "MultiOrigin", "OpenMounted", "OriginFor", "Page", "PageURLs", "Pages", "RegisterCommand",
 		"RegisterDocument", "RenderFragment", "ServeStatus", "URL", "Use"}
 	typ := reflect.TypeOf((*collage.Host)(nil)).Elem()
 	var got []string

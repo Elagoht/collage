@@ -75,6 +75,18 @@ func (a *App) Mounts() []*asset.Mount {
 	return slices.Clone(a.mounts)
 }
 
+// OpenMounted opens the file the URL path urlPath is served from, through the
+// mount whose prefix it is under — what a request for it would be answered
+// with, read without a request. No mount, or no such file, is fs.ErrNotExist.
+func (a *App) OpenMounted(urlPath string) (fs.File, error) {
+	for _, m := range a.Mounts() {
+		if m.Handles(urlPath) {
+			return m.Open(urlPath)
+		}
+	}
+	return nil, &fs.PathError{Op: "open", Path: urlPath, Err: fs.ErrNotExist}
+}
+
 // checkMountsDoNotShadow reports ErrMountShadowsRoute for the first mount prefix
 // that is a prefix of a URL path the router already answers to, and
 // ErrMountConflict for the first pair of mount prefixes where one is a prefix of

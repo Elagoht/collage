@@ -25,6 +25,11 @@ did not start.
   `go run .`, `collage export` and the built binary with no `source .env`. What
   the environment already sets wins; a malformed line stops the program with the
   file and line.
+- **`Host.OpenMounted(urlPath)`** lets a plugin read one of the site's own
+  files by the URL it is served at — `/static/icon.png` — through the
+  application's mount: from disk in development, embedded in a built binary.
+  Only what a request could reach opens. elagoht/favicon reads its source this
+  way.
 - **`collage.SeeOtherPage(rc, name, params)`** redirects to a page by its name,
   its path built by `rc.URL`.
 - **`collage plugin add` says what each plugin needs from you**: after its setup

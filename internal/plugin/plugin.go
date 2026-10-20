@@ -139,6 +139,12 @@ type Host = interface {
 	// Mount serves fsys under prefix. A plugin that rewrites URLs into its own
 	// namespace — an image optimiser, say — uses this to serve what it rewrote to.
 	Mount(prefix string, fsys fs.FS, opts ...asset.Option) error
+	// OpenMounted opens the file a URL path is served from, through the mount
+	// whose prefix it is under: "/static/icon.png" is static/icon.png on disk in
+	// development and the embedded copy in a built binary. It is how a plugin
+	// reads one of the site's own files — a source image, a stylesheet — by the
+	// URL the site serves it at. No such file is fs.ErrNotExist.
+	OpenMounted(urlPath string) (fs.File, error)
 	// Handle serves handler for every request under prefix, on the same terms as
 	// the application's own Handle: a prefix ending in "/", refused when it shadows
 	// a registered route. It is for what a file system cannot answer — an event
