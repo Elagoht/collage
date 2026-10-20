@@ -63,6 +63,7 @@ func TestNoUnicodeFoldingOutsideThisPackage(t *testing.T) {
 		"internal/cli/build.go":      "a yes or no typed at the terminal",
 		"internal/router/action.go":  "a method name at registration, the application's own",
 		"internal/plugin/config.go":  "a plugins-config.json key matched to a field as encoding/json matches it, which folds Unicode",
+		"internal/cli/add.go":        "a Go name typed to collage add, exported as Go exports it: by a Unicode upper-case first letter",
 	}
 	forbidden := map[string]bool{
 		"strings.EqualFold": true, "strings.ToLower": true, "strings.ToUpper": true,
