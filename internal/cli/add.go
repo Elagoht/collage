@@ -33,10 +33,11 @@ the layout "collage new" scaffolds, and registers it in routes.go:
              registered when it has a --path, attached to a page otherwise
   document   documents/<name>.go
 
-Each segment is a Go name, written as you want it: "blog/post",
-"layouts/partials/siteFooter". The last one names the file, the default URL
-and the page, action or document (unless --name says otherwise); its function is
-the same name with its first letter capitalised, SiteFooter. A name the
+The last segment is a Go name, written as you want it: "blog/post",
+"layouts/partials/siteFooter". It names the file, the default URL and the page,
+action or document (unless --name says otherwise); its function is the same
+name with its first letter capitalised, SiteFooter. The directories before it
+may have dashes too, "user-settings/profile"; their package drops them. A name the
 project already uses is refused before anything is written. Constructors take no
 arguments; add the services they need by hand.
 
@@ -61,6 +62,19 @@ var addValueFlags = map[string]bool{"path": true, "name": true, "locale": true, 
 // directory name, a URL segment and a function's name at once.
 func validSegment(segment string) bool {
 	return token.IsIdentifier(segment) && token.IsExported(upperFirst(segment))
+}
+
+// validArea reports whether segment may be a directory before the name: a Go
+// name that may also hold dashes, "user-settings", since it is only a path.
+// Its package is areaIdent's.
+func validArea(segment string) bool {
+	return !strings.HasPrefix(segment, "-") && validSegment(strings.ReplaceAll(segment, "-", ""))
+}
+
+// areaIdent is an area directory as a package name or an import alias' stem:
+// without its dashes, in lowercase. "user-settings" is usersettings.
+func areaIdent(segment string) string {
+	return strings.ToLower(strings.ReplaceAll(segment, "-", ""))
 }
 
 // addKinds are the things "add" writes.
@@ -180,12 +194,15 @@ func (c *CLI) runAdd(args []string) int {
 // fills in the defaults that follow from them.
 func (r *addRequest) parseTarget(target string) error {
 	segments := strings.Split(strings.Trim(target, "/"), "/")
-	for _, segment := range segments {
-		if !validSegment(segment) {
-			return fmt.Errorf("%w: %q is not a Go name: letters, digits and underscores, a letter first", ErrAddUsage, segment)
+	r.area, r.name = segments[:len(segments)-1], segments[len(segments)-1]
+	for _, segment := range r.area {
+		if !validArea(segment) {
+			return fmt.Errorf("%w: %q is not a directory name: letters, digits, underscores and dashes, a letter first", ErrAddUsage, segment)
 		}
 	}
-	r.area, r.name = segments[:len(segments)-1], segments[len(segments)-1]
+	if !validSegment(r.name) {
+		return fmt.Errorf("%w: %q is not a Go name: letters, digits and underscores, a letter first", ErrAddUsage, r.name)
+	}
 	if r.kind == "document" && len(r.area) > 0 {
 		return fmt.Errorf("%w: a document has no area; documents/ is flat", ErrAddUsage)
 	}
@@ -500,7 +517,7 @@ func (g generator) page(notes []string) ([]fileChange, []string, error) {
 	pkgPath := strings.Join(append([]string{g.proj.module, "pages"}, g.req.area...), "/")
 	alias := ""
 	if len(g.req.area) > 0 {
-		alias = strings.ToLower(g.req.area[len(g.req.area)-1]) + "pages"
+		alias = areaIdent(g.req.area[len(g.req.area)-1]) + "pages"
 	}
 	routes, note, err := registerInRoutes(g.proj, "page", pkgPath, alias, "pages", func(ident string) string {
 		return ident + "." + g.pascal + "()"
@@ -532,7 +549,7 @@ func (g generator) fragmentPackage() (string, error) {
 	if len(g.req.area) == 0 {
 		return "fragments", nil
 	}
-	return strings.ToLower(g.req.area[len(g.req.area)-1]), nil
+	return areaIdent(g.req.area[len(g.req.area)-1]), nil
 }
 
 // fragment writes a fragment, inline or with its template in a file: a page's

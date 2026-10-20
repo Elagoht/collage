@@ -245,12 +245,14 @@ collage add document feed --path /feed.xml --type application/xml
   already in that directory, or one named after it: `fragments/layouts/partials`
   is `partials`.
 
-Every segment is a Go name, written the way you want it: `blog/storyDetail`,
+The last segment is a Go name, written the way you want it: `blog/storyDetail`,
 `layouts/partials/siteFooter`. What it writes is named after the last one —
 the file, the default URL and the page, `blog/storyDetail` is the page
 `"storyDetail"` at `/blog/storyDetail` — unless `--name` gives another, and its
 function is that name with the first letter capitalised, `StoryDetail()`. A
-dashed name is refused: it is no Go name. The locale of its path is
+dashed name is refused: it is no Go name. The directories before it are only a
+path and may have dashes, `user-settings/profile`; their package and import
+alias drop them, `usersettings`. The locale of its path is
 `Locale.Default` as `main.go` writes it, `en` when it is not a literal there, or
 `--locale`; a template file goes under `Template.Root` with its `Extension`, read
 the same way. The command says which locale it used.

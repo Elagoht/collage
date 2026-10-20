@@ -79,6 +79,8 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		{"fragment", "blog/sidebar"},
 		{"fragment", "layouts/partials/siteFooter", "--file"},
 		{"page", "blog/storyDetail"},
+		{"page", "user-settings/profile"},
+		{"fragment", "admin-tools/widget"},
 		{"action", "blog/comment"},
 		{"action", "blog/ping", "--path", "/api/ping"},
 		{"document", "feed", "--path", "/feed.xml", "--type", "application/xml"},
@@ -107,6 +109,11 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		"package partials", "func SiteFooter() *collage.Fragment", `collage.NewFragment("siteFooter", "layouts/partials/siteFooter.html")`)
 	if _, err := os.Stat(filepath.Join(target, "templates", "layouts", "partials", "siteFooter.html")); err != nil {
 		t.Errorf("the fragment's template is not beside its path: %v", err)
+	}
+	// A dashed directory is only a path: its package and alias drop the dashes.
+	wantInOrder(t, readFile(t, target, "fragments/admin-tools/widget.go"), "package admintools", "func Widget() *collage.Fragment")
+	if !strings.Contains(routes, `usersettingspages "collageaddtest/pages/user-settings"`) || !strings.Contains(routes, "usersettingspages.Profile(),") {
+		t.Errorf("the dashed area is not registered under a dashless alias:\n%s", routes)
 	}
 	wantInOrder(t, readFile(t, target, "pages/blog/storyDetail.go"), "func StoryDetail() *collage.Page", `collage.NewPage("storyDetail")`, `WithPath("en", "/blog/storyDetail")`)
 
@@ -368,6 +375,7 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 		"a declared identifier":        {args: []string{"action", "auth/logout", "--name", "sign-out"}, want: "actions/auth.go already declares Logout"},
 		"a name that is not one":       {args: []string{"page", "blog/story-detail"}, want: `"story-detail" is not a Go name`},
 		"a name that cannot export":    {args: []string{"fragment", "_hidden"}, want: "is not a Go name"},
+		"a directory that is not one":  {args: []string{"fragment", "9x/widget"}, want: `"9x" is not a directory name`},
 		"a path without a slash":       {args: []string{"page", "blog", "--path", "blog"}, want: "must start with /"},
 		"a document in an area":        {args: []string{"document", "feeds/rss"}, want: "a document has no area"},
 		"no kind":                      {args: []string{"widget", "x"}, want: "want a kind"},

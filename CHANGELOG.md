@@ -33,7 +33,9 @@ did not start.
   `fragments/pages/`.
 - **`collage add` names are Go names, kept as written.** `blog/storyDetail` is
   `pages/blog/storyDetail.go`, `StoryDetail()`, the page `"storyDetail"` at
-  `/blog/storyDetail`. A dashed name is refused.
+  `/blog/storyDetail`. A dashed name is refused; the directories before it are
+  only a path and may still have dashes, `user-settings/profile`, whose package
+  drops them.
 - **A new project's `files` is the project directory in development**
   (`embed_dev.go`), so a plugin given `files` — ogimage's card templates, a
   favicon source, markdown posts — reads the copy you are editing instead of an
