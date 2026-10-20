@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Elagoht/collage/pkg/collage"
 	"github.com/Elagoht/collage/pkg/collagetest"
 )
 
@@ -22,8 +23,7 @@ import (
 // client returns a browser of its own on a fresh copy of the site.
 func client(t *testing.T) *collagetest.Client {
 	t.Helper()
-	cacheDir = t.TempDir()
-	app, err := newApp(false, 0)
+	app, err := newApp(collage.Env{CacheDir: t.TempDir()})
 	if err != nil {
 		t.Fatalf("newApp() = %v, want nil", err)
 	}

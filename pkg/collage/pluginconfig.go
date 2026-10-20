@@ -31,7 +31,11 @@ func LoadPluginConfig(path string) (map[string]json.RawMessage, error) {
 		}
 		return nil, fmt.Errorf("collage: read plugin config %s: %w", path, err)
 	}
+	return parsePluginConfig(path, raw)
+}
 
+// parsePluginConfig parses raw, the plugin configuration read from path.
+func parsePluginConfig(path string, raw []byte) (map[string]json.RawMessage, error) {
 	var config map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &config); err != nil {
 		return nil, fmt.Errorf("collage: parse plugin config %s: %w", path, err)

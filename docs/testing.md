@@ -10,7 +10,7 @@ production.
 import "github.com/Elagoht/collage/pkg/collagetest"
 
 func TestLogin(t *testing.T) {
-	app, err := newApp(false, 0) // the function main builds the application with
+	app, err := newApp(collage.Env{CacheDir: t.TempDir()}) // the function main hands collage.Main
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,8 @@ res := site.Get("/posts").WantStatus(http.StatusOK)
 
 The scaffolded `main.go` builds the application in `newApp`, which `main` calls to
 serve and the tests call to test, so the tests exercise the site that runs rather
-than a second wiring. Point the disk cache at `t.TempDir()` before building it —
+than a second wiring. Point the disk cache at `t.TempDir()` with the `Env` you
+pass it, `collage.Env{CacheDir: t.TempDir()}` —
 otherwise a test can be served a page an earlier test or run rendered — and shut
 the application down in a `t.Cleanup` registered after it: the data cache writes
 to that directory in the background, and `App.Shutdown` waits for those writes,

@@ -6,7 +6,7 @@
 // does, hands its handler to New, and reads pages and submits their forms:
 //
 //	func TestLogin(t *testing.T) {
-//		app, err := newApp(false, 0) // the function main builds the application with
+//		app, err := newApp(collage.Env{CacheDir: t.TempDir()}) // the function main hands collage.Main
 //		if err != nil {
 //			t.Fatal(err)
 //		}

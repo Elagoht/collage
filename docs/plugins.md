@@ -27,7 +27,7 @@ app, err := collage.New(&collage.Config{
 ```
 
 Configuration, when a plugin takes any, comes from a JSON file keyed by plugin name
-and handed to `Config.PluginConfig` — see `collage.LoadPluginConfig`, which a scaffolded project's `main.go` already calls. A plugin with no entry runs on its defaults.
+and handed to `Config.PluginConfig` — see `collage.LoadPluginConfig`, or `Env.PluginConfig`, which a scaffolded project's `main.go` already calls. A plugin with no entry runs on its defaults.
 
 ### A plugin that hoists needs somewhere to hoist to
 

@@ -129,17 +129,10 @@ file gets a new URL, the page links it, and the browser fetches it.
 That is half the problem. The other half belongs to the application: a mount over an
 `embed.FS` serves bytes that were fixed when the binary was built, and no amount of
 re-hashing changes them. Serve the directory in development and the embedded copy
-otherwise — which is what `collage new` scaffolds:
+otherwise — which `Env.Static` does, and `collage new` scaffolds:
 
 ```go
-func staticFiles(devMode bool) (fs.FS, error) {
-	if devMode {
-		if root, err := os.OpenRoot("static"); err == nil {
-			return root.FS(), nil
-		}
-	}
-	return fs.Sub(staticFS, "static")
-}
+return app, app.Mount("/static/", env.Static(files, "static"))
 ```
 
 collage does this for templates itself, because `Template.Root` already tells it

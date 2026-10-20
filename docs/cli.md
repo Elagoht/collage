@@ -272,8 +272,14 @@ template by `WithData` — with a stylesheet that sets the background and text
 colour, dark mode included — no tests, no not-found page, nothing to
 delete before starting a real site. Flags take one dash or two.
 
-The scaffolded `main.go` mounts `static/` with `os.OpenRoot`, **not** `os.DirFS`.
-That is not a style preference: `os.DirFS` does not prevent symlink traversal, so
+The scaffolded `main.go` is about forty lines: `main` hands `newApp` to
+`collage.Main`, and `newApp` builds the configuration from the `collage.Env` it
+is given. Everything else — the flags, the plugin commands, the static build,
+serving and shutting down — is `collage.Main`'s; see
+[the contract](#collage-dev-and-collage-export).
+
+`env.Static(files, "static")` mounts `static/` from disk in development with
+`os.OpenRoot`, **not** `os.DirFS`. That is not a style preference: `os.DirFS` does not prevent symlink traversal, so
 a symlink planted inside the mounted directory escapes it, while an `os.Root` is
 enforced by the kernel. See [assets.md](assets.md).
 
@@ -298,12 +304,17 @@ to `go` in the current directory, exactly as you would by hand:
 | `collage dev` | `go build -tags collage_dev`, then the binary it built — again on every change | `COLLAGE_DEV=1`, the `HOST` and `PORT` to listen on, and `COLLAGE_DEV_HOST`, your list plus the host `collage dev` itself listens on, in the environment |
 | `collage export` | `go run . -collage-build -out <dir>` | `-clean` appended when you passed it |
 
-That is a **contract with your `main.go`**, and the scaffolded one honours both
-halves: it turns on development mode when `COLLAGE_DEV=1` is set, listens on the
-`HOST` and `PORT` it is given, and it renders
-to static files when `-collage-build` is passed instead of starting a server. If
-you rewrite `main.go`, keep both halves working or these two commands stop doing
-anything useful in your project.
+That is a **contract with your `main.go`**, and `collage.Main`, which the
+scaffolded one calls, honours both halves: it hands `newApp` an `Env` whose `Dev`
+is `COLLAGE_DEV=1` and whose `Host` and `Port` are the ones it is given, and it
+renders to static files when `-collage-build` is passed instead of starting a
+server. A `main.go` written without it must keep both halves working, or these
+two commands stop doing anything useful in your project.
+
+`Env` also reads the two things a deployed binary must carry with it:
+`env.PluginConfig(files)` is `plugins-config.json`, embedded (from disk in
+development), and `env.Static(files, "static")` the static directory. Its
+`CacheDir` is `.cache`; a test passes a directory of its own.
 
 ### Rebuilding on change
 
@@ -321,8 +332,8 @@ tool to install:
   started. A change that does not compile leaves the last good build serving, with
   the compiler's error on screen.
 - **Development builds embed nothing.** They are built with `-tags collage_dev`,
-  and the scaffold keeps its `//go:embed` lines in `embed.go`, constrained with
-  `//go:build !collage_dev`; `embed_dev.go` declares the same variables, empty, for
+  and the scaffold keeps its `//go:embed` line in `embed.go`, constrained with
+  `//go:build !collage_dev`; `embed_dev.go` declares the same `files`, empty, for
   the development build. Every build that embeds files stores another copy of them
   in the Go build cache — a change anywhere recompiles `main`, so that is one copy
   per save, kept for days: a 50 MB `static/` and a few hundred saves fill gigabytes.
@@ -596,7 +607,8 @@ A plugin registers a subcommand from its `Init`, through `Host.RegisterCommand`.
 it, `export` runs `go run . -collage-build` — so it has no way to reach a command
 that only exists once your plugins have been initialised. Your own `main`
 dispatches them, with `collage.DispatchCommands`, and you run them as
-`go run . <command>`. A scaffolded `main.go` already does:
+`go run . <command>`. `collage.Main`, which a scaffolded `main.go` calls, already
+does. A `main` of your own does it this way:
 
 ```go
 func main() {
@@ -645,8 +657,8 @@ Dispatching starts the application, which closes registration — so call it aft
 everything is registered. A later `ListenAndServe` reuses that start rather than
 repeating it. `DispatchCommands` does not shut the application down, since a
 program may go on to serve it: once a command has run, call `App.Shutdown`
-yourself, as above, so that every plugin's `Shutdown` runs. A scaffolded
-`main.go` does, from collage v0.55.0.
+yourself, as above, so that every plugin's `Shutdown` runs. `collage.Main`
+does.
 
 Within the application, a command with an empty name or a name another command
 already holds is rejected at `RegisterCommand` (`collage.ErrDuplicateCommand` for
@@ -701,8 +713,8 @@ func staticBuild(app *collage.App, outDir string, clean bool) error {
 ```
 
 A build does not shut the application down either, and nothing serves after
-it, so a program that exits once it has built calls `App.Shutdown` itself; a
-scaffolded `main.go` does, from collage v0.55.0. Otherwise no plugin's
+it, so a program that exits once it has built calls `App.Shutdown` itself;
+`collage.Main` does. Otherwise no plugin's
 `Shutdown` runs: what a plugin holds is never flushed, and work a queue plugin
 such as [elagoht/jobs](https://github.com/Elagoht/collage-jobs) was handed
 during the build vanishes without being logged.

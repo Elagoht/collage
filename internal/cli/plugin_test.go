@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -68,7 +69,7 @@ func TestPluginAdd_HintWhenUnwired(t *testing.T) {
 	needGo(t)
 	dir := pluginProject(t, fixturePlugin("acme", "greet", "v0.1.0", "func New() *Plugin { return &Plugin{} }", ""))
 	main := readFile(t, dir, "main.go")
-	unwired := strings.Replace(main, "Plugins: plugins(),", "", 1)
+	unwired := regexp.MustCompile(`Plugins:\s+plugins\(\),`).ReplaceAllString(main, "")
 	if unwired == main {
 		t.Fatal("main.go has no Plugins: plugins(), to remove")
 	}

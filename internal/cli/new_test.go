@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -312,7 +313,7 @@ func TestRun_New_Minimal(t *testing.T) {
 		t.Fatalf("Run() = %d, want 0; stderr = %s", code, errOut.String())
 	}
 
-	want := []string{".gitignore", "README.md", "go.mod", "main.go", "embed.go", "embed_dev.go", "routes.go", "plugins.go",
+	want := []string{".gitignore", "README.md", "go.mod", "main.go", "embed.go", "embed_dev.go", "routes.go", "plugins.go", "plugins-config.json",
 		"fragments/layouts/main.go", "fragments/pages/home.go", "pages/home.go",
 		"templates/layouts/default.html", "templates/pages/home.html", "static/app.css"}
 	var got []string
@@ -335,7 +336,7 @@ func TestRun_New_Minimal(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(target, "plugins.go")); string(b) != pluginsSkeleton {
 		t.Errorf("plugins.go =\n%s\nwant\n%s", b, pluginsSkeleton)
 	}
-	if b, _ := os.ReadFile(filepath.Join(target, "main.go")); !strings.Contains(string(b), "Plugins: plugins(),") {
+	if b, _ := os.ReadFile(filepath.Join(target, "main.go")); !regexp.MustCompile(`Plugins:\s+plugins\(\),`).Match(b) {
 		t.Errorf("main.go does not pass plugins() to collage.New:\n%s", b)
 	}
 	if b, _ := os.ReadFile(filepath.Join(target, "README.md")); !strings.Contains(string(b), "collage plugin add") || strings.Contains(string(b), "in `main.go`") {
@@ -369,12 +370,13 @@ func TestRun_New_Minimal(t *testing.T) {
 	// "collage dev" builds with the development tag, and nothing may be
 	// embedded then: every development build would otherwise store another copy
 	// of templates/ and static/ in the Go build cache. Without the tag — "collage
-	// build", "go build" — both are embedded, so the binary runs from anywhere.
+	// build", "go build" — both are embedded, with the plugins' settings, so the
+	// binary runs from anywhere.
 	if out := strings.TrimSpace(runIn("list", "-tags", devBuildTag, "-f", "{{.EmbedPatterns}}", ".")); out != "[]" {
 		t.Errorf("embed patterns in a development build = %s, want none", out)
 	}
-	if out := strings.TrimSpace(runIn("list", "-f", "{{.EmbedPatterns}}", ".")); out != "[all:static all:templates]" {
-		t.Errorf("embed patterns in a release build = %s, want all:static and all:templates", out)
+	if out := strings.TrimSpace(runIn("list", "-f", "{{.EmbedPatterns}}", ".")); out != "[all:static all:templates plugins-config.json]" {
+		t.Errorf("embed patterns in a release build = %s, want all:static, all:templates and plugins-config.json", out)
 	}
 
 	// The home page, and the stylesheet under its own name and its
