@@ -12,7 +12,7 @@ fragment names its template by the path relative to the root, extension included
 
 ```
 templates/
-  layouts/default.html      -> "layouts/default.html"
+  layouts/master.html       -> "layouts/master.html"
   pages/home.html           -> "pages/home.html"
   errors/404.html           -> "errors/404.html"
 ```
@@ -236,7 +236,7 @@ A slot is a named position inside a fragment's template, written `{{slot "name"}
 Calling it in the template is all the declaring it needs:
 
 ```html
-<!-- templates/layouts/default.html -->
+<!-- templates/layouts/master.html -->
 <!doctype html>
 <html lang="en">
 <head><title>{{.Name}}</title></head>
@@ -249,7 +249,7 @@ Calling it in the template is all the declaring it needs:
 ```go
 type site struct{ Name string }
 
-layout := collage.NewFragment("layout", "layouts/default.html").
+layout := collage.NewFragment("layout", "layouts/master.html").
 	WithData(collage.Value(site{Name: "My site"})).
 	Build()
 ```
@@ -359,7 +359,7 @@ hole is a finished fragment, not a builder a page has to finish:
 
 ```go
 func Master() *collage.Fragment {
-	return collage.NewFragment("layout", "layouts/default.html").WithTitle("My site").Build()
+	return collage.NewFragment("layout", "layouts/master.html").WithTitle("My site").Build()
 }
 
 func Auth() *collage.Fragment {
@@ -396,7 +396,7 @@ layout, so each loads only what it shows and fails alone:
 
 ```go
 func Master(api *backend.API) *collage.Fragment {
-	return collage.NewFragment("layout", "layouts/default.html").
+	return collage.NewFragment("layout", "layouts/master.html").
 		WithData(collage.Load(headData(api))). // title, meta tags: hoisted into the head
 		WithSlotFragment("header", Header(api)).
 		WithSlotFragment("footer", Footer(api)).
@@ -414,7 +414,7 @@ func Footer(api *backend.API) *collage.Fragment {
 ```
 
 ```html
-<!-- layouts/default.html -->
+<!-- layouts/master.html -->
 <body>
   {{slot "header"}}
   {{slot "content"}}
@@ -980,7 +980,7 @@ the program starts — the site's name, on its layout — is `WithTitle`, which 
 no handler and so leaves the page static:
 
 ```go
-collage.NewFragment("layout", "layouts/default.html").
+collage.NewFragment("layout", "layouts/master.html").
 	WithTitle("My site").
 	Build()
 ```

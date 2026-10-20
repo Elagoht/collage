@@ -117,7 +117,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	layout := collage.NewFragment("layout", "layouts/default.html").Build()
+	layout := collage.NewFragment("layout", "layouts/master.html").Build()
 
 	homeContent := collage.NewFragment("home-content", "pages/home.html").
 		WithData(collage.LoadTagged(func(_ context.Context, _ *collage.RenderContext) (homeData, []string, error) {
@@ -145,7 +145,7 @@ func main() {
 ```
 
 ```html
-<!-- templates/layouts/default.html -->
+<!-- templates/layouts/master.html -->
 <!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><title>My site</title></head>

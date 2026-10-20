@@ -220,7 +220,7 @@ var cfg = collage.Config{
 	Template: collage.TemplateConfig{Root: "views", Extension: ".tmpl"},
 }
 `,
-		"fragments/layouts/main.go": `package layouts
+		"fragments/layouts/master.go": `package layouts
 
 import "github.com/Elagoht/collage/pkg/collage"
 

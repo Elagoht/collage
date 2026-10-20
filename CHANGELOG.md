@@ -51,6 +51,9 @@ did not start.
   (`embed_dev.go`), so a plugin given `files` — ogimage's card templates, a
   favicon source, markdown posts — reads the copy you are editing instead of an
   empty filesystem. Every project now ships `.env.example`.
+- **The scaffolded layout is "master" everywhere**: `fragments/layouts/master.go`
+  builds `Master()` from `templates/layouts/master.html` (was `main.go` and
+  `default.html`). An existing project needs no change.
 
 ### Fixed
 

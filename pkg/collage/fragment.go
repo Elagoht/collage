@@ -118,7 +118,7 @@ func (b *FragmentBuilder) WithoutTypeCheck() *FragmentBuilder {
 // WithTitle declares the page's <title>, as rc.HoistTitle would, without a data
 // handler — so a layout can name the site and still leave its pages static:
 //
-//	collage.NewFragment("layout", "layouts/default.html").
+//	collage.NewFragment("layout", "layouts/master.html").
 //		WithTitle("My site").
 //		Build()
 //

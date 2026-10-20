@@ -173,7 +173,7 @@ grows into, with a test file that drives all of it through `app.Handler()` with
 
 ```
 pages/<area>/<name>.go            a page: its layouts, content, path, actions
-fragments/layouts/main.go         Master(), the layout every page wraps itself in
+fragments/layouts/master.go       Master(), the layout every page wraps itself in
 fragments/pages/<area>/<name>.go  each page's content, mirroring pages/
 actions/<area>.go                 action builders, one file per area
 actions/funcs/<area>.go           their handlers
@@ -435,7 +435,7 @@ a `types` table describing the types those reach, so an editor can complete
 ```json
 "fragments": [
   {"name": "post-body", "template": "pages/post.html", "handler": true, "dataType": "*blog.Post"},
-  {"name": "layout", "template": "layouts/default.html", "dataType": "nil"},
+  {"name": "layout", "template": "layouts/master.html", "dataType": "nil"},
   {"name": "legacy", "template": "pages/legacy.html", "handler": true, "dataType": null, "typeCheck": false}
 ],
 "types": {
