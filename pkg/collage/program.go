@@ -12,7 +12,10 @@ import (
 	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/Elagoht/collage/internal/envfile"
 )
 
 // Env is what Main knows about the run before the application exists: what
@@ -83,6 +86,11 @@ func (e Env) Static(files fs.FS, dir string) fs.FS {
 //   - with a word after the flags it runs that command — a plugin's,
 //     "collage-inspect" or "collage-check" — and exits with its code.
 //
+// Before newApp runs it loads the working directory's .env — .env.development,
+// or .env, in development — into the environment, leaving alone what the
+// environment already sets, so os.Getenv("BASE_URL") in newApp reads it with
+// no `source .env` first.
+//
 // A build or a command shuts the application down before Main returns, so
 // every plugin's Shutdown runs. Main exits the process on failure, and after a
 // command; a test calls newApp itself rather than Main.
@@ -93,6 +101,11 @@ func Main(newApp func(Env) (*App, error)) {
 // runMain is Main without the exit, for its tests.
 func runMain(newApp func(Env) (*App, error), args []string, stdout, stderr io.Writer) int {
 	name := filepath.Base(os.Args[0])
+	dev := os.Getenv("COLLAGE_DEV") == "1"
+	if err := loadEnvFile(dev, stderr); err != nil {
+		fmt.Fprintf(stderr, "%s: %v\n", name, err)
+		return 1
+	}
 	flags := flag.NewFlagSet(name, flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	build := flags.Bool("collage-build", false, "render the app to static files instead of serving it")
@@ -110,7 +123,7 @@ func runMain(newApp func(Env) (*App, error), args []string, stdout, stderr io.Wr
 	if host == "" {
 		host = "localhost"
 	}
-	env := Env{Dev: os.Getenv("COLLAGE_DEV") == "1", Host: host, Port: *port, CacheDir: ".cache"}
+	env := Env{Dev: dev, Host: host, Port: *port, CacheDir: ".cache"}
 
 	app, err := newApp(env)
 	if err != nil {
@@ -146,6 +159,32 @@ func runMain(newApp func(Env) (*App, error), args []string, stdout, stderr io.Wr
 		return 1
 	}
 	return 0
+}
+
+// envFiles are the environment files Main reads, by mode: the ones "collage
+// dev" reads in development, and .env otherwise. Only the first found is read.
+var envFiles = map[bool][]string{true: {".env.development", ".env"}, false: {".env"}}
+
+// loadEnvFile sets the variables of the working directory's environment file
+// — .env, or .env.development in development — that the environment does not
+// already set, so os.Getenv reads them in go run, collage export and a built
+// binary as it does under collage dev. Outside development it says which file
+// it read; collage dev already does.
+func loadEnvFile(dev bool, stderr io.Writer) error {
+	pairs, loaded, err := envfile.Load(".", envFiles[dev], os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	for _, pair := range pairs {
+		key, value, _ := strings.Cut(pair, "=")
+		if err := os.Setenv(key, value); err != nil {
+			return err
+		}
+	}
+	if loaded != "" && !dev {
+		fmt.Fprintf(stderr, "collage: loaded %s\n", loaded)
+	}
+	return nil
 }
 
 // shutdownStarted runs every plugin's Shutdown once a build or a command is

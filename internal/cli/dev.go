@@ -71,8 +71,9 @@ The file read is named on stderr when there is one; no file is not an error.
 BASE_URL, when neither sets it, is collage dev's own address, so a plugin that
 writes absolute URLs — a sitemap, a canonical link — has an origin.
 
-Only "collage dev" reads these files. "collage build", "collage export" and the
-built binary take their environment from wherever they run.
+A program whose main calls collage.Main reads them too, by the same rules:
+"go run .", "collage export" and the built binary load .env from the working
+directory, with what the environment already sets winning.
 
 The browser talks to "collage dev" itself, at HOST and PORT as the program
 would read them (localhost:6060 by default), and each request is passed on to

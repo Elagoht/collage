@@ -148,3 +148,55 @@ func TestEnv_StaticPrefersDiskInDevelopment(t *testing.T) {
 		t.Error("an invalid directory served a file")
 	}
 }
+
+func TestRunMain_LoadsTheEnvFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile(".env", []byte("BASE_URL=https://file.example\nPORT=7171\nKEPT=file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(".env.development", []byte("BASE_URL=http://dev.example\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KEPT", "shell") // the environment wins over the file
+	for _, key := range []string{"BASE_URL", "PORT"} {
+		t.Setenv(key, "") // restored after the test
+		os.Unsetenv(key)
+	}
+
+	var port int
+	var baseURL string
+	newApp := func(env Env) (*App, error) {
+		port, baseURL = env.Port, os.Getenv("BASE_URL")
+		return registrationTestApp(t), nil
+	}
+	var stderr bytes.Buffer
+	runMain(newApp, []string{"collage-check"}, &bytes.Buffer{}, &stderr)
+
+	if baseURL != "https://file.example" || port != 7171 || os.Getenv("KEPT") != "shell" {
+		t.Errorf("BASE_URL %q, port %d, KEPT %q; want the file's, and the shell's KEPT", baseURL, port, os.Getenv("KEPT"))
+	}
+	if !strings.Contains(stderr.String(), "loaded .env") {
+		t.Errorf("stderr = %q, want it to name the file", stderr.String())
+	}
+
+	// In development, .env.development replaces .env.
+	t.Setenv("COLLAGE_DEV", "1")
+	os.Unsetenv("BASE_URL")
+	runMain(newApp, []string{"collage-check"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if baseURL != "http://dev.example" {
+		t.Errorf("development BASE_URL = %q, want .env.development's", baseURL)
+	}
+}
+
+func TestRunMain_MalformedEnvFileStops(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile(".env", []byte("NOT A LINE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ran := false
+	var stderr bytes.Buffer
+	code := runMain(func(Env) (*App, error) { ran = true; return registrationTestApp(t), nil }, nil, &bytes.Buffer{}, &stderr)
+	if code != 1 || ran || !strings.Contains(stderr.String(), ".env:1") {
+		t.Errorf("code %d, ran %v, stderr %q; want 1 before newApp, naming .env:1", code, ran, stderr.String())
+	}
+}

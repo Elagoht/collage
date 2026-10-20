@@ -19,6 +19,12 @@ did not start.
   project keeps working as it is; to move, copy the new `main.go`, `embed.go`
   and `embed_dev.go` from `collage new`, and call `newApp(collage.Env{CacheDir:
   t.TempDir()})` in tests.
+- **`collage.Main` loads `.env`.** Before `newApp` runs, the working directory's
+  `.env` — `.env.development` first under `COLLAGE_DEV=1`, as `collage dev`
+  reads — is put into the environment, so `os.Getenv("BASE_URL")` sees it in
+  `go run .`, `collage export` and the built binary with no `source .env`. What
+  the environment already sets wins; a malformed line stops the program with the
+  file and line.
 - **`collage.SeeOtherPage(rc, name, params)`** redirects to a page by its name,
   its path built by `rc.URL`.
 - **`collage plugin add` says what each plugin needs from you**: after its setup

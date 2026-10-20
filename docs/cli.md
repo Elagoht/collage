@@ -409,8 +409,12 @@ second rule to explain for little gain.
   would be a setting you wrote and the program never saw.
 - No file is not an error. The file that was read is named on stderr.
 
-Only `collage dev` reads these files. `collage build`, `collage export` and the
-built binary never do: production takes its environment from wherever it runs.
+A program whose `main` calls `collage.Main`, as a scaffolded one does, reads them
+too, with the same rules: `go run .`, `collage export` and the built binary load
+`.env` from the working directory — `.env.development` first under
+`COLLAGE_DEV=1` — so `os.Getenv("BASE_URL")` sees it with no `source .env`.
+Outside development the file read is named on stderr. On a server that sets its
+variables itself, the variables win and a missing file is no error.
 
 ## `collage inspect`
 
