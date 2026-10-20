@@ -111,7 +111,7 @@ type builtinDescription struct {
 // usage text present them.
 var builtins = []builtinDescription{
 	{"new", "Scaffold a new collage project"},
-	{"add", "Write a page, fragment, action or document into the current project"},
+	{"add", "Write a page, fragment, action, document or guard into the current project"},
 	{"plugin", "Add, remove or check a plugin: plugin add owner/name"},
 	{"dev", "Run the current directory's project in development mode"},
 	{"build", "Compile the current directory's project into the binary you deploy"},
