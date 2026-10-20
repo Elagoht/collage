@@ -731,3 +731,26 @@ func TestDevProxy_WarnsWhenReachableFromOtherMachines(t *testing.T) {
 		}
 	}
 }
+
+// A project with a sitemap or meta plugin starts under collage dev without a
+// BASE_URL of its own: the origin is collage dev's address, unless the shell or
+// the environment file says otherwise.
+func TestWithDevBaseURL(t *testing.T) {
+	none := func(string) (string, bool) { return "", false }
+	shell := func(key string) (string, bool) { return "https://shell.example", key == "BASE_URL" }
+	for name, c := range map[string]struct {
+		env    []string
+		lookup func(string) (string, bool)
+		want   string
+	}{
+		"unset":   {nil, none, "BASE_URL=http://localhost:6060"},
+		"in file": {[]string{"BASE_URL=https://file.example"}, none, "BASE_URL=https://file.example"},
+		"empty":   {[]string{"BASE_URL="}, none, "BASE_URL="},
+		"shell":   {nil, shell, ""},
+	} {
+		got := strings.Join(withDevBaseURL(c.env, c.lookup, "localhost:6060"), "\n")
+		if got != c.want {
+			t.Errorf("%s: env = %q, want %q", name, got, c.want)
+		}
+	}
+}

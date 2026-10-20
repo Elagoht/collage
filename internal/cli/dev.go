@@ -68,6 +68,9 @@ around a value are allowed. A variable already set in the shell wins over the
 file, so "PORT=4000 collage dev" still works, and COLLAGE_DEV=1 is always set.
 The file read is named on stderr when there is one; no file is not an error.
 
+BASE_URL, when neither sets it, is collage dev's own address, so a plugin that
+writes absolute URLs — a sitemap, a canonical link — has an origin.
+
 Only "collage dev" reads these files. "collage build", "collage export" and the
 built binary take their environment from wherever they run.
 
@@ -299,6 +302,7 @@ func (l *devLoop) restart(ctx context.Context) {
 	// The proxy's own host, too: the program listens on loopback, but the
 	// browser's Host — passed on unchanged — is the proxy's, and the program's
 	// development Host check must allow what the proxy allowed.
+	env = withDevBaseURL(env, os.LookupEnv, l.proxy.public)
 	env = append(env, "HOST="+host, "PORT="+port, devhost.EnvHost+"="+l.proxy.programHosts(), "COLLAGE_DEV=1")
 
 	l.builds++
@@ -404,4 +408,20 @@ func (a *addressRewriter) Flush() {
 		a.w.Write(a.pending)
 		a.pending = a.pending[:0]
 	}
+}
+
+// withDevBaseURL gives the program BASE_URL, the address the browser reaches
+// it at, when neither the shell nor the environment file sets one: a plugin
+// that writes absolute URLs — a sitemap, a canonical link — refuses to start
+// without an origin, and in development that origin is collage dev's own.
+func withDevBaseURL(env []string, lookup func(string) (string, bool), public string) []string {
+	if _, set := lookup("BASE_URL"); set {
+		return env
+	}
+	for _, pair := range env {
+		if strings.HasPrefix(pair, "BASE_URL=") {
+			return env
+		}
+	}
+	return append(env, "BASE_URL=http://"+public)
 }

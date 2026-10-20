@@ -394,6 +394,10 @@ second rule to explain for little gain.
   `COLLAGE_DEV=1` is always set, whatever the file says, and so are the `HOST` and
   `PORT` the program is to listen on — the file's `HOST` and `PORT` are where
   `collage dev` itself listens, read once when it starts.
+- `BASE_URL`, when neither the shell nor the file sets it, is `collage dev`'s own
+  address, `http://localhost:6060`. A plugin that writes absolute URLs — a
+  sitemap, a canonical link — refuses to start without an origin, and in
+  development that is the right one. Deployed, set it yourself.
 - `KEY=value` lines, `#` comments and blank lines; an `export ` prefix and single or
   double quotes around a value are allowed. A `#` after whitespace ends an unquoted
   value.
