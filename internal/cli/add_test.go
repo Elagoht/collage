@@ -84,6 +84,8 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		{"action", "blog/comment"},
 		{"action", "blog/ping", "--path", "/api/ping"},
 		{"document", "feed", "--path", "/feed.xml", "--type", "application/xml"},
+		{"guard", "staff"},
+		{"page", "staff/roster", "--guard", "staff"},
 	} {
 		if code, _, stderr := add(t, target, args...); code != 0 {
 			t.Fatalf("add %v = %d; %s", args, code, stderr)
@@ -116,6 +118,11 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		t.Errorf("the dashed area is not registered under a dashless alias:\n%s", routes)
 	}
 	wantInOrder(t, readFile(t, target, "pages/blog/storyDetail.go"), "func StoryDetail() *collage.Page", `collage.NewPage("storyDetail")`, `WithPath("en", "/blog/storyDetail")`)
+	// A guard is its function and a layout that carries it; a page added with
+	// --guard sits inside the site's layout and then the guard's.
+	wantInOrder(t, readFile(t, target, "guards/staff.go"), "package guards", "func Staff(", "Status: http.StatusForbidden")
+	wantInOrder(t, readFile(t, target, "fragments/layouts/staff.go"), "package layouts", `"collageaddtest/guards"`, "func Staff() *collage.Fragment", "WithGuard(guards.Staff)", `{{slot "content"}}`)
+	wantInOrder(t, readFile(t, target, "pages/staff/roster.go"), "WithLayouts(layouts.Master(), layouts.Staff())")
 
 	writeFiles(t, target, map[string]string{"added_test.go": `package main
 
@@ -135,6 +142,8 @@ func TestAdded(t *testing.T) {
 	if res := c.Get("/feed.xml").WantStatus(http.StatusOK); res.Header.Get("Content-Type") != "application/xml" {
 		t.Errorf("feed type = %q", res.Header.Get("Content-Type"))
 	}
+	// The new guard refuses everyone until its check is written.
+	c.Get("/staff/roster").WantStatus(http.StatusForbidden)
 	req := c.Request(http.MethodPost, "/api/ping", nil)
 	req.Header.Set("X-CSRF-Token", c.Get("/features").CSRFToken())
 	c.Do(req).WantStatus(http.StatusNoContent)
@@ -370,15 +379,20 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 		setup map[string]string
 		want  string
 	}{
-		"a page name the project uses": {args: []string{"page", "account/login"}, want: `a page named "login" already exists, in pages/auth/login.go`},
-		"an existing file":             {args: []string{"page", "panel/settings"}, setup: map[string]string{"pages/panel/settings.go": "package pages\n"}, want: "exists; collage add does not overwrite"},
-		"a declared identifier":        {args: []string{"action", "auth/logout", "--name", "sign-out"}, want: "actions/auth.go already declares Logout"},
-		"a name that is not one":       {args: []string{"page", "blog/story-detail"}, want: `"story-detail" is not a Go name`},
-		"a name that cannot export":    {args: []string{"fragment", "_hidden"}, want: "is not a Go name"},
-		"a directory that is not one":  {args: []string{"fragment", "9x/widget"}, want: `"9x" is not a directory name`},
-		"a path without a slash":       {args: []string{"page", "blog", "--path", "blog"}, want: "must start with /"},
-		"a document in an area":        {args: []string{"document", "feeds/rss"}, want: "a document has no area"},
-		"no kind":                      {args: []string{"widget", "x"}, want: "want a kind"},
+		"a page name the project uses":  {args: []string{"page", "account/login"}, want: `a page named "login" already exists, in pages/auth/login.go`},
+		"an existing file":              {args: []string{"page", "panel/settings"}, setup: map[string]string{"pages/panel/settings.go": "package pages\n"}, want: "exists; collage add does not overwrite"},
+		"a declared identifier":         {args: []string{"action", "auth/logout", "--name", "sign-out"}, want: "actions/auth.go already declares Logout"},
+		"a name that is not one":        {args: []string{"page", "blog/story-detail"}, want: `"story-detail" is not a Go name`},
+		"a name that cannot export":     {args: []string{"fragment", "_hidden"}, want: "is not a Go name"},
+		"a directory that is not one":   {args: []string{"fragment", "9x/widget"}, want: `"9x" is not a directory name`},
+		"a path without a slash":        {args: []string{"page", "blog", "--path", "blog"}, want: "must start with /"},
+		"a document in an area":         {args: []string{"document", "feeds/rss"}, want: "a document has no area"},
+		"no kind":                       {args: []string{"widget", "x"}, want: "want a kind"},
+		"a guard in an area":            {args: []string{"guard", "admin/staff"}, want: "a guard has no area"},
+		"a guard over a layout":         {args: []string{"guard", "master"}, want: "fragments/layouts/master.go already declares Master"},
+		"--guard with no layout for it": {args: []string{"page", "panel/users", "--guard", "staff"}, want: "declares no Staff(); write it first with: collage add guard staff"},
+		"--guard on an action":          {args: []string{"action", "auth/forget", "--guard", "staff"}, want: "--guard wraps a page"},
+		"--guard that is not a name":    {args: []string{"page", "panel/users", "--guard", "st-aff"}, want: `--guard "st-aff" is not a Go name`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := sdyProject(t)

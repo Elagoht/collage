@@ -6,7 +6,7 @@ go install github.com/Elagoht/collage/cmd/collage@latest
 
 ```
 collage new <name> [--template minimal|demo] [--dir path] [--module path] [--force]
-collage add <page|fragment|action|document> <[area/]name> [--file] [--path p] [--name n] [--locale l] [--type t]
+collage add <page|fragment|action|document|guard> <[area/]name> [--file] [--path p] [--name n] [--locale l] [--type t] [--guard g]
 collage dev
 collage build [-o path] [-os name] [-arch name] [-i]
 collage export [-out dir] [-clean]
@@ -213,8 +213,8 @@ it has an action that could verify a token.
 
 ## `collage add`
 
-Writes a page, a fragment, an action or a document in that layout, and registers
-it in `routes.go`:
+Writes a page, a fragment, an action, a document or a guard in that layout, and
+registers it in `routes.go`:
 
 ```
 collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
@@ -226,6 +226,8 @@ collage add fragment layouts/partials/siteFooter --file
 collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
 collage add action blog/ping --path /api/ping
 collage add document feed --path /feed.xml --type application/xml
+collage add guard admin             # guards/admin.go + fragments/layouts/admin.go
+collage add page admin/users --guard admin
 ```
 
 - **A page** is `pages/<area>/<name>.go`, wrapped in `layouts.Master()` — or the
@@ -239,6 +241,19 @@ collage add document feed --path /feed.xml --type application/xml
   page it is attached to, and the command prints the `.WithActionFor(...)` to add.
 - **A document** is `documents/<name>.go`, `text/plain` unless `--type` says
   otherwise.
+- **A guard** is two files. `guards/<name>.go` is the
+  [guard](routing.md#guards) itself, a `collage.GuardFunc` that refuses everyone
+  with `403` until you write its check: return `nil, nil` to let a request
+  through, or a redirect. `fragments/layouts/<name>.go` is a layout that renders
+  nothing of its own, `{{slot "content"}}`, and carries the guard, because a guard
+  acts where a page's layout chain carries it. Guards have no area: `guards/` is
+  flat.
+- **`--guard <name>`** wraps a new page in that layout, inside the site's own:
+  `WithLayouts(layouts.Master(), layouts.Admin())`. The page's renders, the
+  actions attached to it and its fragment paths all meet the guard first. An
+  action added with its own `--path` has no page and so no guard: it checks
+  access in its handler. The layout must exist; `--guard` without it is refused
+  with the `add guard` to run first.
 - **A fragment** is a page's content without the page, for a slot of a page or a
   layout. It goes where its path says, `fragments/<area>/<name>.go`, with its
   template at `<area>/<name>` under the template root. Its package is the one

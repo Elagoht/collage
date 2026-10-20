@@ -20,8 +20,9 @@ reloads itself when one changes. A change to Go code is rebuilt and restarted fo
 one that does not compile leaves the last good build running and says why.
 
 A variable set in your shell wins over the file, so `PORT=4000 collage dev`
-still works. Only `collage dev` reads these files; the built binary takes its
-environment from wherever it runs.
+still works. The program reads them too: `go run .` and the built binary load
+`.env` from the directory they run in (`.env.development` first in development),
+so `os.Getenv` sees the same values everywhere without a `source .env`.
 
 ```
 go test ./...
@@ -30,7 +31,7 @@ go test ./...
 ## What is here
 
 ```
-main.go       configuration, the static mount, and the collage CLI contract
+main.go       newApp: configuration, plugins and the static mount; collage.Main runs it
 routes.go     every page, document and action — a new route goes here
 main_test.go  the tests, driving app.Handler() with pkg/collagetest
 pages/        a page per file, by area: pages/demo/hello.go is the hello page
@@ -56,15 +57,21 @@ file. `/features` has four live demos:
 
 ## Adding to it
 
-`collage add` writes a page, a fragment, an action or a document in this layout,
-and registers it in `routes.go`:
+`collage add` writes a page, a fragment, an action, a document or a guard in
+this layout, and registers it in `routes.go`:
 
 ```
 collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
 collage add page blog/post --file   # the template in templates/pages/blog/post.html
+collage add fragment blog/sidebar   # fragments/blog/sidebar.go, for a slot
 collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
 collage add document feed --path /feed.xml --type application/xml
+collage add guard admin             # guards/admin.go + a layout that carries it
+collage add page admin/users --guard admin
 ```
+
+A new guard refuses everyone until you write its check. `collage help add` has
+the rest.
 
 ## Set `COLLAGE_CSRF_KEY` before deploying
 
@@ -125,23 +132,25 @@ https://collage.furkanbaytekin.dev/en/docs/plugins/.
 
 ## The collage CLI contract
 
+`main.go` is one line, `collage.Main(newApp)`, and `newApp` builds the
+application from the `collage.Env` it is given. `collage.Main` is what the
+`collage` binary talks to:
+
 - **`collage dev`** builds this program with `go build -tags collage_dev` —
   which leaves out `embed.go`, so development builds embed nothing and read
-  `templates/` and `static/` from disk — runs the binary with
-  `COLLAGE_DEV=1` set, and rebuilds and restarts it when its Go code changes.
-  `main.go` reads that variable and turns on development mode. The browser talks
-  to `collage dev`, which passes requests on to the program at the `HOST` and
-  `PORT` it sets for it — so `main.go` must listen there — and shows the
-  program's output in place of the page when it exits.
-- **`collage export`** runs `go run . -collage-build -out <dir>`. `main.go`
-  parses those flags and renders through `collage.Build`, collage's own
-  builder.
+  `templates/` and `static/` from disk — and runs it with `COLLAGE_DEV=1`, which
+  `collage.Main` passes on as `env.Dev`. The browser talks to `collage dev`,
+  which passes requests on to the program at the `HOST` and `PORT` it sets for
+  it, and rebuilds and restarts it when its Go code changes.
+- **`collage export`** runs `go run . -collage-build -out <dir>`;
+  `collage.Main` renders through `collage.Build`, collage's own builder.
 
-If you rewrite `main.go`, keep both halves working, or `collage dev` and
-`collage export` stop doing anything useful here.
+Keep `newApp` building everything — configuration, plugins, routes, commands —
+and leave the flags to `collage.Main`, or `collage dev` and `collage export` stop
+doing anything useful here.
 
-A plugin's own commands are run through this program rather than the `collage`
-binary, which never loads your plugins: `go run . <command>`. `main.go` hands
-the first word after its flags to `collage.DispatchCommands`. Once a command or
-a static build is done, `main.go` calls `app.Shutdown`, so every plugin's
-`Shutdown` runs even though nothing was served.
+Commands — a plugin's, or your own registered with `app.RegisterCommand` in
+`newApp` — run through this program rather than the `collage` binary, which
+never loads your code: `go run . <command>`, or `./bin/@@NAME@@ <command>` on a
+server. `collage.Main` runs the first word after its flags as a command instead
+of serving, and shuts every plugin down when it is done.

@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.69.0
+
+### Added
+
+- **`collage add guard <name>`** writes `guards/<name>.go`, a guard that refuses
+  everyone with `403` until its check is written, and
+  `fragments/layouts/<name>.go`, a layout that adds nothing but the guard.
+  **`collage add page <[area/]name> --guard <name>`** wraps the new page in it,
+  inside the site's own layout, so the page, its attached actions and its
+  fragment paths meet the guard first. The command reminds you that an action
+  with its own `--path` has no page and so no guard. Only the CLI changed: a
+  project needs no new collage version to use what it writes.
+
 ## v0.68.0
 
 From building a real site on collage: what was hard to find, hard to read, or
