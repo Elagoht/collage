@@ -111,12 +111,13 @@ type builtinDescription struct {
 // usage text present them.
 var builtins = []builtinDescription{
 	{"new", "Scaffold a new collage project"},
-	{"add", "Write a page, fragment, action, document or guard into the current project"},
+	{"add", "Write a page, layout, guard, action, middleware, command and more into the project"},
 	{"plugin", "Add, remove or check a plugin: plugin add owner/name"},
 	{"dev", "Run the current directory's project in development mode"},
 	{"build", "Compile the current directory's project into the binary you deploy"},
 	{"export", "Render the current directory's project to static files"},
 	{"serve", "Serve a static export the way a static host would"},
+	{"routes", "List every URL the current directory's project answers, with its guards"},
 	{"inspect", "Print what the current directory's project is made of, as JSON"},
 	{"check", "Check the current directory's project's templates without rendering them"},
 	{"version", "Print the collage CLI version"},
@@ -168,6 +169,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.runExport(ctx, rest)
 	case "serve":
 		return c.runServe(ctx, rest)
+	case "routes":
+		return c.runRoutes(ctx, rest)
 	case "inspect":
 		return c.runInspect(ctx, rest)
 	case "check":
@@ -298,6 +301,9 @@ func (c *CLI) printCommandHelp(w io.Writer, name string) error {
 		return nil
 	case "serve":
 		fmt.Fprint(w, serveUsage)
+		return nil
+	case "routes":
+		fmt.Fprint(w, routesUsage)
 		return nil
 	case "inspect":
 		fmt.Fprint(w, inspectUsage)

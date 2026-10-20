@@ -3,8 +3,10 @@ package cli
 import (
 	"embed"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -47,6 +49,29 @@ func writeScaffold(targetDir, module, name, variant string) error {
 		}
 	}
 	return nil
+}
+
+// existingScaffoldFiles returns the files writeScaffold would replace in
+// targetDir, relative to it, sorted: what --force overwrites.
+func existingScaffoldFiles(targetDir, variant string) ([]string, error) {
+	seen := map[string]bool{}
+	for _, layer := range []string{"common", variant} {
+		root := scaffoldRoot + "/" + layer
+		err := fs.WalkDir(scaffoldFS, root, func(path string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return err
+			}
+			rel := targetName(strings.TrimPrefix(path, root+"/"))
+			if info, err := os.Stat(filepath.Join(targetDir, filepath.FromSlash(rel))); err == nil && !info.IsDir() {
+				seen[rel] = true
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return slices.Sorted(maps.Keys(seen)), nil
 }
 
 // writeLayer writes one embedded scaffold layer, rooted at root, into targetDir.

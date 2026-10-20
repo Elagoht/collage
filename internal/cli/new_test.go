@@ -126,6 +126,38 @@ func TestRun_New_ForceOverridesNonEmptyDir(t *testing.T) {
 	}
 }
 
+// --force says which of the files that were there it replaced: go.mod among
+// them is a module path and dependencies gone.
+func TestRun_New_ForceNamesWhatItOverwrote(t *testing.T) {
+	c, out, errOut := testCLI()
+	target := t.TempDir()
+	writeFiles(t, target, map[string]string{"go.mod": "module mine\n", "README.md": "mine\n", "notes.txt": "kept\n"})
+
+	if code := c.Run(context.Background(), []string{"new", "proj", "-dir", target, "-force"}); code != 0 {
+		t.Fatalf("Run() = %d; %s", code, errOut.String())
+	}
+	if !strings.Contains(out.String(), "Overwrote what was there: README.md, go.mod\n") {
+		t.Errorf("stdout does not name the overwritten files:\n%s", out.String())
+	}
+}
+
+// Scaffolding into the directory you are in does not tell you to cd into it.
+func TestRun_New_NoCdIntoTheCurrentDirectory(t *testing.T) {
+	target := t.TempDir()
+	t.Chdir(target)
+	c, out, errOut := testCLI()
+	if code := c.Run(context.Background(), []string{"new", "proj", "-dir", "."}); code != 0 {
+		t.Fatalf("Run() = %d; %s", code, errOut.String())
+	}
+	if strings.Contains(out.String(), "cd ") || strings.Contains(out.String(), "Overwrote") {
+		t.Errorf("stdout:\n%s", out.String())
+	}
+	c, out, _ = testCLI()
+	if c.Run(context.Background(), []string{"new", "other", "-dir", "sub"}); !strings.Contains(out.String(), "  cd sub\n") {
+		t.Errorf("a new directory lost its cd:\n%s", out.String())
+	}
+}
+
 func TestRun_New_ScaffoldsExpectedFiles(t *testing.T) {
 	c, _, errOut := testCLI()
 	target := filepath.Join(t.TempDir(), "proj")

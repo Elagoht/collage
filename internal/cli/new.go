@@ -155,13 +155,22 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 		fmt.Fprintf(c.stderr(), "collage: %v\n", err)
 		return 1
 	}
+	overwritten, err := existingScaffoldFiles(targetDir, variant)
+	if err != nil {
+		fmt.Fprintf(c.stderr(), "collage: scaffold: %v\n", err)
+		return 1
+	}
 	if err := writeScaffold(targetDir, modulePath, name, variant); err != nil {
 		fmt.Fprintf(c.stderr(), "collage: scaffold: %v\n", err)
 		return 1
 	}
 
 	out := c.stdout()
-	fmt.Fprintf(out, "Scaffolded %q in %s\n\n", name, targetDir)
+	fmt.Fprintf(out, "Scaffolded %q in %s\n", name, targetDir)
+	if len(overwritten) > 0 {
+		fmt.Fprintf(out, "Overwrote what was there: %s\n", strings.Join(overwritten, ", "))
+	}
+	fmt.Fprintln(out)
 	code, tidied := 0, false
 	if len(refs) > 0 {
 		if err := prepareWith(ctx, c, targetDir); err != nil {
@@ -173,7 +182,9 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 		fmt.Fprintln(out)
 	}
 	fmt.Fprintln(out, "Next steps:")
-	fmt.Fprintf(out, "  cd %s\n", targetDir)
+	if !sameDir(targetDir, ".") {
+		fmt.Fprintf(out, "  cd %s\n", targetDir)
+	}
 	if !tidied {
 		fmt.Fprintln(out, "  go mod tidy")
 	}
@@ -216,6 +227,13 @@ func splitPositional(args []string, valueFlags map[string]bool) (positional, fla
 		}
 	}
 	return positional, flagArgs
+}
+
+// sameDir reports whether a and b name the same directory.
+func sameDir(a, b string) bool {
+	absA, errA := filepath.Abs(a)
+	absB, errB := filepath.Abs(b)
+	return errA == nil && errB == nil && absA == absB
 }
 
 // checkTarget refuses a non-empty dir unless force is set. A directory that

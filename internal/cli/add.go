@@ -22,19 +22,27 @@ import (
 var ErrAddUsage = errors.New("collage: add")
 
 // addUsage is "collage help add"'s own usage text.
-const addUsage = `Usage: collage add <page|fragment|action|document|guard> <[area/]name> [flags]
+const addUsage = `Usage: collage add <kind> <[area/]name> [flags]
 
-Writes a page, a fragment, an action, a document or a guard into the current
-project, in the layout "collage new" scaffolds, and registers it in routes.go:
+Writes a page, a fragment, an action, a document, a layout, a guard, a
+middleware or a command into the current project, in the layout "collage new"
+scaffolds, and registers it in routes.go:
 
   page       pages/<area>/<name>.go, and its content in fragments/pages/<area>/<name>.go
   fragment   fragments/<area>/<name>.go alone, for a slot of a page or a layout
   action     a builder in actions/<area>.go and its handler in actions/funcs/<area>.go;
              registered when it has a --path, attached to a page otherwise
   document   documents/<name>.go
+  layout     fragments/layouts/<name>.go, a layout that nests inside the site's
+             own around a page's content; add page --layout wraps a page in it
   guard      guards/<name>.go, a guard that refuses everyone until you write its
              check, and fragments/layouts/<name>.go, a layout that adds nothing
              but the guard; a page wrapped in it meets the guard first
+  middleware middleware/<name>.go, run around every request with app.Use
+  command    commands/<name>.go, run as "go run . <name>" with app.RegisterCommand
+
+A layout, a guard, a middleware and a command have no area: their directories
+are flat.
 
 The last segment is a Go name, written as you want it: "blog/post",
 "layouts/partials/siteFooter". It names the file, the default URL and the page,
@@ -47,11 +55,15 @@ arguments; add the services they need by hand.
   --file          keep the template in a file under the template root, not inline
   --path pattern  the URL (default: /<area>/<name> for a page and a document; an
                   action without one answers at the page it is attached to)
-  --name name     the page's, action's or document's name (default: <name>)
+  --name name     the page's, action's, document's or command's name (default: <name>)
   --locale code   the locale its path is in (default: main.go's Locale.Default, or en)
   --type type     a document's content type (default: text/plain; charset=utf-8)
-  --guard name    a page's guard: wraps it in the layout "add guard <name>" wrote,
+  --layout name   a page's layout: wraps it in the one "add layout <name>" wrote,
                   inside the site's own layout
+  --guard name    a page's guard: wraps it in the layout "add guard <name>" wrote,
+                  inside the site's own layout and any --layout
+  --page target   an action's page, [area/]name as "add page" took it: attaches
+                  the action to pages/<area>/<name>.go instead of printing how
   --dir path      the project (default: the current directory)
 
 Nothing is overwritten: a file that exists, or a name already declared in the
@@ -60,7 +72,7 @@ package a file goes into, stops the command before it writes anything.
 
 // addValueFlags names the "add" command's flags that consume a following
 // argument, for splitPositional.
-var addValueFlags = map[string]bool{"path": true, "name": true, "locale": true, "type": true, "guard": true, "dir": true}
+var addValueFlags = map[string]bool{"path": true, "name": true, "locale": true, "type": true, "guard": true, "layout": true, "page": true, "dir": true}
 
 // validSegment reports whether segment may be a segment of an add target: a Go
 // identifier that is exported once its first letter is capitalised, so it is a
@@ -83,7 +95,10 @@ func areaIdent(segment string) string {
 }
 
 // addKinds are the things "add" writes.
-var addKinds = []string{"page", "fragment", "action", "document", "guard"}
+var addKinds = []string{"page", "fragment", "action", "document", "layout", "guard", "middleware", "command"}
+
+// flatKinds are the kinds whose directory has no areas.
+var flatKinds = []string{"document", "layout", "guard", "middleware", "command"}
 
 // addRequest is one "collage add", parsed.
 type addRequest struct {
@@ -97,7 +112,9 @@ type addRequest struct {
 	// localeFrom says where locale came from, for the note "add" prints.
 	localeFrom string
 	ctype      string
-	guard      string // a page's --guard, as written
+	guard      string   // a page's --guard, as written
+	layout     string   // a page's --layout, as written
+	page       []string // an action's --page, as segments; nil for none
 	dir        string
 }
 
@@ -128,6 +145,8 @@ func (c *CLI) runAdd(args []string) int {
 	locale := fs.String("locale", "", "the locale its path is in")
 	ctype := fs.String("type", "text/plain; charset=utf-8", "a document's content type")
 	guard := fs.String("guard", "", "the guard a page is wrapped in")
+	layout := fs.String("layout", "", "the layout a page is wrapped in")
+	page := fs.String("page", "", "the page an action is attached to")
 	dir := fs.String("dir", ".", "the project")
 
 	positional, flagArgs := splitPositional(args, addValueFlags)
@@ -143,7 +162,10 @@ func (c *CLI) runAdd(args []string) int {
 		return 2
 	}
 
-	req := addRequest{kind: positional[0], file: *file, path: *path, ident: *name, locale: *locale, ctype: *ctype, guard: *guard, dir: *dir}
+	req := addRequest{kind: positional[0], file: *file, path: *path, ident: *name, locale: *locale, ctype: *ctype, guard: *guard, layout: *layout, dir: *dir}
+	if *page != "" {
+		req.page = strings.Split(strings.Trim(*page, "/"), "/")
+	}
 	if err := req.parseTarget(positional[1]); err != nil {
 		fmt.Fprintln(c.stderr(), err)
 		return 2
@@ -210,17 +232,34 @@ func (r *addRequest) parseTarget(target string) error {
 	if !validSegment(r.name) {
 		return fmt.Errorf("%w: %q is not a Go name: letters, digits and underscores, a letter first", ErrAddUsage, r.name)
 	}
-	if r.kind == "document" && len(r.area) > 0 {
-		return fmt.Errorf("%w: a document has no area; documents/ is flat", ErrAddUsage)
+	if slices.Contains(flatKinds, r.kind) && len(r.area) > 0 {
+		return fmt.Errorf("%w: a %s has no area; %s is flat", ErrAddUsage, r.kind, map[string]string{
+			"document": "documents/", "layout": "fragments/layouts/", "guard": "guards/", "middleware": "middleware/", "command": "commands/",
+		}[r.kind])
 	}
-	if r.kind == "guard" && len(r.area) > 0 {
-		return fmt.Errorf("%w: a guard has no area; guards/ is flat", ErrAddUsage)
+	for flagName, value := range map[string]string{"guard": r.guard, "layout": r.layout} {
+		if value == "" {
+			continue
+		}
+		if r.kind != "page" {
+			return fmt.Errorf("%w: --%s wraps a page; a %s has no layouts", ErrAddUsage, flagName, r.kind)
+		}
+		if !validSegment(value) {
+			return fmt.Errorf("%w: --%s %q is not a Go name: letters, digits and underscores, a letter first", ErrAddUsage, flagName, value)
+		}
 	}
-	if r.guard != "" && r.kind != "page" {
-		return fmt.Errorf("%w: --guard wraps a page; a %s has no layouts", ErrAddUsage, r.kind)
-	}
-	if r.guard != "" && !validSegment(r.guard) {
-		return fmt.Errorf("%w: --guard %q is not a Go name: letters, digits and underscores, a letter first", ErrAddUsage, r.guard)
+	if r.page != nil {
+		if r.kind != "action" {
+			return fmt.Errorf("%w: --page attaches an action; a %s is not attached to a page", ErrAddUsage, r.kind)
+		}
+		if r.path != "" {
+			return fmt.Errorf("%w: --page and --path: an action attached to a page answers at the page's URL", ErrAddUsage)
+		}
+		for i, segment := range r.page {
+			if (i == len(r.page)-1 && !validSegment(segment)) || (i < len(r.page)-1 && !validArea(segment)) {
+				return fmt.Errorf("%w: --page %q is not a page add page could have written: [area/]name", ErrAddUsage, strings.Join(r.page, "/"))
+			}
+		}
 	}
 	if r.kind == "action" && len(r.area) > 1 {
 		return fmt.Errorf("%w: an action's area is one file, actions/<area>.go: %q has %d", ErrAddUsage, target, len(r.area))
@@ -370,7 +409,7 @@ func stringField(lit *ast.CompositeLit, key string) (string, bool) {
 // already declares.
 func plan(req addRequest, proj project) ([]fileChange, []string, error) {
 	var notes []string
-	if req.kind != "fragment" && req.kind != "guard" && (req.kind != "action" || req.path != "") {
+	if !slices.Contains([]string{"fragment", "layout", "guard", "middleware", "command"}, req.kind) && (req.kind != "action" || req.path != "") {
 		notes = append(notes, fmt.Sprintf("locale %s, from %s", req.locale, req.localeFrom))
 	}
 
@@ -399,8 +438,14 @@ func plan(req addRequest, proj project) ([]fileChange, []string, error) {
 		changes, notes, err = g.action(notes)
 	case "document":
 		changes, notes, err = g.document(notes)
+	case "layout":
+		changes, notes, err = g.layout(notes)
 	case "guard":
 		changes, notes, err = g.guard(notes)
+	case "middleware":
+		changes, notes, err = g.middleware(notes)
+	case "command":
+		changes, notes, err = g.command(notes)
 	}
 	if err != nil {
 		return nil, nil, err
@@ -516,22 +561,32 @@ func (g generator) page(notes []string) ([]fileChange, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	funcs, err := layoutFuncs(layoutsDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	var nested []string // --layout's, then --guard's
 	guardLayout := ""
-	if g.req.guard != "" {
-		funcs, err := layoutFuncs(layoutsDir)
-		if err != nil {
-			return nil, nil, err
+	for _, wrap := range []struct{ flag, value string }{{"layout", g.req.layout}, {"guard", g.req.guard}} {
+		if wrap.value == "" {
+			continue
 		}
-		guardLayout = pascal(g.req.guard)
-		if !slices.Contains(funcs, guardLayout) {
-			return nil, nil, fmt.Errorf("--guard %s: fragments/layouts declares no %s(); write it first with: collage add guard %s", g.req.guard, guardLayout, g.req.guard)
+		fn := pascal(wrap.value)
+		if !slices.ContainsFunc(funcs, func(l layoutFunc) bool { return l.name == fn }) {
+			return nil, nil, fmt.Errorf("--%s %s: fragments/layouts declares no %s(); write it first with: collage add %s %s", wrap.flag, wrap.value, fn, wrap.flag, wrap.value)
 		}
-		if guardLayout == layout {
+		if fn == layout {
 			layout = ""
+		}
+		if !slices.Contains(nested, fn) {
+			nested = append(nested, fn)
+		}
+		if wrap.flag == "guard" {
+			guardLayout = fn
 		}
 	}
 	var chain []string
-	for _, name := range []string{layout, guardLayout} {
+	for _, name := range append([]string{layout}, nested...) {
 		if name != "" {
 			chain = append(chain, "layouts."+name+"()")
 		}
@@ -548,8 +603,8 @@ func (g generator) page(notes []string) ([]fileChange, []string, error) {
 	if len(chain) > 0 {
 		fmt.Fprintf(&b, "\t\tWithLayouts(%s).\n", strings.Join(chain, ", "))
 	}
-	if layout == "" && guardLayout == "" {
-		notes = append(notes, "no layout: fragments/layouts declares no func returning a *collage.Fragment that takes no arguments")
+	if layout == "" {
+		notes = append(notes, "no site layout: fragments/layouts declares no func returning a *collage.Fragment that takes no arguments and does not nest")
 	}
 	fmt.Fprintf(&b, "\t\tWithContent(fragments.%s()).\n\t\tWithPath(%q, %q).\n\t\tBuild()\n}\n", g.pascal, g.req.locale, g.req.path)
 	changes = append(changes, fileChange{path: filepath.Join(dir, g.req.name+".go"), content: []byte(b.String())})
@@ -705,8 +760,18 @@ func (g generator) action(notes []string) ([]fileChange, []string, error) {
 	changes := []fileChange{builderFile, handlerFile}
 
 	if !standalone {
-		notes = append(notes, fmt.Sprintf("attach it to its page: .WithActionFor(actions.%s())", g.pascal))
-		return changes, notes, nil
+		if g.req.page == nil {
+			notes = append(notes, fmt.Sprintf("attach it to its page: .WithActionFor(actions.%s()), or add it with --page", g.pascal))
+			return changes, notes, nil
+		}
+		page, note, err := g.attachToPage()
+		if err != nil {
+			return nil, nil, err
+		}
+		if page != nil {
+			changes = append(changes, *page)
+		}
+		return changes, append(notes, note), nil
 	}
 	routes, note, err := registerInRoutes(g.proj, "action", g.proj.module+"/actions", "", "actions", func(ident string) string {
 		return ident + "." + g.pascal + "()"
@@ -790,7 +855,7 @@ func (g generator) guard(notes []string) ([]fileChange, []string, error) {
 	fmt.Fprintf(&lb, "package %s\n\nimport (\n\t%q\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\n", layoutPkg, g.proj.module+"/guards")
 	fmt.Fprintf(&lb, "// Returns a layout that adds nothing to a page but guards.%s: wrap a page in it,\n", g.pascal)
 	lb.WriteString("// inside the site's own layout, and every request for the page meets the guard\n// first.\n//\n")
-	fmt.Fprintf(&lb, "//\tWithLayouts(layouts.Master(), layouts.%s())\n", g.pascal)
+	fmt.Fprintf(&lb, "//\tWithLayouts(layouts.Master(), layouts.%s())\n//\n%s\n", g.pascal, nestedMarker)
 	fmt.Fprintf(&lb, "func %s() *collage.Fragment {\n\treturn collage.NewInlineFragment(%q, %sBlock).\n", g.pascal, g.camel+"Guard", g.camel)
 	fmt.Fprintf(&lb, "\t\tWithGuard(guards.%s).\n\t\tBuild()\n}\n\n", g.pascal)
 	fmt.Fprintf(&lb, "const %sBlock collage.InlineHTML = `{{slot \"content\"}}`\n", g.camel)
@@ -886,10 +951,20 @@ func declaredIdents(decl ast.Decl) []string {
 // scaffold's, when fragments/layouts declares it, otherwise Layout, otherwise
 // the first exported function there that takes nothing and returns a
 // *collage.Fragment. "" means there is none to use.
+//
+// A layout that nests inside another — one "add layout" or "add guard" wrote,
+// marked //collage:nested, or any that carries a guard — is never the site's
+// layout: a project whose layouts are Base and Admin wraps a new page in Base.
 func findLayout(dir string) (string, error) {
-	candidates, err := layoutFuncs(dir)
+	funcs, err := layoutFuncs(dir)
 	if err != nil {
 		return "", err
+	}
+	var candidates []string
+	for _, l := range funcs {
+		if !l.nested {
+			candidates = append(candidates, l.name)
+		}
 	}
 	for _, preferred := range []string{"Master", "Layout"} {
 		if slices.Contains(candidates, preferred) {
@@ -902,14 +977,24 @@ func findLayout(dir string) (string, error) {
 	return "", nil
 }
 
+// nestedMarker marks a layout that nests inside the site's own, in the last
+// line of its doc comment.
+const nestedMarker = "//collage:nested"
+
+// layoutFunc is one function a page can be wrapped in.
+type layoutFunc struct {
+	name   string
+	nested bool // marked nestedMarker, or carries a guard
+}
+
 // layoutFuncs returns the exported functions in dir that take nothing and
 // return a *collage.Fragment: the layouts a page can be wrapped in.
-func layoutFuncs(dir string) ([]string, error) {
+func layoutFuncs(dir string) ([]layoutFunc, error) {
 	files, err := parseDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	var candidates []string
+	var candidates []layoutFunc
 	for _, f := range files {
 		for _, decl := range f.ast.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -920,11 +1005,33 @@ func layoutFuncs(dir string) ([]string, error) {
 				continue
 			}
 			if star, ok := fn.Type.Results.List[0].Type.(*ast.StarExpr); ok && selectorName(star.X) == "Fragment" {
-				candidates = append(candidates, fn.Name.Name)
+				candidates = append(candidates, layoutFunc{name: fn.Name.Name, nested: isNested(fn)})
 			}
 		}
 	}
 	return candidates, nil
+}
+
+// isNested reports whether fn is a layout that nests inside another: its doc
+// comment carries nestedMarker, or its body attaches a guard.
+func isNested(fn *ast.FuncDecl) bool {
+	if fn.Doc != nil {
+		for _, c := range fn.Doc.List {
+			if strings.TrimSpace(c.Text) == nestedMarker {
+				return true
+			}
+		}
+	}
+	guarded := false
+	if fn.Body != nil {
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok && selectorName(call.Fun) == "WithGuard" {
+				guarded = true
+			}
+			return !guarded
+		})
+	}
+	return guarded
 }
 
 // importSpec is one import a file needs: its path, and the alias it is

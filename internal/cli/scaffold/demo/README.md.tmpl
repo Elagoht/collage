@@ -57,8 +57,9 @@ file. `/features` has four live demos:
 
 ## Adding to it
 
-`collage add` writes a page, a fragment, an action, a document or a guard in
-this layout, and registers it in `routes.go`:
+`collage add` writes a page, a fragment, an action, a document, a layout, a
+guard, a middleware or a command in this layout, and registers it in
+`routes.go`:
 
 ```
 collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
@@ -66,9 +67,15 @@ collage add page blog/post --file   # the template in templates/pages/blog/post.
 collage add fragment blog/sidebar   # fragments/blog/sidebar.go, for a slot
 collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
 collage add document feed --path /feed.xml --type application/xml
+collage add action blog/like --page blog/post   # attached to that page
+collage add layout panel            # a layout that nests inside the site's
 collage add guard admin             # guards/admin.go + a layout that carries it
-collage add page admin/users --guard admin
+collage add page admin/users --layout panel --guard admin
+collage add middleware loadUser     # run around every request, with app.Use
+collage add command seed            # go run . seed
 ```
+
+`collage routes` lists every URL the site answers, with the guards each meets.
 
 A new guard refuses everyone until you write its check. `collage help add` has
 the rest.

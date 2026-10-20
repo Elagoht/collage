@@ -6,11 +6,12 @@ go install github.com/Elagoht/collage/cmd/collage@latest
 
 ```
 collage new <name> [--template minimal|demo] [--dir path] [--module path] [--force]
-collage add <page|fragment|action|document|guard> <[area/]name> [--file] [--path p] [--name n] [--locale l] [--type t] [--guard g]
+collage add <page|fragment|action|document|layout|guard|middleware|command> <[area/]name> [flags]
 collage dev
 collage build [-o path] [-os name] [-arch name] [-i]
 collage export [-out dir] [-clean]
 collage serve [-dir dir] [-host name] [-port n]
+collage routes
 collage inspect
 collage check [-json]
 collage plugin add <owner/name | module path>[@version] [-dir dir]
@@ -213,8 +214,8 @@ it has an action that could verify a token.
 
 ## `collage add`
 
-Writes a page, a fragment, an action, a document or a guard in that layout, and
-registers it in `routes.go`:
+Writes a page, a fragment, an action, a document, a layout, a guard, a
+middleware or a command in that layout, and registers it in `routes.go`:
 
 ```
 collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
@@ -226,8 +227,12 @@ collage add fragment layouts/partials/siteFooter --file
 collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
 collage add action blog/ping --path /api/ping
 collage add document feed --path /feed.xml --type application/xml
+collage add action blog/like --page blog/post   # attached to pages/blog/post.go
+collage add layout panel            # fragments/layouts/panel.go, nested
 collage add guard admin             # guards/admin.go + fragments/layouts/admin.go
-collage add page admin/users --guard admin
+collage add page admin/users --layout panel --guard admin
+collage add middleware loadUser     # middleware/loadUser.go + app.Use in routes.go
+collage add command seed            # commands/seed.go + app.RegisterCommand
 ```
 
 - **A page** is `pages/<area>/<name>.go`, wrapped in `layouts.Master()` — or the
@@ -241,6 +246,18 @@ collage add page admin/users --guard admin
   page it is attached to, and the command prints the `.WithActionFor(...)` to add.
 - **A document** is `documents/<name>.go`, `text/plain` unless `--type` says
   otherwise.
+- **`--page <[area/]name>`** attaches a new action to that page instead of
+  printing how: it adds `.WithActionFor(actions.Like())` before the `Build()`
+  that ends the page's `NewPage` chain in `pages/<area>/<name>.go`, importing
+  `actions`. A page file holding more than one chain is left alone, and the
+  line to add is printed. It cannot go with `--path`.
+- **A layout** is `fragments/layouts/<name>.go`, a layout that nests inside the
+  site's own around a page's content, `<div class="<name>">{{slot "content"}}</div>`
+  — inline, or in `templates/layouts/<name>.html` with `--file`.
+  **`--layout <name>`** wraps a new page in it, inside the site's layout. A
+  layout `add layout` or `add guard` wrote is marked `//collage:nested`, and a
+  layout that carries a guard counts as nested too: none of them is ever taken
+  for the site's layout a new page goes into.
 - **A guard** is two files. `guards/<name>.go` is the
   [guard](routing.md#guards) itself, a `collage.GuardFunc` that refuses everyone
   with `403` until you write its check: return `nil, nil` to let a request
@@ -248,12 +265,27 @@ collage add page admin/users --guard admin
   nothing of its own, `{{slot "content"}}`, and carries the guard, because a guard
   acts where a page's layout chain carries it. Guards have no area: `guards/` is
   flat.
-- **`--guard <name>`** wraps a new page in that layout, inside the site's own:
-  `WithLayouts(layouts.Master(), layouts.Admin())`. The page's renders, the
+- **`--guard <name>`** wraps a new page in that layout, inside the site's own and
+  any `--layout`: `WithLayouts(layouts.Master(), layouts.Panel(), layouts.Admin())`. The page's renders, the
   actions attached to it and its fragment paths all meet the guard first. An
   action added with its own `--path` has no page and so no guard: it checks
   access in its handler. The layout must exist; `--guard` without it is refused
   with the `add guard` to run first.
+- **A middleware** is `middleware/<name>.go`, a `func(http.Handler)
+  http.Handler` that passes every request on, registered with `app.Use` in the
+  register function after the middleware already there — the first registered
+  is the outermost. It runs before routing and guards run after it, so a guard
+  reads what it puts in the request's context: load the signed-in user there,
+  decide in the guard.
+- **A command** is `commands/<name>.go`, a `collage.Command` registered with
+  `app.RegisterCommand`: `go run . <name>`, or the built binary followed by it,
+  runs it instead of the server. `--name` gives it a name that is no Go name,
+  `user-add`; a name another `collage.Command` in the project has is refused.
+  A middleware or a command that needs a service takes it as an argument you
+  add, passed in where it is registered. Both go into the register function
+  as statements of their own, `if err := app.Use(...); err != nil { return err
+  }`, which needs one that takes the `*collage.App` and returns an `error`;
+  otherwise the line to add is printed.
 - **A fragment** is a page's content without the page, for a slot of a page or a
   layout. It goes where its path says, `fragments/<area>/<name>.go`, with its
   template at `<area>/<name>` under the template root. Its package is the one
@@ -317,6 +349,10 @@ collage new myblog --template demo       # the demos, their tests, a README
 collage new myblog -module github.com/me/myblog
 collage new myblog -dir . -force         # into a non-empty directory
 ```
+
+With `-force`, what was there stays unless the scaffold has a file of the same
+name: those are replaced, and the command names them — `go.mod` among them is
+your module path and dependencies, back with `go mod tidy` and your own edit.
 
 Flags may appear before or after the project name; the command splits the
 positional argument out before parsing, so ordering does not matter.
@@ -430,6 +466,30 @@ too, with the same rules: `go run .`, `collage export` and the built binary load
 `COLLAGE_DEV=1` — so `os.Getenv("BASE_URL")` sees it with no `source .env`.
 Outside development the file read is named on stderr. On a server that sets its
 variables itself, the variables win and a missing file is no error.
+
+## `collage routes`
+
+Lists every URL the project answers through collage, a row per method and path,
+sorted by path:
+
+```
+METHOD  PATH          KIND    NAME    NOTES
+GET     /             page    home    static
+GET     /admin/users  page    users   dynamic, guard adminGuard
+POST    /admin/users  action  rename  on page users, guard adminGuard
+POST    /api/ping     action  ping    own URL, no guard
+GET     /static/*     mount           12 files
+
+Not listed: handlers mounted with app.Handle, and plugins' own endpoints.
+```
+
+Pages say how they are cached and which guards they meet; an action says
+whether it answers on a page, and so meets the page's guards, or at a URL of its
+own with none; a page's fragment URLs are listed with the guards they meet too.
+A `LOCALE` column appears when the site has more than one locale. It reads what
+`collage inspect` prints, so the project is built and `newApp` runs; what is
+not registered through collage — `app.Handle`, a plugin's own endpoints such
+as `/healthz` — is not in it.
 
 ## `collage inspect`
 

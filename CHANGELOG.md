@@ -2,16 +2,40 @@
 
 ## v0.69.0
 
+From the system monitor trial: what `collage add` could not write yet. Only the
+CLI changed; a project needs no new collage version to use what it writes.
+
 ### Added
 
 - **`collage add guard <name>`** writes `guards/<name>.go`, a guard that refuses
   everyone with `403` until its check is written, and
   `fragments/layouts/<name>.go`, a layout that adds nothing but the guard.
-  **`collage add page <[area/]name> --guard <name>`** wraps the new page in it,
-  inside the site's own layout, so the page, its attached actions and its
-  fragment paths meet the guard first. The command reminds you that an action
-  with its own `--path` has no page and so no guard. Only the CLI changed: a
-  project needs no new collage version to use what it writes.
+  **`add page --guard <name>`** wraps the new page in it, inside the site's own
+  layout, so the page, its attached actions and its fragment paths meet the
+  guard first. The command reminds you that an action with its own `--path` has
+  no page and so no guard.
+- **`collage add layout <name>`** writes a layout that nests inside the site's
+  own around a page's content; **`add page --layout <name>`** wraps a page in it.
+  Generated nested layouts carry `//collage:nested`, and a layout with a guard
+  counts as nested, so neither is taken for the site's layout a new page goes
+  into — which in a project with no `Master` or `Layout` could have wrapped
+  every new page in a guard.
+- **`collage add middleware <name>`** writes `middleware/<name>.go` and registers
+  it with `app.Use`, after the middleware already there.
+- **`collage add command <name>`** writes `commands/<name>.go` and registers it
+  with `app.RegisterCommand`; `go run . <name>` runs it.
+- **`collage add action <[area/]name> --page <[area/]page>`** attaches the action
+  to that page's `NewPage` chain instead of printing the line.
+- **`collage routes`** lists every URL the project answers through collage —
+  pages, the actions on them and on their own URLs, fragment URLs, documents and
+  mounts — with how each page is cached and the guards each route meets.
+
+### Fixed
+
+- `collage new -dir .` no longer tells you to `cd .`, and `-force` names the
+  files it replaced: `go.mod` among them.
+- The scaffolded READMEs describe `collage.Main`, `.env` loading and `collage
+  add`'s kinds; they still told `main.go` to parse the flags itself.
 
 ## v0.68.0
 

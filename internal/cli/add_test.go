@@ -84,13 +84,33 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		{"action", "blog/comment"},
 		{"action", "blog/ping", "--path", "/api/ping"},
 		{"document", "feed", "--path", "/feed.xml", "--type", "application/xml"},
+		{"layout", "panel"},
 		{"guard", "staff"},
-		{"page", "staff/roster", "--guard", "staff"},
+		{"page", "staff/roster", "--guard", "staff", "--layout", "panel"},
+		{"page", "panelled", "--layout", "panel"},
+		{"action", "staff/promote", "--page", "panelled"},
+		{"middleware", "stamp"},
+		{"middleware", "later"},
+		{"command", "greet", "--name", "say-hi"},
 	} {
 		if code, _, stderr := add(t, target, args...); code != 0 {
 			t.Fatalf("add %v = %d; %s", args, code, stderr)
 		}
 	}
+
+	// The generated middleware passes requests on; make it mark them, so the
+	// project's test can see it runs.
+	writeFiles(t, target, map[string]string{"middleware/stamp.go": `package middleware
+
+import "net/http"
+
+func Stamp(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Stamp", "1")
+		next.ServeHTTP(w, r)
+	})
+}
+`})
 
 	routes := readFile(t, target, "routes.go")
 	wantInOrder(t, routes,
@@ -122,14 +142,25 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 	// --guard sits inside the site's layout and then the guard's.
 	wantInOrder(t, readFile(t, target, "guards/staff.go"), "package guards", "func Staff(", "Status: http.StatusForbidden")
 	wantInOrder(t, readFile(t, target, "fragments/layouts/staff.go"), "package layouts", `"collageaddtest/guards"`, "func Staff() *collage.Fragment", "WithGuard(guards.Staff)", `{{slot "content"}}`)
-	wantInOrder(t, readFile(t, target, "pages/staff/roster.go"), "WithLayouts(layouts.Master(), layouts.Staff())")
+	wantInOrder(t, readFile(t, target, "pages/staff/roster.go"), "WithLayouts(layouts.Master(), layouts.Panel(), layouts.Staff())")
+	wantInOrder(t, readFile(t, target, "fragments/layouts/panel.go"), "//collage:nested", "func Panel() *collage.Fragment", `{{slot "content"}}`)
+	// --page attaches the action before the chain's Build; middleware keeps
+	// the order it was added in; commands are registered beside it.
+	wantInOrder(t, readFile(t, target, "pages/panelled.go"), `"collageaddtest/actions"`, "WithActionFor(actions.Promote()).", "Build()")
+	wantInOrder(t, routes, `"collageaddtest/commands"`, `"collageaddtest/middleware"`,
+		"func register(app *collage.App) error {", "app.RegisterCommand(commands.Greet())",
+		"app.Use(middleware.Stamp)", "app.Use(middleware.Later)", "app.Register(")
 
 	writeFiles(t, target, map[string]string{"added_test.go": `package main
 
 import (
+	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Elagoht/collage/pkg/collage"
 )
 
 func TestAdded(t *testing.T) {
@@ -144,6 +175,30 @@ func TestAdded(t *testing.T) {
 	}
 	// The new guard refuses everyone until its check is written.
 	c.Get("/staff/roster").WantStatus(http.StatusForbidden)
+	// A nested layout renders inside the site's, and an action attached with
+	// --page answers at its page.
+	panelled := c.Get("/panelled").WantStatus(http.StatusOK)
+	if !strings.Contains(panelled.Body, "<html") || !strings.Contains(panelled.Body, "<div class=\"panel\">") || !strings.Contains(panelled.Body, "<h1>Panelled</h1>") {
+		t.Errorf("/panelled: %s", panelled.Body)
+	}
+	if panelled.Header.Get("X-Stamp") != "1" {
+		t.Errorf("the middleware did not run: X-Stamp %q", panelled.Header.Get("X-Stamp"))
+	}
+	post := c.Request(http.MethodPost, "/panelled", nil)
+	post.Header.Set("X-CSRF-Token", c.Get("/features").CSRFToken())
+	c.Do(post).WantStatus(http.StatusOK)
+	app, err := newApp(collage.Env{CacheDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Shutdown(context.Background())
+	var names []string
+	for _, cmd := range app.Commands() {
+		names = append(names, cmd.Name)
+	}
+	if !slices.Contains(names, "say-hi") {
+		t.Errorf("commands = %v, want say-hi", names)
+	}
 	req := c.Request(http.MethodPost, "/api/ping", nil)
 	req.Header.Set("X-CSRF-Token", c.Get("/features").CSRFToken())
 	c.Do(req).WantStatus(http.StatusNoContent)
@@ -393,6 +448,13 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 		"--guard with no layout for it": {args: []string{"page", "panel/users", "--guard", "staff"}, want: "declares no Staff(); write it first with: collage add guard staff"},
 		"--guard on an action":          {args: []string{"action", "auth/forget", "--guard", "staff"}, want: "--guard wraps a page"},
 		"--guard that is not a name":    {args: []string{"page", "panel/users", "--guard", "st-aff"}, want: `--guard "st-aff" is not a Go name`},
+		"a layout in an area":           {args: []string{"layout", "admin/panel"}, want: "a layout has no area; fragments/layouts/ is flat"},
+		"a middleware in an area":       {args: []string{"middleware", "auth/load"}, want: "a middleware has no area"},
+		"--layout with no layout":       {args: []string{"page", "panel/users", "--layout", "wide"}, want: "declares no Wide(); write it first with: collage add layout wide"},
+		"--page with --path":            {args: []string{"action", "auth/forget", "--page", "auth/login", "--path", "/forget"}, want: "--page and --path"},
+		"--page to no page":             {args: []string{"action", "auth/forget", "--page", "auth/nope"}, want: "pages/auth/nope.go does not exist"},
+		"--page on a page":              {args: []string{"page", "panel/users", "--page", "auth/login"}, want: "--page attaches an action"},
+		"a command name in use":         {args: []string{"command", "seedAgain", "--name", "seed"}, setup: map[string]string{"commands/seed.go": "package commands\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nfunc Seed() collage.Command { return collage.Command{Name: \"seed\"} }\n"}, want: `a command named "seed" already exists, in commands/seed.go`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := sdyProject(t)
@@ -429,6 +491,54 @@ func treeSnapshot(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return b.String()
+}
+
+// A project whose site layout is Base, not Master, still wraps a new page in
+// Base after a guard or a nested layout is added: those nest, and sort first.
+func TestAdd_NestedLayoutsAreNeverTheSiteLayout(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"go.mod":                    "module proj\n\ngo 1.26\n",
+		"routes.go":                 "package main\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nfunc register(app *collage.App) error {\n\treturn app.Register()\n}\n",
+		"fragments/layouts/base.go": "package layouts\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nfunc Base() *collage.Fragment { return nil }\n",
+	})
+	for _, args := range [][]string{{"guard", "admin"}, {"layout", "aside"}, {"page", "plain"}, {"page", "secret", "--guard", "admin"}} {
+		if code, _, stderr := add(t, dir, args...); code != 0 {
+			t.Fatalf("add %v = %d; %s", args, code, stderr)
+		}
+	}
+	wantInOrder(t, readFile(t, dir, "pages/plain.go"), "WithLayouts(layouts.Base())")
+	wantInOrder(t, readFile(t, dir, "pages/secret.go"), "WithLayouts(layouts.Base(), layouts.Admin())")
+}
+
+// Middleware and commands go into the register function whatever its shape —
+// here a loop over a literal — after the calls already there; a register
+// function that returns no error gets nothing, and the line to add instead.
+func TestAdd_RegistersMiddlewareAndCommandsInAnyShape(t *testing.T) {
+	dir := sdyProject(t)
+	for _, args := range [][]string{{"middleware", "loadUser"}, {"middleware", "audit"}, {"command", "seed"}} {
+		if code, _, stderr := add(t, dir, args...); code != 0 {
+			t.Fatalf("add %v = %d; %s", args, code, stderr)
+		}
+	}
+	wantInOrder(t, readFile(t, dir, "routes.go"),
+		`"sdy/commands"`, `"sdy/middleware"`, "userService *users.UserService,\n) error {",
+		"if err := app.RegisterCommand(commands.Seed()); err != nil {",
+		"if err := app.Use(middleware.LoadUser); err != nil {", "if err := app.Use(middleware.Audit); err != nil {",
+		"for _, page := range []*collage.Page{")
+
+	noError := t.TempDir()
+	writeFiles(t, noError, map[string]string{
+		"go.mod":    "module ne\n\ngo 1.26\n",
+		"routes.go": "package main\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nfunc register(app *collage.App) {\n\tapp.Register()\n}\n",
+	})
+	code, out, stderr := add(t, noError, "middleware", "audit")
+	if code != 0 || !strings.Contains(out, "register it yourself, in the function that builds the app: app.Use(middleware.Audit)") {
+		t.Errorf("add = %d; %s%s", code, out, stderr)
+	}
+	if strings.Contains(readFile(t, noError, "routes.go"), "middleware") {
+		t.Error("routes.go was edited although its register returns no error")
+	}
 }
 
 func TestNames(t *testing.T) {
