@@ -18,6 +18,17 @@ type Manifest struct {
 	Requires []string `json:"requires"`
 	Order    int      `json:"order"`
 	Setup    string   `json:"setup"`
+	// Repository and TemplateFunctions are what "plugin add" tells the user
+	// to read and to use; ReadManifest leaves either empty when the manifest
+	// writes it in a shape it does not know.
+	Repository        string             `json:"repository"`
+	TemplateFunctions []TemplateFunction `json:"templateFunctions"`
+}
+
+// TemplateFunction is one template function a plugin's manifest lists.
+type TemplateFunction struct {
+	Signature string `json:"signature"`
+	Doc       string `json:"doc"`
 }
 
 // manifestFile lists every top-level key the manifest schema allows, so an
@@ -57,6 +68,12 @@ func ReadManifest(dir string) (Manifest, error) {
 		return Manifest{}, refuse(fmt.Sprintf("collage.json: %v", err))
 	}
 	m := Manifest{Name: f.Name, Requires: f.Requires, Order: f.Order, Setup: f.Setup}
+	if json.Unmarshal(f.Repository, &m.Repository) != nil {
+		m.Repository = ""
+	}
+	if json.Unmarshal(f.TemplateFunctions, &m.TemplateFunctions) != nil {
+		m.TemplateFunctions = nil
+	}
 	if err := checkManifest(dec, m); err != nil {
 		return Manifest{}, err
 	}

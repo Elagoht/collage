@@ -63,7 +63,7 @@ func TestPluginAdd_ManySetupNotesLast(t *testing.T) {
 		t.Fatalf("add = %d\n%s%s", code, out, errOut)
 	}
 	wantInOrder(t, out, "added acme/plain", "added acme/greet", "added: acme/plain, acme/greet",
-		"To finish setting up:", "acme/plain", "Pass it nothing.")
+		"What each plugin needs from you:", "acme/plain", "Pass it nothing.")
 	if strings.Count(out, "Pass it nothing.") != 1 {
 		t.Errorf("the setup note is printed more than once:\n%s", out)
 	}
@@ -236,7 +236,7 @@ func TestNew_With(t *testing.T) {
 		t.Fatalf("new --with = %d\n%s%s", code, out, errOut)
 	}
 	wantInOrder(t, out, "Scaffolded", "added acme/greet", "added acme/plain", "added acme/base",
-		"added: acme/greet, acme/plain, acme/base", "To finish setting up:", "Pass it nothing.", "Next steps:")
+		"added: acme/greet, acme/plain, acme/base", "What each plugin needs from you:", "Pass it nothing.", "Next steps:")
 	if strings.Contains(out, "go mod tidy") {
 		t.Errorf("next steps still ask for go mod tidy:\n%s", out)
 	}

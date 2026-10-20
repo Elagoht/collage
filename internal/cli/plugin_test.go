@@ -729,8 +729,32 @@ func TestPrintAdded_SetupNoteSanitised(t *testing.T) {
 	if strings.ContainsAny(got, "\x1b\r\x07\u009b") {
 		t.Fatalf("control characters printed: %q", got)
 	}
-	if !strings.Contains(got, "[31mred[0mover2J\nline two\n\tindented") {
+	if !strings.Contains(got, "  [31mred[0mover2J\n  line two\n  \tindented") {
 		t.Fatalf("note = %q", got)
+	}
+}
+
+// After the setup note, what the plugin gives the templates and where its
+// documentation is: what to do next, not only what was written.
+func TestPrintAdded_NextSteps(t *testing.T) {
+	c, out, _ := testCLI()
+	c.printAdded([]addedPlugin{{Name: "acme/flash", Version: "v0.1.0", Call: "flash.New()", ConfigAdded: true,
+		Setup:      "Put the messages in your layout.",
+		Repository: "https://github.com/acme/collage-flash",
+		Funcs: []plugincontract.TemplateFunction{
+			{Signature: "flashes", Doc: "The messages this request arrived with. `{{range flashes}}…{{end}}`."},
+		}}})
+	wantInOrder(t, out.String(), "added acme/flash v0.1.0", "acme/flash\n", "  Put the messages in your layout.",
+		"  In templates:\n    {{flashes}}  The messages this request arrived with.\n",
+		"  Docs: https://github.com/acme/collage-flash")
+	if strings.Contains(out.String(), "range flashes") {
+		t.Errorf("the function's doc was printed past its first sentence:\n%s", out)
+	}
+
+	c, out, _ = testCLI()
+	c.printAdded([]addedPlugin{{Name: "acme/plain", Version: "v0.1.0", Call: "plain.New()", ConfigAdded: true}})
+	if strings.Contains(out.String(), "\nacme/plain") {
+		t.Errorf("a plugin with nothing to say printed next steps:\n%s", out)
 	}
 }
 

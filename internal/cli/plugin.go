@@ -11,6 +11,7 @@ import (
 	"go/build"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -67,6 +68,10 @@ type addedPlugin struct {
 	Version string // the module version go get chose
 	Call    string // the entry written into plugins.go
 	Setup   string // the manifest's setup note, or ""
+	// Repository and Funcs are the manifest's, for the next steps "plugin
+	// add" prints.
+	Repository string
+	Funcs      []plugincontract.TemplateFunction
 	// ConfigAdded is whether plugins-config.json gained a section for it;
 	// false when one was already there and was kept.
 	ConfigAdded bool
@@ -273,6 +278,8 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 		Version:     info.Version,
 		Call:        p.Constructor.Call(ident),
 		Setup:       p.Manifest.Setup,
+		Repository:  p.Manifest.Repository,
+		Funcs:       p.Manifest.TemplateFunctions,
 		ConfigAdded: configAdded,
 	}), nil
 }
@@ -454,11 +461,47 @@ func (c *CLI) printAdded(added []addedPlugin) {
 		fmt.Fprintf(tw, "  plugins.go\t%s\n", a.Call)
 		fmt.Fprintf(tw, "  plugins-config.json\t%s\n", config)
 		tw.Flush()
-		if a.Setup != "" {
+		if a.hasNextSteps() {
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, strings.TrimSpace(printable(a.Setup)))
+			a.printNextSteps(w)
 		}
 	}
+}
+
+// hasNextSteps reports whether printNextSteps has anything to say.
+func (a addedPlugin) hasNextSteps() bool {
+	return a.Setup != "" || a.Repository != "" || len(a.Funcs) > 0
+}
+
+// printNextSteps tells the user what the plugin still needs from them: its
+// setup note, the template functions it gives the templates, and where its
+// documentation is.
+func (a addedPlugin) printNextSteps(w io.Writer) {
+	fmt.Fprintln(w, a.Name)
+	if a.Setup != "" {
+		for _, line := range strings.Split(strings.TrimSpace(printable(a.Setup)), "\n") {
+			fmt.Fprintln(w, "  "+line)
+		}
+	}
+	if len(a.Funcs) > 0 {
+		fmt.Fprintln(w, "  In templates:")
+		for _, f := range a.Funcs {
+			fmt.Fprintf(w, "    {{%s}}  %s\n", printable(f.Signature), firstSentence(printable(f.Doc)))
+		}
+	}
+	if a.Repository != "" {
+		fmt.Fprintf(w, "  Docs: %s\n", printable(a.Repository))
+	}
+}
+
+// firstSentence is s up to the end of its first sentence: a function's doc
+// line, without the examples after it.
+func firstSentence(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if i := strings.Index(s, ". "); i >= 0 {
+		return s[:i+1]
+	}
+	return s
 }
 
 // printable is s without its control characters other than newline and tab:

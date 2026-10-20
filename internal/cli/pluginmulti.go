@@ -90,10 +90,10 @@ func (c *CLI) addPlugins(ctx context.Context, dir string, refs []namedRef) (int,
 		added = append(added, r.label)
 		if multi {
 			for j := range got {
-				if got[j].Setup != "" {
+				if !got[j].Already && got[j].hasNextSteps() {
 					notes = append(notes, got[j])
-					got[j].Setup = ""
 				}
+				got[j].Setup, got[j].Repository, got[j].Funcs = "", "", nil
 			}
 			if len(added) > 1 {
 				fmt.Fprintln(c.stdout())
@@ -107,13 +107,10 @@ func (c *CLI) addPlugins(ctx context.Context, dir string, refs []namedRef) (int,
 		if len(notes) > 0 {
 			w := c.stdout()
 			fmt.Fprintln(w)
-			fmt.Fprintln(w, "To finish setting up:")
+			fmt.Fprintln(w, "What each plugin needs from you:")
 			for _, n := range notes {
 				fmt.Fprintln(w)
-				fmt.Fprintln(w, n.Name)
-				for _, line := range strings.Split(strings.TrimSpace(printable(n.Setup)), "\n") {
-					fmt.Fprintln(w, "  "+line)
-				}
+				n.printNextSteps(w)
 			}
 		}
 	}

@@ -237,12 +237,19 @@ func fmtSrc(pkg, decl string) string {
 
 func TestReadManifest(t *testing.T) {
 	good := `{"$schema":"x","name":"elagoht/consent","description":"d","repository":"https://x","config":{},
-	  "attributes":[],"templateFunctions":[],"snippets":{},"requires":["elagoht/live"],"order":-30,"setup":"note"}`
+	  "attributes":[],"templateFunctions":[{"name":"f","signature":"f \"x\"","doc":"Does f."}],"snippets":{},"requires":["elagoht/live"],"order":-30,"setup":"note"}`
 	dir := t.TempDir()
 	write(t, dir, map[string]string{"collage.json": good})
 	m, err := ReadManifest(dir)
-	if err != nil || m.Name != "elagoht/consent" || m.Order != -30 || m.Setup != "note" || len(m.Requires) != 1 {
+	if err != nil || m.Name != "elagoht/consent" || m.Order != -30 || m.Setup != "note" || len(m.Requires) != 1 ||
+		m.Repository != "https://x" || len(m.TemplateFunctions) != 1 || m.TemplateFunctions[0] != (TemplateFunction{Signature: `f "x"`, Doc: "Does f."}) {
 		t.Fatalf("%+v, %v", m, err)
+	}
+	// Only shown to the user: a shape it does not know leaves them empty.
+	odd := t.TempDir()
+	write(t, odd, map[string]string{"collage.json": `{"name":"a/b","repository":{"url":"x"},"templateFunctions":{}}`})
+	if m, err := ReadManifest(odd); err != nil || m.Repository != "" || m.TemplateFunctions != nil {
+		t.Errorf("odd shapes: %+v, %v", m, err)
 	}
 	for name, body := range map[string]string{
 		"unknown key": `{"name":"a/b","extra":1}`,

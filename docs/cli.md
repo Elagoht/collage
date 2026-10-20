@@ -553,8 +553,11 @@ added elagoht/consent v0.1.2
   plugins-config.json  "elagoht/consent": {}
 ```
 
-followed by the manifest's `setup` note, when it has one: what only Go can give
-the plugin. An empty section means the defaults. A setting the plugin requires
+followed by what the plugin still needs from you, from its manifest: its
+`setup` note, the template functions it adds, each with the first sentence of
+its description, and its documentation's address. With several plugins — a
+bundle, `new --with` — these come together at the end, under "What each plugin
+needs from you". An empty section means the defaults. A setting the plugin requires
 is reported by the plugin when the application starts.
 
 - **The import is named after the package.** When that name is already an
