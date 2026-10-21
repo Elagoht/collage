@@ -267,10 +267,14 @@ collage add command seed            # commands/seed.go + app.RegisterCommand
   flat.
 - **`--guard <name>`** wraps a new page in that layout, inside the site's own and
   any `--layout`: `WithLayouts(layouts.Master(), layouts.Panel(), layouts.Admin())`. The page's renders, the
-  actions attached to it and its fragment paths all meet the guard first. An
-  action added with its own `--path` has no page and so no guard: it checks
-  access in its handler. The layout must exist; `--guard` without it is refused
-  with the `add guard` to run first.
+  actions attached to it and its fragment paths all meet the guard first. The
+  layout must exist; `--guard` without it is refused with the `add guard` to run
+  first.
+- **`add action ... --guard <name>`** gives the action the guard itself,
+  `.WithGuard(guards.Admin)` (`ActionBuilder.WithGuard`, collage v0.70.0 and
+  later): asked before the handler, the body and the forgery check. It is how an
+  action on its own `--path`, which has no page and so no page guards, is
+  guarded; on a page it is asked after the page's.
 - **A middleware** is `middleware/<name>.go`, a `func(http.Handler)
   http.Handler` that passes every request on, registered with `app.Use` in the
   register function after the middleware already there — the first registered
@@ -477,6 +481,7 @@ METHOD  PATH          KIND    NAME    NOTES
 GET     /             page    home    static
 GET     /admin/users  page    users   dynamic, guard adminGuard
 POST    /admin/users  action  rename  on page users, guard adminGuard
+POST    /api/fire     action  fire    own URL, own guard
 POST    /api/ping     action  ping    own URL, no guard
 GET     /static/*     mount           12 files
 
@@ -485,7 +490,7 @@ Not listed: handlers mounted with app.Handle, and plugins' own endpoints.
 
 Pages say how they are cached and which guards they meet; an action says
 whether it answers on a page, and so meets the page's guards, or at a URL of its
-own with none; a page's fragment URLs are listed with the guards they meet too.
+own, and whether it has a guard of its own; a page's fragment URLs are listed with the guards they meet too.
 A `LOCALE` column appears when the site has more than one locale. It reads what
 `collage inspect` prints, so the project is built and `newApp` runs; what is
 not registered through collage — `app.Handle`, a plugin's own endpoints such

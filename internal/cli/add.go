@@ -61,7 +61,8 @@ arguments; add the services they need by hand.
   --layout name   a page's layout: wraps it in the one "add layout <name>" wrote,
                   inside the site's own layout
   --guard name    a page's guard: wraps it in the layout "add guard <name>" wrote,
-                  inside the site's own layout and any --layout
+                  inside the site's own layout and any --layout; an action's:
+                  WithGuard(guards.<Name>), asked before its handler runs
   --page target   an action's page, [area/]name as "add page" took it: attaches
                   the action to pages/<area>/<name>.go instead of printing how
   --dir path      the project (default: the current directory)
@@ -112,7 +113,7 @@ type addRequest struct {
 	// localeFrom says where locale came from, for the note "add" prints.
 	localeFrom string
 	ctype      string
-	guard      string   // a page's --guard, as written
+	guard      string   // a page's or an action's --guard, as written
 	layout     string   // a page's --layout, as written
 	page       []string // an action's --page, as segments; nil for none
 	dir        string
@@ -144,7 +145,7 @@ func (c *CLI) runAdd(args []string) int {
 	name := fs.String("name", "", "the page's, action's or document's name")
 	locale := fs.String("locale", "", "the locale its path is in")
 	ctype := fs.String("type", "text/plain; charset=utf-8", "a document's content type")
-	guard := fs.String("guard", "", "the guard a page is wrapped in")
+	guard := fs.String("guard", "", "the guard a page or an action meets")
 	layout := fs.String("layout", "", "the layout a page is wrapped in")
 	page := fs.String("page", "", "the page an action is attached to")
 	dir := fs.String("dir", ".", "the project")
@@ -241,7 +242,7 @@ func (r *addRequest) parseTarget(target string) error {
 		if value == "" {
 			continue
 		}
-		if r.kind != "page" {
+		if r.kind != "page" && !(flagName == "guard" && r.kind == "action") {
 			return fmt.Errorf("%w: --%s wraps a page; a %s has no layouts", ErrAddUsage, flagName, r.kind)
 		}
 		if !validSegment(value) {
@@ -734,7 +735,11 @@ func (g generator) action(notes []string) ([]fileChange, []string, error) {
 	if standalone {
 		fmt.Fprintf(&builder, "\t\tWithPath(%q, %q).\n", g.req.locale, g.req.path)
 	}
-	fmt.Fprintf(&builder, "\t\tWithMethods(http.MethodPost).\n\t\tWithHandler(funcs.%s()).\n\t\tBuild()\n}\n", g.pascal)
+	fmt.Fprintf(&builder, "\t\tWithMethods(http.MethodPost).\n")
+	if g.req.guard != "" {
+		fmt.Fprintf(&builder, "\t\tWithGuard(guards.%s).\n", pascal(g.req.guard))
+	}
+	fmt.Fprintf(&builder, "\t\tWithHandler(funcs.%s()).\n\t\tBuild()\n}\n", g.pascal)
 
 	var handler strings.Builder
 	fmt.Fprintf(&handler, "\n// Answers the %s action.\nfunc %s() collage.ActionHandlerFunc {\n\treturn func(\n\t\t_ context.Context,\n", g.req.name, g.pascal)
@@ -745,6 +750,15 @@ func (g generator) action(notes []string) ([]fileChange, []string, error) {
 	}
 
 	builderImports := []importSpec{{path: "net/http"}, {path: g.proj.module + "/actions/funcs"}, {path: collageImport}}
+	if g.req.guard != "" {
+		if err := g.checkGuardExists(); err != nil {
+			return nil, nil, err
+		}
+		builderImports = append(builderImports, importSpec{path: g.proj.module + "/guards"})
+		notes = append(notes, fmt.Sprintf("guarded by guards.%s; an action's WithGuard needs collage v0.70.0 or later", pascal(g.req.guard)))
+	} else if standalone {
+		notes = append(notes, "no guard: an action on its own URL has no page's guards; give it one with --guard <name>, or check access in its handler")
+	}
 	handlerImports := []importSpec{{path: "context"}, {path: collageImport}}
 	if standalone {
 		handlerImports = append(handlerImports, importSpec{path: "net/http"})
@@ -868,9 +882,27 @@ func (g generator) guard(notes []string) ([]fileChange, []string, error) {
 		fmt.Sprintf("guards.%s refuses everyone until you write its check", g.pascal),
 		fmt.Sprintf("guard a new page: collage add page <[area/]name> --guard %s", g.req.name),
 		fmt.Sprintf("guard a page you have: .WithLayouts(layouts.Master(), layouts.%s())", g.pascal),
-		"an action added with its own --path has no page, so no guard: check access in its handler",
+		fmt.Sprintf("guard an action: collage add action <[area/]name> --guard %s, or .WithGuard(guards.%s)", g.req.name, g.pascal),
 	)
 	return changes, notes, nil
+}
+
+// checkGuardExists refuses an action's --guard that guards/ declares no
+// function for, before anything is written.
+func (g generator) checkGuardExists() error {
+	fn := pascal(g.req.guard)
+	files, err := parseDir(filepath.Join(g.proj.dir, "guards"))
+	if err != nil {
+		return err
+	}
+	for _, f := range files {
+		for _, decl := range f.ast.Decls {
+			if d, ok := decl.(*ast.FuncDecl); ok && d.Recv == nil && d.Name.Name == fn {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("--guard %s: guards/ declares no %s; write it first with: collage add guard %s", g.req.guard, fn, g.req.guard)
 }
 
 // collageImport is the package every generated file builds with.

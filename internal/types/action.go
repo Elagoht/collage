@@ -105,6 +105,11 @@ type Action struct {
 	// protection entirely, so it is named for what it does rather than for when it
 	// is convenient.
 	SkipCSRF bool
+	// Guard, when set, is asked whether a request may reach this action, as a
+	// page's guards are: after routing, before the body is read and before the
+	// forgery check. An action on a page's URL meets the page's guards first,
+	// then its own. See GuardFunc.
+	Guard GuardFunc
 	// buildErr is what the builder that made this value recorded; see
 	// RecordBuildErr. Registration refuses a value that carries one.
 	buildErr error

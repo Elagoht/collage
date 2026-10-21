@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.70.0
+
+### Added
+
+- **`ActionBuilder.WithGuard(g)`** gives an action a guard of its own, the same
+  `GuardFunc` a layout carries. It is asked after routing and before the body is
+  read or the forgery token checked, so a refused request costs neither. An
+  action on its own URL — which has no page, and so had no way to be guarded but
+  a middleware or a check in its handler — meets it alone; one on a page's URL
+  meets the page's guards first, then its own: the page decides who sees the
+  form, the action who may submit it. A nil guard is a build error. `collage
+  inspect` reports it as an action's `"guarded": true`.
+- **`collage add action <[area/]name> --guard <name>`** writes the action with
+  `.WithGuard(guards.<Name>)`, refusing a guard `guards/` does not declare.
+  **`collage routes`** says which actions have a guard of their own.
+
 ## v0.69.0
 
 From the system monitor trial: what `collage add` could not write yet. Only the

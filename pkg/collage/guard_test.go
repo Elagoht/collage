@@ -483,3 +483,115 @@ func TestRenderFragmentRunsTheFragmentsGuard(t *testing.T) {
 		}
 	}
 }
+
+// requireHeader is a guard that lets through a request carrying X-Logged-In and
+// sends every other to /login, recording its name in calls when calls is set.
+func requireHeader(name string, calls *[]string) collage.GuardFunc {
+	return func(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
+		if calls != nil {
+			*calls = append(*calls, name)
+		}
+		if r.Header.Get("X-Logged-In") != "" {
+			return nil, nil
+		}
+		return &collage.GuardDecision{Status: http.StatusSeeOther, Location: "/login"}, nil
+	}
+}
+
+// An action on a URL of its own has no page to carry a guard; WithGuard gives
+// it one, asked before the forgery check and before the body is read: the
+// logged-out request is redirected, not refused as a forgery or as too large.
+func TestActionGuardOnItsOwnURL(t *testing.T) {
+	app, _ := guardedApp(t, nil, false)
+	ran := 0
+	action := collage.NewAction("rename").
+		WithPath("en", "/api/rename").
+		WithMethods(http.MethodPost).
+		WithMaxBodyBytes(8).
+		WithGuard(requireHeader("rename", nil)).
+		WithHandler(func(ctx context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+			ran++
+			return &collage.ActionResult{Status: http.StatusOK}, nil
+		}).
+		Build()
+	if err := app.RegisterAction(action); err != nil {
+		t.Fatalf("RegisterAction: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/rename", strings.NewReader(strings.Repeat("x", 1024)))
+	w := httptest.NewRecorder()
+	app.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login" {
+		t.Fatalf("logged-out POST: status = %d, location %q; want 303 to /login", w.Code, w.Header().Get("Location"))
+	}
+	if w.Header().Get("Cache-Control") != "no-store" {
+		t.Errorf("a guard's answer is cacheable: Cache-Control %q", w.Header().Get("Cache-Control"))
+	}
+	// Let through, it meets the forgery check like any action: no token, 403.
+	if w := post(app.Handler(), "/api/rename", "1"); w.Code != http.StatusForbidden {
+		t.Errorf("logged-in POST without a token: status = %d, want 403 from the forgery check", w.Code)
+	}
+	if ran != 0 {
+		t.Errorf("the handler ran %d times", ran)
+	}
+}
+
+// On a page's URL an action meets the page's guards first, then its own; a
+// page guard that answers means the action's is never asked.
+func TestActionGuardRunsAfterThePagesGuards(t *testing.T) {
+	app, _ := guardedApp(t, nil, false)
+	var calls []string
+	page := collage.NewPage("save").
+		WithLayouts(collage.NewFragment("private", "layouts/private.html").WithGuard(requireHeader("page", &calls)).Build()).
+		WithContent(collage.NewFragment("c", "pages/panel.html").Build()).
+		WithPath("en", "/save").
+		WithActionFor(collage.NewAction("save").
+			WithMethods(http.MethodPost).
+			WithoutCSRF().
+			WithGuard(func(ctx context.Context, r *http.Request) (*collage.GuardDecision, error) {
+				calls = append(calls, "action")
+				if r.Header.Get("X-Logged-In") == "admin" {
+					return nil, nil
+				}
+				return &collage.GuardDecision{Status: http.StatusForbidden}, nil
+			}).
+			WithHandler(func(ctx context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+				return &collage.ActionResult{Status: http.StatusOK}, nil
+			}).Build()).
+		Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatalf("RegisterPage: %v", err)
+	}
+	for _, tt := range []struct {
+		header string
+		status int
+		calls  string
+	}{
+		{"", http.StatusSeeOther, "page"},
+		{"reader", http.StatusForbidden, "page action"},
+		{"admin", http.StatusOK, "page action"},
+	} {
+		calls = nil
+		if w := post(app.Handler(), "/save", tt.header); w.Code != tt.status {
+			t.Errorf("POST as %q: status = %d, want %d", tt.header, w.Code, tt.status)
+		}
+		if got := strings.Join(calls, " "); got != tt.calls {
+			t.Errorf("POST as %q asked %q, want %q", tt.header, got, tt.calls)
+		}
+	}
+	// The page itself is the page's guard's alone: a reader may see the form an
+	// admin alone may submit.
+	if w := get(app.Handler(), "/save", "reader"); w.Code != http.StatusOK {
+		t.Errorf("GET as a reader: status = %d, want 200", w.Code)
+	}
+}
+
+func TestActionGuardNilIsABuildError(t *testing.T) {
+	app, _ := guardedApp(t, nil, false)
+	action := collage.NewAction("x").WithPath("en", "/x").WithMethods(http.MethodPost).
+		WithGuard(nil).
+		WithHandler(func(ctx context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) { return nil, nil }).
+		Build()
+	if err := app.RegisterAction(action); err == nil || !strings.Contains(err.Error(), `nil guard on action "x"`) {
+		t.Errorf("RegisterAction = %v, want the nil guard refused", err)
+	}
+}

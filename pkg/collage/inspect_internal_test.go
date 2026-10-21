@@ -154,6 +154,24 @@ func TestInspectLayoutsAndGuards(t *testing.T) {
 	if got := strings.Join(p.Guards, ","); got != "private,panel" {
 		t.Errorf("Guards = %q, want private,panel", got)
 	}
+
+	// An action's own guard is reported on the action; a page's are the page's.
+	handler := func(context.Context, *RenderContext) (*ActionResult, error) { return nil, nil }
+	if err := app.RegisterAction(NewAction("rename").WithPath("en", "/rename").WithMethods(http.MethodPost).
+		WithGuard(allow).WithHandler(handler).Build()); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.RegisterAction(NewAction("ping").WithPath("en", "/ping").WithMethods(http.MethodPost).
+		WithHandler(handler).Build()); err != nil {
+		t.Fatal(err)
+	}
+	guarded := map[string]bool{}
+	for _, a := range app.c.Inspect().Actions {
+		guarded[a.Name] = a.Guarded
+	}
+	if !guarded["rename"] || guarded["ping"] {
+		t.Errorf("Guarded = %v, want rename only", guarded)
+	}
 }
 
 // A layout shared by two pages is one fragment the author wrote, reported once

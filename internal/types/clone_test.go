@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"reflect"
 	"testing"
 	"time"
@@ -131,6 +132,7 @@ func TestClone_NoSharedContainers(t *testing.T) {
 		Name: "a", Paths: map[string]string{"en": "/a"}, Methods: []string{"POST"},
 		Handler:      func(context.Context, *RenderContext) (*ActionResult, error) { return nil, nil },
 		MaxBodyBytes: 1, StreamingBody: true, BodyTimeout: time.Second, SkipCSRF: true,
+		Guard:    func(context.Context, *http.Request) (*GuardDecision, error) { return nil, nil },
 		buildErr: errors.New("recorded"),
 	}
 	av := reflect.ValueOf(a).Elem()
@@ -142,13 +144,17 @@ func TestClone_NoSharedContainers(t *testing.T) {
 	ca := CloneAction(a)
 	assertNoSharedContainers(t, av, reflect.ValueOf(ca).Elem(), "Action")
 	// Every field, unexported ones included: reflect.DeepEqual calls two
-	// non-nil funcs unequal even when they are one func, so Handler is compared
-	// by identity and left out of the rest.
+	// non-nil funcs unequal even when they are one func, so Handler and Guard
+	// are compared by identity and left out of the rest.
 	if reflect.ValueOf(ca.Handler).Pointer() != reflect.ValueOf(a.Handler).Pointer() {
 		t.Error("CloneAction's Handler is not its source's")
 	}
+	if reflect.ValueOf(ca.Guard).Pointer() != reflect.ValueOf(a.Guard).Pointer() {
+		t.Error("CloneAction's Guard is not its source's")
+	}
 	x, y := *a, *ca
 	x.Handler, y.Handler = nil, nil
+	x.Guard, y.Guard = nil, nil
 	if !reflect.DeepEqual(x, y) {
 		t.Errorf("CloneAction is not equal to its source:\n%+v\n%+v", y, x)
 	}

@@ -95,6 +95,9 @@ type InspectedAction struct {
 	Name    string            `json:"name"`
 	Paths   map[string]string `json:"paths"`
 	Methods []string          `json:"methods"`
+	// Guarded reports a guard of the action's own, set with WithGuard; the
+	// guards of a page it is on are the page's.
+	Guarded bool `json:"guarded,omitempty"`
 }
 
 // InspectedPlugin is one registered plugin.
@@ -258,7 +261,7 @@ func (a *App) Inspect() Inspection {
 		if _, fragmentPath := a.fragmentPaths[act]; fragmentPath {
 			continue // listed under its page
 		}
-		out.Actions = append(out.Actions, InspectedAction{Name: act.Name, Paths: maps.Clone(act.Paths), Methods: slices.Clone(act.Methods)})
+		out.Actions = append(out.Actions, InspectedAction{Name: act.Name, Paths: maps.Clone(act.Paths), Methods: slices.Clone(act.Methods), Guarded: act.Guard != nil})
 	}
 
 	funcs := template.DefaultFuncs()

@@ -23,6 +23,19 @@ func runGuards(ctx context.Context, r *http.Request, guards []types.GuardFunc) (
 	return nil, nil
 }
 
+// actionGuards returns the guards an action's request meets: its page's, when
+// it is on a page's URL, outermost layout first, then its own.
+func actionGuards(page *types.Page, action *types.Action) []types.GuardFunc {
+	var guards []types.GuardFunc
+	if page != nil {
+		guards = types.PageGuards(page)
+	}
+	if action.Guard != nil {
+		guards = append(guards, action.Guard)
+	}
+	return guards
+}
+
 // checkGuards runs guards and writes what they answer. It is the guard half of
 // every guarded dispatch — a page render, an action on a page's own URL — so
 // the two cannot drift apart. A nil guards slice allows immediately.

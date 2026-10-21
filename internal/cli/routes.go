@@ -50,6 +50,7 @@ type routesInspection struct {
 		Name    string            `json:"name"`
 		Paths   map[string]string `json:"paths"`
 		Methods []string          `json:"methods"`
+		Guarded bool              `json:"guarded"`
 	} `json:"actions"`
 	Mounts []struct {
 		Prefix    string   `json:"prefix"`
@@ -125,10 +126,16 @@ func writeRoutes(w io.Writer, in routesInspection) {
 		for _, locale := range slices.Sorted(maps.Keys(a.Paths)) {
 			path := a.Paths[locale]
 			note := "own URL, no guard"
+			if a.Guarded {
+				note = "own URL, own guard"
+			}
 			if page, ok := pageAt[locale+" "+path]; ok {
 				note = "on page " + page
 				if g := guardsOf[page]; len(g) > 0 {
 					note += ", guard " + strings.Join(g, ", ")
+				}
+				if a.Guarded {
+					note += ", own guard"
 				}
 			}
 			rows = append(rows, routeRow{strings.Join(a.Methods, ","), path, locale, "action", a.Name, note})

@@ -31,8 +31,9 @@ const routesFixture = `{
   ],
   "documents": [{"name": "feed", "paths": {"en": "/feed.xml"}, "contentType": "application/xml"}],
   "actions": [
-    {"name": "rename", "paths": {"en": "/admin/users"}, "methods": ["POST"]},
-    {"name": "ping", "paths": {"en": "/api/ping"}, "methods": ["POST", "PUT"]}
+    {"name": "rename", "paths": {"en": "/admin/users"}, "methods": ["POST"], "guarded": true},
+    {"name": "ping", "paths": {"en": "/api/ping"}, "methods": ["POST", "PUT"]},
+    {"name": "fire", "paths": {"en": "/api/fire"}, "methods": ["POST"], "guarded": true}
   ],
   "mounts": [{"prefix": "/static/", "files": ["/static/app.css"]}]
 }`
@@ -52,8 +53,9 @@ func TestRoutes_ListsEveryRouteWithItsGuards(t *testing.T) {
 		{"METHOD", "PATH", "KIND", "NAME", "NOTES"},
 		{"GET", "/", "page", "home", "static"},
 		{"GET", "/admin/users", "page", "users", "dynamic, guard adminGuard"},
-		{"POST", "/admin/users", "action", "rename", "on page users, guard adminGuard"},
+		{"POST", "/admin/users", "action", "rename", "on page users, guard adminGuard, own guard"},
 		{"GET", "/admin/users/table", "fragment", "table", "of page users, guard adminGuard"},
+		{"POST", "/api/fire", "action", "fire", "own URL, own guard"},
 		{"POST,PUT", "/api/ping", "action", "ping", "own URL, no guard"},
 		{"GET", "/feed.xml", "document", "feed", "application/xml"},
 		{"GET", "/static/*", "mount", "1 file"},

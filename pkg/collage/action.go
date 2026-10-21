@@ -44,6 +44,30 @@ func NewAction(name string) *ActionBuilder {
 	return &ActionBuilder{action: &Action{Name: name, Paths: map[string]string{}}}
 }
 
+// WithGuard sets the guard this action carries: asked about every request for
+// it, after routing and before its body is read or its forgery token checked,
+// as a page's guards are. It is how an action on a URL of its own — which has
+// no page, so no layout to carry a guard — says who may call it:
+//
+//	collage.NewAction("rename").
+//		WithPath("en", "/api/rename").
+//		WithMethods(http.MethodPost).
+//		WithGuard(guards.Admin).
+//		WithHandler(rename).
+//		Build()
+//
+// An action attached to a page meets the page's guards first, outermost layout
+// inwards, then its own: the page decides who may see the form, the action who
+// may submit it. A nil g records an error retrievable via BuildErr.
+func (b *ActionBuilder) WithGuard(g GuardFunc) *ActionBuilder {
+	if g == nil {
+		b.errs = append(b.errs, fmt.Errorf("collage: nil guard on action %q", b.action.Name))
+		return b
+	}
+	b.action.Guard = g
+	return b
+}
+
 // WithPath declares the URL pattern that reaches this action in locale.
 //
 // locale is not a label: it names the locale tree the path is written into, and

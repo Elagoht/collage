@@ -92,6 +92,7 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		{"middleware", "stamp"},
 		{"middleware", "later"},
 		{"command", "greet", "--name", "say-hi"},
+		{"action", "staff/fire", "--path", "/api/fire", "--guard", "staff"},
 	} {
 		if code, _, stderr := add(t, target, args...); code != 0 {
 			t.Fatalf("add %v = %d; %s", args, code, stderr)
@@ -147,6 +148,7 @@ func Stamp(next http.Handler) http.Handler {
 	// --page attaches the action before the chain's Build; middleware keeps
 	// the order it was added in; commands are registered beside it.
 	wantInOrder(t, readFile(t, target, "pages/panelled.go"), `"collageaddtest/actions"`, "WithActionFor(actions.Promote()).", "Build()")
+	wantInOrder(t, readFile(t, target, "actions/staff.go"), `"collageaddtest/guards"`, "func Fire() *collage.Action", "WithGuard(guards.Staff).", "WithHandler(funcs.Fire())")
 	wantInOrder(t, routes, `"collageaddtest/commands"`, `"collageaddtest/middleware"`,
 		"func register(app *collage.App) error {", "app.RegisterCommand(commands.Greet())",
 		"app.Use(middleware.Stamp)", "app.Use(middleware.Later)", "app.Register(")
@@ -173,8 +175,13 @@ func TestAdded(t *testing.T) {
 	if res := c.Get("/feed.xml").WantStatus(http.StatusOK); res.Header.Get("Content-Type") != "application/xml" {
 		t.Errorf("feed type = %q", res.Header.Get("Content-Type"))
 	}
-	// The new guard refuses everyone until its check is written.
+	// The new guard refuses everyone until its check is written, on a page and
+	// on an action of its own URL alike: with a valid forgery token the action
+	// would answer 204, and the guard answers 403 instead.
 	c.Get("/staff/roster").WantStatus(http.StatusForbidden)
+	fire := c.Request(http.MethodPost, "/api/fire", nil)
+	fire.Header.Set("X-CSRF-Token", c.Get("/features").CSRFToken())
+	c.Do(fire).WantStatus(http.StatusForbidden)
 	// A nested layout renders inside the site's, and an action attached with
 	// --page answers at its page.
 	panelled := c.Get("/panelled").WantStatus(http.StatusOK)
@@ -446,7 +453,7 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 		"a guard in an area":            {args: []string{"guard", "admin/staff"}, want: "a guard has no area"},
 		"a guard over a layout":         {args: []string{"guard", "master"}, want: "fragments/layouts/master.go already declares Master"},
 		"--guard with no layout for it": {args: []string{"page", "panel/users", "--guard", "staff"}, want: "declares no Staff(); write it first with: collage add guard staff"},
-		"--guard on an action":          {args: []string{"action", "auth/forget", "--guard", "staff"}, want: "--guard wraps a page"},
+		"--layout on an action":         {args: []string{"action", "auth/forget", "--layout", "staff"}, want: "--layout wraps a page"},
 		"--guard that is not a name":    {args: []string{"page", "panel/users", "--guard", "st-aff"}, want: `--guard "st-aff" is not a Go name`},
 		"a layout in an area":           {args: []string{"layout", "admin/panel"}, want: "a layout has no area; fragments/layouts/ is flat"},
 		"a middleware in an area":       {args: []string{"middleware", "auth/load"}, want: "a middleware has no area"},
@@ -454,6 +461,7 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 		"--page with --path":            {args: []string{"action", "auth/forget", "--page", "auth/login", "--path", "/forget"}, want: "--page and --path"},
 		"--page to no page":             {args: []string{"action", "auth/forget", "--page", "auth/nope"}, want: "pages/auth/nope.go does not exist"},
 		"--page on a page":              {args: []string{"page", "panel/users", "--page", "auth/login"}, want: "--page attaches an action"},
+		"--guard with no guard":         {args: []string{"action", "auth/forget", "--path", "/forget", "--guard", "staff"}, want: "guards/ declares no Staff; write it first with: collage add guard staff"},
 		"a command name in use":         {args: []string{"command", "seedAgain", "--name", "seed"}, setup: map[string]string{"commands/seed.go": "package commands\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nfunc Seed() collage.Command { return collage.Command{Name: \"seed\"} }\n"}, want: `a command named "seed" already exists, in commands/seed.go`},
 	} {
 		t.Run(name, func(t *testing.T) {

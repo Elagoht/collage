@@ -440,8 +440,9 @@ deadlines and a warning is logged once.
 
 A request that clears those checks holds its connection for up to `d`. An action
 registered on its own has no page guards, and a token is free to anyone who loads
-the form, so guard the upload: a page guard or an auth middleware, which runs
-before all of this — a check inside the handler runs after `d` is granted. See
+the form, so guard the upload: `WithGuard` on the action, a page guard or an auth
+middleware, all of which run before all of this — a check inside the handler runs
+after `d` is granted. See
 [Going to production](deployment.md#uploads) for what a proxy in front needs.
 
 ## A fragment at its own URL

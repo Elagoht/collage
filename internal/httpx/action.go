@@ -59,16 +59,15 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 			fmt.Errorf("%w: %q", ErrNoActionHandler, action.Name)))
 	}
 
-	// The page's guards, not the action's own: an action has no spine to
-	// guard, but one on a page's URL is reached through that page, and a page
-	// a reader may not see is a page whose form the reader may not submit.
+	// The page's guards, then the action's own. One on a page's URL is
+	// reached through that page, and a page a reader may not see is a page
+	// whose form the reader may not submit; the action's own guard says who
+	// may submit it, and is the only one an action on its own URL has.
 	// Before the body limit and the CSRF check — a guard that answers never
 	// reads the body, and a logged-out forged POST is better spent against the
 	// guard than the forgery check.
-	if page := match.Page; page != nil {
-		if status, allowed := h.checkGuards(w, r, route, match.Locale, types.PageGuards(page)); !allowed {
-			return status
-		}
+	if status, allowed := h.checkGuards(w, r, route, match.Locale, actionGuards(match.Page, action)); !allowed {
+		return status
 	}
 
 	// An ordinary action's longer deadlines are set after the guards, so only

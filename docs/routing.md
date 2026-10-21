@@ -305,8 +305,12 @@ are ignored: access policy belongs to routes, not to the parts a page is drawn
 from. A **fragment path** is a part of the page that opened it, and meets the
 page's guards first — outermost layout inwards, then the content fragment's —
 and then the fragment's own. A guarded layout whose content a script refreshes
-from a URL of its own refuses that URL to the same readers. An action
-registered on its own URL has no page, so no guards. Error and not-found pages
+from a URL of its own refuses that URL to the same readers. An action carries a
+guard of its own with `WithGuard` (since v0.70.0): one on a page's URL meets the
+page's guards first, then its own — the page decides who sees the form, the
+action who may submit it — and one registered on its own URL, which has no page,
+meets its own alone. It is asked before the body is read and before the forgery
+check, so a refused request costs neither. Error and not-found pages
 render without guards — a private error page would otherwise redirect the reader
 who hit the error.
 
