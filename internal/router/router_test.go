@@ -89,6 +89,18 @@ func TestDecodeSegments_FailureIsNotAnError(t *testing.T) {
 	}
 }
 
+// A NUL is no part of a published path, and ends a name at the system call a
+// handler joining the value onto a directory makes. A "\" is kept: it
+// round-trips through a link and a build like any other character.
+func TestDecodeSegments_RefusesNUL(t *testing.T) {
+	if _, ok := decodeSegments([]string{"docs", "a%00b.md"}); ok {
+		t.Error("decodeSegments accepted a NUL")
+	}
+	if decoded, ok := decodeSegments([]string{"blog", "back%5Cslash"}); !ok || decoded[1] != `back\slash` {
+		t.Errorf("decodeSegments(back%%5Cslash) = %q, %v; want the backslash kept", decoded, ok)
+	}
+}
+
 func TestDecodeSegments_Success(t *testing.T) {
 	decoded, ok := decodeSegments([]string{"blog", "hello%20world"})
 	if !ok {

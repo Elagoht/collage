@@ -644,7 +644,7 @@ func (rt *router) ErrorPage() *types.Page {
 
 // decodeSegments percent-decodes each of raw's segments individually via
 // url.PathUnescape, returning the decoded segments and true, or nil and false if
-// any segment fails to decode or decodes to one holding a "/".
+// any segment fails to decode or decodes to one holding a "/" or a NUL.
 //
 // A "%2F" is refused rather than kept inside its segment, which it once was.
 // Everything in front of the router — a middleware, a mount, a proxy — reads
@@ -653,11 +653,17 @@ func (rt *router) ErrorPage() *types.Page {
 // through without a login then let that request through to "/{slug}" with the
 // slug "public/secret". Two readings of one path is the bypass; the one both
 // sides agree on is the one where a "/" separates segments.
+//
+// A NUL is refused too. It is in no path a site publishes, and a captured value
+// is what a handler joins onto a directory, where a NUL ends the name at the
+// system call. A "\" is kept — it round-trips through a link and a build as any
+// other character — so a handler joining a value onto a directory on Windows,
+// where filepath.Join reads it as a separator, checks it with filepath.IsLocal.
 func decodeSegments(raw []string) ([]string, bool) {
 	decoded := make([]string, len(raw))
 	for i, seg := range raw {
 		d, err := url.PathUnescape(seg)
-		if err != nil || strings.Contains(d, "/") {
+		if err != nil || strings.ContainsAny(d, "/\x00") {
 			return nil, false
 		}
 		decoded[i] = d
