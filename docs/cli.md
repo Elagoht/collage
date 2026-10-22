@@ -509,7 +509,10 @@ embedded, so the program reads `templates/` and `static/` from disk; `go run`
 would store the linked program, and with it everything `main` embeds, in the Go
 build cache on every run after a change to `main` (see "Development builds
 embed nothing" under `collage dev`). `collage routes` and `collage check` run
-the project the same way. It is what an
+the project the same way. They also set `COLLAGE_CLI_COMMAND` to the word they
+ask with; while it is set, `App.ListenAndServe` refuses to serve and returns why,
+so a `main` that never hands its arguments to `DispatchCommands` fails at once
+rather than leaving the command waiting on a server. It is what an
 editor's completion reads: the Collage Snippets & Highlighter extension for VS Code
 offers page names in `{{pageURL "…"}}`, slots in `{{slot "…"}}` and files in
 `{{asset "…"}}` from it.

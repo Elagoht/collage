@@ -56,7 +56,7 @@ func TestRoutes_ListsEveryRouteWithItsGuards(t *testing.T) {
 	if got := strings.Join(build[:len(build)-2], " "); got != "go build -tags collage_dev -o" || build[len(build)-1] != "." {
 		t.Errorf("built with %q", build)
 	}
-	if binary := build[len(build)-2]; !slices.Equal(run, []string{binary, "collage-inspect", "COLLAGE_DEV=1"}) {
+	if binary := build[len(build)-2]; !slices.Equal(run, []string{binary, "collage-inspect", "COLLAGE_DEV=1", "COLLAGE_CLI_COMMAND=collage-inspect"}) {
 		t.Errorf("ran %q, want %s collage-inspect with COLLAGE_DEV=1", run, binary)
 	}
 	lines := strings.Split(out.String(), "\n")

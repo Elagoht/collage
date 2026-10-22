@@ -3,10 +3,13 @@ package collage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 
+	"github.com/Elagoht/collage/internal/clienv"
 	"github.com/Elagoht/collage/internal/core"
 )
 
@@ -220,7 +223,17 @@ func (a *App) Start() error { return a.c.Start() }
 // ListenAndServe starts the application and serves it on the configured host and
 // port until SIGINT or SIGTERM, then drains and shuts down gracefully. A clean
 // shutdown returns nil.
-func (a *App) ListenAndServe() error { return a.c.ListenAndServe() }
+//
+// It refuses to serve when the collage binary ran the program only to ask it
+// something — collage inspect, routes and check do — since the CLI would wait on
+// a server forever: main then never handed its arguments to DispatchCommands.
+func (a *App) ListenAndServe() error {
+	if name := os.Getenv(clienv.Command); name != "" {
+		return fmt.Errorf("collage: the collage CLI ran this program to answer %q, but it started serving instead: "+
+			"main must hand the words after its flags to collage.DispatchCommands, as collage.Main does", name)
+	}
+	return a.c.ListenAndServe()
+}
 
 // Shutdown drains and stops the running server, then shuts the plugins down, with
 // ctx bounding the wait. It runs once; every caller sees the same result.

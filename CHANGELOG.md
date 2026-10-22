@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.71.1
+
+### Fixed
+
+- **`collage inspect`, `collage routes` and `collage check` no longer wait
+  forever on a program that serves instead of answering.** A `main.go` written
+  before `collage.Main` that never hands the words after its flags to
+  `collage.DispatchCommands` took `collage-inspect` for nothing and started
+  serving, and the command waited on that server until it was killed. The CLI
+  now sets `COLLAGE_CLI_COMMAND` to the word it asks with, and
+  `App.ListenAndServe` refuses to serve while it is set, returning
+  `the collage CLI ran this program to answer "collage-inspect", but it started
+  serving instead: main must hand the words after its flags to
+  collage.DispatchCommands, as collage.Main does`. It takes the project's collage
+  at v0.71.1 or later; with an earlier one the command still waits.
+
 ## v0.71.0
 
 Security fixes from an audit of every surface a client reaches, after the

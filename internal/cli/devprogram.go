@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+
+	"github.com/Elagoht/collage/internal/clienv"
 )
 
 // runDevProgram builds the current directory's project the way "collage dev"
@@ -35,5 +37,8 @@ func (c *CLI) runDevProgram(ctx context.Context, stdout, stderr io.Writer, args 
 	if err := c.runner().Run(ctx, "", nil, stderr, stderr, "go", "build", "-tags", devBuildTag, "-o", binary, "."); err != nil {
 		return err
 	}
-	return c.runner().Run(ctx, "", []string{"COLLAGE_DEV=1"}, stdout, stderr, binary, args...)
+	// The word asked with, too: a program that never hands it to
+	// DispatchCommands starts serving, and collage refuses to while it is set,
+	// rather than leave this run waiting on a server.
+	return c.runner().Run(ctx, "", []string{"COLLAGE_DEV=1", clienv.Command + "=" + args[0]}, stdout, stderr, binary, args...)
 }
