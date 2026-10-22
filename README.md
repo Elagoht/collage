@@ -27,7 +27,7 @@ routed, cacheable non-HTML responses such as a sitemap, a feed or a `robots.txt`
 whose handler returns bytes — and **assets**, a mounted `fs.FS` served with
 `Range` support and its own `Cache-Control`.
 
-No dependencies: the standard library, and nothing else. Go 1.26.
+No dependencies: the standard library, and nothing else. Go 1.26.10 or later.
 
 **Status: pre-1.0.** The API can still change between minor versions. Every
 change that breaks an application is listed first, under **Breaking**, in
@@ -49,8 +49,8 @@ collage dev
 
 http://localhost:6060 — a home page and a page of live demos: an API action, a form,
 a fragment with its own URL and a JSON document, with the tests that drive them.
-`collage dev` reads `.env.development`; `PORT=8080 collage dev` moves it. Go 1.26 is
-the only requirement; `go install` puts `collage` in `$(go env GOPATH)/bin`, which is on your `PATH` if you have
+`collage dev` reads `.env.development`; `PORT=8080 collage dev` moves it. Go 1.26.10 or
+later is the only requirement; `go install` puts `collage` in `$(go env GOPATH)/bin`, which is on your `PATH` if you have
 installed any Go tool before.
 
 Then, in that directory:

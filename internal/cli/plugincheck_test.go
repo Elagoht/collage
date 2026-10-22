@@ -182,7 +182,7 @@ func TestPluginCheck_Run(t *testing.T) {
 			}
 			dir := t.TempDir()
 			writeFiles(t, dir, m.Files)
-			writeFiles(t, dir, map[string]string{"go.mod": "module github.com/acme/collage-greet\n\ngo 1.26\n\nrequire github.com/Elagoht/collage v0.57.0\n\n" + tc.req + "replace github.com/Elagoht/collage => " + repoRootForTest(t) + "\n"})
+			writeFiles(t, dir, map[string]string{"go.mod": "module github.com/acme/collage-greet\n\ngo 1.26.10\n\nrequire github.com/Elagoht/collage v0.57.0\n\n" + tc.req + "replace github.com/Elagoht/collage => " + repoRootForTest(t) + "\n"})
 			if tc.vendor {
 				// Without the fake proxy's -mod=mod, so the go tool reads the
 				// vendor directory as it would in a real repository.

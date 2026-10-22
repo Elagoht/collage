@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.72.0
+
+### Security
+
+- **collage needs Go 1.26.10 or later.** `go.mod` says `go 1.26.10`, and so does
+  the one `collage new` writes. Go 1.26.10 rejects the compromised eMudhra
+  intermediate certificates (CVE-2026-111943), and Go 1.26.9 before it fixed
+  net/http, mime/multipart, crypto/tls and html/template. A program carries the
+  standard library it was built with, so a rebuild with an older Go shipped those
+  holes again. With `GOTOOLCHAIN=auto`, the default, the go command now fetches
+  1.26.10 for a build that would have used an older one; with
+  `GOTOOLCHAIN=local` and an older Go, the build stops and says why. `go get
+  github.com/Elagoht/collage@v0.72.0` raises an application's own `go` line to
+  match.
+- **The forgery token is masked anew in every response.** A response that
+  reflects what a request sent and is compressed on its way out — by
+  collage-compress, a proxy, a CDN — is shorter when the reflected text matches
+  part of the token on the same page, and an attacker who can make a reader's
+  browser send requests could read the token from those lengths (BREACH). The
+  form field now holds the token XORed with a fresh random pad, prefixed `~`, so
+  it reads differently every time; the forgery check takes the mask off, from
+  the form and from the header. A token submitted unmasked — a form served
+  before this release — is still accepted. A page's `ETag` names the body with
+  the token itself, so a conditional request is still answered `304`.
+
 ## v0.71.2
 
 ### Security
