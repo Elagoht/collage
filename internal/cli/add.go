@@ -35,9 +35,9 @@ scaffolds, and registers it in routes.go:
   document   documents/<name>.go
   layout     fragments/layouts/<name>.go, a layout that nests inside the site's
              own around a page's content; add page --layout wraps a page in it
-  guard      guards/<name>.go, a guard that refuses everyone until you write its
-             check, and fragments/layouts/<name>.go, a layout that adds nothing
-             but the guard; a page wrapped in it meets the guard first
+  guard      guards/<name>.go, a guard function that refuses everyone until you
+             write its check; --guard <name> puts it on a page, a layout or an
+             action
   middleware middleware/<name>.go, run around every request with app.Use
   command    commands/<name>.go, run as "go run . <name>" with app.RegisterCommand
 
@@ -60,9 +60,9 @@ arguments; add the services they need by hand.
   --type type     a document's content type (default: text/plain; charset=utf-8)
   --layout name   a page's layout: wraps it in the one "add layout <name>" wrote,
                   inside the site's own layout
-  --guard name    a page's guard: wraps it in the layout "add guard <name>" wrote,
-                  inside the site's own layout and any --layout; an action's:
-                  WithGuard(guards.<Name>), asked before its handler runs
+  --guard name    WithGuard(guards.<Name>), the guard "add guard <name>" wrote:
+                  on a page's content, a layout or an action, asked before any
+                  of them renders or runs
   --page target   an action's page, [area/]name as "add page" took it: attaches
                   the action to pages/<area>/<name>.go instead of printing how
   --dir path      the project (default: the current directory)
@@ -113,7 +113,7 @@ type addRequest struct {
 	// localeFrom says where locale came from, for the note "add" prints.
 	localeFrom string
 	ctype      string
-	guard      string   // a page's or an action's --guard, as written
+	guard      string   // a page's, a layout's or an action's --guard, as written
 	layout     string   // a page's --layout, as written
 	page       []string // an action's --page, as segments; nil for none
 	dir        string
@@ -242,8 +242,11 @@ func (r *addRequest) parseTarget(target string) error {
 		if value == "" {
 			continue
 		}
-		if r.kind != "page" && !(flagName == "guard" && r.kind == "action") {
-			return fmt.Errorf("%w: --%s wraps a page; a %s has no layouts", ErrAddUsage, flagName, r.kind)
+		if flagName == "layout" && r.kind != "page" {
+			return fmt.Errorf("%w: --layout wraps a page; a %s has no layouts", ErrAddUsage, r.kind)
+		}
+		if flagName == "guard" && !slices.Contains([]string{"page", "layout", "action"}, r.kind) {
+			return fmt.Errorf("%w: --guard guards a page, a layout or an action; a %s carries no guard", ErrAddUsage, r.kind)
 		}
 		if !validSegment(value) {
 			return fmt.Errorf("%w: --%s %q is not a Go name: letters, digits and underscores, a letter first", ErrAddUsage, flagName, value)
@@ -548,6 +551,9 @@ func (g generator) title() string {
 
 // page writes the page and its content, and registers the page.
 func (g generator) page(notes []string) ([]fileChange, []string, error) {
+	if err := g.checkGuardExists(); err != nil {
+		return nil, nil, err
+	}
 	changes, _, err := g.fragment(true)
 	if err != nil {
 		return nil, nil, err
@@ -566,28 +572,18 @@ func (g generator) page(notes []string) ([]fileChange, []string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	var nested []string // --layout's, then --guard's
-	guardLayout := ""
-	for _, wrap := range []struct{ flag, value string }{{"layout", g.req.layout}, {"guard", g.req.guard}} {
-		if wrap.value == "" {
-			continue
+	nested := "" // --layout's
+	if g.req.layout != "" {
+		nested = pascal(g.req.layout)
+		if !slices.ContainsFunc(funcs, func(l layoutFunc) bool { return l.name == nested }) {
+			return nil, nil, fmt.Errorf("--layout %s: fragments/layouts declares no %s(); write it first with: collage add layout %s", g.req.layout, nested, g.req.layout)
 		}
-		fn := pascal(wrap.value)
-		if !slices.ContainsFunc(funcs, func(l layoutFunc) bool { return l.name == fn }) {
-			return nil, nil, fmt.Errorf("--%s %s: fragments/layouts declares no %s(); write it first with: collage add %s %s", wrap.flag, wrap.value, fn, wrap.flag, wrap.value)
-		}
-		if fn == layout {
+		if nested == layout {
 			layout = ""
-		}
-		if !slices.Contains(nested, fn) {
-			nested = append(nested, fn)
-		}
-		if wrap.flag == "guard" {
-			guardLayout = fn
 		}
 	}
 	var chain []string
-	for _, name := range append([]string{layout}, nested...) {
+	for _, name := range []string{layout, nested} {
 		if name != "" {
 			chain = append(chain, "layouts."+name+"()")
 		}
@@ -628,8 +624,8 @@ func (g generator) page(notes []string) ([]fileChange, []string, error) {
 		notes = append(notes, note)
 	}
 	notes = append(notes, fmt.Sprintf("page %q at %s", g.req.ident, g.req.path))
-	if guardLayout != "" {
-		notes = append(notes, fmt.Sprintf("guarded by guards.%s, through layouts.%s()", guardLayout, guardLayout))
+	if g.req.guard != "" {
+		notes = append(notes, fmt.Sprintf("guarded by guards.%s, on its content: its renders, its actions and its fragment paths", pascal(g.req.guard)))
 	}
 	return changes, notes, nil
 }
@@ -674,8 +670,12 @@ func (g generator) fragment(forPage bool) ([]fileChange, string, error) {
 	}
 	markup := "<main>\n  <h1>{{.Title}}</h1>\n</main>\n"
 
+	guards := ""
+	if forPage && g.req.guard != "" {
+		guards = fmt.Sprintf("\t%q\n\n", g.proj.module+"/guards")
+	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "package %s\n\nimport (\n\t\"context\"\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\n", pkg)
+	fmt.Fprintf(&b, "package %s\n\nimport (\n\t\"context\"\n\n%s\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\n", pkg, guards)
 	fmt.Fprintf(&b, "// Types data used on %s.\ntype %sView struct {\n\tTitle string\n}\n\n", data, g.camel)
 	fmt.Fprintf(&b, "// Returns the %s %s.\nfunc %s() *collage.Fragment {\n", g.req.name, what, g.pascal)
 
@@ -689,6 +689,9 @@ func (g generator) fragment(forPage bool) ([]fileChange, string, error) {
 		})
 	} else {
 		fmt.Fprintf(&b, "\treturn collage.NewInlineFragment(%q, %sBlock).\n", g.req.ident, g.camel)
+	}
+	if guards != "" {
+		fmt.Fprintf(&b, "\t\tWithGuard(guards.%s).\n", pascal(g.req.guard))
 	}
 	fmt.Fprintf(&b, "\t\tWithData(%sData()).\n\t\tBuild()\n}\n\n", g.camel)
 	if !g.req.file {
@@ -836,64 +839,39 @@ func (g generator) document(notes []string) ([]fileChange, []string, error) {
 }
 
 // guard writes guards/<name>.go, a guard that refuses every request until its
-// check is written, and fragments/layouts/<name>.go, a layout that renders
-// nothing of its own and carries the guard. A guard on its own does nothing:
-// it acts where a page's layout chain or content carries it, so the layout is
-// what "add page --guard" wraps a page in.
+// check is written. It is only the function: --guard on a page, a layout or an
+// action puts it where it is asked, with WithGuard.
 func (g generator) guard(notes []string) ([]fileChange, []string, error) {
 	guardsDir := filepath.Join(g.proj.dir, "guards")
-	layoutsDir := filepath.Join(g.proj.dir, "fragments", "layouts")
 	if err := checkIdentifiers(g.proj, guardsDir, g.pascal); err != nil {
 		return nil, nil, err
-	}
-	if err := checkIdentifiers(g.proj, layoutsDir, g.pascal, g.camel+"Block"); err != nil {
-		return nil, nil, err
-	}
-	layoutPkg := "layouts"
-	files, err := parseDir(layoutsDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, f := range files {
-		layoutPkg = f.ast.Name.Name
-		break
 	}
 
 	var gb strings.Builder
 	gb.WriteString("package guards\n\nimport (\n\t\"context\"\n\t\"net/http\"\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\n")
-	fmt.Fprintf(&gb, "// Decides who may reach the pages layouts.%s() wraps: their renders, the\n", g.pascal)
-	gb.WriteString("// actions on their URLs and their fragment paths alike.\n//\n")
+	gb.WriteString("// Decides who may reach what carries it with WithGuard: a page's content or a\n")
+	gb.WriteString("// layout — their renders, the actions on their URLs and their fragment paths\n// alike — or an action.\n//\n")
 	gb.WriteString("// Return nil, nil to let the request through; a redirect to send the reader\n// to a page by its name, in the request's locale:\n//\n")
 	gb.WriteString("//\treturn collage.GuardSeeOtherPage(ctx, \"login\", nil)\n//\n")
 	gb.WriteString("// or a 4xx status to refuse with no body. Until it checks something, it refuses\n// everyone.\n")
 	fmt.Fprintf(&gb, "func %s(\n\t_ context.Context,\n\t_ *http.Request,\n) (*collage.GuardDecision, error) {\n", g.pascal)
 	gb.WriteString("\treturn &collage.GuardDecision{Status: http.StatusForbidden}, nil\n}\n")
 
-	var lb strings.Builder
-	fmt.Fprintf(&lb, "package %s\n\nimport (\n\t%q\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\n", layoutPkg, g.proj.module+"/guards")
-	fmt.Fprintf(&lb, "// Returns a layout that adds nothing to a page but guards.%s: wrap a page in it,\n", g.pascal)
-	lb.WriteString("// inside the site's own layout, and every request for the page meets the guard\n// first.\n//\n")
-	fmt.Fprintf(&lb, "//\tWithLayouts(layouts.Master(), layouts.%s())\n//\n%s\n", g.pascal, nestedMarker)
-	fmt.Fprintf(&lb, "func %s() *collage.Fragment {\n\treturn collage.NewInlineFragment(%q, %sBlock).\n", g.pascal, g.camel+"Guard", g.camel)
-	fmt.Fprintf(&lb, "\t\tWithGuard(guards.%s).\n\t\tBuild()\n}\n\n", g.pascal)
-	fmt.Fprintf(&lb, "const %sBlock collage.InlineHTML = `{{slot \"content\"}}`\n", g.camel)
-
-	changes := []fileChange{
-		{path: filepath.Join(guardsDir, g.req.name+".go"), content: []byte(gb.String())},
-		{path: filepath.Join(layoutsDir, g.req.name+".go"), content: []byte(lb.String())},
-	}
+	changes := []fileChange{{path: filepath.Join(guardsDir, g.req.name+".go"), content: []byte(gb.String())}}
 	notes = append(notes,
 		fmt.Sprintf("guards.%s refuses everyone until you write its check", g.pascal),
-		fmt.Sprintf("guard a new page: collage add page <[area/]name> --guard %s", g.req.name),
-		fmt.Sprintf("guard a page you have: .WithLayouts(layouts.Master(), layouts.%s())", g.pascal),
-		fmt.Sprintf("guard an action: collage add action <[area/]name> --guard %s, or .WithGuard(guards.%s)", g.req.name, g.pascal),
+		fmt.Sprintf("guard a new page, layout or action: collage add <page|layout|action> <name> --guard %s", g.req.name),
+		fmt.Sprintf("guard one you have: .WithGuard(guards.%s) on a page's content fragment, a layout or an action", g.pascal),
 	)
 	return changes, notes, nil
 }
 
-// checkGuardExists refuses an action's --guard that guards/ declares no
-// function for, before anything is written.
+// checkGuardExists refuses a --guard that guards/ declares no function for,
+// before anything is written. No --guard passes.
 func (g generator) checkGuardExists() error {
+	if g.req.guard == "" {
+		return nil
+	}
 	fn := pascal(g.req.guard)
 	files, err := parseDir(filepath.Join(g.proj.dir, "guards"))
 	if err != nil {
@@ -988,8 +966,8 @@ func declaredIdents(decl ast.Decl) []string {
 // the first exported function there that takes nothing and returns a
 // *collage.Fragment. "" means there is none to use.
 //
-// A layout that nests inside another — one "add layout" or "add guard" wrote,
-// marked //collage:nested, or any that carries a guard — is never the site's
+// A layout that nests inside another — one "add layout" wrote, marked
+// //collage:nested, or any that carries a guard — is never the site's
 // layout: a project whose layouts are Base and Admin wraps a new page in Base.
 func findLayout(dir string) (string, error) {
 	funcs, err := layoutFuncs(dir)

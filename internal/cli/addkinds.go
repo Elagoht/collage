@@ -26,8 +26,11 @@ func (g generator) layoutsPackage() (string, error) {
 
 // layout writes fragments/layouts/<name>.go, a layout that nests inside the
 // site's own around a page's content, marked so findLayout never takes it for
-// the site's layout.
+// the site's layout. With --guard it carries that guard.
 func (g generator) layout(notes []string) ([]fileChange, []string, error) {
+	if err := g.checkGuardExists(); err != nil {
+		return nil, nil, err
+	}
 	dir := filepath.Join(g.proj.dir, "fragments", "layouts")
 	if err := checkIdentifiers(g.proj, dir, g.pascal, g.camel+"Block"); err != nil {
 		return nil, nil, err
@@ -38,8 +41,14 @@ func (g generator) layout(notes []string) ([]fileChange, []string, error) {
 	}
 	markup := fmt.Sprintf("<div class=%q>\n  {{slot \"content\"}}\n</div>\n", g.req.name)
 
+	guard := ""
 	var b strings.Builder
-	fmt.Fprintf(&b, "package %s\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\n", pkg)
+	if g.req.guard != "" {
+		guard = fmt.Sprintf("\t\tWithGuard(guards.%s).\n", pascal(g.req.guard))
+		fmt.Fprintf(&b, "package %s\n\nimport (\n\t%q\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\n", pkg, g.proj.module+"/guards")
+	} else {
+		fmt.Fprintf(&b, "package %s\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\n", pkg)
+	}
 	fmt.Fprintf(&b, "// Returns the %s layout: it nests inside the site's own, around a page's\n", g.req.name)
 	b.WriteString("// content, which it renders where it says {{slot \"content\"}}.\n//\n")
 	fmt.Fprintf(&b, "//\tWithLayouts(layouts.Master(), layouts.%s())\n//\n%s\n", g.pascal, nestedMarker)
@@ -47,16 +56,19 @@ func (g generator) layout(notes []string) ([]fileChange, []string, error) {
 	changes := []fileChange{}
 	if g.req.file {
 		rel := "layouts/" + g.req.name + g.proj.templateExt
-		fmt.Fprintf(&b, "\treturn collage.NewFragment(%q, %q).\n\t\tBuild()\n}\n", g.camel+"Layout", rel)
+		fmt.Fprintf(&b, "\treturn collage.NewFragment(%q, %q).\n%s\t\tBuild()\n}\n", g.camel+"Layout", rel, guard)
 		changes = append(changes, fileChange{
 			path:    filepath.Join(g.proj.dir, g.proj.templateRoot, filepath.FromSlash(rel)),
 			content: []byte(markup),
 		})
 	} else {
-		fmt.Fprintf(&b, "\treturn collage.NewInlineFragment(%q, %sBlock).\n\t\tBuild()\n}\n\n", g.camel+"Layout", g.camel)
+		fmt.Fprintf(&b, "\treturn collage.NewInlineFragment(%q, %sBlock).\n%s\t\tBuild()\n}\n\n", g.camel+"Layout", g.camel, guard)
 		fmt.Fprintf(&b, "const %sBlock collage.InlineHTML = `%s`\n", g.camel, strings.TrimSuffix(markup, "\n"))
 	}
 	changes = append([]fileChange{{path: filepath.Join(dir, g.req.name+".go"), content: []byte(b.String())}}, changes...)
+	if g.req.guard != "" {
+		notes = append(notes, fmt.Sprintf("guarded by guards.%s: every page wrapped in it meets the guard first", pascal(g.req.guard)))
+	}
 	return changes, append(notes,
 		fmt.Sprintf("wrap a new page in it: collage add page <[area/]name> --layout %s", g.req.name),
 		fmt.Sprintf("wrap a page you have: .WithLayouts(layouts.Master(), layouts.%s())", g.pascal),

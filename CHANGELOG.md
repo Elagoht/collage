@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.74.0
+
+From the system monitor trial.
+
+### Changed
+
+- **`collage add guard` writes the guard function alone**, `guards/<name>.go`.
+  It no longer writes `fragments/layouts/<name>.go`, a layout that only carried
+  the guard: a guard is a function, and `--guard` puts it where it is asked.
+- **`--guard <name>` adds `.WithGuard(guards.<Name>)` and nothing else.** On
+  `collage add page` it goes on the page's content fragment instead of wrapping
+  the page in the guard's layout; the page's renders, its actions and its
+  fragment paths meet the guard as before. `collage add layout` takes `--guard`
+  too, and the layout carries it. `--guard` on a page or a layout is refused,
+  before anything is written, when `guards/` declares no such function. Layouts
+  the old `add guard` wrote keep working.
+
+### Fixed
+
+- A copied mount file whose close failed — where a deferred write such as a full
+  disk shows up — was reported as copied. The dev reload stream kept a
+  connection whose writes failed until the next flush.
+
 ## v0.73.0
 
 From the system monitor trial.

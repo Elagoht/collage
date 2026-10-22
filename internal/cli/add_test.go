@@ -87,6 +87,8 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		{"layout", "panel"},
 		{"guard", "staff"},
 		{"page", "staff/roster", "--guard", "staff", "--layout", "panel"},
+		{"layout", "vault", "--guard", "staff"},
+		{"page", "vaulted", "--layout", "vault"},
 		{"page", "panelled", "--layout", "panel"},
 		{"action", "staff/promote", "--page", "panelled"},
 		{"middleware", "stamp"},
@@ -139,11 +141,16 @@ func Stamp(next http.Handler) http.Handler {
 		t.Errorf("the dashed area is not registered under a dashless alias:\n%s", routes)
 	}
 	wantInOrder(t, readFile(t, target, "pages/blog/storyDetail.go"), "func StoryDetail() *collage.Page", `collage.NewPage("storyDetail")`, `WithPath("en", "/blog/storyDetail")`)
-	// A guard is its function and a layout that carries it; a page added with
-	// --guard sits inside the site's layout and then the guard's.
+	// A guard is its function alone; --guard puts it on a page's content or on
+	// a layout with WithGuard, and wraps nothing in a layout of its own.
 	wantInOrder(t, readFile(t, target, "guards/staff.go"), "package guards", "func Staff(", "Status: http.StatusForbidden")
-	wantInOrder(t, readFile(t, target, "fragments/layouts/staff.go"), "package layouts", `"collageaddtest/guards"`, "func Staff() *collage.Fragment", "WithGuard(guards.Staff)", `{{slot "content"}}`)
-	wantInOrder(t, readFile(t, target, "pages/staff/roster.go"), "WithLayouts(layouts.Master(), layouts.Panel(), layouts.Staff())")
+	if _, err := os.Stat(filepath.Join(target, "fragments", "layouts", "staff.go")); !os.IsNotExist(err) {
+		t.Errorf("add guard wrote a layout: %v", err)
+	}
+	wantInOrder(t, readFile(t, target, "pages/staff/roster.go"), "WithLayouts(layouts.Master(), layouts.Panel())")
+	wantInOrder(t, readFile(t, target, "fragments/pages/staff/roster.go"), `"collageaddtest/guards"`, "func Roster() *collage.Fragment", "WithGuard(guards.Staff).", "WithData(rosterData())")
+	wantInOrder(t, readFile(t, target, "fragments/layouts/vault.go"), `"collageaddtest/guards"`, "//collage:nested", "func Vault() *collage.Fragment", "WithGuard(guards.Staff).", `{{slot "content"}}`)
+	wantInOrder(t, readFile(t, target, "pages/vaulted.go"), "WithLayouts(layouts.Master(), layouts.Vault())")
 	wantInOrder(t, readFile(t, target, "fragments/layouts/panel.go"), "//collage:nested", "func Panel() *collage.Fragment", `{{slot "content"}}`)
 	// --page attaches the action before the chain's Build; middleware keeps
 	// the order it was added in; commands are registered beside it.
@@ -179,6 +186,7 @@ func TestAdded(t *testing.T) {
 	// on an action of its own URL alike: with a valid forgery token the action
 	// would answer 204, and the guard answers 403 instead.
 	c.Get("/staff/roster").WantStatus(http.StatusForbidden)
+	c.Get("/vaulted").WantStatus(http.StatusForbidden)
 	fire := c.Request(http.MethodPost, "/api/fire", nil)
 	fire.Header.Set("X-CSRF-Token", c.Get("/features").CSRFToken())
 	c.Do(fire).WantStatus(http.StatusForbidden)
@@ -441,28 +449,30 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 		setup map[string]string
 		want  string
 	}{
-		"a page name the project uses":  {args: []string{"page", "account/login"}, want: `a page named "login" already exists, in pages/auth/login.go`},
-		"an existing file":              {args: []string{"page", "panel/settings"}, setup: map[string]string{"pages/panel/settings.go": "package pages\n"}, want: "exists; collage add does not overwrite"},
-		"a declared identifier":         {args: []string{"action", "auth/logout", "--name", "sign-out"}, want: "actions/auth.go already declares Logout"},
-		"a name that is not one":        {args: []string{"page", "blog/story-detail"}, want: `"story-detail" is not a Go name`},
-		"a name that cannot export":     {args: []string{"fragment", "_hidden"}, want: "is not a Go name"},
-		"a directory that is not one":   {args: []string{"fragment", "9x/widget"}, want: `"9x" is not a directory name`},
-		"a path without a slash":        {args: []string{"page", "blog", "--path", "blog"}, want: "must start with /"},
-		"a document in an area":         {args: []string{"document", "feeds/rss"}, want: "a document has no area"},
-		"no kind":                       {args: []string{"widget", "x"}, want: "want a kind"},
-		"a guard in an area":            {args: []string{"guard", "admin/staff"}, want: "a guard has no area"},
-		"a guard over a layout":         {args: []string{"guard", "master"}, want: "fragments/layouts/master.go already declares Master"},
-		"--guard with no layout for it": {args: []string{"page", "panel/users", "--guard", "staff"}, want: "declares no Staff(); write it first with: collage add guard staff"},
-		"--layout on an action":         {args: []string{"action", "auth/forget", "--layout", "staff"}, want: "--layout wraps a page"},
-		"--guard that is not a name":    {args: []string{"page", "panel/users", "--guard", "st-aff"}, want: `--guard "st-aff" is not a Go name`},
-		"a layout in an area":           {args: []string{"layout", "admin/panel"}, want: "a layout has no area; fragments/layouts/ is flat"},
-		"a middleware in an area":       {args: []string{"middleware", "auth/load"}, want: "a middleware has no area"},
-		"--layout with no layout":       {args: []string{"page", "panel/users", "--layout", "wide"}, want: "declares no Wide(); write it first with: collage add layout wide"},
-		"--page with --path":            {args: []string{"action", "auth/forget", "--page", "auth/login", "--path", "/forget"}, want: "--page and --path"},
-		"--page to no page":             {args: []string{"action", "auth/forget", "--page", "auth/nope"}, want: "pages/auth/nope.go does not exist"},
-		"--page on a page":              {args: []string{"page", "panel/users", "--page", "auth/login"}, want: "--page attaches an action"},
-		"--guard with no guard":         {args: []string{"action", "auth/forget", "--path", "/forget", "--guard", "staff"}, want: "guards/ declares no Staff; write it first with: collage add guard staff"},
-		"a command name in use":         {args: []string{"command", "seedAgain", "--name", "seed"}, setup: map[string]string{"commands/seed.go": "package commands\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nfunc Seed() collage.Command { return collage.Command{Name: \"seed\"} }\n"}, want: `a command named "seed" already exists, in commands/seed.go`},
+		"a page name the project uses":   {args: []string{"page", "account/login"}, want: `a page named "login" already exists, in pages/auth/login.go`},
+		"an existing file":               {args: []string{"page", "panel/settings"}, setup: map[string]string{"pages/panel/settings.go": "package pages\n"}, want: "exists; collage add does not overwrite"},
+		"a declared identifier":          {args: []string{"action", "auth/logout", "--name", "sign-out"}, want: "actions/auth.go already declares Logout"},
+		"a name that is not one":         {args: []string{"page", "blog/story-detail"}, want: `"story-detail" is not a Go name`},
+		"a name that cannot export":      {args: []string{"fragment", "_hidden"}, want: "is not a Go name"},
+		"a directory that is not one":    {args: []string{"fragment", "9x/widget"}, want: `"9x" is not a directory name`},
+		"a path without a slash":         {args: []string{"page", "blog", "--path", "blog"}, want: "must start with /"},
+		"a document in an area":          {args: []string{"document", "feeds/rss"}, want: "a document has no area"},
+		"no kind":                        {args: []string{"widget", "x"}, want: "want a kind"},
+		"a guard in an area":             {args: []string{"guard", "admin/staff"}, want: "a guard has no area"},
+		"a guard name in use":            {args: []string{"guard", "staff"}, setup: map[string]string{"guards/staff.go": "package guards\n\nfunc Staff() {}\n"}, want: "guards/staff.go already declares Staff"},
+		"--guard with no guard":          {args: []string{"page", "panel/users", "--guard", "staff"}, want: "guards/ declares no Staff; write it first with: collage add guard staff"},
+		"--guard on a layout, no guard":  {args: []string{"layout", "vault", "--guard", "staff"}, want: "guards/ declares no Staff; write it first with: collage add guard staff"},
+		"--guard on a fragment":          {args: []string{"fragment", "panel/widget", "--guard", "staff"}, want: "--guard guards a page, a layout or an action"},
+		"--layout on an action":          {args: []string{"action", "auth/forget", "--layout", "staff"}, want: "--layout wraps a page"},
+		"--guard that is not a name":     {args: []string{"page", "panel/users", "--guard", "st-aff"}, want: `--guard "st-aff" is not a Go name`},
+		"a layout in an area":            {args: []string{"layout", "admin/panel"}, want: "a layout has no area; fragments/layouts/ is flat"},
+		"a middleware in an area":        {args: []string{"middleware", "auth/load"}, want: "a middleware has no area"},
+		"--layout with no layout":        {args: []string{"page", "panel/users", "--layout", "wide"}, want: "declares no Wide(); write it first with: collage add layout wide"},
+		"--page with --path":             {args: []string{"action", "auth/forget", "--page", "auth/login", "--path", "/forget"}, want: "--page and --path"},
+		"--page to no page":              {args: []string{"action", "auth/forget", "--page", "auth/nope"}, want: "pages/auth/nope.go does not exist"},
+		"--page on a page":               {args: []string{"page", "panel/users", "--page", "auth/login"}, want: "--page attaches an action"},
+		"--guard on an action, no guard": {args: []string{"action", "auth/forget", "--path", "/forget", "--guard", "staff"}, want: "guards/ declares no Staff; write it first with: collage add guard staff"},
+		"a command name in use":          {args: []string{"command", "seedAgain", "--name", "seed"}, setup: map[string]string{"commands/seed.go": "package commands\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nfunc Seed() collage.Command { return collage.Command{Name: \"seed\"} }\n"}, want: `a command named "seed" already exists, in commands/seed.go`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			dir := sdyProject(t)
@@ -502,7 +512,8 @@ func treeSnapshot(t *testing.T, dir string) string {
 }
 
 // A project whose site layout is Base, not Master, still wraps a new page in
-// Base after a guard or a nested layout is added: those nest, and sort first.
+// Base after a nested layout is added: it nests, and sorts first. A guard adds
+// no layout at all.
 func TestAdd_NestedLayoutsAreNeverTheSiteLayout(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
@@ -516,7 +527,8 @@ func TestAdd_NestedLayoutsAreNeverTheSiteLayout(t *testing.T) {
 		}
 	}
 	wantInOrder(t, readFile(t, dir, "pages/plain.go"), "WithLayouts(layouts.Base())")
-	wantInOrder(t, readFile(t, dir, "pages/secret.go"), "WithLayouts(layouts.Base(), layouts.Admin())")
+	wantInOrder(t, readFile(t, dir, "pages/secret.go"), "WithLayouts(layouts.Base())")
+	wantInOrder(t, readFile(t, dir, "fragments/pages/secret.go"), `"proj/guards"`, "WithGuard(guards.Admin).")
 }
 
 // Middleware and commands go into the register function whatever its shape —

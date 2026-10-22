@@ -228,9 +228,11 @@ collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
 collage add action blog/ping --path /api/ping
 collage add document feed --path /feed.xml --type application/xml
 collage add action blog/like --page blog/post   # attached to pages/blog/post.go
-collage add layout panel            # fragments/layouts/panel.go, nested
-collage add guard admin             # guards/admin.go + fragments/layouts/admin.go
-collage add page admin/users --layout panel --guard admin
+collage add guard admin             # guards/admin.go, the guard function alone
+collage add guard guest
+collage add layout panel --guard admin  # fragments/layouts/panel.go, nested, guarded
+collage add page admin/users --layout panel
+collage add page login --guard guest    # WithGuard(guards.Guest) on its content
 collage add middleware loadUser     # middleware/loadUser.go + app.Use in routes.go
 collage add command seed            # commands/seed.go + app.RegisterCommand
 ```
@@ -258,21 +260,21 @@ collage add command seed            # commands/seed.go + app.RegisterCommand
   site's own around a page's content, `<div class="<name>">{{slot "content"}}</div>`
   — inline, or in `templates/layouts/<name>.html` with `--file`.
   **`--layout <name>`** wraps a new page in it, inside the site's layout. A
-  layout `add layout` or `add guard` wrote is marked `//collage:nested`, and a
+  layout `add layout` wrote is marked `//collage:nested`, and a
   layout that carries a guard counts as nested too: none of them is ever taken
   for the site's layout a new page goes into.
-- **A guard** is two files. `guards/<name>.go` is the
-  [guard](routing.md#guards) itself, a `collage.GuardFunc` that refuses everyone
-  with `403` until you write its check: return `nil, nil` to let a request
-  through, or a redirect. `fragments/layouts/<name>.go` is a layout that renders
-  nothing of its own, `{{slot "content"}}`, and carries the guard, because a guard
-  acts where a page's layout chain carries it. Guards have no area: `guards/` is
-  flat.
-- **`--guard <name>`** wraps a new page in that layout, inside the site's own and
-  any `--layout`: `WithLayouts(layouts.Master(), layouts.Panel(), layouts.Admin())`. The page's renders, the
-  actions attached to it and its fragment paths all meet the guard first. The
-  layout must exist; `--guard` without it is refused with the `add guard` to run
-  first.
+- **A guard** is `guards/<name>.go`, the [guard](routing.md#guards) function
+  alone: a `collage.GuardFunc` that refuses everyone with `403` until you write
+  its check — return `nil, nil` to let a request through, or a redirect. It
+  writes no layout; `--guard` puts it where it is asked. Guards have no area:
+  `guards/` is flat.
+- **`--guard <name>`** adds `.WithGuard(guards.<Name>)` and nothing else, and
+  the guard must exist: without it the command is refused with the `add guard`
+  to run first. On **`add page`** it goes on the page's content fragment,
+  `fragments/pages/<area>/<name>.go` — a page's builder has no guard of its own,
+  and its content is part of its spine — so the page's renders, the actions
+  attached to it and its fragment paths all meet the guard. On **`add layout`**
+  it goes on the layout, and every page wrapped in it meets the guard first.
 - **`add action ... --guard <name>`** gives the action the guard itself,
   `.WithGuard(guards.Admin)` (`ActionBuilder.WithGuard`, collage v0.70.0 and
   later): asked before the handler, the body and the forgery check. It is how an
