@@ -62,6 +62,36 @@ func TestWriteRedirectFetchConvention(t *testing.T) {
 	}
 }
 
+// A script is handed only a web address: it navigates with location.assign,
+// which would run a javascript: URL in the page where a browser following the
+// Location refuses to. Anything else is answered as the redirect itself.
+func TestWriteRedirectFetchOnlyWebAddresses(t *testing.T) {
+	for location, handed := range map[string]bool{
+		"/login":                   true,
+		"login?next=/a:b":          true,
+		"/a:b":                     true,
+		"https://example.com/":     true,
+		"HTTP://example.com/":      true,
+		"//example.com/":           true,
+		"javascript:alert(1)":      false,
+		"JavaScript:alert(1)":      false,
+		" \tjava\nscript:alert(1)": false,
+		"data:text/html,<b>x</b>":  false,
+		"vbscript:x":               false,
+	} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, "/", nil)
+		r.Header.Set(FetchHeader, "1")
+		status := writeRedirect(w, r, http.StatusSeeOther, location)
+		if got := w.Header().Get(LocationHeader) != ""; got != handed {
+			t.Errorf("%q: Collage-Location set = %v, want %v", location, got, handed)
+		}
+		if !handed && (status != http.StatusSeeOther || w.Header().Get("Location") != location) {
+			t.Errorf("%q: status %d, Location %q; want the 303 itself", location, status, w.Header().Get("Location"))
+		}
+	}
+}
+
 // A guard's answer is about one reader. Kept by a CDN that caches a 404 or a 308
 // by default, a logged-out reader's refusal would be served to everyone after.
 func TestCheckGuards_AnswerIsNotStored(t *testing.T) {

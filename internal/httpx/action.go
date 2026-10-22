@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/render"
@@ -588,7 +589,11 @@ func writeRedirect(w http.ResponseWriter, r *http.Request, status int, location 
 	// The answer depends on FetchHeader, so a cache keying it on the URL alone
 	// would hand a script's 204 to a browser that asked to be redirected.
 	addVary(w.Header(), FetchHeader)
-	if r.Header.Get(FetchHeader) != "" {
+	// A script is handed only a web address. It navigates with
+	// location.assign, which runs a javascript: URL in the page's origin where
+	// a browser following a Location would refuse to; anything else is answered
+	// as the redirect it is, which fetch refuses to follow.
+	if r.Header.Get(FetchHeader) != "" && webLocation(location) {
 		w.Header().Set(LocationHeader, location)
 		w.WriteHeader(http.StatusNoContent)
 		return http.StatusNoContent
@@ -596,6 +601,34 @@ func writeRedirect(w http.ResponseWriter, r *http.Request, status int, location 
 	w.Header().Set("Location", location)
 	w.WriteHeader(status)
 	return status
+}
+
+// webLocation reports whether location, read the way a browser reads a URL, is
+// a path on this site or an http or https address — not javascript:, data: or
+// any other scheme. Leading spaces and controls, and tabs and line breaks
+// anywhere, are dropped first, as the browser drops them.
+func webLocation(location string) bool {
+	location = strings.TrimLeftFunc(location, func(c rune) bool { return c <= ' ' })
+	location = strings.Map(func(c rune) rune {
+		if c == '\t' || c == '\n' || c == '\r' {
+			return -1
+		}
+		return c
+	}, location)
+	colon := strings.IndexByte(location, ':')
+	if colon <= 0 {
+		return true
+	}
+	scheme := location[:colon]
+	for i, c := range []byte(scheme) {
+		letter := c|0x20 >= 'a' && c|0x20 <= 'z'
+		if !letter && (i == 0 || !(c >= '0' && c <= '9' || c == '+' || c == '-' || c == '.')) {
+			// Not a scheme, so a path that happens to hold a colon: "/a:b".
+			return true
+		}
+	}
+	scheme = ascii.LowerString(scheme)
+	return scheme == "http" || scheme == "https"
 }
 
 // statusOr returns declared when it is set, and fallback otherwise.
