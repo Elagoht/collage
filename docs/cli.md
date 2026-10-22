@@ -238,7 +238,10 @@ collage add command seed            # commands/seed.go + app.RegisterCommand
 - **A page** is `pages/<area>/<name>.go`, wrapped in `layouts.Master()` — or the
   first layout in `fragments/layouts` that takes no arguments — with its content in
   `fragments/pages/<area>/<name>.go`: an inline template, a view struct, and a
-  typed `collage.Load` handler that declares the page's title. Its path is
+  typed `collage.Load` handler that declares the page's title. The handler is
+  made by a function, `<name>Data()`, that the content's function calls, so a
+  service the handler needs is a parameter added to both (see
+  [Data handlers](fragments.md#data-handlers)). Its path is
   `/<area>/<name>` unless `--path` says otherwise.
 - **An action** gets a builder appended to `actions/<area>.go` and a handler to
   `actions/funcs/<area>.go`, either created when it is not there. With `--path` it

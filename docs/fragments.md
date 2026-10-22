@@ -467,6 +467,31 @@ collage.NewFragment("blog-post", "pages/blog-post.html").
 	Build()
 ```
 
+A handler that reads through something the application builds once — a service,
+a store — is made by a function that takes it, and the fragment's own function
+passes it on, so nothing reaches for a global:
+
+```go
+func Post(posts *blog.Service) *collage.Fragment {
+	return collage.NewFragment("blog-post", "pages/blog-post.html").
+		WithData(postData(posts)).
+		Build()
+}
+
+func postData(posts *blog.Service) collage.Data {
+	return collage.Load(func(ctx context.Context, rc *collage.RenderContext) (postView, error) {
+		post, err := posts.BySlug(ctx, rc.Param("slug"))
+		if err != nil {
+			return postView{}, err
+		}
+		return postView{Title: post.Title}, nil
+	})
+}
+```
+
+`collage add page` and `collage add fragment` write the handler in this shape, with
+no parameters yet, so a service is one parameter away.
+
 `T` comes from the function's signature, so the handler and the type its template
 is checked against cannot disagree — see
 [how templates are checked](#how-templates-are-checked). The same loader is just as
@@ -897,6 +922,12 @@ holding `/`, or being `.` or `..`, is `ErrRouteParams`, so it cannot turn the
 path into another site's URL. On a `RenderContext` collage did not make — one a
 test builds by hand — both return `ErrUnknownRoute`. For a locale other than the
 render's own, `app.URL(name, locale, params)` takes one explicitly.
+
+Code that runs in a request but has no `RenderContext` — a guard, a middleware —
+builds with `collage.URL(ctx, name, params)`, in the locale the request resolved
+to (the default one in a middleware, which runs before routing), and a guard
+redirects by name with `collage.GuardSeeOtherPage(ctx, name, params)` (see
+[Guards](routing.md#guards)).
 
 ### Adding your own
 

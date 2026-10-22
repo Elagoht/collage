@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.73.0
+
+From the system monitor trial.
+
+### Added
+
+- **`collage.URL(ctx, name, params)`** builds the path of a page or document by
+  its name for code that runs in a request but has no `RenderContext` — a guard,
+  a middleware. It is `rc.URL`'s twin: in the locale the request resolved to,
+  falling back to the default one as `{{pageURL}}` does, and as strict. A
+  middleware runs before routing, so it builds in the default locale; outside a
+  request collage serves it is `ErrUnknownRoute`.
+- **`collage.GuardSeeOtherPage(ctx, name, params)`** is a guard's redirect to a
+  page by its name, what `SeeOtherPage` is to an action: a guard on `/tr/panel`
+  sends the reader to the Turkish login rather than a path written into it.
+
+### Changed
+
+- **`collage add page` and `collage add fragment` write the data handler as a
+  function that makes it:** `WithData(aboutData())`, with `aboutData()
+  collage.Data` returning the `collage.Load(...)`. A service the handler reads
+  through is then a parameter added to `aboutData` and passed on by `About`,
+  rather than the handler rewritten into that shape. What `collage inspect`
+  reports, and the template check, are unchanged.
+- **`collage add guard`** shows `collage.GuardSeeOtherPage(ctx, "login", nil)` as
+  the way to redirect, instead of a hard-coded `Location`.
+
 ## v0.72.0
 
 ### Security

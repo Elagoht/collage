@@ -252,10 +252,7 @@ func requireUser(ctx context.Context, r *http.Request) (*collage.GuardDecision, 
 	if session.FromContext(ctx).Get("user") != "" {
 		return nil, nil // allowed
 	}
-	return &collage.GuardDecision{
-		Status:   http.StatusSeeOther,
-		Location: "/login?next=" + url.QueryEscape(r.URL.RequestURI()),
-	}, nil
+	return collage.GuardSeeOtherPage(ctx, "login", nil)
 }
 
 private := collage.NewFragment("private", "layouts/private.html").
@@ -294,6 +291,26 @@ A guard answers in one of three ways:
   `303 See Other`. A request marked with the `Collage-Fetch` header gets `204`
   and the destination in `Collage-Location`, as an action's redirect does;
 - a `4xx` or `5xx` status with no location refuses, with no body.
+
+`collage.GuardSeeOtherPage(ctx, name, params)` is the redirect to a page by its
+name, built in the locale the request resolved to and falling back to the
+default one as `{{pageURL}}` does: a guard on `/tr/panel` sends the reader to the
+Turkish login. It is a guard's `SeeOtherPage`, which returns an action's
+`*ActionResult` instead. For a path with a query of its own, build it with
+`collage.URL(ctx, name, params)` and return the decision yourself:
+
+```go
+login, err := collage.URL(ctx, "login", nil)
+if err != nil {
+	return nil, err
+}
+return &collage.GuardDecision{
+	Status:   http.StatusSeeOther,
+	Location: login + "?next=" + url.QueryEscape(r.URL.RequestURI()),
+}, nil
+```
+
+An unknown name is an error, and fails the request rather than letting it through.
 
 Any other decision — a redirect with nowhere to go, a `200` — is
 `collage.ErrInvalidGuardDecision` and fails the request with a `500`, as a guard

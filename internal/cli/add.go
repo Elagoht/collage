@@ -690,7 +690,7 @@ func (g generator) fragment(forPage bool) ([]fileChange, string, error) {
 	} else {
 		fmt.Fprintf(&b, "\treturn collage.NewInlineFragment(%q, %sBlock).\n", g.req.ident, g.camel)
 	}
-	fmt.Fprintf(&b, "\t\tWithData(collage.Load(%sData)).\n\t\tBuild()\n}\n\n", g.camel)
+	fmt.Fprintf(&b, "\t\tWithData(%sData()).\n\t\tBuild()\n}\n\n", g.camel)
 	if !g.req.file {
 		fmt.Fprintf(&b, "const %sBlock collage.InlineHTML = `%s`\n\n", g.camel, strings.TrimSuffix(markup, "\n"))
 	}
@@ -698,11 +698,15 @@ func (g generator) fragment(forPage bool) ([]fileChange, string, error) {
 	if forPage {
 		rc = "rc"
 	}
-	fmt.Fprintf(&b, "// Reads what %s renders.\nfunc %sData(\n\t_ context.Context,\n\t%s *collage.RenderContext,\n) (%sView, error) {\n", data, g.camel, rc, g.camel)
+	// A factory rather than the handler itself, so what the handler reads
+	// through — a service, a store — is one parameter away: added here and
+	// passed on by the fragment's function, with nothing to restructure.
+	fmt.Fprintf(&b, "// Reads what %s renders. What it reads through — a service, a store — comes\n// in as %sData's parameters, passed on by %s.\n", data, g.camel, g.pascal)
+	fmt.Fprintf(&b, "func %sData() collage.Data {\n\treturn collage.Load(func(\n\t\t_ context.Context,\n\t\t%s *collage.RenderContext,\n\t) (%sView, error) {\n", g.camel, rc, g.camel)
 	if forPage {
-		fmt.Fprintf(&b, "\trc.HoistTitle(%q)\n", g.title())
+		fmt.Fprintf(&b, "\t\trc.HoistTitle(%q)\n", g.title())
 	}
-	fmt.Fprintf(&b, "\treturn %sView{Title: %q}, nil\n}\n", g.camel, g.title())
+	fmt.Fprintf(&b, "\t\treturn %sView{Title: %q}, nil\n\t})\n}\n", g.camel, g.title())
 
 	return append([]fileChange{{path: filepath.Join(dir, g.req.name+".go"), content: []byte(b.String())}}, changes...), pkg, nil
 }
@@ -859,8 +863,8 @@ func (g generator) guard(notes []string) ([]fileChange, []string, error) {
 	gb.WriteString("package guards\n\nimport (\n\t\"context\"\n\t\"net/http\"\n\n\t\"github.com/Elagoht/collage/pkg/collage\"\n)\n\n")
 	fmt.Fprintf(&gb, "// Decides who may reach the pages layouts.%s() wraps: their renders, the\n", g.pascal)
 	gb.WriteString("// actions on their URLs and their fragment paths alike.\n//\n")
-	gb.WriteString("// Return nil, nil to let the request through; a redirect to send the reader\n// elsewhere:\n//\n")
-	gb.WriteString("//\treturn &collage.GuardDecision{Status: http.StatusSeeOther, Location: \"/login\"}, nil\n//\n")
+	gb.WriteString("// Return nil, nil to let the request through; a redirect to send the reader\n// to a page by its name, in the request's locale:\n//\n")
+	gb.WriteString("//\treturn collage.GuardSeeOtherPage(ctx, \"login\", nil)\n//\n")
 	gb.WriteString("// or a 4xx status to refuse with no body. Until it checks something, it refuses\n// everyone.\n")
 	fmt.Fprintf(&gb, "func %s(\n\t_ context.Context,\n\t_ *http.Request,\n) (*collage.GuardDecision, error) {\n", g.pascal)
 	gb.WriteString("\treturn &collage.GuardDecision{Status: http.StatusForbidden}, nil\n}\n")

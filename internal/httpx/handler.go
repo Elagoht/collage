@@ -456,7 +456,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// the raw path. See RouteInfo. Ahead of the request hooks: a hook keeps the
 	// context it was handed and reads the route from it once the response is
 	// written. A request answered before routing leaves it empty.
-	route := &routeRef{start: time.Now()}
+	route := &routeRef{start: time.Now(), routes: &h.routes}
 	r = r.WithContext(context.WithValue(r.Context(), routeCtxKey{}, route))
 	if h.origins != nil {
 		r = r.WithContext(WithOrigins(r.Context(), h.origins))

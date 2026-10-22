@@ -55,6 +55,13 @@ func (rc *RenderContext) ActionURL(name string, params map[string]string) (strin
 	return routes.build(routes.Action, name, rc.Locale, params)
 }
 
+// URL is the path of the page or document registered as name in locale, or in
+// the default locale when it has no path in locale — what rc.URL builds, for a
+// caller that has the builders but no render.
+func (routes *Routes) URL(name, locale string, params map[string]string) (string, error) {
+	return routes.build(routes.Page, name, locale, params)
+}
+
 // routes returns the builders bound to rc, or ErrUnknownRoute when none are.
 func (rc *RenderContext) routes(name string) (*Routes, error) {
 	if rc == nil || rc.state == nil || rc.state.routes == nil {

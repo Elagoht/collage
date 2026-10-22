@@ -247,6 +247,38 @@ type Route = httpx.Route
 // means it resolved to nothing, or has not yet.
 func RouteInfo(ctx context.Context) Route { return httpx.RouteInfo(ctx) }
 
+// URL returns the path of the page or document registered as name, for the
+// request carrying ctx — what rc.URL is in a render, for code that has no
+// RenderContext: a guard, a middleware. It is in the locale the request resolved
+// to, falling back to the default locale as {{pageURL}} does, and in the default
+// locale in a middleware that runs before the request is routed:
+//
+//	location, err := collage.URL(ctx, "login", nil)
+//
+// It is as strict as App.URL. Outside a request collage serves — a guard called
+// with context.Background() in a test — it is ErrUnknownRoute.
+func URL(ctx context.Context, name string, params map[string]string) (string, error) {
+	return httpx.URL(ctx, name, params)
+}
+
+// GuardSeeOtherPage is a guard's redirect to the page or document registered as
+// name, its path built by URL in the request's locale:
+//
+//	if user == "" {
+//		return collage.GuardSeeOtherPage(ctx, "login", nil)
+//	}
+//
+// It is to a guard what SeeOtherPage is to an action, which returns an
+// *ActionResult instead. An unknown name or params that do not fill the pattern
+// are URL's error, so a guard can return both values as they are.
+func GuardSeeOtherPage(ctx context.Context, name string, params map[string]string) (*GuardDecision, error) {
+	location, err := URL(ctx, name, params)
+	if err != nil {
+		return nil, err
+	}
+	return &GuardDecision{Status: http.StatusSeeOther, Location: location}, nil
+}
+
 // ClientIP is the address of the client r comes from. It is RemoteAddr's host,
 // unless that is one of ServerConfig.TrustedProxies: then it is the first
 // untrusted address in X-Forwarded-For read from the right, or the leftmost when

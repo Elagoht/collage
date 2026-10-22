@@ -585,7 +585,7 @@ func (h *Handler) warmKey(ctx context.Context, key string) (ok bool, err error) 
 		return false, nil
 	}
 
-	route := &routeRef{}
+	route := &routeRef{routes: &h.routes}
 	state := &warmState{}
 	ctx = context.WithValue(ctx, routeCtxKey{}, route)
 	ctx = context.WithValue(ctx, warmCtxKey{}, state)

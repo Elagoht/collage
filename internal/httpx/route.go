@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -90,6 +91,9 @@ type routeRef struct {
 	// start is when the handler took the request, which net/http's WriteTimeout
 	// counts from, near enough: an action works out its write deadline from it.
 	start time.Time
+	// routes are the application's URL builders, which URL builds with in the
+	// request's locale.
+	routes *types.Routes
 }
 
 // at records the pattern and the locale the route matched with.
@@ -157,6 +161,19 @@ func RouteInfo(ctx context.Context) Route {
 }
 
 type routeCtxKey struct{}
+
+// URL returns the path of the page or document registered as name for the
+// request carrying ctx: in the locale it resolved to, or the default locale
+// before it has resolved — in a middleware that runs ahead of routing — and for
+// a route with no path in it. Outside a request collage serves it is
+// ErrUnknownRoute.
+func URL(ctx context.Context, name string, params map[string]string) (string, error) {
+	ref, ok := ctx.Value(routeCtxKey{}).(*routeRef)
+	if !ok || ref.routes == nil || ref.routes.Page == nil {
+		return "", fmt.Errorf("%w: %q: no request collage is serving", types.ErrUnknownRoute, name)
+	}
+	return ref.routes.URL(name, ref.locale, params)
+}
 
 // failure returns a failure for this route carrying its kind and name, so the
 // response serveFailure writes follows the resolved route rather than whatever
