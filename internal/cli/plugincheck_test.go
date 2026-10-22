@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"errors"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -218,12 +220,33 @@ func TestPluginCheck_Run(t *testing.T) {
 				t.Fatalf("the failure is not shown:\n%s", errOut)
 			}
 			// The throwaway program is gone, whether it started or not.
-			if left, _ := filepath.Glob(filepath.Join(dir, "collage-plugin-check-*")); len(left) > 0 {
-				t.Fatalf("left behind: %v", left)
+			if _, err := os.Stat(filepath.Join(dir, pluginCheckDir)); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("%s left behind: %v", pluginCheckDir, err)
 			}
 			if _, err := os.Stat(filepath.Join(dir, "plugin.go")); err != nil {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+// The program's directory has one name, so the build cache keeps one copy of
+// it; a directory already there is another check's, or an interrupted one's,
+// and is left alone.
+func TestPluginCheck_RunDirectoryTaken(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{"go.mod": "module github.com/acme/collage-greet\n\ngo 1.26\n"})
+	taken := filepath.Join(dir, pluginCheckDir)
+	if err := os.Mkdir(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c, _, _ := testCLI()
+	c.Runner = &fakeRunner{}
+	err := c.runPluginProgram(t.Context(), dir, plugincontract.Plugin{})
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("err = %v, want the directory named as taken", err)
+	}
+	if _, err := os.Stat(taken); err != nil {
+		t.Fatalf("the other check's directory was removed: %v", err)
 	}
 }

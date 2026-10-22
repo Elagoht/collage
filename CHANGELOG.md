@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.70.1
+
+Only the CLI changed; a project needs no new collage version.
+
+### Fixed
+
+- **`collage inspect`, `collage routes` and `collage check` no longer fill the
+  Go build cache.** They ran the project with `go run .`, which stores the
+  linked program in the build cache, built without `-tags collage_dev`, so the
+  compiled `main` package held every file the scaffold embeds. Each run after a
+  change to `main` — adding a route to `routes.go`, say — stored another copy of
+  `templates/` and `static/` there, kept for five days: about 70 MB a run with a
+  30 MB `static/`. They now build the project as `collage dev` does, into a
+  temporary file, and run it with `COLLAGE_DEV=1`, reading `templates/` and
+  `static/` from disk: about 1 MB a run. Their output is unchanged; development
+  mode also loads the `.env` file and uses an in-memory cache, so a run no
+  longer creates `.cache/`.
+- **`collage plugin check -run`** writes its program into
+  `collage-plugin-check/` rather than a directory with a random name, which the
+  go tool took for a new package on every run and stored again, and builds it
+  into a temporary file rather than with `go run`. A `collage-plugin-check/`
+  already there — another check, or an interrupted one — is refused and left
+  alone.
+- The CLI's own tests build with `-trimpath`, so a run reuses what the last one
+  compiled instead of storing every package again under a new temporary
+  directory: a full `go test ./...` added about 174 MB to the build cache, now
+  about 1 MB.
+
 ## v0.70.0
 
 ### Added

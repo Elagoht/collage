@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -159,8 +160,7 @@ func compareNumeric(a, b string) int {
 
 // runPluginProgram writes a program into a directory inside dir that calls
 // the plugin's New as plugins.go would and checks its Name against the
-// manifest, and runs it there with go run; the directory is removed
-// afterwards. It neither configures nor starts the plugin: a required field
+// manifest, and builds and runs it; the directory is removed afterwards. It neither configures nor starts the plugin: a required field
 // an empty config section lacks is the startup error the user then sees, not
 // a broken contract.
 func (c *CLI) runPluginProgram(ctx context.Context, dir string, p plugincontract.Plugin) error {
@@ -179,8 +179,14 @@ func (c *CLI) runPluginProgram(ctx context.Context, dir string, p plugincontract
 			fmt.Fprintf(c.stderr(), "collage: plugin check: putting go.mod and go.sum back: %v\n", rerr)
 		}
 	}()
-	tmp, err := os.MkdirTemp(dir, "collage-plugin-check-")
-	if err != nil {
+	// One name, not a random one: the directory is the program's import path,
+	// and the go tool keys what it compiles on it, so every run under a new
+	// name stored the program in the Go build cache again.
+	tmp := filepath.Join(dir, pluginCheckDir)
+	if err := os.Mkdir(tmp, 0o755); err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("%s already exists: another plugin check is running there, or one was interrupted; remove it and check again", tmp)
+		}
 		return err
 	}
 	defer os.RemoveAll(tmp)
@@ -188,12 +194,27 @@ func (c *CLI) runPluginProgram(ctx context.Context, dir string, p plugincontract
 	if err := os.WriteFile(filepath.Join(tmp, "main.go"), []byte(src), 0o644); err != nil {
 		return err
 	}
+	// Built into a file of its own, not with go run, which would also store
+	// the linked executable in the build cache.
+	out, err := os.MkdirTemp("", "collage-plugin-check-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(out)
+	binary := filepath.Join(out, "check"+exeSuffix())
 	var errOut bytes.Buffer
-	if err := c.runner().Run(ctx, dir, nil, c.stdout(), &errOut, "go", "run", "./"+filepath.Base(tmp)); err != nil {
+	if err := c.runner().Run(ctx, dir, nil, c.stdout(), &errOut, "go", "build", "-o", binary, "./"+pluginCheckDir); err != nil {
+		return goError(errOut.Bytes(), err)
+	}
+	if err := c.runner().Run(ctx, dir, nil, c.stdout(), &errOut, binary); err != nil {
 		return goError(errOut.Bytes(), err)
 	}
 	return nil
 }
+
+// pluginCheckDir is the directory, inside the plugin's repository, that
+// plugin check -run writes its program into.
+const pluginCheckDir = "collage-plugin-check"
 
 // checkProgram is the source of the program -run builds: it calls New as add
 // writes it, in the []collage.Plugin context plugins.go gives the call, and

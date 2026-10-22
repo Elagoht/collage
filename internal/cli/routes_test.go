@@ -3,18 +3,20 @@ package cli
 import (
 	"context"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 )
 
-// printingRunner answers every command by writing out to stdout.
+// printingRunner answers every command by writing out to stdout, and records
+// each as its name, arguments and environment.
 type printingRunner struct {
-	out  string
-	args []string
+	out   string
+	calls [][]string
 }
 
-func (p *printingRunner) Run(_ context.Context, _ string, _ []string, stdout, _ io.Writer, _ string, args ...string) error {
-	p.args = args
+func (p *printingRunner) Run(_ context.Context, _ string, env []string, stdout, _ io.Writer, name string, args ...string) error {
+	p.calls = append(p.calls, append(append([]string{name}, args...), env...))
 	_, err := io.WriteString(stdout, p.out)
 	return err
 }
@@ -45,8 +47,17 @@ func TestRoutes_ListsEveryRouteWithItsGuards(t *testing.T) {
 	if code := c.Run(context.Background(), []string{"routes"}); code != 0 {
 		t.Fatalf("routes = %d; %s", code, errOut.String())
 	}
-	if got := strings.Join(runner.args, " "); got != "run . collage-inspect" {
-		t.Errorf("ran go %s, want go run . collage-inspect", got)
+	// Built as collage dev builds, and run in development mode: go run would
+	// store the program, and everything main embeds, in the Go build cache.
+	if len(runner.calls) != 2 {
+		t.Fatalf("ran %q, want a build and a run", runner.calls)
+	}
+	build, run := runner.calls[0], runner.calls[1]
+	if got := strings.Join(build[:len(build)-2], " "); got != "go build -tags collage_dev -o" || build[len(build)-1] != "." {
+		t.Errorf("built with %q", build)
+	}
+	if binary := build[len(build)-2]; !slices.Equal(run, []string{binary, "collage-inspect", "COLLAGE_DEV=1"}) {
+		t.Errorf("ran %q, want %s collage-inspect with COLLAGE_DEV=1", run, binary)
 	}
 	lines := strings.Split(out.String(), "\n")
 	want := [][]string{

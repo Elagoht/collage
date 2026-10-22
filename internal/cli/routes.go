@@ -19,8 +19,8 @@ row per method and path, sorted by path: its pages (with how they are cached
 and the guards they meet), the fragment URLs they open, the actions on them
 and on URLs of their own, the documents and the mounts.
 
-It reads "go run . collage-inspect", as collage inspect does, so the project
-is built and its newApp runs. What newApp does not register through collage
+It reads collage-inspect, as collage inspect does, so the project is built
+and its newApp runs. What newApp does not register through collage
 is not listed: a handler mounted with app.Handle, and a plugin's own
 endpoints, such as /healthz or a websocket.
 `
@@ -80,7 +80,7 @@ func (c *CLI) runRoutes(ctx context.Context, args []string) int {
 		return 2
 	}
 	var out, errOut bytes.Buffer
-	if err := c.runner().Run(ctx, "", nil, &out, &errOut, "go", "run", ".", "collage-inspect"); err != nil {
+	if err := c.runDevProgram(ctx, &out, &errOut, "collage-inspect"); err != nil {
 		c.stderr().Write(errOut.Bytes())
 		fmt.Fprintf(c.stderr(), "collage: routes: %v\n", err)
 		return 1

@@ -899,7 +899,8 @@ and snippet bodies use VS Code's snippet syntax. Every field but `name` is optio
 
 The editor learns which of those functions the application actually has, and every
 page, fragment, slot and mounted file by name, from `collage inspect` (see the CLI
-guide) — which is `go run . collage-inspect`, answered by `DispatchCommands` with
+guide) — which builds the project as `collage dev` does and runs it as
+`<program> collage-inspect`, answered by `DispatchCommands` with
 the application's description as JSON.
 
 ## Testing a plugin

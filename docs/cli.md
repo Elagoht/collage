@@ -501,8 +501,15 @@ as `/healthz` — is not in it.
 Prints what the current directory's project is made of, as JSON — every page with
 its patterns and parameters, every fragment with its template and slots, documents,
 actions, the template functions, the plugins, the locales, and the files the mounts
-serve. It runs `go run . collage-inspect`, which `DispatchCommands` answers itself
-with the application's description as JSON, so a scaffolded project needs nothing more. It is what an
+serve. It builds the project as `collage dev` does — with `-tags collage_dev`,
+into a temporary file — and runs it as `<program> collage-inspect` with
+`COLLAGE_DEV=1`, which `DispatchCommands` answers itself with the application's
+description as JSON, so a scaffolded project needs nothing more. Nothing is
+embedded, so the program reads `templates/` and `static/` from disk; `go run`
+would store the linked program, and with it everything `main` embeds, in the Go
+build cache on every run after a change to `main` (see "Development builds
+embed nothing" under `collage dev`). `collage routes` and `collage check` run
+the project the same way. It is what an
 editor's completion reads: the Collage Snippets & Highlighter extension for VS Code
 offers page names in `{{pageURL "…"}}`, slots in `{{slot "…"}}` and files in
 `{{asset "…"}}` from it.
@@ -590,7 +597,7 @@ since a render falls back to the default one.
 
 It exits `1` when it finds anything, so it can stand in CI before `collage build`;
 `-json` prints the findings as an array of `{level, rule, message}` for an editor.
-It runs `go run . collage-check`, which `collage.DispatchCommands` answers by
+It runs the project as `collage inspect` does, as `<program> collage-check`, which `collage.DispatchCommands` answers by
 starting the application and calling `App.Check` — the same function a test can
 call. That needs the project's collage at v0.40.0 or later; an earlier one
 answers `unknown command: "collage-check"`.
@@ -690,8 +697,11 @@ step fails.
 contract `add` enforces. The check itself reads only the repository:
 
 - `-release` also wants a release tag at `HEAD`, which needs git;
-- `-run` builds a throwaway program in the repository with `go run`, which
-  fetches what the module cache lacks. It calls
+- `-run` builds a throwaway program in the repository's `collage-plugin-check/`
+  directory and runs it, which fetches what the module cache lacks. The
+  directory has one name so the Go build cache keeps one copy of the program; if
+  it is already there — another check running, or one interrupted — `-run`
+  refuses and leaves it alone. It calls
   `New` exactly as `add` would write it, as a `collage.Plugin`, and checks that
   `Name()` is the manifest's `name`. It fails on a build error, a panic in
   `New` or a different name. It does not configure or start the plugin, so a

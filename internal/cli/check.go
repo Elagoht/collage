@@ -19,12 +19,14 @@ once. Only names written as string literals are checked.
 
 Exits 1 when it finds anything, so it can stand in CI before a build.
 
-Runs "go run . collage-check" in the current directory's Go project. The
-scaffolded main.go hands the word after its flags to collage.DispatchCommands,
-which answers collage-check itself, after starting the application — so a
-program that opens a database on start opens it here too. It needs the
-project's collage at v0.40.0 or later; an earlier one answers
-unknown command: "collage-check".
+Builds the current directory's Go project as collage dev does — with the
+collage_dev tag, so nothing is embedded — and runs it as "<program>
+collage-check" with COLLAGE_DEV=1, so it reads templates/ and static/ from
+disk. The scaffolded main.go hands the word after its flags to
+collage.DispatchCommands, which answers collage-check itself, after starting
+the application — so a program that opens a database on start opens it here
+too. It needs the project's collage at v0.40.0 or later; an earlier one
+answers unknown command: "collage-check".
 `
 
 // runCheck implements the "check" command.
@@ -33,7 +35,7 @@ func (c *CLI) runCheck(ctx context.Context, args []string) int {
 		fmt.Fprint(c.stdout(), checkUsage)
 		return 0
 	}
-	command := []string{"run", ".", "collage-check"}
+	command := []string{"collage-check"}
 	switch {
 	case len(args) == 1 && (args[0] == "-json" || args[0] == "--json"):
 		command = append(command, "-json")
@@ -43,7 +45,7 @@ func (c *CLI) runCheck(ctx context.Context, args []string) int {
 		fmt.Fprint(c.stderr(), checkUsage)
 		return 2
 	}
-	if err := c.runner().Run(ctx, "", nil, c.stdout(), c.stderr(), "go", command...); err != nil {
+	if err := c.runDevProgram(ctx, c.stdout(), c.stderr(), command...); err != nil {
 		// The program has already said what it found; this is only the exit.
 		return 1
 	}

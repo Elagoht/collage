@@ -13,10 +13,12 @@ template functions, the plugins, the locales and the files the mounts serve.
 It is what an editor's completion reads; the Collage Snippets & Highlighter
 extension for VS Code runs it.
 
-Runs "go run . collage-inspect" in the current directory's Go project. The
-scaffolded main.go hands the word after its flags to collage.DispatchCommands,
-which answers collage-inspect itself; a program that does not dispatch its
-arguments that way has nothing to answer with.
+Builds the current directory's Go project as collage dev does — with the
+collage_dev tag, so nothing is embedded — and runs it as "<program>
+collage-inspect" with COLLAGE_DEV=1, so it reads templates/ and static/ from
+disk. The scaffolded main.go hands the word after its flags to
+collage.DispatchCommands, which answers collage-inspect itself; a program that
+does not dispatch its arguments that way has nothing to answer with.
 `
 
 // runInspect implements the "inspect" command.
@@ -31,7 +33,7 @@ func (c *CLI) runInspect(ctx context.Context, args []string) int {
 		fmt.Fprint(c.stderr(), inspectUsage)
 		return 2
 	}
-	if err := c.runner().Run(ctx, "", nil, c.stdout(), c.stderr(), "go", "run", ".", "collage-inspect"); err != nil {
+	if err := c.runDevProgram(ctx, c.stdout(), c.stderr(), "collage-inspect"); err != nil {
 		fmt.Fprintf(c.stderr(), "collage: inspect: %v\n", err)
 		return 1
 	}
