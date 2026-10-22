@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 
@@ -141,9 +142,9 @@ func TestBodySpill_DataHandlerFormRemoved(t *testing.T) {
 }
 
 // formApp is an application whose /form action, with no forgery check and a
-// 1 KiB limit, answers with the a and b it read. A middleware, when given,
-// runs before it.
-func formApp(t *testing.T, mw func(http.Handler) http.Handler) http.Handler {
+// 1 KiB limit, answers with the a and b it read, and counts its runs in ran. A
+// middleware, when given, runs before it.
+func formApp(t *testing.T, mw func(http.Handler) http.Handler, ran *atomic.Int64) http.Handler {
 	t.Helper()
 	app, err := collage.New(&collage.Config{
 		Server:   collage.ServerConfig{Host: "localhost", Port: 3000, MaxBodyBytes: 1024},
@@ -159,6 +160,7 @@ func formApp(t *testing.T, mw func(http.Handler) http.Handler) http.Handler {
 	}
 	action := collage.NewAction("form").WithPath("en", "/form").WithMethods(http.MethodPost).WithoutCSRF().
 		WithHandler(func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+			ran.Add(1)
 			body := "a=" + rc.Request.FormValue("a") + " b=" + rc.Request.FormValue("b")
 			return &collage.ActionResult{Status: http.StatusOK, Body: []byte(body), ContentType: "text/plain"}, nil
 		}).Build()
@@ -169,20 +171,32 @@ func formApp(t *testing.T, mw func(http.Handler) http.Handler) http.Handler {
 }
 
 // postLongForm posts a form whose a is longer than formApp's limit, with b
-// after it and a b in the query to stand in for the one cut off.
-func postLongForm(h http.Handler) *httptest.ResponseRecorder {
+// after it and a b in the query to stand in for the one cut off. Chunked, the
+// body does not say its length.
+func postLongForm(h http.Handler, chunked bool) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodPost, "/form?b=fromquery", strings.NewReader("a="+strings.Repeat("x", 4096)+"&b=tail"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if chunked {
+		req.ContentLength = -1
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
 }
 
-// An action with no forgery check whose handler read a form past its limit
-// is refused, not run on the form it was cut down to.
+// An action with no forgery check is not run on a form cut down to its limit:
+// a body that says it is too large is refused before the handler, and one that
+// does not (chunked) is refused after it rather than answered as a success.
 func TestBodyLimit_TruncatedFormRefused(t *testing.T) {
-	if rec := postLongForm(formApp(t, nil)); rec.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("status %d, body %q; want 413", rec.Code, rec.Body)
+	for _, chunked := range []bool{false, true} {
+		var ran atomic.Int64
+		rec := postLongForm(formApp(t, nil, &ran), chunked)
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Errorf("chunked=%v: status %d, body %q; want 413", chunked, rec.Code, rec.Body)
+		}
+		if want := map[bool]int64{false: 0, true: 1}[chunked]; ran.Load() != want {
+			t.Errorf("chunked=%v: the handler ran %d times; want %d", chunked, ran.Load(), want)
+		}
 	}
 }
 
@@ -197,7 +211,8 @@ func TestBodyLimit_BufferingMiddlewareRefused(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 	}
-	if rec := postLongForm(formApp(t, buffering)); rec.Code != http.StatusRequestEntityTooLarge {
-		t.Errorf("status %d, body %q; want 413", rec.Code, rec.Body)
+	var ran atomic.Int64
+	if rec := postLongForm(formApp(t, buffering, &ran), true); rec.Code != http.StatusRequestEntityTooLarge || ran.Load() != 0 {
+		t.Errorf("status %d, body %q, handler ran %d times; want 413 and none", rec.Code, rec.Body, ran.Load())
 	}
 }

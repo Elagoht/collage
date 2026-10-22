@@ -311,7 +311,10 @@ func TestNonStreaming_HandlerOverreadIs413(t *testing.T) {
 			return nil, errors.New("upload failed")
 		})
 	}, events)
-	w := postUpload(h, strings.Repeat("x", 1024), "application/octet-stream", nil)
+	// Chunked: a body that says it is over the limit is refused before the
+	// handler, and this is about one the handler ran into.
+	chunked := func(r *http.Request) { r.ContentLength = -1 }
+	w := postUpload(h, strings.Repeat("x", 1024), "application/octet-stream", chunked)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status %d, want 413", w.Code)
 	}

@@ -107,8 +107,14 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 	// error — is answered here, before the forgery check and the handler. A
 	// middleware that buffered the body and replaced it leaves a body here that
 	// never ran into anything; the one it read did. See earlyBodyTooLarge.
-	if (body != nil && body.tooLarge.Load()) || earlyBodyTooLarge(r) {
-		limit := h.bodyLimit(action)
+	//
+	// So is a body that says it is larger than the bound, before any of it is
+	// read. A handler with no forgery check in front of it would otherwise read
+	// the form up to the bound and run on what it got — its later fields
+	// missing — before anything could refuse it. A browser's form always says
+	// its length; a body that does not is refused after the handler instead.
+	limit := h.bodyLimit(action)
+	if (body != nil && body.tooLarge.Load()) || earlyBodyTooLarge(r) || (limit >= 0 && r.ContentLength > limit) {
 		return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
 			actionBodyTooLarge(action, limit)))
 	}
@@ -208,12 +214,13 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 
 	// A handler that read a form past its bound and carried on anyway saw a
 	// form cut short — its later fields missing, a query value standing in for
-	// a body one. The forgery check would have refused it before the handler;
-	// an action without one is refused after. A streaming action reads its own
-	// body and answers for what it read.
+	// a body one. A body that said its length was refused before the handler;
+	// one that did not, chunked, is refused after, so at least the response
+	// does not claim success. A streaming action reads its own body and
+	// answers for what it read.
 	if !action.StreamingBody && ((body != nil && body.tooLarge.Load()) || earlyBodyTooLarge(r)) {
 		return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRender,
-			actionBodyTooLarge(action, h.bodyLimit(action))))
+			actionBodyTooLarge(action, limit)))
 	}
 
 	if result == nil {

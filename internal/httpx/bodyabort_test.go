@@ -131,7 +131,11 @@ func TestAction_HandlerOverreadIsAWarning(t *testing.T) {
 	upload := action("upload", "/upload", []string{http.MethodPost}, readAll)
 	upload.MaxBodyBytes = 4
 	env := actionEnv(t, nil, []*types.Action{upload}, withPlugins(t, recorder))
-	res := env.do(post("/upload", strings.Repeat("x", 64)))
+	// Chunked: a body that says it is over the limit is refused before the
+	// handler, and this is about one the handler ran into.
+	req := post("/upload", strings.Repeat("x", 64))
+	req.ContentLength = -1
+	res := env.do(req)
 	if res.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status %d, want 413", res.Code)
 	}
