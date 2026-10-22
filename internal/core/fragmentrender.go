@@ -63,8 +63,25 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 	if !ok {
 		return nil, fmt.Errorf("collage: this application's renderer cannot render a fragment in parts")
 	}
-	rc := types.NewRenderContext(r.Context(), r, page, locale, params)
-	result, err := renderer.RenderFragmentResult(r.Context(), rc, fragment)
+	// A page served from one cached render to every reader has said its
+	// handlers answer the same for everyone; a fragment of it can say no less.
+	//
+	// Said, not trusted: a render reported Shared is pushed to every reader of
+	// the URL, so it is made the way the page cache makes its one render — from
+	// a request with nothing of this reader's in it. Made from r itself, a
+	// handler reading a cookie or a middleware's context value wrote this
+	// reader's name into every other reader's page.
+	shared := page.Strategy.Cacheable() || readerFree(fragment)
+	renderFor := r
+	if shared {
+		var ok bool
+		renderFor, ok = httpx.ShareableRequest(r, page.CacheParams, a.devMode, a.logger)
+		if !ok {
+			shared, renderFor = false, r
+		}
+	}
+	rc := types.NewRenderContext(renderFor.Context(), renderFor, page, locale, params)
+	result, err := renderer.RenderFragmentResult(renderFor.Context(), rc, fragment)
 	if err != nil {
 		return nil, err
 	}
@@ -73,9 +90,7 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 		HTML:           result.HTML,
 		Head:           result.Head,
 		DependencyTags: result.DependencyTags,
-		// A page served from one cached render to every reader has said its
-		// handlers answer the same for everyone; a fragment of it can say no less.
-		Shared: page.Strategy.Cacheable() || readerFree(fragment),
+		Shared:         shared,
 	}
 	if a.csrf != nil {
 		if a.csrf.Carries(out.HTML) {

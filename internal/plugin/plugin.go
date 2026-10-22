@@ -263,11 +263,14 @@ type FragmentRender struct {
 	// fragments matches them against CacheInvalidateEvent.Tags.
 	DependencyTags []string
 	// Shared reports that the render is the same for every reader of the same
-	// page, fragment, locale and parameters at this moment: the page is one the
-	// framework caches for every reader, or every data handler in the subtree is
-	// declared Static or Shared and none has a slot resolver — and the markup
-	// carries no forgery token. Only a shared render may be rendered once and sent
-	// to many readers; any other may hold one reader's data.
+	// page, fragment, locale and parameters on the same host (r.Host) at this
+	// moment: the page is one the framework caches for every reader, or every
+	// data handler in the subtree is declared Static or Shared and none has a
+	// slot resolver — and the markup carries no forgery token. Such a render is
+	// made from a request stripped of the reader's cookies, headers and context
+	// values, as the page cache's is. Only a shared render may be rendered once
+	// and sent to many readers, and only to readers on the host it was made
+	// for; any other may hold one reader's data.
 	Shared bool
 	// ETag is the ETag a request to the fragment's path would be answered with
 	// for this render: the same hash of the same body. A client holding it from a

@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -71,18 +72,41 @@ func sharedRequest(r *http.Request, cacheParams []string) *http.Request {
 // application discovers it has marked a page cacheable while a data handler reads
 // something per-reader from the context.
 func (h *Handler) renderSafeContext(parent context.Context) context.Context {
+	return safeContext(parent, h.devMode, h.logger)
+}
+
+// safeContext is renderSafeContext for a caller with no Handler: it warns
+// through logger when devMode is set.
+func safeContext(parent context.Context, devMode bool, logger *slog.Logger) context.Context {
 	c := renderSafe{Context: parent}
-	if h.devMode {
+	if devMode {
 		var once sync.Once
 		c.warn = func() {
 			once.Do(func() {
-				h.logger.Warn("collage: a value stored in the request context was hidden from a shared render, " +
+				logger.Warn("collage: a value stored in the request context was hidden from a shared render, " +
 					"so a data handler read nothing where a per-request render would have seen the first reader's; " +
 					"read a cache dimension with collage.Varied, or make the page Dynamic if its data is per-reader")
 			})
 		}
 	}
 	return c
+}
+
+// ShareableRequest returns r as a render handed to every reader of one URL on
+// one host may see it: sharedRequest's request — no cookie, no credentials, no
+// address, only the query the page caches on — with renderSafeContext's
+// context. It is what App.RenderFragment renders from when it will report the
+// render Shared, so a plugin pushing that one render to many readers pushes
+// nothing of the reader it happened to be made for.
+//
+// ok is false when r carries a value declared with collage.Vary. Such a render
+// differs by more than its URL and host, and is not to be shared on those alone.
+func ShareableRequest(r *http.Request, cacheParams []string, devMode bool, logger *slog.Logger) (shared *http.Request, ok bool) {
+	if len(requestVary(r)) > 0 {
+		return nil, false
+	}
+	shared = sharedRequest(r, cacheParams)
+	return shared.WithContext(safeContext(shared.Context(), devMode, logger)), true
 }
 
 // renderSafe is a context whose Value answers only for the framework's own
