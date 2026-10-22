@@ -123,10 +123,14 @@ func copyMountFile(fsys fs.FS, name, target string) error {
 	if err != nil {
 		return fmt.Errorf("create %q: %w", target, err)
 	}
-	defer dst.Close()
-
 	if _, err := io.Copy(dst, src); err != nil {
+		dst.Close()
 		return fmt.Errorf("copy to %q: %w", target, err)
+	}
+	// Close is where a write the file system deferred, such as one a full disk
+	// refuses, is reported.
+	if err := dst.Close(); err != nil {
+		return fmt.Errorf("write %q: %w", target, err)
 	}
 	return nil
 }

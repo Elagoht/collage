@@ -158,9 +158,13 @@ func (hub *reloadHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case <-hub.closed:
 			return
 		case <-heartbeat.C:
-			fmt.Fprint(w, ": ping\n\n")
+			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
+				return
+			}
 		case <-events:
-			fmt.Fprint(w, "event: reload\ndata:\n\n")
+			if _, err := fmt.Fprint(w, "event: reload\ndata:\n\n"); err != nil {
+				return
+			}
 		}
 		if controller.Flush() != nil {
 			return
