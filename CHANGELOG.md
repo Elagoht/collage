@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.71.2
+
+### Security
+
+- **A path segment holding a NUL matches no route.** A captured value is what a
+  handler joins onto a directory, and a NUL ends the name at the system call:
+  `/docs/a%00b.md` against `/docs/{slug}.md` captured `a\x00b`. A backslash is
+  still a value like any other — it round-trips through a link and a build — so
+  a handler joining one onto a directory on Windows checks it with
+  `filepath.IsLocal`.
+
+### Documentation
+
+- `collage.Cached` keys belong to the application, not to raw request input:
+  `MaxBytes` does not bound the data store, so a key from a query parameter is an
+  entry per value a visitor invents ([caching](docs/caching.md)).
+- A bare `app.Handle` gets the encoded-slash 404 only for a path that needed
+  cleaning; `/api%2Fx` reaches it with the decoded `/`, as under net/http alone.
+
 ## v0.71.1
 
 ### Fixed
