@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -82,20 +83,48 @@ func boundBody(w http.ResponseWriter, r *http.Request, limit int64) *limitedBody
 // read it unbounded, and left it parsed for the action, whose own limit then
 // had nothing left to bound. A handler mounted with Handle is left alone: its
 // body is the application's own business, as it always was.
-func (h *Handler) boundBeforeMiddleware(w http.ResponseWriter, r *http.Request) {
+//
+// The bound is also kept in the returned request's context. A middleware that
+// buffered the body and put a fresh reader in its place — io.ReadAll, then
+// io.NopCloser — hands the action a body that never ran into anything, and the
+// action asks this one instead. See earlyBodyTooLarge.
+func (h *Handler) boundBeforeMiddleware(w http.ResponseWriter, r *http.Request) *http.Request {
 	if r.Body == nil || r.Body == http.NoBody {
-		return
+		return r
 	}
 	for _, mount := range h.handlers {
 		if mount.Matches(r.URL.Path) {
-			return
+			return r
 		}
 	}
 	limit := h.appBodyLimit()
 	if match, err := h.router.Match(r); err == nil && match != nil && match.Action != nil {
 		limit = h.bodyLimit(match.Action)
 	}
-	boundBody(w, r, limit)
+	body := boundBody(w, r, limit)
+	return r.WithContext(context.WithValue(r.Context(), earlyBodyKey{}, body))
+}
+
+// earlyBodyKey keys the body boundBeforeMiddleware bounded.
+type earlyBodyKey struct{}
+
+// earlyBodyTooLarge reports whether the body bounded before the middleware ran
+// into its bound, whatever body the request carries now.
+func earlyBodyTooLarge(r *http.Request) bool {
+	body, ok := r.Context().Value(earlyBodyKey{}).(*limitedBody)
+	return ok && body.tooLarge.Load()
+}
+
+// removeMultipart removes the files a multipart form parsed on r spilled to
+// disk. net/http does this only for the request it made itself, and every
+// request collage hands on is a copy of that one — r.WithContext — so a form
+// parsed on the copy, by a guard, a data handler or a middleware, would leave
+// its files behind for good: up to a whole body's worth of disk per request,
+// for anyone who sends one.
+func removeMultipart(r *http.Request) {
+	if r.MultipartForm != nil {
+		_ = r.MultipartForm.RemoveAll()
+	}
 }
 
 // bodyAbortStatus is the status for a body whose read failed with err: 408 when

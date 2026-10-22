@@ -59,13 +59,30 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 			fmt.Errorf("%w: %q", ErrNoActionHandler, action.Name)))
 	}
 
+	// Bounded before the handler sees it, not by the handler. A limit every
+	// handler has to remember is a limit the one handler that forgot does not
+	// have, and that handler is the one an anonymous caller will find.
+	//
+	// And before the guards, which may read the form: wrapping the body reads
+	// none of it, so a guard that answers without looking still never does.
+	// Already bounded before the middleware, as a rule; see
+	// boundBeforeMiddleware. An unbounded body is wrapped all the same, to see
+	// whether a read of it failed. A request built by hand may have no body at
+	// all; it is left as it is. The files a parsed multipart form spilled are
+	// removed whatever answers — a refusing guard as much as the handler.
+	defer removeMultipart(r)
+	var body *limitedBody
+	if r.Body != nil {
+		body = boundBody(w, r, h.bodyLimit(action))
+	}
+
 	// The page's guards, then the action's own. One on a page's URL is
 	// reached through that page, and a page a reader may not see is a page
 	// whose form the reader may not submit; the action's own guard says who
 	// may submit it, and is the only one an action on its own URL has.
-	// Before the body limit and the CSRF check — a guard that answers never
-	// reads the body, and a logged-out forged POST is better spent against the
-	// guard than the forgery check.
+	// Before the CSRF check — a guard that answers never reads the body, and a
+	// logged-out forged POST is better spent against the guard than the
+	// forgery check.
 	if status, allowed := h.checkGuards(w, r, route, match.Locale, actionGuards(match.Page, action)); !allowed {
 		return status
 	}
@@ -85,34 +102,14 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		writeDeadline = h.setBodyDeadlines(w, r, action)
 	}
 
-	// A multipart body over the parser's memory budget spills its files to disk,
-	// and net/http removes them only for the request it made — not for this one,
-	// a copy, which is the one the forgery check and the handler parse. Without
-	// this every large upload leaves its files behind, and so does every refused
-	// one.
-	defer func() {
-		if r.MultipartForm != nil {
-			_ = r.MultipartForm.RemoveAll()
-		}
-	}()
-
-	// Bounded before the handler sees it, not by the handler. A limit every
-	// handler has to remember is a limit the one handler that forgot does not
-	// have, and that handler is the one an anonymous caller will find.
-	//
-	// Already bounded before the middleware, as a rule; a middleware that read
-	// the body and dropped the error leaves it read past its bound, and the
-	// action answers for it. See boundBeforeMiddleware. An unbounded body is
-	// wrapped all the same, to see whether a read of it failed.
-	// A request built by hand may have no body at all; it is left as it is.
-	var body *limitedBody
-	if r.Body != nil {
+	// A body read past its bound — by a middleware or a guard that dropped the
+	// error — is answered here, before the forgery check and the handler. A
+	// middleware that buffered the body and replaced it leaves a body here that
+	// never ran into anything; the one it read did. See earlyBodyTooLarge.
+	if (body != nil && body.tooLarge.Load()) || earlyBodyTooLarge(r) {
 		limit := h.bodyLimit(action)
-		body = boundBody(w, r, limit)
-		if body.tooLarge.Load() {
-			return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
-				actionBodyTooLarge(action, limit)))
-		}
+		return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRoute,
+			actionBodyTooLarge(action, limit)))
 	}
 
 	// Checked before the handler runs, and before anything it might change.
@@ -206,6 +203,16 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		}
 		return h.serveFailure(w, r, route.failure(actionErrorStatus(err), stageRender,
 			fmt.Errorf("collage: action %q: %w", action.Name, err)))
+	}
+
+	// A handler that read a form past its bound and carried on anyway saw a
+	// form cut short — its later fields missing, a query value standing in for
+	// a body one. The forgery check would have refused it before the handler;
+	// an action without one is refused after. A streaming action reads its own
+	// body and answers for what it read.
+	if !action.StreamingBody && ((body != nil && body.tooLarge.Load()) || earlyBodyTooLarge(r)) {
+		return h.serveFailure(w, r, route.failure(http.StatusRequestEntityTooLarge, stageRender,
+			actionBodyTooLarge(action, h.bodyLimit(action))))
 	}
 
 	if result == nil {

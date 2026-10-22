@@ -647,19 +647,29 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request, route *ro
 		freezeDeclarations(r)
 		route.resolved(routeKindHandler, mount.Prefix)
 		route.at(mount.Prefix, "")
+		// The handler's body is its own business, but the request it parses a
+		// form on is this copy, whose spilled files net/http does not remove.
+		defer removeMultipart(r)
 		return h.serveHandler(w, r, mount, route)
 	}
+	// Bounded whether or not there is middleware: what reads the body first may
+	// be a page guard or a data handler, not a middleware, and without a chain it
+	// would otherwise read it unbounded.
+	r = h.boundBeforeMiddleware(w, r)
 	if h.chain == nil {
 		return h.serve(w, r, route)
 	}
-	h.boundBeforeMiddleware(w, r)
 
 	// Through the middleware, which may answer the request itself — a 401, a
 	// redirect — without serve ever running. The status is then whatever it
 	// wrote.
 	state := &chainState{route: route}
 	capture := &statusCapturingWriter{ResponseWriter: w}
-	h.chain.ServeHTTP(capture, r.WithContext(context.WithValue(r.Context(), chainStateKey{}, state)))
+	chained := r.WithContext(context.WithValue(r.Context(), chainStateKey{}, state))
+	// A middleware that parsed the form parsed it on this copy, or on one of its
+	// own that serve receives and cleans up after.
+	defer removeMultipart(chained)
+	h.chain.ServeHTTP(capture, chained)
 	if state.status != 0 {
 		return state.status
 	}
@@ -694,6 +704,11 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request, route *ro
 // HTTPResponse metric. A mount request goes through serveMount so it gets all of
 // that instead of bypassing it.
 func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef) int {
+	// A page guard or a data handler that read a form read it on this request,
+	// a copy of the one net/http made, so net/http leaves its spilled files
+	// behind. See removeMultipart.
+	defer removeMultipart(r)
+
 	// Middleware is done, so what the request declared through Vary and
 	// SkipCache is settled here, for every route alike. Freezing only where a
 	// cache key was computed made a late call an error on a cached page and a
