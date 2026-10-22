@@ -92,9 +92,12 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 		DependencyTags: result.DependencyTags,
 		Shared:         shared,
 	}
+	var token string
 	if a.csrf != nil {
 		if a.csrf.Carries(out.HTML) {
-			token, minted, err := a.csrf.TokenFor(r)
+			var minted bool
+			var err error
+			token, minted, err = a.csrf.TokenFor(r)
 			if err != nil {
 				return nil, fmt.Errorf("collage: could not issue a forgery token: %w", err)
 			}
@@ -108,6 +111,10 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 	// The ETag a request to the fragment's path would be answered with: the hash
 	// of the same body, built the same way, after the same token went in.
 	out.ETag = cache.ETag((&render.FragmentResult{HTML: out.HTML, Head: out.Head}).Body())
+	// Masked after the ETag, as a response is: see csrf.Guard.Mask.
+	if token != "" {
+		out.HTML = a.csrf.Mask(out.HTML, token)
+	}
 	return out, nil
 }
 

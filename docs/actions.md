@@ -288,6 +288,14 @@ under `Security.CSRFKey`, and the same value goes in a cookie and in the form.
 Verifying needs the key and nothing else — no session table, no store to configure,
 nothing shared between instances.
 
+The form carries the token masked: XORed with a random pad that is new in every
+response, and prefixed `~`. A response that is compressed and reflects what a
+request sent is shorter when the reflection matches part of a secret on the same
+page (BREACH); masked, the token on the page is different bytes every time, so
+there is nothing to match. The check takes the mask off, from the form field and
+from the header alike, and accepts an unmasked token too. A script that reads the
+field's value and sends it in the header needs no change.
+
 A signed token is not a secret from an attacker, though: any page with a form hands
 one to whoever loads it. Someone who can write a cookie for the domain — a sibling
 subdomain, a man-in-the-middle on plain http — could plant their own token in a

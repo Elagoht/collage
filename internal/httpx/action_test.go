@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -460,8 +461,8 @@ func TestCSRF_AnExistingTokenIsKept(t *testing.T) {
 	req.AddCookie(&http.Cookie{Name: csrf.DefaultCookieName, Value: token})
 
 	rec := env.do(req)
-	if !strings.Contains(rec.Body.String(), token) {
-		t.Error("the reader's own token is not in the page they were served")
+	if got := servedToken(rec.Body.String()); got != token {
+		t.Errorf("the page carries the token %q, want the reader's own %q", got, token)
 	}
 }
 
@@ -597,8 +598,8 @@ func TestCSRF_AnActionsResponseCarriesAToken(t *testing.T) {
 			if strings.Contains(body, marker) {
 				t.Errorf("body = %q, still carries the marker", body)
 			}
-			if !strings.Contains(body, token) {
-				t.Errorf("body = %q, want the reader's token %q", body, token)
+			if got := servedToken(body); got != token {
+				t.Errorf("body = %q carries %q, want the reader's token %q", body, got, token)
 			}
 		})
 	}
@@ -837,4 +838,17 @@ func TestActionResult_SingleOrNoBodyUnchanged(t *testing.T) {
 	if res.Code != http.StatusNoContent || res.Header().Get("X-A") != "1" {
 		t.Errorf("Header-only result = %d, X-A %q", res.Code, res.Header().Get("X-A"))
 	}
+}
+
+// servedTokenField finds the forgery field's value in a body.
+var servedTokenField = regexp.MustCompile(`name="_csrf" value="([^"]*)"`)
+
+// servedToken returns the token the forgery field in body stands for: its value,
+// unmasked, as the forgery check reads it. Empty when there is no field.
+func servedToken(body string) string {
+	m := servedTokenField.FindStringSubmatch(body)
+	if m == nil {
+		return ""
+	}
+	return csrf.Unmask(m[1])
 }

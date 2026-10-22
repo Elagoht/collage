@@ -232,6 +232,57 @@ func (g *Guard) Personalise(content []byte, token string) []byte {
 	return bytes.ReplaceAll(content, g.renderedValue(), []byte(`value="`+token+`"`))
 }
 
+// Mask returns content with every field Personalise filled with token holding
+// token masked instead: a random pad, and the token XORed with it, so that the
+// same token reads differently in every response.
+//
+// A response that reflects what a request sent, compressed on its way out —
+// by collage-compress, a proxy, a CDN — is shorter when the reflected text
+// matches part of the token on the same page. An attacker who can make a
+// reader's browser send requests guesses the token a byte at a time from those
+// lengths (BREACH). Masked, the token on the page is new random bytes each
+// time, and there is nothing to match against. Verify and VerifyHeader take it
+// off again.
+//
+// Called last, on the body that goes on the wire: what an ETag names is the
+// body with the token itself, which is the same between responses, so a
+// conditional request still finds its match.
+func (g *Guard) Mask(content []byte, token string) []byte {
+	pad := make([]byte, len(token))
+	_, _ = rand.Read(pad) // crypto/rand.Read never fails
+	masked := make([]byte, 2*len(token))
+	copy(masked, pad)
+	for i := range len(token) {
+		masked[len(token)+i] = token[i] ^ pad[i]
+	}
+	return bytes.ReplaceAll(content, []byte(`value="`+token+`"`),
+		[]byte(`value="`+maskedPrefix+base64.RawURLEncoding.EncodeToString(masked)+`"`))
+}
+
+// maskedPrefix starts a masked token. A token itself never starts with it: its
+// nonce is base64url, which has no "~".
+const maskedPrefix = "~"
+
+// Unmask returns the token submitted stands for: submitted itself when it is not
+// masked, or the token Mask masked into it. A masked value that does not decode
+// is returned as it is, to be refused as a mismatch.
+func Unmask(submitted string) string {
+	encoded, masked := strings.CutPrefix(submitted, maskedPrefix)
+	if !masked {
+		return submitted
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || len(raw)%2 != 0 {
+		return submitted
+	}
+	half := len(raw) / 2
+	token := make([]byte, half)
+	for i := range half {
+		token[i] = raw[half+i] ^ raw[i]
+	}
+	return string(token)
+}
+
 // renderedValue is the value attribute {{csrfToken}} renders.
 func (g *Guard) renderedValue() []byte {
 	return []byte(`value="` + g.Marker() + `"`)
@@ -321,6 +372,7 @@ func (g *Guard) Verify(r *http.Request) error {
 	if submitted == "" {
 		return ErrMissing
 	}
+	submitted = Unmask(submitted)
 
 	// Constant time, on both comparisons. A token is a secret, and a comparison
 	// that stops at the first wrong byte tells an attacker how many were right.
@@ -357,6 +409,7 @@ func (g *Guard) VerifyHeader(r *http.Request) error {
 	if submitted == "" {
 		return fmt.Errorf("%w: the CSRF token must be sent in the %s header for this action", ErrHeaderRequired, g.headerName)
 	}
+	submitted = Unmask(submitted)
 
 	if !hmac.Equal([]byte(submitted), []byte(cookie.Value)) {
 		return ErrMismatch

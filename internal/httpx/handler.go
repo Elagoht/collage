@@ -1094,8 +1094,10 @@ func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []
 		return original, nil
 	}
 	var cookie *http.Cookie
+	var token string
 	if h.csrf != nil && h.csrf.Carries(content) {
-		token, _, err := h.csrf.TokenFor(r)
+		var err error
+		token, _, err = h.csrf.TokenFor(r)
 		if err != nil {
 			// Nothing to substitute with. Serving the marker would render a form
 			// that is refused on submission with nothing to explain why, so this
@@ -1135,6 +1137,12 @@ func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []
 	// 304 for content the client never had.
 	if changed || ev.Personal {
 		out.etag = cache.ETag(out.body)
+	}
+	// Masked after the ETag, which names the body with the token itself: the
+	// same in every response to this reader, so a conditional request still
+	// matches, where the masked body differs every time. See csrf.Guard.Mask.
+	if personal {
+		out.body = h.csrf.Mask(out.body, token)
 	}
 	return out, nil
 }

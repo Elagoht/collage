@@ -560,3 +560,76 @@ func TestVerifyHeader(t *testing.T) {
 		}
 	})
 }
+
+// maskedIn returns the value Mask wrote into a field filled with token.
+func maskedIn(t *testing.T, g *Guard, token string) string {
+	t.Helper()
+	out := string(g.Mask([]byte(`value="`+token+`"`), token))
+	value, ok := strings.CutPrefix(out, `value="`)
+	if !ok || !strings.HasPrefix(value, maskedPrefix) {
+		t.Fatalf("Mask wrote %q, want a masked value", out)
+	}
+	return strings.TrimSuffix(value, `"`)
+}
+
+// The same token reads differently in every response, so a compressed
+// response's length says nothing about it (BREACH), and every one of them still
+// stands for the token.
+func TestMask_DiffersEveryTimeAndUnmasks(t *testing.T) {
+	g := guard(t)
+	token, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+	first, second := maskedIn(t, g, token), maskedIn(t, g, token)
+	if first == second {
+		t.Errorf("two masks of one token are both %q", first)
+	}
+	if strings.Contains(first, token) {
+		t.Errorf("masked %q still holds the token", first)
+	}
+	for _, masked := range []string{first, second} {
+		if got := Unmask(masked); got != token {
+			t.Errorf("Unmask(%q) = %q, want %q", masked, got, token)
+		}
+	}
+}
+
+// Only the value attribute Personalise filled is masked: the token anywhere
+// else in the page is left as it is.
+func TestMask_OnlyTheField(t *testing.T) {
+	g := guard(t)
+	body := `<p>token</p><input value="token">`
+	if got := string(g.Mask([]byte(body), "token")); !strings.HasPrefix(got, `<p>token</p><input value="~`) {
+		t.Errorf("Mask = %q", got)
+	}
+}
+
+// A masked token is accepted from the form and from the header; the token
+// itself still is, so a form served before the masking still submits.
+func TestVerify_AcceptsMaskedAndUnmasked(t *testing.T) {
+	g := guard(t)
+	token, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+	for _, submitted := range []string{maskedIn(t, g, token), token} {
+		if err := g.Verify(postWith(t, token, submitted)); err != nil {
+			t.Errorf("Verify(form %q) = %v, want nil", submitted, err)
+		}
+		req := postWith(t, token, "")
+		req.Header.Set(DefaultHeaderName, submitted)
+		if err := g.VerifyHeader(req); err != nil {
+			t.Errorf("VerifyHeader(%q) = %v, want nil", submitted, err)
+		}
+	}
+}
+
+// A masked value that does not unmask to the cookie's token is refused: one
+// tampered with, one that does not decode, another reader's.
+func TestVerify_RefusesABadMask(t *testing.T) {
+	g := guard(t)
+	token, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+	other, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
+	masked := maskedIn(t, g, token)
+	tampered := masked[:len(masked)-1] + map[bool]string{true: "A", false: "B"}[masked[len(masked)-1] != 'A']
+	for _, submitted := range []string{tampered, maskedPrefix + "!!!", maskedPrefix + "QUJD", maskedIn(t, g, other)} {
+		if err := g.Verify(postWith(t, token, submitted)); err == nil {
+			t.Errorf("Verify(%q) = nil, want a refusal", submitted)
+		}
+	}
+}
