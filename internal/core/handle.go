@@ -22,8 +22,10 @@ var ErrNilHandler = errors.New("collage: nil handler")
 // wrap it in http.StripPrefix if it expects otherwise — and does nothing to it: no
 // forgery check, no body limit, no cache. What it does is what it does before any
 // request is routed: the plugins' request hooks, the span, the metrics, the panic
-// guard, the clean-path redirect and the encoded-slash 404, the baseline
-// security headers, and draining it on shutdown.
+// guard, the clean-path redirect (and the 404 for an encoded slash in a path
+// that needed cleaning), the baseline security headers, and draining it on
+// shutdown. An encoded slash in an otherwise clean path reaches the handler: its
+// r.URL.Path holds the decoded "/", as it would under net/http alone.
 //
 // No middleware runs for it — neither what Use added nor any plugin's, a
 // session, a rate limit, a basicauth, a compressor. The handler is the

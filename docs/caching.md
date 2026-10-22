@@ -689,6 +689,13 @@ one number — an application that sizes it sizes both, each counted separately.
 entries leave by eviction or `PurgeTags` — an expired or invalidated entry stays,
 as stale.
 
+`MaxBytes` does not bound the data store: it holds Go values, whose size is the
+application's. So build a `collage.Cached` key from what the application chose —
+an id it found in its own database, a page number it capped — and not from raw
+request input. A key from a query parameter is one entry per value a visitor
+invents, each as large as what the handler fetched for it, up to `MaxEntries` of
+them, and on a `"disk"` cache they outlive the process.
+
 ## Supplying your own cache
 
 Set `CacheConfig.Store`. A non-nil `Store` is used exactly as given, and

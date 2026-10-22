@@ -179,10 +179,13 @@ Collage does nothing to it. **No forgery check, no body limit, no cache**: what 
 handler accepts is yours to decide, and yours to get right. What it does get is
 what happens to every request before it is routed — the plugins' request hooks (an
 incoming trace), the span, the metrics, the panic guard, the clean-path redirect
-and encoded-slash 404 [below](#paths-are-cleaned-first), the baseline
+(and the 404 for an encoded slash in a path that needed cleaning)
+[below](#paths-are-cleaned-first), the baseline
 `X-Content-Type-Options` and `X-Frame-Options` headers — and draining on shutdown.
 A 5xx it answers with is reported to the error hooks; its 4xx answers are its own
-business.
+business. An encoded slash in an otherwise clean path, `/api%2Fx`, reaches the
+handler as net/http would hand it over, with `r.URL.Path` holding the decoded `/`;
+a page refuses it.
 
 ### No middleware, unless you ask
 
