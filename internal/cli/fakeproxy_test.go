@@ -93,7 +93,7 @@ func fakeProxy(t *testing.T, mods ...fakeModule) {
 	t.Setenv("GOPROXY", "file://"+filepath.ToSlash(root))
 	t.Setenv("GOSUMDB", "off")
 	t.Setenv("GONOSUMDB", "*")
-	t.Setenv("GOFLAGS", "-mod=mod -modcacherw")
+	t.Setenv("GOFLAGS", testGoFlags+" -mod=mod -modcacherw")
 	t.Setenv("GOMODCACHE", t.TempDir())
 	t.Setenv("GOTOOLCHAIN", "local")
 	t.Setenv("GOWORK", "off")

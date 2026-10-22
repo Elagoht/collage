@@ -184,7 +184,7 @@ func TestPluginCheck_Run(t *testing.T) {
 			if tc.vendor {
 				// Without the fake proxy's -mod=mod, so the go tool reads the
 				// vendor directory as it would in a real repository.
-				t.Setenv("GOFLAGS", "-modcacherw")
+				t.Setenv("GOFLAGS", testGoFlags+" -modcacherw")
 				// A repository's go.sum is complete; go mod vendor alone
 				// leaves out the module nothing imports.
 				for _, args := range [][]string{{"mod", "download", "github.com/acme/collage-other"}, {"mod", "vendor"}} {
