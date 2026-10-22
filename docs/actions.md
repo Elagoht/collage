@@ -235,6 +235,14 @@ for one action, and a negative value for unbounded. A body past the limit is a 4
 with forgery protection on as well, where reading the token means reading the body:
 an oversized form is refused for its size, not reported as a forged one.
 
+The body is bounded before anything reads it — middleware, a page guard, an
+action's guard, a data handler — with or without middleware, and a page's route is
+held to `Server.MaxBodyBytes` as an action is. A body whose `Content-Length` is over
+the limit is refused before the forgery check and the handler, so a handler without
+a forgery check is never run on a form cut short; a chunked body that runs into the
+limit is refused after the handler instead. The files a multipart form spilled to
+disk are removed once the request is answered, whoever parsed it.
+
 A size rule of the action's own — a photo over 5 MB refused with a message on the
 form — is reached only under a limit above it: below, collage's 413 answers first
 and the message is never shown. Give the action room for the file and the rest of

@@ -1,5 +1,55 @@
 # Changelog
 
+## v0.71.0
+
+Security fixes from an audit of every surface a client reaches, after the
+2026-10-21 PHP, Node.js, NGINX and Go security releases. Build with Go 1.26.10
+or later: it is the release that fixes CVE-2026-111943 (crypto/x509, the
+compromised eMudhra intermediates), and Go 1.26.9 fixed net/http,
+mime/multipart, crypto/tls and html/template issues before it.
+
+### Security
+
+- **A request body is bounded before anything reads it, middleware or not.**
+  Without middleware, nothing bounded the body before a page guard, an action's
+  guard or a data handler read it, so a guard calling `FormValue` read past
+  `Server.MaxBodyBytes` (4 MiB by default) — 40 MiB in the report. The body is
+  now bounded on every route but a bare `Handle`, and before an action's guards.
+- **Multipart files spilled to disk are removed.** net/http removes them only for
+  the request it made itself, and collage hands every handler a copy. A form
+  parsed by a guard, a data handler or a middleware left its temporary files
+  behind for good, a refusing guard included: a whole body's worth of disk per
+  request, for anyone who sent one. They are removed when the request is
+  answered.
+- **An action is not run on a form cut down to its limit.** A body whose
+  `Content-Length` is over the limit is refused with 413 before the forgery
+  check and the handler; a chunked one that runs into the limit is refused
+  after the handler rather than answered as a success. A middleware that buffers
+  the body and replaces it (`io.ReadAll`, then `io.NopCloser`) no longer hides
+  that the body it read was too large.
+- **A `Shared` fragment render sees nothing of the reader it is made for.**
+  `App.RenderFragment` reported a cacheable page's fragment `Shared` but
+  rendered it from the reader's own request, cookies and context values
+  included, and collage-live pushed that one render to every reader of the URL:
+  one reader's data, and one host's origin, to the others. A render reported
+  `Shared` is now made the way the page cache makes its one render, from a
+  request with the reader's cookies, headers and context values stripped; a
+  request carrying a `collage.Vary` value is rendered per reader.
+  `FragmentRender.Shared` now means the same for readers on the same host.
+- **`Collage-Location` carries only a web address.** A script that asked with
+  `Collage-Fetch` navigates with `location.assign`, which runs a `javascript:`
+  URL in the page where a browser following a `Location` refuses to. An action
+  redirecting to a `javascript:`, `data:` or other non-http address is now
+  answered as the 303 itself, which fetch will not follow.
+
+### Changed
+
+- Page routes are held to `Server.MaxBodyBytes` as actions are, with or without
+  middleware. A page has no use for a body; one sent with a GET is read only if
+  something reads it.
+- A body whose `Content-Length` is over an action's limit is refused before the
+  forgery check, where it was refused when the check read past the limit.
+
 ## v0.70.1
 
 Only the CLI changed; a project needs no new collage version.
