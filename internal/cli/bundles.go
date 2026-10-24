@@ -27,9 +27,9 @@ var bundles = []bundle{
 	{"site", "a public site's search and share basics", []string{
 		"elagoht/robots", "elagoht/sitemap", "elagoht/meta", "elagoht/jsonld", "elagoht/favicon",
 	}},
-	{"blog", "@site, and posts written in Markdown", []string{
+	{"blog", "@site, and a feed, contents and share cards", []string{
 		"elagoht/robots", "elagoht/sitemap", "elagoht/meta", "elagoht/jsonld", "elagoht/favicon",
-		"elagoht/markdown", "elagoht/feed", "elagoht/toc", "elagoht/highlight", "elagoht/ogimage",
+		"elagoht/feed", "elagoht/toc", "elagoht/ogimage",
 	}},
 	{"forms", "forms, and state kept in cookies", []string{
 		"elagoht/session", "elagoht/flash", "elagoht/validate", "elagoht/honeypot",

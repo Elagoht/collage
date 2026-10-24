@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.75.0
+
+### Changed
+
+- **`@blog` no longer adds elagoht/markdown or elagoht/highlight.** It is
+  `@site` with feed, toc and ogimage; a blog whose posts are Markdown files, or
+  that shows code, adds them itself:
+  `collage plugin add elagoht/markdown elagoht/highlight`.
+
+### Fixed
+
+- A forgery-token test failed about one run in four: it tampered with a masked
+  token's last character, whose low bits are padding the decoder drops.
+
 ## v0.74.0
 
 From the system monitor trial.

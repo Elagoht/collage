@@ -626,7 +626,10 @@ func TestVerify_RefusesABadMask(t *testing.T) {
 	token, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
 	other, _, _ := g.TokenFor(httptest.NewRequest(http.MethodGet, "/", nil))
 	masked := maskedIn(t, g, token)
-	tampered := masked[:len(masked)-1] + map[bool]string{true: "A", false: "B"}[masked[len(masked)-1] != 'A']
+	// A character in the middle: the last one's low bits may be padding, which
+	// decoding drops, so changing it can leave the bytes as they were.
+	i := len(masked) / 2
+	tampered := masked[:i] + map[bool]string{true: "A", false: "B"}[masked[i] != 'A'] + masked[i+1:]
 	for _, submitted := range []string{tampered, maskedPrefix + "!!!", maskedPrefix + "QUJD", maskedIn(t, g, other)} {
 		if err := g.Verify(postWith(t, token, submitted)); err == nil {
 			t.Errorf("Verify(%q) = nil, want a refusal", submitted)
