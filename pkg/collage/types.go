@@ -58,7 +58,8 @@ const (
 	SlotSingle = types.SlotSingle
 )
 
-// GuardFunc decides whether a request may reach what it guards. See
+// GuardFunc decides whether a request may reach what it guards. The route's
+// parameters are on the request, r.PathValue("slug"). See
 // FragmentBuilder.WithGuard.
 type GuardFunc = types.GuardFunc
 

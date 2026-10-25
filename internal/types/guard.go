@@ -11,6 +11,10 @@ import (
 // from cache, so a blocked reader never touches the page's render or its cache
 // entry.
 //
+// The route's parameters are on the request: r.PathValue("slug") is the
+// {slug} of the page's pattern, in whichever locale's path the request came in
+// on, and a catch-all {rest...} is r.PathValue("rest").
+//
 // A nil decision with a nil error allows the request. A non-nil decision
 // blocks it: a redirect — a 3xx Status with a Location — or a bare refusal
 // status such as 401 or 403. An error fails the request; it is not a refusal,

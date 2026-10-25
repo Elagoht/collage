@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.76.0
+
+From the cookbook trial.
+
+### Added
+
+- **A guard reads the route's parameters with `r.PathValue`.** Once the request
+  is routed, collage puts the matched pattern's parameters on it as a
+  `ServeMux` route's are: `r.PathValue("slug")` in a guard is the `{slug}` of
+  `/recipes/{slug}/edit`, or of the Turkish `/tr/tarifler/{slug}/duzenle`, and a
+  catch-all `{rest...}` is `r.PathValue("rest")`. A guard no longer has to line
+  `RouteInfo(ctx).Pattern` up with the path itself. An action reads them the
+  same way from `rc.Request`, beside `rc.Param`.
+
 ## v0.75.0
 
 ### Changed

@@ -778,6 +778,13 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 		return status
 	}
 
+	// The route's parameters, on the request as a ServeMux route's are: a guard,
+	// handed the request and no RenderContext, reads {slug} with
+	// r.PathValue("slug"), and so does an action through rc.Request.
+	for name, value := range match.PathParams {
+		r.SetPathValue(name, value)
+	}
+
 	// Checked before the not-found fallback below, deliberately: on a successful
 	// document match, Page is nil by MatchResult's own contract (exactly one of
 	// Page and Document is set), and the nil-Page check below would otherwise
