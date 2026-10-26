@@ -81,7 +81,11 @@ func expandRefs(args []string) ([]namedRef, error) {
 		if name, ok := strings.CutPrefix(arg, "@"); ok {
 			b, found := findBundle(name)
 			if !found {
-				return nil, fmt.Errorf("%q is not a bundle; the bundles are %s", arg, bundleNames())
+				var names []string
+				for _, b := range bundles {
+					names = append(names, b.Name)
+				}
+				return nil, fmt.Errorf("%q is not a bundle; the bundles are %s%s", arg, bundleNames(), prefixedDidYouMean("@", name, names))
 			}
 			for _, p := range b.Plugins {
 				ref, err := plugincontract.ParseRef(p)

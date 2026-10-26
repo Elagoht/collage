@@ -94,7 +94,7 @@ func (c *CLI) runDev(ctx context.Context, args []string) int {
 	fs.SetOutput(c.stderr())
 	fs.Usage = func() { fmt.Fprint(c.stderr(), devUsage) }
 
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}

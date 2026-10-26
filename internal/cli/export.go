@@ -41,7 +41,7 @@ func (c *CLI) runExport(ctx context.Context, args []string) int {
 	out := fs.String("out", "dist", "directory the project renders static files into")
 	clean := fs.Bool("clean", false, "remove -out's existing contents before building")
 
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}

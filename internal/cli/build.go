@@ -56,7 +56,7 @@ func (c *CLI) runBuild(ctx context.Context, args []string) int {
 	goarch := fs.String("arch", runtime.GOARCH, "target architecture")
 	interactive := fs.Bool("i", false, "ask which extra files to write beside the binary")
 
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}

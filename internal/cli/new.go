@@ -111,7 +111,7 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 	// ever runs, so their order relative to each other does not matter.
 	positional, flagArgs := splitPositional(args, newValueFlags)
 
-	if err := fs.Parse(flagArgs); err != nil {
+	if err := parseFlags(fs, flagArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
@@ -126,7 +126,8 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 	name := positional[0]
 	variant := *template
 	if variant != variantDemo && variant != variantMinimal {
-		fmt.Fprintf(c.stderr(), "%v: %q; the templates are %q and %q\n", ErrUnknownTemplate, variant, variantMinimal, variantDemo)
+		fmt.Fprintf(c.stderr(), "%v: %q; the templates are %q and %q%s\n", ErrUnknownTemplate, variant, variantMinimal, variantDemo,
+			didYouMean(variant, []string{variantMinimal, variantDemo}))
 		return 2
 	}
 

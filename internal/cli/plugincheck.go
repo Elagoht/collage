@@ -27,7 +27,7 @@ func (c *CLI) runPluginCheck(ctx context.Context, args []string) int {
 	run := flags.Bool("run", false, "also run New as add would call it and check Name() against collage.json")
 
 	positional, flagArgs := splitPositional(args, map[string]bool{})
-	if err := flags.Parse(flagArgs); err != nil {
+	if err := parseFlags(flags, flagArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}

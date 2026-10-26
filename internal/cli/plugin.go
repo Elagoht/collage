@@ -101,7 +101,7 @@ func (c *CLI) runPlugin(ctx context.Context, args []string) int {
 	case "check":
 		return c.runPluginCheck(ctx, args[1:])
 	}
-	fmt.Fprintf(c.stderr(), "collage: plugin: unknown subcommand %q\n\n", args[0])
+	fmt.Fprintf(c.stderr(), "collage: plugin: unknown subcommand %q%s\n\n", args[0], didYouMean(args[0], []string{"add", "del", "check", "help"}))
 	fmt.Fprint(c.stderr(), pluginUsage())
 	return 2
 }
@@ -115,7 +115,7 @@ func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 	dir := flags.String("dir", ".", "the directory of the project's package main")
 
 	positional, flagArgs := splitPositional(args, pluginValueFlags)
-	if err := flags.Parse(flagArgs); err != nil {
+	if err := parseFlags(flags, flagArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
@@ -171,7 +171,7 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 	}
 	path, err := c.goGet(ctx, dir, ref)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w%s", err, bundledPluginHint(ref))
 	}
 	info, err := c.locateModule(ctx, dir, path)
 	if err != nil {
@@ -282,6 +282,28 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 		Funcs:       p.Manifest.TemplateFunctions,
 		ConfigAdded: configAdded,
 	}), nil
+}
+
+// bundledPluginHint is didYouMean for a short ref go get could not fetch,
+// among the plugins the bundles name: the only plugin names this CLI knows
+// without asking the network. It is "" for a full module path, and for a
+// plugin the bundles name themselves, whose fetch failed for some other
+// reason than its spelling. It is asked only once go get has failed, since a
+// plugin no bundle names may well exist.
+func bundledPluginHint(ref plugincontract.Ref) string {
+	if ref.Short == "" {
+		return ""
+	}
+	var known []string
+	for _, b := range bundles {
+		for _, p := range b.Plugins {
+			if p == ref.Short {
+				return ""
+			}
+			known = append(known, p)
+		}
+	}
+	return didYouMean(ref.Short, known)
 }
 
 // declaredPath is the go tool's complaint that a module's go.mod names it
@@ -674,7 +696,7 @@ func (c *CLI) runPluginDel(ctx context.Context, args []string) int {
 	dir := flags.String("dir", ".", "the directory of the project's package main")
 
 	positional, flagArgs := splitPositional(args, pluginValueFlags)
-	if err := flags.Parse(flagArgs); err != nil {
+	if err := parseFlags(flags, flagArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
@@ -742,7 +764,8 @@ func (c *CLI) pluginDel(ctx context.Context, dir string, ref plugincontract.Ref,
 		if len(have) > 0 {
 			shown = strings.Join(have, ", ")
 		}
-		return "", "", &notAddedError{name: firstNonEmpty(ref.Short, ref.Path), have: shown}
+		name := firstNonEmpty(ref.Short, ref.Path)
+		return "", "", &notAddedError{name: name, have: shown, hint: didYouMean(name, have)}
 	}
 	t := entries[target]
 	if ref.Short == "" && t.Err == nil {

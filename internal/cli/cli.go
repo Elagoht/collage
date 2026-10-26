@@ -188,7 +188,7 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return 0
 	}
 
-	fmt.Fprintf(c.stderr(), "%s: %q\n", ErrUnknownCommand, name)
+	fmt.Fprintf(c.stderr(), "%s: %q%s\n", ErrUnknownCommand, name, didYouMean(name, c.commandNames()))
 	fmt.Fprintln(c.stderr())
 	c.printUsage(c.stderr())
 	return 2
@@ -334,7 +334,20 @@ func (c *CLI) printCommandHelp(w io.Writer, name string) error {
 		return nil
 	}
 
-	return fmt.Errorf("%w: %q", ErrUnknownCommand, name)
+	return fmt.Errorf("%w: %q%s", ErrUnknownCommand, name, didYouMean(name, c.commandNames()))
+}
+
+// commandNames is every command Run dispatches: the built-ins, then
+// CLI.Commands.
+func (c *CLI) commandNames() []string {
+	names := make([]string, 0, len(builtins)+len(c.Commands))
+	for _, b := range builtins {
+		names = append(names, b.name)
+	}
+	for _, cmd := range c.Commands {
+		names = append(names, cmd.Name)
+	}
+	return names
 }
 
 // stdout returns c.Stdout, or os.Stdout when it is nil.

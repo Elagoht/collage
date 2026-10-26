@@ -25,6 +25,12 @@ collage help [command]
 Exit codes: `0` on success, `2` for a usage error (no command, an unknown
 command, a malformed plugin command), `1` for a command that parsed but failed.
 
+A mistyped name the CLI knows the valid set of — a command, a subcommand, an
+`add` kind, a flag, a `--template`, a `@bundle`, a plugin a bundle names or
+`plugins.go` has — ends its error line with the closest one:
+`collage: unknown command: "chek" (did you mean "check"?)`. A name close to
+none of them gets the error alone, and the exit code is the same either way.
+
 ## `build` and `export`
 
 They produce the two different things a project can be deployed as.

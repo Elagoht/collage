@@ -151,14 +151,19 @@ func (c *CLI) runAdd(args []string) int {
 	dir := fs.String("dir", ".", "the project")
 
 	positional, flagArgs := splitPositional(args, addValueFlags)
-	if err := fs.Parse(flagArgs); err != nil {
+	if err := parseFlags(fs, flagArgs); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}
 		return 2
 	}
 	if len(positional) != 2 || !slices.Contains(addKinds, positional[0]) {
-		fmt.Fprintf(c.stderr(), "%v: want a kind (%s) and a name\n\n", ErrAddUsage, strings.Join(addKinds, ", "))
+		hint := ""
+		if len(positional) > 0 {
+			// "" for a kind that exists: then only the name was missing.
+			hint = didYouMean(positional[0], addKinds)
+		}
+		fmt.Fprintf(c.stderr(), "%v: want a kind (%s) and a name%s\n\n", ErrAddUsage, strings.Join(addKinds, ", "), hint)
 		fs.Usage()
 		return 2
 	}

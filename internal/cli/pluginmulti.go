@@ -18,10 +18,12 @@ import (
 type notAddedError struct {
 	name string
 	have string // what plugins.go has, for the message
+	// hint is didYouMean's answer for name among what plugins.go has, or "".
+	hint string
 }
 
 func (e *notAddedError) Error() string {
-	return fmt.Sprintf("%s is not in plugins.go; it has: %s", e.name, e.have)
+	return fmt.Sprintf("%s is not in plugins.go; it has: %s%s", e.name, e.have, e.hint)
 }
 
 // requiredError is "plugin del"'s refusal of a plugin another one requires;

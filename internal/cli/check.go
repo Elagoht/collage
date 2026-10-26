@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 )
 
 const checkUsage = `Usage: collage check [-json]
@@ -40,7 +41,12 @@ func (c *CLI) runCheck(ctx context.Context, args []string) int {
 	case len(args) == 1 && (args[0] == "-json" || args[0] == "--json"):
 		command = append(command, "-json")
 	case len(args) != 0:
-		fmt.Fprintln(c.stderr(), "collage: check takes no arguments but -json")
+		hint := ""
+		if name, ok := strings.CutPrefix(args[0], "-"); ok && len(args) == 1 {
+			// check reads its one flag by hand, so it suggests it by hand.
+			hint = prefixedDidYouMean("-", strings.TrimPrefix(name, "-"), []string{"json"})
+		}
+		fmt.Fprintln(c.stderr(), "collage: check takes no arguments but -json"+hint)
 		fmt.Fprintln(c.stderr())
 		fmt.Fprint(c.stderr(), checkUsage)
 		return 2

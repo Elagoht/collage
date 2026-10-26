@@ -49,7 +49,7 @@ func (c *CLI) runServe(ctx context.Context, args []string) int {
 	// can be up at the same time — which is exactly when somebody compares them.
 	port := fs.Int("port", 4000, "port to listen on")
 
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}

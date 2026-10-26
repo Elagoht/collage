@@ -11,6 +11,13 @@
   the section between its markers and refreshes it on the next run; the
   project's own rules around it are kept. A `CLAUDE.md` importing it is written
   when the project has none.
+- **The CLI suggests what you meant.** A mistyped command, subcommand, `add`
+  kind, flag, `--template`, `@bundle`, or plugin (one a bundle names, for
+  `plugin add`; one `plugins.go` has, for `plugin del`) ends its error with
+  the closest valid name: `collage chek` says
+  `unknown command: "chek" (did you mean "check"?)`. It uses the same rule as
+  the template checker's suggestions; nothing close, nothing added, and exit
+  codes are unchanged.
 
 ### Changed
 
