@@ -36,8 +36,9 @@
 
 ### Changed
 
-- **`ai`, `completion`, `man` and `__complete` are reserved command names.** A
-  plugin command by one of them is refused, as one named after any built-in is.
+- **`ai`, `completion`, `man` and `__complete` are built-in `collage`
+  commands.** A command a project registers with `app.RegisterCommand` runs
+  through the project's own binary (`go run . <name>`), so it is not affected.
 - **A plugin cannot register a template function under a built-in's name.**
   `AddTemplateFunc` refuses it with `ErrDuplicateTemplateFunc`, as
   `AddRenderFunc` already did; it used to replace the built-in silently. No

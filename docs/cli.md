@@ -757,8 +757,9 @@ for every directory on `PATH`, so `man collage` works with nothing else set up. 
 says so when the binary is not on `PATH`, or when `MANPATH` is set without the
 empty entry that keeps those directories in.
 
-`completion`, `man` and `__complete` are reserved: a plugin command by one of those
-names is refused, as for every built-in.
+`completion`, `man` and the hidden `__complete` are built-in `collage` commands. A
+command a project registers with `app.RegisterCommand` runs through the project's
+own binary, `go run . <name>`, and is not affected by them.
 
 ## `collage ai`
 
