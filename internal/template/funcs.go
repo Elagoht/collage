@@ -83,6 +83,15 @@ func DefaultFuncs() template.FuncMap {
 	}
 }
 
+// RenderBound lists the built-ins the render engine binds anew for every render,
+// because each needs that render: its slots, its request, its locale. A function
+// an application registers under one of these names is never the one that runs.
+var RenderBound = []string{
+	"slot", "hoist", "asset", "stylesheet", "csrfToken",
+	"pageURL", "pageURLIn", "localeURL", "actionURL", "fragmentURL", "fragmentURLIn",
+	"withQuery",
+}
+
 // pageURLPlaceholder, pageURLInPlaceholder, actionURLPlaceholder and
 // localeURLPlaceholder are the parse-time stand-ins for the URL functions, which
 // need the application's routes and the render's locale and are bound per render.

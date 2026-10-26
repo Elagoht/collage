@@ -165,6 +165,10 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 						header := http.Header{"Cache-Control": []string{"no-store"}}
 						return &types.ActionResult{Status: decision.Status, Location: decision.Location, Header: header}, nil
 					}
+					// A part of the page that opened it, so its render knows
+					// that page: withQuery and localeURL link the page, not
+					// the bare fragment's URL.
+					rc.Page = page
 					return &types.ActionResult{Fragment: target}, nil
 				},
 			}

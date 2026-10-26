@@ -541,6 +541,11 @@ func New(cfg Config) (*App, error) {
 	// application always wins a name a plugin also claims: it is the party that can
 	// see both and decide, and a plugin silently shadowing a function the templates
 	// were written against is not a failure anyone would trace back here.
+	for _, name := range template.RenderBound {
+		if _, mine := cfg.Template.Funcs[name]; mine {
+			logger.Warn("collage: Config.Template.Funcs names a function bound for every render; yours is never called", "func", name)
+		}
+	}
 	funcs := make(map[string]any, len(app.pluginFuncs)+len(cfg.Template.Funcs)) // any: html/template.FuncMap's own value type
 	maps.Copy(funcs, app.pluginFuncs)
 	maps.Copy(funcs, cfg.Template.Funcs)

@@ -894,7 +894,9 @@ request does.
 is written as it is (`<`, `>` and `&` stay `\u003c`-escaped, so it cannot close the
 script), and anywhere else it is escaped like text. `withQuery` starts from the
 request the render sees: on a cached page that is the path and only the query
-parameters in its cache key, never a reader's other ones.
+parameters in its cache key, never a reader's other ones. Its path is the page's
+own URL, so a link inside a fragment refreshed from a URL of its own leads to the
+page; in an action at a URL of its own, which has no page, it is the action's URL.
 
 ### Links by name
 
@@ -975,10 +977,11 @@ time but can only call a name that was already in the map when the template was
 parsed, and `New` is where parsing happens — so a template calling a name nobody
 registered fails in `New`, not at the first request, and a name added afterwards is
 never consulted. Overriding a per-render function — `slot`, `hoist`, `asset`,
-`stylesheet`, `csrfToken`, `pageURL`, `pageURLIn`, `localeURL`, `fragmentURL`,
-`fragmentURLIn` — is possible but
-pointless: each needs the render it runs in, so the render engine rebinds them all
-on every render and yours never runs.
+`stylesheet`, `csrfToken`, `pageURL`, `pageURLIn`, `localeURL`, `actionURL`,
+`fragmentURL`, `fragmentURLIn`, `withQuery` — is possible but pointless: each needs
+the render it runs in, so the render engine rebinds them all on every render and
+yours never runs; `New` logs a warning naming it. A plugin cannot take a built-in's
+name at all: `AddTemplateFunc` refuses it with `ErrDuplicateTemplateFunc`.
 
 Anything that needs request state belongs in the data handler rather than in a
 function: that is where the data comes from anyway.

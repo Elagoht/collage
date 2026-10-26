@@ -387,7 +387,7 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 
 		"fragmentURL":   e.fragmentURLFunc(rc),
 		"fragmentURLIn": e.fragmentURLInFunc(),
-		"withQuery":     withQueryFunc(rc),
+		"withQuery":     e.withQueryFunc(rc),
 	}
 	// A plugin's render functions last, bound to this render; the framework's own
 	// names are not theirs to take, and registration refuses a clash.
@@ -669,11 +669,13 @@ func (e *SlotEngine) localeURLFunc(rc *types.RenderContext) func(string) (string
 }
 
 // withQueryFunc is the per-render implementation of {{withQuery "page" 2}}: the
-// URL being rendered with those query parameters set, and one given "" removed.
-// It reads the request the render sees, so a shared render — a cached page, one
-// body for every reader — starts from a URL without the reader's query, only
-// the parameters the page's cache key holds.
-func withQueryFunc(rc *types.RenderContext) func(string, reflect.Value, ...reflect.Value) (string, error) {
+// page being rendered, with the request's query and those parameters set, one
+// given "" removed. The page's own URL rather than the request's, so a link in a
+// fragment refreshed from a URL of its own, or rendered for an action, leads to
+// the page and not to the bare fragment. The query is the request the render
+// sees, so a shared render — a cached page, one body for every reader — starts
+// from the parameters the page's cache key holds, never a reader's others.
+func (e *SlotEngine) withQueryFunc(rc *types.RenderContext) func(string, reflect.Value, ...reflect.Value) (string, error) {
 	return func(key string, value reflect.Value, more ...reflect.Value) (string, error) {
 		if rc.Request == nil || rc.Request.URL == nil {
 			return "", fmt.Errorf("collage: withQuery %q: this render has no request", key)
@@ -699,6 +701,16 @@ func withQueryFunc(rc *types.RenderContext) func(string, reflect.Value, ...refle
 			}
 		}
 		target := rc.Request.URL.EscapedPath()
+		if rc.Page != nil {
+			built, err := e.buildURL(rc.Page.Name, rc.Locale, rc.PathParams)
+			if errors.Is(err, types.ErrNoPathInLocale) && rc.Locale != e.defaultLocale {
+				built, err = e.buildURL(rc.Page.Name, e.defaultLocale, rc.PathParams)
+			}
+			if err != nil {
+				return "", fmt.Errorf("collage: withQuery: %w", err)
+			}
+			target = built
+		}
 		if encoded := query.Encode(); encoded != "" {
 			target += "?" + encoded
 		}

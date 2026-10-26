@@ -18,7 +18,6 @@
   `unknown command: "chek" (did you mean "check"?)`. It uses the same rule as
   the template checker's suggestions; nothing close, nothing added, and exit
   codes are unchanged.
-
 - **Built-in template functions for everyday work:** `json` and `pre` (a value as
   JSON, two-space indented by default; `pre` puts it in an escaped `<pre>` for
   looking at what a template was given), integer `add` `sub` `mul` `div` `mod`
@@ -26,11 +25,18 @@
   `hasPrefix` `hasSuffix` `split` `truncate` (characters, not bytes), `first`
   `last` `seq` `keys` `hasKey`, `dig` for a nested value, `pathEscape`, and
   `withQuery` for the current URL with query parameters set or removed. All are
-  typed, so the template checker judges their arguments. A plugin that registers
-  a template function under one of these names now collides with the built-in.
+  typed, so the template checker judges their arguments.
 
 ### Changed
 
+- **A plugin cannot register a template function under a built-in's name.**
+  `AddTemplateFunc` refuses it with `ErrDuplicateTemplateFunc`, as
+  `AddRenderFunc` already did; it used to replace the built-in silently. No
+  elagoht plugin uses one of these names. `Config.Template.Funcs` may still
+  replace a built-in, and `New` now warns when it names one bound for every
+  render (`pageURL`, `withQuery`…), whose replacement never runs.
+- **A fragment served at a URL its page opened for it renders with that page as
+  `rc.Page`**, so `localeURL` and `withQuery` in it link the page.
 - **The scaffold keeps page and fragment markup inline; only layouts are
   files.** `templates/pages/` is gone from both templates: the home page (and the
   demo's features page) is a `collage.InlineHTML` const in its fragment's Go

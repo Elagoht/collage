@@ -262,7 +262,13 @@ func dig(v reflect.Value, path ...string) reflect.Value {
 			if !ok || !field.IsExported() {
 				return reflect.Value{}
 			}
-			cur = cur.FieldByIndex(field.Index)
+			// A promoted field behind a nil embedded pointer is a path that
+			// leads nowhere too.
+			next, err := cur.FieldByIndexErr(field.Index)
+			if err != nil {
+				return reflect.Value{}
+			}
+			cur = next
 		default:
 			return reflect.Value{}
 		}

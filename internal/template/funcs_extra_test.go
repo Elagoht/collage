@@ -200,3 +200,18 @@ func TestWithQueryPlaceholder(t *testing.T) {
 		t.Errorf("withQuery outside a render did not fail")
 	}
 }
+
+type digBase struct{ ID string }
+
+type digWrapper struct{ *digBase }
+
+// A promoted field through a nil embedded pointer is a path that leads
+// nowhere, not a failed render.
+func TestDig_NilEmbeddedPointer(t *testing.T) {
+	if got := mustRender(t, `{{dig . "ID"}}`, digWrapper{}); got != "" {
+		t.Errorf("dig through a nil embedded pointer = %q, want nothing", got)
+	}
+	if got := mustRender(t, `{{dig . "ID"}}`, digWrapper{&digBase{ID: "7"}}); got != "7" {
+		t.Errorf("dig through an embedded pointer = %q, want 7", got)
+	}
+}

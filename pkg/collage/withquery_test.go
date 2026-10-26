@@ -87,3 +87,27 @@ func TestWithQuery_BadValue(t *testing.T) {
 		t.Errorf("GET /x = %d; a float in withQuery must fail the render", rec.Code)
 	}
 }
+
+// A fragment a page opens at a URL of its own renders the page's links: a
+// pagination link inside it leads to the page, not to the bare fragment.
+func TestWithQuery_FragmentPathLinksThePage(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server: collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{
+			"t/results.html": {Data: []byte(`<a id="next" href="{{withQuery "page" 2}}">next</a>`)},
+		}, Root: "t"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	results := collage.NewFragment("results", "results.html").Build()
+	page := collage.NewPage("search").WithContent(results).WithPath("en", "/search").
+		WithFragmentPath("en", "/search/results", results).Dynamic().Build()
+	if err := app.RegisterPage(page); err != nil {
+		t.Fatal(err)
+	}
+	got := body(t, app.Handler(), "/search/results?q=a")
+	if !strings.Contains(got, `href="/search?page=2&amp;q=a"`) {
+		t.Errorf("fragment path link:\n%s\nwant /search?page=2&amp;q=a", got)
+	}
+}

@@ -200,6 +200,12 @@ func (h *configHostView) AddTemplateFunc(name string, fn any) error { // any: re
 	if _, taken := h.app.pluginFuncs[name]; taken {
 		return fmt.Errorf("%w: %q", plugin.ErrDuplicateTemplateFunc, name)
 	}
+	// A plugin's function under a built-in's name would replace the built-in
+	// every template was written against, without a word; AddRenderFunc refuses
+	// the same names.
+	if _, reserved := template.DefaultFuncs()[name]; reserved {
+		return fmt.Errorf("%w: %q is the framework's own", plugin.ErrDuplicateTemplateFunc, name)
+	}
 	h.app.pluginFuncs[name] = fn
 	return nil
 }

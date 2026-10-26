@@ -254,10 +254,10 @@ type TemplateConfig struct {
 	//
 	// Overriding a per-render function — slot, hoist, asset, stylesheet,
 	// csrfToken, pageURL, pageURLIn, localeURL, actionURL, fragmentURL,
-	// fragmentURLIn — is possible but pointless: each needs the render it runs
-	// in, so the render engine rebinds all of them on
-	// every render, and whatever is registered here is never the implementation
-	// that runs.
+	// fragmentURLIn, withQuery — is possible but pointless: each needs the render
+	// it runs in, so the render engine rebinds all of them on every render, and
+	// whatever is registered here is never the implementation that runs. New logs
+	// a warning naming each one it was given.
 	Funcs template.FuncMap
 	// Extension selects which files under Root are templates: only a file ending in
 	// it is parsed. It is not added to or stripped from names — a template's name is

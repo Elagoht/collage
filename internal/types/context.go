@@ -20,6 +20,7 @@ type RenderContext struct {
 	// Page is the page being rendered. In an action's handler it is the page whose
 	// URL the action answers on — the page a form posted to, which is what a
 	// validation failure answers with — and nil for an action at a URL of its own.
+	// A fragment served at a URL its page opened for it renders with that page.
 	Page *Page
 	// values are what this render's fragments share through Key.Set and
 	// Key.Get. A pointer, so the copies WithContext and WithFragment make all
