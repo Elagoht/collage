@@ -1,4 +1,7 @@
-package typecheck
+// Package suggest finds the name someone most likely meant when they wrote one
+// that does not exist: a template's field, a CLI command, a flag. One place, so
+// every "did you mean" in collage agrees on what counts as close.
+package suggest
 
 import (
 	"sort"
@@ -6,11 +9,13 @@ import (
 	"github.com/Elagoht/collage/internal/ascii"
 )
 
-// suggest returns the candidate closest to name: an exact match ignoring case,
+// Closest returns the candidate closest to name: an exact match ignoring case,
 // or the nearest by edit distance (a swap of two letters counting once) within
 // one edit for short names and two for names of five letters or more. Ties go
-// to the alphabetically first. It returns "" when nothing is that close.
-func suggest(name string, candidates []string) string {
+// to the alphabetically first, so the answer does not depend on the order the
+// candidates came in. It returns "" when nothing is that close: a guess further
+// off than that is more often wrong than helpful.
+func Closest(name string, candidates []string) string {
 	limit := 1
 	if len(name) >= 5 {
 		limit = 2

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"text/template/parse"
+
+	"github.com/Elagoht/collage/internal/suggest"
 )
 
 // value is what the checker knows about a value: its type, and whether
@@ -69,7 +71,7 @@ func (w *walker) field(node parse.Node, recv value, name string, argc int) (valu
 			w.report(node, fmt.Sprintf("method %s has a pointer receiver, and this %s is not addressable: pass the data as a pointer, or reach the value through a slice", name, t), "")
 			return
 		}
-		w.report(node, fmt.Sprintf("type %s has no field or method %s", t, name), suggest(name, members(t)))
+		w.report(node, fmt.Sprintf("type %s has no field or method %s", t, name), suggest.Closest(name, members(t)))
 	}
 	switch t.Kind() {
 	case reflect.Struct:
