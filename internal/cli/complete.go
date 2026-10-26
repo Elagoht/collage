@@ -166,6 +166,12 @@ func complete(args []string) (candidates []string, files bool) {
 	}
 	if n := len(rest); n >= 1 && strings.HasPrefix(rest[n-1], "-") && !strings.Contains(rest[n-1], "=") {
 		if f := fs.Lookup(strings.TrimLeft(rest[n-1], "-")); f != nil && !isBoolFlag(f) {
+			// bash hands over a bare "=" as the word right after typing
+			// "--template=", and replaces exactly that word: keep it.
+			if value, ok := strings.CutPrefix(cur, "="); ok {
+				values, files := flagValueCandidates(fs, f.Name, value)
+				return prefixEach("=", values), files
+			}
 			return flagValueCandidates(fs, f.Name, cur)
 		}
 	}

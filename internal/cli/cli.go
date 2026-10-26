@@ -180,6 +180,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.runInspect(ctx, rest)
 	case "check":
 		return c.runCheck(ctx, rest)
+	case "completion":
+		return c.runCompletion(rest)
 	case completeCommand:
 		return c.runComplete(rest)
 	}
@@ -323,6 +325,9 @@ func (c *CLI) printCommandHelp(w io.Writer, name string) error {
 		return nil
 	case "check":
 		fmt.Fprint(w, checkUsage)
+		return nil
+	case "completion":
+		fmt.Fprint(w, completionUsage)
 		return nil
 	case "version":
 		fmt.Fprintln(w, "Usage: collage version")
