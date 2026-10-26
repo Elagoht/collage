@@ -5,7 +5,7 @@ go install github.com/Elagoht/collage/cmd/collage@latest
 ```
 
 ```
-collage new <name> [--template minimal|demo] [--dir path] [--module path] [--force]
+collage new <name> [--template minimal|demo] [--dir path] [--module path] [--force] [--ai]
 collage add <page|fragment|action|document|layout|guard|middleware|command> <[area/]name> [flags]
 collage dev
 collage build [-o path] [-os name] [-arch name] [-i]
@@ -17,6 +17,7 @@ collage check [-json]
 collage plugin add <owner/name | module path>[@version] [-dir dir]
 collage plugin del <owner/name | module path> [-dir dir]
 collage plugin check [-release] [-run] [dir]
+collage ai init [-dir dir]
 collage version
 collage help [command]
 ```
@@ -180,15 +181,16 @@ actions/<area>.go                 action builders, one file per area
 actions/funcs/<area>.go           their handlers
 documents/<name>.go               routes that are not HTML
 data/<domain>/                    state, by domain
-templates/                        the HTML kept in files
+templates/layouts/                the layouts' HTML
 ```
 
 `pages/` and `fragments/pages/` mirror each other by area, and every package in
 them is called `pages` or `fragments`, so a page file imports its content as
 `fragments "<module>/fragments/pages/<area>"` and `routes.go` imports each area's
-pages under an alias, `demopages`. Small fragments keep their markup inline, as a
-`collage.InlineHTML` const beside their data handler; the layout and the larger
-pages keep theirs in `templates/`. An action a page attaches with `WithActionFor`
+pages under an alias, `demopages`. Pages and fragments keep their markup inline,
+as a `collage.InlineHTML` const beside their data handler; layouts keep theirs in
+`templates/layouts/`. In the layout's `<head>`, `{{hoist "head"}}` comes after the
+site's stylesheet, so a stylesheet a fragment hoists is the one that wins. An action a page attaches with `WithActionFor`
 shares the page's name and has no path of its own.
 
 - **`/`** is `Static()`: nothing about it depends on the request, which is what
@@ -202,7 +204,8 @@ shares the page's name and has no path of its own.
 
 Templates and static files are embedded, in `embed.go`, so the binary runs from
 any working directory; development builds leave them out and read the directories
-on disk, so editing a template is visible on the next request. Static files are linked with `{{asset}}`,
+on disk, so editing a layout is visible on the next request; editing a page's
+inline markup is a Go change, which `collage dev` rebuilds for. Static files are linked with `{{asset}}`,
 so they are served content-addressed and `immutable`.
 
 It ships a `.env.example` with `COLLAGE_CSRF_KEY`, `PORT` and `HOST`; copy it to
@@ -718,6 +721,40 @@ contract `add` enforces. The check itself reads only the repository:
 
 These are commands of the `collage` binary. A plugin's own subcommands are
 another thing: see the next section.
+
+## `collage ai`
+
+Writes the rules a coding agent needs to work in a collage project — opencode,
+Codex, Cursor, Claude Code — into the project's `AGENTS.md`:
+
+```
+collage ai init            # in the project
+collage new site --ai      # the same, while scaffolding
+```
+
+The rules say where each kind of file goes (and that `collage add` puts it
+there), that a change to a layout reaches every page under it, how guards reach
+an action, how CSS is hoisted, and which plugin to add instead of writing one.
+They are short on purpose: an agent that has never seen collage, often a small
+model, reads them first and follows them over its own habits.
+
+collage writes only its own section, between two markers:
+
+```markdown
+<!-- collage:begin v0.77.0 — written by `collage ai init`; … -->
+…
+<!-- collage:end -->
+
+## Project rules
+```
+
+Run `collage ai init` again after upgrading collage to refresh that section;
+everything outside the markers — the project's own rules — is kept byte for byte.
+An `AGENTS.md` without the markers gets the section above its text. Markers that
+are not one begin line followed by one end line are refused, and nothing is
+written. A `CLAUDE.md` holding `@AGENTS.md` is written too when the project has
+none, so Claude Code reads the same rules; an existing one is never changed, and
+the command says so when it does not import `AGENTS.md`.
 
 ## Plugin commands
 

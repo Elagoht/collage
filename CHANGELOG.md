@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`collage ai init` and `collage new --ai` write `AGENTS.md`**, the rules a
+  coding agent needs in a collage project: where each kind of file goes, that a
+  layout change reaches every page under it, how guards reach an action, how CSS
+  is hoisted, and which plugin to add instead of writing one. collage owns only
+  the section between its markers and refreshes it on the next run; the
+  project's own rules around it are kept. A `CLAUDE.md` importing it is written
+  when the project has none.
+
+### Changed
+
+- **The scaffold keeps page and fragment markup inline; only layouts are
+  files.** `templates/pages/` is gone from both templates: the home page (and the
+  demo's features page) is a `collage.InlineHTML` const in its fragment's Go
+  file. Editing it is a Go change, which `collage dev` rebuilds for.
+- **`{{hoist "head"}}` comes after the site stylesheet** in both scaffolds'
+  layout, so a stylesheet a fragment hoists wins over the site's at equal
+  specificity. An existing project changes its own layout if it wants the same.
+
 ## v0.76.0
 
 From the cookbook trial.
