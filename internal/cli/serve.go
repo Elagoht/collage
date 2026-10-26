@@ -38,16 +38,23 @@ It serves files. It does not run the project: for that, "collage dev".
   -port n     port to listen on (default 4000)
 `
 
+// defineServeFlags declares serve's flags on fs. runServe parses them;
+// completion and the man page read the same declaration.
+func defineServeFlags(fs *flag.FlagSet) (dir, host *string, port *int) {
+	dir = fs.String("dir", "dist", "directory to serve")
+	host = fs.String("host", "localhost", "interface to listen on")
+	// 4000 rather than 6060, so this and a project running under "collage dev"
+	// can be up at the same time — which is exactly when somebody compares them.
+	port = fs.Int("port", 4000, "port to listen on")
+	return dir, host, port
+}
+
 // runServe implements the "serve" command.
 func (c *CLI) runServe(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(c.stderr())
 	fs.Usage = func() { fmt.Fprint(c.stderr(), serveUsage) }
-	dir := fs.String("dir", "dist", "directory to serve")
-	host := fs.String("host", "localhost", "interface to listen on")
-	// 4000 rather than 6060, so this and a project running under "collage dev"
-	// can be up at the same time — which is exactly when somebody compares them.
-	port := fs.Int("port", 4000, "port to listen on")
+	dir, host, port := defineServeFlags(fs)
 
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

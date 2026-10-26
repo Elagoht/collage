@@ -146,12 +146,18 @@ func (c *CLI) runAI(args []string) int {
 	return 2
 }
 
+// defineAIInitFlags declares "ai init"'s flags on fs. runAIInit parses them;
+// completion and the man page read the same declaration.
+func defineAIInitFlags(fs *flag.FlagSet) (dir *string) {
+	return fs.String("dir", ".", "the project")
+}
+
 // runAIInit implements "ai init".
 func (c *CLI) runAIInit(args []string) int {
 	flags := flag.NewFlagSet("ai init", flag.ContinueOnError)
 	flags.SetOutput(c.stderr())
 	flags.Usage = func() { fmt.Fprint(c.stderr(), aiUsage) }
-	dir := flags.String("dir", ".", "the project")
+	dir := defineAIInitFlags(flags)
 	if err := parseFlags(flags, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0

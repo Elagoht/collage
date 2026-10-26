@@ -18,13 +18,19 @@ import (
 	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
 
+// definePluginCheckFlags declares "plugin check"'s flags on fs. runPluginCheck
+// parses them; completion and the man page read the same declaration.
+func definePluginCheckFlags(fs *flag.FlagSet) (release, run *bool) {
+	return fs.Bool("release", false, "also want a release tag at HEAD"),
+		fs.Bool("run", false, "also run New as add would call it and check Name() against collage.json")
+}
+
 // runPluginCheck implements "plugin check".
 func (c *CLI) runPluginCheck(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("plugin check", flag.ContinueOnError)
 	flags.SetOutput(c.stderr())
 	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage()) }
-	release := flags.Bool("release", false, "also want a release tag at HEAD")
-	run := flags.Bool("run", false, "also run New as add would call it and check Name() against collage.json")
+	release, run := definePluginCheckFlags(flags)
 
 	positional, flagArgs := splitPositional(args, map[string]bool{})
 	if err := parseFlags(flags, flagArgs); err != nil {

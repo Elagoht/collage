@@ -106,13 +106,19 @@ func (c *CLI) runPlugin(ctx context.Context, args []string) int {
 	return 2
 }
 
+// definePluginDirFlag declares the -dir flag "plugin add" and "plugin del"
+// take. They parse it; completion and the man page read the same declaration.
+func definePluginDirFlag(fs *flag.FlagSet) *string {
+	return fs.String("dir", ".", "the directory of the project's package main")
+}
+
 // runPluginAdd implements "plugin add": each plugin is added on its own, and
 // every file it touches is put back as it was when a step of it fails.
 func (c *CLI) runPluginAdd(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("plugin add", flag.ContinueOnError)
 	flags.SetOutput(c.stderr())
 	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage()) }
-	dir := flags.String("dir", ".", "the directory of the project's package main")
+	dir := definePluginDirFlag(flags)
 
 	positional, flagArgs := splitPositional(args, pluginValueFlags)
 	if err := parseFlags(flags, flagArgs); err != nil {
@@ -709,7 +715,7 @@ func (c *CLI) runPluginDel(ctx context.Context, args []string) int {
 	flags := flag.NewFlagSet("plugin del", flag.ContinueOnError)
 	flags.SetOutput(c.stderr())
 	flags.Usage = func() { fmt.Fprint(c.stderr(), pluginUsage()) }
-	dir := flags.String("dir", ".", "the directory of the project's package main")
+	dir := definePluginDirFlag(flags)
 
 	positional, flagArgs := splitPositional(args, pluginValueFlags)
 	if err := parseFlags(flags, flagArgs); err != nil {

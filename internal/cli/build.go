@@ -46,15 +46,30 @@ in a Linux container, so name the target there — "-os linux -arch amd64".
 To render the project to static files instead, see "collage export".
 `
 
+// buildFlags are build's flags, as defineBuildFlags declares them.
+type buildFlags struct {
+	out, goos, goarch *string
+	interactive       *bool
+}
+
+// defineBuildFlags declares build's flags on fs: runBuild parses them, and
+// completion and the man page read them from the same declaration.
+func defineBuildFlags(fs *flag.FlagSet) buildFlags {
+	return buildFlags{
+		out:         fs.String("o", "", `where to write the binary (default "bin/<module name>")`),
+		goos:        fs.String("os", runtime.GOOS, "target operating system"),
+		goarch:      fs.String("arch", runtime.GOARCH, "target architecture"),
+		interactive: fs.Bool("i", false, "ask which extra files to write beside the binary"),
+	}
+}
+
 // runBuild implements the "build" command.
 func (c *CLI) runBuild(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("build", flag.ContinueOnError)
 	fs.SetOutput(c.stderr())
 	fs.Usage = func() { fmt.Fprint(c.stderr(), buildUsage) }
-	out := fs.String("o", "", `where to write the binary (default "bin/<module name>")`)
-	goos := fs.String("os", runtime.GOOS, "target operating system")
-	goarch := fs.String("arch", runtime.GOARCH, "target architecture")
-	interactive := fs.Bool("i", false, "ask which extra files to write beside the binary")
+	opts := defineBuildFlags(fs)
+	out, goos, goarch, interactive := opts.out, opts.goos, opts.goarch, opts.interactive
 
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

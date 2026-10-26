@@ -91,18 +91,35 @@ func collageQuery(version string) string {
 	return v
 }
 
+// newFlags are new's flags, as defineNewFlags declares them.
+type newFlags struct {
+	dir, module, template *string
+	force, ai             *bool
+	with                  *withFlag
+}
+
+// defineNewFlags declares new's flags on fs. runNew parses them; completion and
+// the man page read the same declaration.
+func defineNewFlags(fs *flag.FlagSet) newFlags {
+	opts := newFlags{
+		dir:      fs.String("dir", "", "directory to scaffold into"),
+		module:   fs.String("module", "", "the scaffolded go.mod's module path"),
+		force:    fs.Bool("force", false, "scaffold into a non-empty directory anyway"),
+		ai:       fs.Bool("ai", false, "write AGENTS.md and CLAUDE.md for coding agents"),
+		template: fs.String("template", variantMinimal, "the project to scaffold: minimal or demo"),
+		with:     new(withFlag),
+	}
+	fs.Var(opts.with, "with", "plugins to add: @bundles and plugins, comma-separated")
+	return opts
+}
+
 // runNew implements the "new" command.
 func (c *CLI) runNew(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("new", flag.ContinueOnError)
 	fs.SetOutput(c.stderr())
 	fs.Usage = func() { fmt.Fprint(c.stderr(), newUsage) }
-	dir := fs.String("dir", "", "directory to scaffold into")
-	module := fs.String("module", "", "the scaffolded go.mod's module path")
-	force := fs.Bool("force", false, "scaffold into a non-empty directory anyway")
-	ai := fs.Bool("ai", false, "write AGENTS.md and CLAUDE.md for coding agents")
-	template := fs.String("template", variantMinimal, "the project to scaffold: minimal or demo")
-	var with withFlag
-	fs.Var(&with, "with", "plugins to add: @bundles and plugins, comma-separated")
+	opts := defineNewFlags(fs)
+	dir, module, force, ai, template := opts.dir, opts.module, opts.force, opts.ai, opts.template
 
 	// The stdlib flag package stops parsing at the first non-flag argument, so
 	// a flag placed after <name> — which is exactly how newUsage documents
@@ -132,6 +149,7 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 	}
 
 	withGiven := false
+	with := *opts.with
 	fs.Visit(func(f *flag.Flag) { withGiven = withGiven || f.Name == "with" })
 	if withGiven && len(with) == 0 {
 		fmt.Fprintln(c.stderr(), "collage: new: --with: want a plugin or a @bundle")

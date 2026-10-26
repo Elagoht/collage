@@ -59,8 +59,8 @@ var ErrNoCommand = errors.New("collage: no command given")
 var ErrUnknownCommand = errors.New("collage: unknown command")
 
 // ErrReservedCommandName is returned when a CLI.Commands entry's Name matches
-// a built-in command ("new", "add", "plugin", "ai", "dev", "build", "export", "serve", "inspect", "check", "version", or
-// "help"). A plugin is not permitted to shadow a built-in command.
+// a built-in command ("new", "add", "plugin", "ai", "dev", "build", "export", "serve", "routes", "inspect", "check",
+// "completion", "man", "version", "help", or the hidden "__complete"). A plugin is not permitted to shadow a built-in command.
 var ErrReservedCommandName = errors.New("collage: command name collides with a built-in command")
 
 // ErrDuplicateCommand is returned when two entries in CLI.Commands share the
@@ -121,6 +121,8 @@ var builtins = []builtinDescription{
 	{"routes", "List every URL the current directory's project answers, with its guards"},
 	{"inspect", "Print what the current directory's project is made of, as JSON"},
 	{"check", "Check the current directory's project's templates without rendering them"},
+	{"completion", "Print a shell completion script: completion bash|zsh|fish"},
+	{"man", "Print collage's man page, or install it with man --install"},
 	{"version", "Print the collage CLI version"},
 	{"help", "Show help for a command, or list every command"},
 }
@@ -178,6 +180,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.runInspect(ctx, rest)
 	case "check":
 		return c.runCheck(ctx, rest)
+	case completeCommand:
+		return c.runComplete(rest)
 	}
 
 	if cmd, ok := c.findPluginCommand(name); ok {
@@ -234,8 +238,11 @@ func (c *CLI) validateCommands() error {
 }
 
 // isBuiltin reports whether name is one of the commands Run handles itself —
-// those listed in builtins.
+// those listed in builtins, and the hidden one completion scripts call.
 func isBuiltin(name string) bool {
+	if name == completeCommand {
+		return true
+	}
 	for _, b := range builtins {
 		if b.name == name {
 			return true

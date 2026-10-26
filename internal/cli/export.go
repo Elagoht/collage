@@ -33,13 +33,20 @@ output is streamed straight through, not reformatted by this command.
   -clean     remove -out's existing contents before building
 `
 
+// defineExportFlags declares export's flags on fs: where to write, and whether
+// to empty it first. runExport parses them; completion and the man page read
+// the same declaration.
+func defineExportFlags(fs *flag.FlagSet) (out *string, clean *bool) {
+	return fs.String("out", "dist", "directory the project renders static files into"),
+		fs.Bool("clean", false, "remove -out's existing contents before building")
+}
+
 // runExport implements the "export" command.
 func (c *CLI) runExport(ctx context.Context, args []string) int {
 	fs := flag.NewFlagSet("export", flag.ContinueOnError)
 	fs.SetOutput(c.stderr())
 	fs.Usage = func() { fmt.Fprint(c.stderr(), exportUsage) }
-	out := fs.String("out", "dist", "directory the project renders static files into")
-	clean := fs.Bool("clean", false, "remove -out's existing contents before building")
+	out, clean := defineExportFlags(fs)
 
 	if err := parseFlags(fs, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

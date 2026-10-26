@@ -135,20 +135,36 @@ type fileChange struct {
 	existed bool
 }
 
+// addFlags are add's flags, as defineAddFlags declares them.
+type addFlags struct {
+	file                                                *bool
+	path, name, locale, ctype, guard, layout, page, dir *string
+}
+
+// defineAddFlags declares add's flags on fs. runAdd parses them; completion and
+// the man page read the same declaration.
+func defineAddFlags(fs *flag.FlagSet) addFlags {
+	return addFlags{
+		file:   fs.Bool("file", false, "keep the template in a file"),
+		path:   fs.String("path", "", "the URL pattern"),
+		name:   fs.String("name", "", "the page's, action's or document's name"),
+		locale: fs.String("locale", "", "the locale its path is in"),
+		ctype:  fs.String("type", "text/plain; charset=utf-8", "a document's content type"),
+		guard:  fs.String("guard", "", "the guard a page or an action meets"),
+		layout: fs.String("layout", "", "the layout a page is wrapped in"),
+		page:   fs.String("page", "", "the page an action is attached to"),
+		dir:    fs.String("dir", ".", "the project"),
+	}
+}
+
 // runAdd implements the "add" command.
 func (c *CLI) runAdd(args []string) int {
 	fs := flag.NewFlagSet("add", flag.ContinueOnError)
 	fs.SetOutput(c.stderr())
 	fs.Usage = func() { fmt.Fprint(c.stderr(), addUsage) }
-	file := fs.Bool("file", false, "keep the template in a file")
-	path := fs.String("path", "", "the URL pattern")
-	name := fs.String("name", "", "the page's, action's or document's name")
-	locale := fs.String("locale", "", "the locale its path is in")
-	ctype := fs.String("type", "text/plain; charset=utf-8", "a document's content type")
-	guard := fs.String("guard", "", "the guard a page or an action meets")
-	layout := fs.String("layout", "", "the layout a page is wrapped in")
-	page := fs.String("page", "", "the page an action is attached to")
-	dir := fs.String("dir", ".", "the project")
+	opts := defineAddFlags(fs)
+	file, path, name, locale, ctype := opts.file, opts.path, opts.name, opts.locale, opts.ctype
+	guard, layout, page, dir := opts.guard, opts.layout, opts.page, opts.dir
 
 	positional, flagArgs := splitPositional(args, addValueFlags)
 	if err := parseFlags(fs, flagArgs); err != nil {

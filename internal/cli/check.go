@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"strings"
 )
@@ -29,6 +30,13 @@ the application — so a program that opens a database on start opens it here
 too. It needs the project's collage at v0.40.0 or later; an earlier one
 answers unknown command: "collage-check".
 `
+
+// defineCheckFlags declares check's one flag on fs. check reads it by hand,
+// since it hands it on to the program rather than acting on it; completion and
+// the man page read this declaration.
+func defineCheckFlags(fs *flag.FlagSet) *bool {
+	return fs.Bool("json", false, "print the findings as a JSON array, for an editor")
+}
 
 // runCheck implements the "check" command.
 func (c *CLI) runCheck(ctx context.Context, args []string) int {
