@@ -12,7 +12,7 @@ func TestClosest(t *testing.T) {
 		{"exact ignoring case wins over a nearer spelling", "TITLE", []string{"Titlf", "title"}, "title"},
 		{"one substitution in a short name", "chek", []string{"check", "dev"}, "check"},
 		{"a swap of two letters counts once", "Titel", []string{"Title", "Body"}, "Title"},
-		{"a swap in a short name", "ad", []string{"add", "del"}, "add"},
+		{"one insertion in a short name", "ad", []string{"add", "del"}, "add"},
 		{"two edits are too many under five letters", "pgx", []string{"page"}, ""},
 		{"two edits are enough from five letters", "tempalte", []string{"template", "dir"}, "template"},
 		{"three edits are too many from five letters", "frobnicate", []string{"new", "dev", "build"}, ""},

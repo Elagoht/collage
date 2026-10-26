@@ -171,7 +171,7 @@ func (c *CLI) pluginAdd(ctx context.Context, dir string, ref plugincontract.Ref,
 	}
 	path, err := c.goGet(ctx, dir, ref)
 	if err != nil {
-		return nil, fmt.Errorf("%w%s", err, bundledPluginHint(ref))
+		return nil, onFirstLine(err, bundledPluginHint(ref))
 	}
 	info, err := c.locateModule(ctx, dir, path)
 	if err != nil {
@@ -304,6 +304,22 @@ func bundledPluginHint(ref plugincontract.Ref) string {
 		}
 	}
 	return didYouMean(ref.Short, known)
+}
+
+// onFirstLine is err with hint at the end of its message's first line. The go
+// tool explains a module it cannot fetch over several lines — the proxy's
+// response, git's complaint — and a hint after all of them would read as part
+// of the last; on the first, it sits on the error's line as everywhere else.
+// err is returned as it is when hint is "".
+func onFirstLine(err error, hint string) error {
+	if hint == "" {
+		return err
+	}
+	first, rest, multiline := strings.Cut(err.Error(), "\n")
+	if !multiline {
+		return errors.New(first + hint)
+	}
+	return errors.New(first + hint + "\n" + rest)
 }
 
 // declaredPath is the go tool's complaint that a module's go.mod names it

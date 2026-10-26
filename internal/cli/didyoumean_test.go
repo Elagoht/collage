@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -167,6 +168,22 @@ func TestPluginAdd_DidYouMean(t *testing.T) {
 	code, _, errOut = pluginCmd(t, dir, "add", "acme/missing")
 	if code != 1 || strings.Contains(errOut, "did you mean") {
 		t.Errorf("known but missing: %d\n%s", code, errOut)
+	}
+}
+
+// The go tool's message for a module it cannot fetch runs over several lines;
+// the hint goes at the end of the first.
+func TestOnFirstLine(t *testing.T) {
+	tests := []struct{ msg, hint, want string }{
+		{"go: x: 404 Not Found\n\tserver response: not found", ` (did you mean "a/b"?)`,
+			"go: x: 404 Not Found (did you mean \"a/b\"?)\n\tserver response: not found"},
+		{"go: x: 404 Not Found", ` (did you mean "a/b"?)`, `go: x: 404 Not Found (did you mean "a/b"?)`},
+		{"go: x\n\ty", "", "go: x\n\ty"},
+	}
+	for _, tt := range tests {
+		if got := onFirstLine(errors.New(tt.msg), tt.hint).Error(); got != tt.want {
+			t.Errorf("onFirstLine(%q, %q) = %q, want %q", tt.msg, tt.hint, got, tt.want)
+		}
 	}
 }
 
