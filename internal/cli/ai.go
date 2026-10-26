@@ -141,7 +141,7 @@ func (c *CLI) runAI(args []string) int {
 	case "init":
 		return c.runAIInit(args[1:])
 	}
-	fmt.Fprintf(c.stderr(), "collage: ai: unknown subcommand %q\n\n", args[0])
+	fmt.Fprintf(c.stderr(), "collage: ai: unknown subcommand %q%s\n\n", args[0], didYouMean(args[0], []string{"init", "help"}))
 	fmt.Fprint(c.stderr(), aiUsage)
 	return 2
 }
@@ -152,7 +152,7 @@ func (c *CLI) runAIInit(args []string) int {
 	flags.SetOutput(c.stderr())
 	flags.Usage = func() { fmt.Fprint(c.stderr(), aiUsage) }
 	dir := flags.String("dir", ".", "the project")
-	if err := flags.Parse(args); err != nil {
+	if err := parseFlags(flags, args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
 		}

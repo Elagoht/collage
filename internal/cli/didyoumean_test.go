@@ -41,6 +41,10 @@ func TestRun_DidYouMean(t *testing.T) {
 			`collage: plugin: unknown subcommand "ad" (did you mean "add"?)`},
 		{"plugin subcommand far off", nil, []string{"plugin", "frobnicate"}, 2,
 			`collage: plugin: unknown subcommand "frobnicate"`},
+		{"ai subcommand", nil, []string{"ai", "int"}, 2,
+			`collage: ai: unknown subcommand "int" (did you mean "init"?)`},
+		{"ai subcommand far off", nil, []string{"ai", "frobnicate"}, 2,
+			`collage: ai: unknown subcommand "frobnicate"`},
 		{"add kind", nil, []string{"add", "pgae", "x"}, 2,
 			`collage: add: want a kind (` + kinds + `) and a name (did you mean "page"?)`},
 		{"add kind without a name", nil, []string{"add", "midleware"}, 2,
@@ -103,6 +107,7 @@ func TestRun_DidYouMeanFlag(t *testing.T) {
 		{"serve", []string{"serve", "--prot", "80"}, `-prot (did you mean "-port"?)`, serveUsage},
 		{"dev has no flags", []string{"dev", "-dri"}, `-dri`, devUsage},
 		{"plugin add", []string{"plugin", "add", "-dri", "x", "acme/greet"}, `-dri (did you mean "-dir"?)`, pluginUsage()},
+		{"ai init", []string{"ai", "init", "-dri", "x"}, `-dri (did you mean "-dir"?)`, aiUsage},
 		{"plugin del", []string{"plugin", "del", "-dri", "x", "acme/greet"}, `-dri (did you mean "-dir"?)`, pluginUsage()},
 		{"plugin check", []string{"plugin", "check", "-relase"}, `-relase (did you mean "-release"?)`, pluginUsage()},
 	}
