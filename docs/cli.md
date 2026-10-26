@@ -18,6 +18,8 @@ collage plugin add <owner/name | module path>[@version] [-dir dir]
 collage plugin del <owner/name | module path> [-dir dir]
 collage plugin check [-release] [-run] [dir]
 collage ai init [-dir dir]
+collage completion bash|zsh|fish
+collage man [-install]
 collage version
 collage help [command]
 ```
@@ -727,6 +729,34 @@ contract `add` enforces. The check itself reads only the repository:
 
 These are commands of the `collage` binary. A plugin's own subcommands are
 another thing: see the next section.
+
+## `collage completion` and `collage man`
+
+`collage completion` prints a script that completes commands, flags and their
+values when TAB is pressed: `add`'s kinds, `plugin add`'s bundles and the plugins
+they name, `--template`'s templates, `--with`'s list item by item, and paths for
+`--dir`, `-o` and `-out`. Load it from the shell's startup file:
+
+```
+eval "$(collage completion bash)"      # ~/.bashrc (works with macOS's bash 3.2)
+source <(collage completion zsh)       # ~/.zshrc, after compinit
+collage completion fish | source       # ~/.config/fish/config.fish
+```
+
+The script asks the `collage` on `PATH` what to complete, through a hidden
+`collage __complete` command, so it stays right after an upgrade with nothing to
+reload. Each command's flags are declared once and read by both the command and
+completion, so a new flag completes the day it exists. Commands a project's
+plugins add run through the project's own binary and are not completed.
+
+`collage man` prints collage(1), made from every command's own `help` text.
+`collage man -install` writes it to `../share/man/man1/collage.1` beside the
+directory the binary is in — `$(go env GOPATH)/share/man` for `go install` — which
+`man` searches for every directory on `PATH`, so `man collage` works with nothing
+else set up. It says so when the binary's directory is not on `PATH`.
+
+`completion`, `man` and `__complete` are reserved: a plugin command by one of those
+names is refused, as for every built-in.
 
 ## `collage ai`
 

@@ -18,6 +18,13 @@
   `unknown command: "chek" (did you mean "check"?)`. It uses the same rule as
   the template checker's suggestions; nothing close, nothing added, and exit
   codes are unchanged.
+- **`collage completion bash|zsh|fish` and `collage man`.** The completion
+  script asks a hidden `collage __complete` for commands, flags and their values
+  (`add` kinds, bundles and plugins, `--template`, `--with` item by item, paths
+  for `--dir`), so it never goes stale. `collage man` prints collage(1) from every
+  command's own help; `man -install` writes it beside the binary where `man`
+  finds it. Each command's flags are now declared once, for the command and for
+  completion alike.
 - **Built-in template functions for everyday work:** `json` and `pre` (a value as
   JSON, two-space indented by default; `pre` puts it in an escaped `<pre>` for
   looking at what a template was given), integer `add` `sub` `mul` `div` `mod`
@@ -29,6 +36,8 @@
 
 ### Changed
 
+- **`ai`, `completion`, `man` and `__complete` are reserved command names.** A
+  plugin command by one of them is refused, as one named after any built-in is.
 - **A plugin cannot register a template function under a built-in's name.**
   `AddTemplateFunc` refuses it with `ErrDuplicateTemplateFunc`, as
   `AddRenderFunc` already did; it used to replace the built-in silently. No

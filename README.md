@@ -53,6 +53,13 @@ a fragment with its own URL and a JSON document, with the tests that drive them.
 later is the only requirement; `go install` puts `collage` in `$(go env GOPATH)/bin`, which is on your `PATH` if you have
 installed any Go tool before.
 
+Tab completion and the man page come with it:
+
+```
+eval "$(collage completion bash)"   # or: source <(collage completion zsh), collage completion fish | source
+collage man -install                # then: man collage
+```
+
 Then, in that directory:
 
 ```
