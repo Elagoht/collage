@@ -1,4 +1,21 @@
-<main class="home">
+package fragments
+
+import "github.com/Elagoht/collage/pkg/collage"
+
+// Types data used on this page.
+type homeView struct {
+	Name string
+}
+
+// Returns the home page's content. Its data is fixed when the program starts, so
+// WithData rather than a data handler, and the page stays static.
+func Home() *collage.Fragment {
+	return collage.NewInlineFragment("home", homeBlock).
+		WithData(collage.Value(homeView{Name: "@@NAME@@"})).
+		Build()
+}
+
+const homeBlock collage.InlineHTML = `<main class="home">
   <header class="hero">
     <svg class="logo" viewBox="0 0 96 96" aria-hidden="true">
       <rect class="tile tile-a" x="8" y="14" width="46" height="46" rx="6" />
@@ -8,7 +25,7 @@
     <h1>collage</h1>
     <p class="tagline">Pages composed from server-rendered fragments. Written in Go, served as HTML.</p>
     <div class="actions">
-      <a class="button button-primary" href="/features">Explore the features</a>
+      <a class="button button-primary" href="{{pageURL "features"}}">Explore the features</a>
       <a class="button" href="https://collage.furkanbaytekin.dev/en/docs/introduction/">Read the docs</a>
     </div>
   </header>
@@ -23,14 +40,14 @@
 ├── <span class="dir">actions/</span>      <span class="muted">POST and friends; their handlers in funcs/</span>
 ├── <span class="dir">documents/</span>    <span class="muted">routes that are not HTML, like /healthz</span>
 ├── <span class="dir">data/</span>         <span class="muted">state, by domain: the demo's count</span>
-├── <span class="dir">templates/</span>    <span class="muted">the HTML kept in files: layouts and big pages</span>
+├── <span class="dir">templates/</span>    <span class="muted">the layouts' HTML; pages keep theirs inline</span>
 └── <span class="dir">static/</span>       <span class="muted">CSS, JavaScript and images, at /static/</span></code></pre>
   </section>
 
   <section class="commands" aria-label="Commands">
     <div class="command">
       <code>collage dev</code>
-      <p>Runs the site with templates reloaded from disk on every request.</p>
+      <p>Runs the site and rebuilds it when the Go code changes. Layouts are read from disk on every request.</p>
     </div>
     <div class="command">
       <code>collage build</code>
@@ -70,6 +87,6 @@
   </section>
 
   <p class="edit">
-    Edit <code>templates/pages/home.html</code> and reload. Run with <code>collage dev</code> and templates are read from disk on every request.
+    Edit <code>fragments/pages/home.go</code> and save: <code>collage dev</code> rebuilds the site and you reload.
   </p>
-</main>
+</main>`

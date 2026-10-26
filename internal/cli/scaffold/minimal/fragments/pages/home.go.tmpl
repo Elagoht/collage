@@ -2,7 +2,7 @@ package fragments
 
 import "github.com/Elagoht/collage/pkg/collage"
 
-// Types data used on this page: what templates/pages/home.html renders as ".".
+// Types data used on this page.
 type homeView struct {
 	Name string
 }
@@ -10,7 +10,9 @@ type homeView struct {
 // Returns the home page's content. Its data is fixed when the program starts, so
 // WithData rather than a data handler, and the page stays static.
 func Home() *collage.Fragment {
-	return collage.NewFragment("home", "pages/home.html").
+	return collage.NewInlineFragment("home", homeBlock).
 		WithData(collage.Value(homeView{Name: "@@NAME@@"})).
 		Build()
 }
+
+const homeBlock collage.InlineHTML = `<h1>Hello from {{.Name}}</h1>`

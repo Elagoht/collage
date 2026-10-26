@@ -184,12 +184,15 @@ func TestRun_New_ScaffoldsExpectedFiles(t *testing.T) {
 		filepath.Join("actions", "funcs", "demo.go"),
 		filepath.Join("data", "count", "count.go"),
 		filepath.Join("templates", "layouts", "master.html"),
-		filepath.Join("templates", "pages", "home.html"),
 		filepath.Join("static", "app.css"),
 	} {
 		if _, err := os.Stat(filepath.Join(target, want)); err != nil {
 			t.Errorf("expected file %s not written: %v", want, err)
 		}
+	}
+	// Pages and fragments keep their templates inline; only layouts are files.
+	if _, err := os.Stat(filepath.Join(target, "templates", "pages")); !os.IsNotExist(err) {
+		t.Errorf("templates/pages exists; pages keep their templates inline")
 	}
 
 	// The embedded scaffold's own template files are the placeholder-bearing
@@ -347,7 +350,7 @@ func TestRun_New_Minimal(t *testing.T) {
 
 	want := []string{".env.example", ".gitignore", "README.md", "go.mod", "main.go", "embed.go", "embed_dev.go", "routes.go", "plugins.go", "plugins-config.json",
 		"fragments/layouts/master.go", "fragments/pages/home.go", "pages/home.go",
-		"templates/layouts/master.html", "templates/pages/home.html", "static/app.css"}
+		"templates/layouts/master.html", "static/app.css"}
 	var got []string
 	if err := filepath.WalkDir(target, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
@@ -374,9 +377,8 @@ func TestRun_New_Minimal(t *testing.T) {
 	if b, _ := os.ReadFile(filepath.Join(target, "README.md")); !strings.Contains(string(b), "collage plugin add") || strings.Contains(string(b), "in `main.go`") {
 		t.Errorf("README.md does not point at collage plugin add:\n%s", b)
 	}
-	home, _ := os.ReadFile(filepath.Join(target, "templates", "pages", "home.html"))
-	if strings.TrimSpace(string(home)) != "<h1>Hello from {{.Name}}</h1>" {
-		t.Errorf("home.html = %q", home)
+	if home, _ := os.ReadFile(filepath.Join(target, "fragments", "pages", "home.go")); !strings.Contains(string(home), "`<h1>Hello from {{.Name}}</h1>`") {
+		t.Errorf("fragments/pages/home.go does not hold the inline greeting:\n%s", home)
 	}
 	css, _ := os.ReadFile(filepath.Join(target, "static", "app.css"))
 	if !strings.Contains(string(css), "prefers-color-scheme: dark") {
@@ -624,5 +626,26 @@ func TestRun_New_AIForceKeepsUserRules(t *testing.T) {
 		if strings.HasPrefix(line, "Overwrote") && strings.Contains(line, "AGENTS.md") {
 			t.Errorf("stdout says AGENTS.md was overwritten: %q", line)
 		}
+	}
+}
+
+// A fragment's hoisted stylesheet must come after the site's, so it wins.
+func TestScaffold_HoistAfterStylesheet(t *testing.T) {
+	for _, variant := range []string{variantMinimal, variantDemo} {
+		t.Run(variant, func(t *testing.T) {
+			c, _, errOut := testCLI()
+			target := filepath.Join(t.TempDir(), "proj")
+			if code := c.Run(context.Background(), []string{"new", "site", "--template", variant, "-dir", target}); code != 0 {
+				t.Fatalf("Run() = %d; stderr = %s", code, errOut)
+			}
+			master := readFile(t, target, "templates/layouts/master.html")
+			hoist, css := strings.Index(master, `{{hoist "head"}}`), strings.Index(master, `app.css`)
+			if hoist < 0 || css < 0 || hoist < css {
+				t.Errorf("master.html: hoist at %d, app.css at %d; want the hoist after the stylesheet", hoist, css)
+			}
+			if strings.Contains(master[hoist:], `rel="stylesheet"`) {
+				t.Errorf("master.html links a stylesheet after the hoist")
+			}
+		})
 	}
 }
