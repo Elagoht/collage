@@ -25,7 +25,7 @@ var ErrUnknownTemplate = errors.New("collage: unknown template")
 var ErrTargetNotEmpty = errors.New("collage: target directory is not empty")
 
 // newUsage is "collage help new"'s own usage text.
-const newUsage = `Usage: collage new <name> [--template minimal|demo] [--with plugins] [--dir path] [--module path] [--force]
+const newUsage = `Usage: collage new <name> [--template minimal|demo] [--with plugins] [--dir path] [--module path] [--force] [--ai]
 
 Scaffolds a new, runnable collage project named <name>.
 
@@ -44,6 +44,8 @@ Scaffolds a new, runnable collage project named <name>.
   --dir path        directory to scaffold into (default: ./<name>)
   --module path     the scaffolded go.mod's module path (default: <name>)
   --force           scaffold into a non-empty directory anyway
+  --ai              write AGENTS.md, the rules for coding agents, and a
+                    CLAUDE.md importing it; "collage help ai" says more
 
 Flags take one dash or two: -template and --template are the same flag.
 `
@@ -97,6 +99,7 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 	dir := fs.String("dir", "", "directory to scaffold into")
 	module := fs.String("module", "", "the scaffolded go.mod's module path")
 	force := fs.Bool("force", false, "scaffold into a non-empty directory anyway")
+	ai := fs.Bool("ai", false, "write AGENTS.md and CLAUDE.md for coding agents")
 	template := fs.String("template", variantMinimal, "the project to scaffold: minimal or demo")
 	var with withFlag
 	fs.Var(&with, "with", "plugins to add: @bundles and plugins, comma-separated")
@@ -169,6 +172,14 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 	fmt.Fprintf(out, "Scaffolded %q in %s\n", name, targetDir)
 	if len(overwritten) > 0 {
 		fmt.Fprintf(out, "Overwrote what was there: %s\n", strings.Join(overwritten, ", "))
+	}
+	if *ai {
+		done, err := writeAIFiles(targetDir, Version)
+		if err != nil {
+			fmt.Fprintf(c.stderr(), "collage: new: --ai: %v\n", err)
+			return 1
+		}
+		c.printAIWritten(done, targetDir)
 	}
 	fmt.Fprintln(out)
 	code, tidied := 0, false

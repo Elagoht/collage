@@ -560,3 +560,69 @@ func TestRun_New_UnknownTemplate(t *testing.T) {
 		t.Errorf("%s was created for a refused template", target)
 	}
 }
+
+func TestRun_New_AI(t *testing.T) {
+	for _, variant := range []string{variantMinimal, variantDemo} {
+		t.Run(variant, func(t *testing.T) {
+			c, _, errOut := testCLI()
+			target := filepath.Join(t.TempDir(), "proj")
+			if code := c.Run(context.Background(), []string{"new", "site", "--ai", "--template", variant, "-dir", target}); code != 0 {
+				t.Fatalf("Run() = %d; stderr = %s", code, errOut)
+			}
+			if agents := readFile(t, target, "AGENTS.md"); !strings.HasPrefix(agents, "<!-- collage:begin") {
+				t.Errorf("AGENTS.md does not start with the section")
+			}
+			if claude := readFile(t, target, "CLAUDE.md"); claude != claudeImport {
+				t.Errorf("CLAUDE.md = %q, want %q", claude, claudeImport)
+			}
+		})
+	}
+}
+
+// --ai takes no value: before the name it must not swallow it.
+func TestRun_New_AIBeforeName(t *testing.T) {
+	c, _, errOut := testCLI()
+	target := filepath.Join(t.TempDir(), "proj")
+	if code := c.Run(context.Background(), []string{"new", "--ai", "site", "-dir", target}); code != 0 {
+		t.Fatalf("Run() = %d; stderr = %s", code, errOut)
+	}
+	if mod := readFile(t, target, "go.mod"); !strings.HasPrefix(mod, "module site\n") {
+		t.Errorf("go.mod starts %q, want module site", firstLine(mod))
+	}
+	readFile(t, target, "AGENTS.md")
+}
+
+func TestRun_New_NoAI(t *testing.T) {
+	c, _, errOut := testCLI()
+	target := filepath.Join(t.TempDir(), "proj")
+	if code := c.Run(context.Background(), []string{"new", "site", "-dir", target}); code != 0 {
+		t.Fatalf("Run() = %d; stderr = %s", code, errOut)
+	}
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		if _, err := os.Stat(filepath.Join(target, name)); !os.IsNotExist(err) {
+			t.Errorf("%s exists without --ai", name)
+		}
+	}
+}
+
+// Scaffolding over a project that has its own AGENTS.md keeps the user's text:
+// it goes through the merge, not the overwrite.
+func TestRun_New_AIForceKeepsUserRules(t *testing.T) {
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, "AGENTS.md"), []byte("# Mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c, out, errOut := testCLI()
+	if code := c.Run(context.Background(), []string{"new", "site", "--ai", "--force", "-dir", target}); code != 0 {
+		t.Fatalf("Run() = %d; stderr = %s", code, errOut)
+	}
+	agents := readFile(t, target, "AGENTS.md")
+	if !strings.HasPrefix(agents, "<!-- collage:begin") || !strings.HasSuffix(agents, "# Mine\n") {
+		t.Errorf("AGENTS.md =\n%s\nwant the section above the user's text", agents)
+	}
+	for line := range strings.SplitSeq(out.String(), "\n") {
+		if strings.HasPrefix(line, "Overwrote") && strings.Contains(line, "AGENTS.md") {
+			t.Errorf("stdout says AGENTS.md was overwritten: %q", line)
+		}
+	}
+}
