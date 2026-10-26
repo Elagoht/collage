@@ -255,3 +255,24 @@ func TestRegister_NumberConstantIsTyped(t *testing.T) {
 		t.Fatalf("RegisterPage error = %v, want ErrTemplateType", err)
 	}
 }
+
+// The built-in helpers are typed, so the template checker judges their
+// arguments like any other function's: a string handed to add, or an integer
+// to replace, fails registration instead of the first render.
+func TestRegister_TemplateTypeErrorsInBuiltins(t *testing.T) {
+	for _, src := range []string{`{{add .Title 1}}`, `{{replace "a" "b" 1}}`, `{{truncate .Title "x"}}`, `{{seq .Title}}`} {
+		t.Run(src, func(t *testing.T) {
+			app := tcApp(t, fstest.MapFS{"t/post.html": {Data: []byte(src)}})
+			content := collage.NewFragment("post-body", "post.html").WithData(collage.Load(loadPost)).Build()
+			err := app.RegisterPage(collage.NewPage("post").WithContent(content).WithPath("en", "/").Build())
+			if !errors.Is(err, collage.ErrTemplateType) {
+				t.Errorf("RegisterPage error = %v, want ErrTemplateType", err)
+			}
+		})
+	}
+	app := tcApp(t, fstest.MapFS{"t/post.html": {Data: []byte(`{{.Title | truncate 3 | upper}}{{json .Author}}{{dig .Author "Name"}}{{add (len .Title) 1}}`)}})
+	content := collage.NewFragment("post-body", "post.html").WithData(collage.Load(loadPost)).Build()
+	if err := app.RegisterPage(collage.NewPage("post").WithContent(content).WithPath("en", "/").Build()); err != nil {
+		t.Errorf("well-typed builtins refused: %v", err)
+	}
+}

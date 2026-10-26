@@ -12,6 +12,9 @@ func TestDefaultFuncs_HasAllDocumentedNames(t *testing.T) {
 		"slot", "hoist", "asset", "csrfToken", "safeHTML", "safeURL", "dict", "default",
 		"upper", "lower", "title", "join", "formatTime", "pageURL", "pageURLIn", "localeURL", "stylesheet",
 		"fragmentURL", "fragmentURLIn", "actionURL",
+		"json", "pre", "add", "sub", "mul", "div", "mod", "min", "max", "addf", "subf", "mulf", "divf",
+		"withQuery", "pathEscape", "trim", "replace", "contains", "hasPrefix", "hasSuffix", "split", "truncate",
+		"first", "last", "seq", "keys", "hasKey", "dig",
 	}
 	funcs := DefaultFuncs()
 	for _, name := range want {

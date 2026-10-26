@@ -19,6 +19,16 @@
   the template checker's suggestions; nothing close, nothing added, and exit
   codes are unchanged.
 
+- **Built-in template functions for everyday work:** `json` and `pre` (a value as
+  JSON, two-space indented by default; `pre` puts it in an escaped `<pre>` for
+  looking at what a template was given), integer `add` `sub` `mul` `div` `mod`
+  `min` `max` and float `addf` `subf` `mulf` `divf`, `trim` `replace` `contains`
+  `hasPrefix` `hasSuffix` `split` `truncate` (characters, not bytes), `first`
+  `last` `seq` `keys` `hasKey`, `dig` for a nested value, `pathEscape`, and
+  `withQuery` for the current URL with query parameters set or removed. All are
+  typed, so the template checker judges their arguments. A plugin that registers
+  a template function under one of these names now collides with the built-in.
+
 ### Changed
 
 - **The scaffold keeps page and fragment markup inline; only layouts are

@@ -871,6 +871,30 @@ Available in every template:
 | `stylesheet "/static/app.css"` | Hoist a `<link rel="stylesheet">` for a mounted file into the head, by its content-addressed URL — see [Hoisting](#hoisting) |
 | `csrfToken` | The hidden input a form's forgery token travels in |
 | `hoist "area"` | Where hoisted content lands — see [Hoisting](#hoisting) |
+| `withQuery "page" 2 ...` | The URL being rendered with those query parameters set; a value of `""` removes one — see below |
+| `pathEscape s` | `s` escaped for one path segment |
+| `json v [spaces] [pretty]` | `v` as JSON, indented by 2 unless told otherwise; `{{json v 2 false}}` is one line |
+| `pre v [spaces] [pretty]` | `v` in a `<pre>` block: a string as it is, anything else as `json` writes it, always escaped |
+| `add`, `sub`, `mul`, `div`, `mod`, `min`, `max` | Integer arithmetic: `{{add .Page 1}}`; `div` and `mod` by zero fail the render |
+| `addf`, `subf`, `mulf`, `divf` | The same for `float64` |
+| `trim s` | `strings.TrimSpace` |
+| `replace old new s`, `contains sub s`, `hasPrefix p s`, `hasSuffix p s`, `split sep s` | The `strings` functions, the string last so they read in a pipeline: `{{.Slug \| replace "-" " "}}` |
+| `truncate n s` | `s` cut to `n` characters (not bytes), with `…` after them when anything was cut |
+| `first list`, `last list` | The first or last element; nothing for an empty list |
+| `seq n` | `1` to `n`, for `{{range seq 5}}`; at most 100000 |
+| `keys map`, `hasKey map "k"` | A string-keyed map's keys, sorted; whether it holds `k` |
+| `dig v "a" "b" ...` | The value at that path through string-keyed maps and exported struct fields; nothing when the path leads nowhere, so `{{with dig …}}` handles what is optional |
+
+Go's own are there too: `index`, `len`, `slice`, `eq`/`ne`/`lt`/`le`/`gt`/`ge`,
+`and`/`or`/`not`, `print`/`printf`, `urlquery`. Every function is typed, so `collage
+check` and registration report `{{add .Title 1}}` with a string `Title` before any
+request does.
+
+`json` is `template.JS`: inside `<script type="application/json">` or a script it
+is written as it is (`<`, `>` and `&` stay `\u003c`-escaped, so it cannot close the
+script), and anywhere else it is escaped like text. `withQuery` starts from the
+request the render sees: on a cached page that is the path and only the query
+parameters in its cache key, never a reader's other ones.
 
 ### Links by name
 

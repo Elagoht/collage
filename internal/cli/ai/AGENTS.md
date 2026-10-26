@@ -60,6 +60,10 @@ Docs: https://collage.furkanbaytekin.dev/en/docs/introduction/
   ``const nameBlock collage.InlineHTML = `...` ``. Layouts keep theirs in a file
   under `templates/layouts/`.
 - A view type (`homeView`, `counterView`) is plain data: fields, no methods.
+- Before adding a template function, use the built-ins: `json`, `pre` (debug
+  output), `add` `sub` `mul` `div` `mod` `min` `max` (and `addf`… for floats),
+  `trim` `replace` `contains` `split` `truncate`, `first` `last` `seq` `keys`
+  `hasKey` `dig`, `withQuery` `pathEscape`, and Go's `index` `len` `printf`.
 - A function every template may call, that does not depend on the request, goes
   in `Config.Template.Funcs` in `main.go`. Anything that depends on the request
   is computed in the fragment's data handler and put into its view.

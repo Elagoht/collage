@@ -387,6 +387,7 @@ func (e *SlotEngine) slotFuncs(rc *types.RenderContext, f *types.Fragment, state
 
 		"fragmentURL":   e.fragmentURLFunc(rc),
 		"fragmentURLIn": e.fragmentURLInFunc(),
+		"withQuery":     withQueryFunc(rc),
 	}
 	// A plugin's render functions last, bound to this render; the framework's own
 	// names are not theirs to take, and registration refuses a clash.
@@ -665,6 +666,52 @@ func (e *SlotEngine) localeURLFunc(rc *types.RenderContext) func(string) (string
 		}
 		return built, err
 	}
+}
+
+// withQueryFunc is the per-render implementation of {{withQuery "page" 2}}: the
+// URL being rendered with those query parameters set, and one given "" removed.
+// It reads the request the render sees, so a shared render — a cached page, one
+// body for every reader — starts from a URL without the reader's query, only
+// the parameters the page's cache key holds.
+func withQueryFunc(rc *types.RenderContext) func(string, reflect.Value, ...reflect.Value) (string, error) {
+	return func(key string, value reflect.Value, more ...reflect.Value) (string, error) {
+		if rc.Request == nil || rc.Request.URL == nil {
+			return "", fmt.Errorf("collage: withQuery %q: this render has no request", key)
+		}
+		if len(more)%2 != 0 {
+			return "", fmt.Errorf("collage: withQuery %q: parameters come in name and value pairs, got an odd one", key)
+		}
+		pairs := append([]reflect.Value{reflect.ValueOf(key), value}, more...)
+		query := rc.Request.URL.Query()
+		for i := 0; i < len(pairs); i += 2 {
+			name, ok := pathSegment(pairs[i])
+			if !ok || indirectKind(pairs[i]) != reflect.String {
+				return "", fmt.Errorf("collage: withQuery: parameter name %d is %s, not a string", i/2+1, describe(pairs[i]))
+			}
+			v, ok := pathSegment(pairs[i+1])
+			if !ok {
+				return "", fmt.Errorf("collage: withQuery: parameter %q is %s; pass a string, an integer or a fmt.Stringer", name, describe(pairs[i+1]))
+			}
+			if v == "" {
+				query.Del(name)
+			} else {
+				query.Set(name, v)
+			}
+		}
+		target := rc.Request.URL.EscapedPath()
+		if encoded := query.Encode(); encoded != "" {
+			target += "?" + encoded
+		}
+		return target, nil
+	}
+}
+
+// indirectKind is the kind of the value v holds through interfaces.
+func indirectKind(v reflect.Value) reflect.Kind {
+	for v.IsValid() && v.Kind() == reflect.Interface {
+		v = v.Elem()
+	}
+	return v.Kind()
 }
 
 // fragmentURLFunc is the per-render implementation of

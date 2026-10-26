@@ -48,6 +48,38 @@ func DefaultFuncs() template.FuncMap {
 
 		"fragmentURL":   fragmentURLPlaceholder,
 		"fragmentURLIn": fragmentURLInPlaceholder,
+		"withQuery":     withQueryPlaceholder,
+		"pathEscape":    pathEscape,
+
+		"json": jsonFunc,
+		"pre":  pre,
+
+		"add":  add,
+		"sub":  sub,
+		"mul":  mul,
+		"div":  div,
+		"mod":  mod,
+		"min":  minInt,
+		"max":  maxInt,
+		"addf": addf,
+		"subf": subf,
+		"mulf": mulf,
+		"divf": divf,
+
+		"trim":      strings.TrimSpace,
+		"replace":   replace,
+		"contains":  contains,
+		"hasPrefix": hasPrefix,
+		"hasSuffix": hasSuffix,
+		"split":     split,
+		"truncate":  truncate,
+
+		"first":  first,
+		"last":   last,
+		"seq":    seq,
+		"keys":   keys,
+		"hasKey": hasKey,
+		"dig":    dig,
 	}
 }
 
