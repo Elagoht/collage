@@ -45,13 +45,25 @@ type aiWritten struct {
 // none. Nothing is written when AGENTS.md's markers are malformed.
 func writeAIFiles(dir, version string) (aiWritten, error) {
 	var done aiWritten
-	agentsPath := filepath.Join(dir, "AGENTS.md")
+	// A symlinked AGENTS.md — rules shared between projects — is written
+	// through, to its target and with the target's mode, rather than replaced
+	// by a file of its own.
+	agentsPath, perm := filepath.Join(dir, "AGENTS.md"), fs.FileMode(0o644)
 	existing, err := os.ReadFile(agentsPath)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		existing = nil
 	case err != nil:
 		return done, err
+	default:
+		if agentsPath, err = filepath.EvalSymlinks(agentsPath); err != nil {
+			return done, err
+		}
+		info, err := os.Stat(agentsPath)
+		if err != nil {
+			return done, err
+		}
+		perm = info.Mode().Perm()
 	}
 	merged, err := mergeAgents(existing, managedSection(version))
 	if err != nil {
@@ -66,7 +78,7 @@ func writeAIFiles(dir, version string) (aiWritten, error) {
 		done.Agents = "updated"
 	}
 	if done.Agents != "current" {
-		if err := writeFileAtomic(agentsPath, merged, 0o644); err != nil {
+		if err := writeFileAtomic(agentsPath, merged, perm); err != nil {
 			return done, err
 		}
 	}

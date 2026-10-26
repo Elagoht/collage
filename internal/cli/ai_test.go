@@ -164,3 +164,34 @@ func TestRun_AI_ClaudeHint(t *testing.T) {
 		t.Errorf("stdout = %q, want the CLAUDE.md hint", out)
 	}
 }
+
+// A symlinked AGENTS.md, rules shared between projects, is written through:
+// the link and the target's mode stay as they were.
+func TestWriteAIFiles_FollowsSymlink(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "proj")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(root, "shared.md")
+	if err := os.WriteFile(shared, []byte("# Shared\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../shared.md", filepath.Join(dir, "AGENTS.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writeAIFiles(dir, "1.2.3"); err != nil {
+		t.Fatalf("writeAIFiles() error = %v", err)
+	}
+	info, err := os.Lstat(filepath.Join(dir, "AGENTS.md"))
+	if err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("AGENTS.md is no longer a symlink: %v", err)
+	}
+	got := readFile(t, root, "shared.md")
+	if !strings.HasPrefix(got, "<!-- collage:begin v1.2.3") || !strings.HasSuffix(got, "# Shared\n") {
+		t.Errorf("shared.md =\n%s\nwant the section above its text", got)
+	}
+	if st, _ := os.Stat(shared); st.Mode().Perm() != 0o600 {
+		t.Errorf("shared.md mode = %v, want 0600", st.Mode().Perm())
+	}
+}

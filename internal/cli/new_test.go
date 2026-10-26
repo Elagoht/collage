@@ -649,3 +649,19 @@ func TestScaffold_HoistAfterStylesheet(t *testing.T) {
 		})
 	}
 }
+
+// Agents copy the demo, and AGENTS.md tells them never to hard-code a URL
+// another route owns: the demo must not either.
+func TestScaffold_DemoLinksByName(t *testing.T) {
+	c, _, errOut := testCLI()
+	target := filepath.Join(t.TempDir(), "proj")
+	if code := c.Run(context.Background(), []string{"new", "site", "--template", "demo", "-dir", target}); code != 0 {
+		t.Fatalf("Run() = %d; stderr = %s", code, errOut)
+	}
+	features := readFile(t, target, "fragments/pages/demo/features.go")
+	for _, literal := range []string{`="/api/count"`, `="/fragments/clock"`, `="/healthz"`} {
+		if strings.Contains(features, literal) {
+			t.Errorf("features.go hard-codes %s", literal)
+		}
+	}
+}
