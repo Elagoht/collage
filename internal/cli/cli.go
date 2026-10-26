@@ -59,7 +59,7 @@ var ErrNoCommand = errors.New("collage: no command given")
 var ErrUnknownCommand = errors.New("collage: unknown command")
 
 // ErrReservedCommandName is returned when a CLI.Commands entry's Name matches
-// a built-in command ("new", "add", "plugin", "dev", "build", "export", "serve", "inspect", "check", "version", or
+// a built-in command ("new", "add", "plugin", "ai", "dev", "build", "export", "serve", "inspect", "check", "version", or
 // "help"). A plugin is not permitted to shadow a built-in command.
 var ErrReservedCommandName = errors.New("collage: command name collides with a built-in command")
 
@@ -113,6 +113,7 @@ var builtins = []builtinDescription{
 	{"new", "Scaffold a new collage project"},
 	{"add", "Write a page, layout, guard, action, middleware, command and more into the project"},
 	{"plugin", "Add, remove or check a plugin: plugin add owner/name"},
+	{"ai", "Write or refresh AGENTS.md, the rules for coding agents: ai init"},
 	{"dev", "Run the current directory's project in development mode"},
 	{"build", "Compile the current directory's project into the binary you deploy"},
 	{"export", "Render the current directory's project to static files"},
@@ -161,6 +162,8 @@ func (c *CLI) Run(ctx context.Context, args []string) int {
 		return c.runAdd(rest)
 	case "plugin":
 		return c.runPlugin(ctx, rest)
+	case "ai":
+		return c.runAI(rest)
 	case "dev":
 		return c.runDev(ctx, rest)
 	case "build":
@@ -289,6 +292,9 @@ func (c *CLI) printCommandHelp(w io.Writer, name string) error {
 		return nil
 	case "plugin":
 		fmt.Fprint(w, pluginUsage())
+		return nil
+	case "ai":
+		fmt.Fprint(w, aiUsage)
 		return nil
 	case "dev":
 		fmt.Fprint(w, devUsage)
