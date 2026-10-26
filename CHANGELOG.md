@@ -22,7 +22,7 @@
   script asks a hidden `collage __complete` for commands, flags and their values
   (`add` kinds, bundles and plugins, `--template`, `--with` item by item, paths
   for `--dir`), so it never goes stale. `collage man` prints collage(1) from every
-  command's own help; `man -install` writes it beside the binary where `man`
+  command's own help; `man --install` writes it beside the binary where `man`
   finds it. Each command's flags are now declared once, for the command and for
   completion alike.
 - **Built-in template functions for everyday work:** `json` and `pre` (a value as

@@ -57,7 +57,7 @@ Tab completion and the man page come with it:
 
 ```
 eval "$(collage completion bash)"   # or: source <(collage completion zsh), collage completion fish | source
-collage man -install                # then: man collage
+collage man --install                # then: man collage
 ```
 
 Then, in that directory:

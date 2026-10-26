@@ -63,7 +63,6 @@ func TestComplete(t *testing.T) {
 		{[]string{"ai", "init", "--"}, []string{"--dir"}, false},
 		{[]string{"new", "site", "--template", ""}, []string{"minimal", "demo"}, false},
 		{[]string{"new", "site", "--template=de"}, []string{"--template=demo"}, false},
-		{[]string{"new", "site", "--template", "=", "de"}, []string{"demo"}, false},
 		{[]string{"new", "site", "--with", "@forms,@b"}, []string{"@forms,@blog"}, false},
 		{[]string{"new", "site", "--dir", ""}, nil, true},
 		{[]string{"new", ""}, nil, false},

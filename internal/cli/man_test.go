@@ -75,6 +75,7 @@ func TestRun_ManInstall(t *testing.T) {
 	t.Cleanup(func() { executable = os.Executable })
 
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("MANPATH", "")
 	c, out, errOut := testCLI()
 	if code := c.Run(t.Context(), []string{"man", "--install"}); code != 0 {
 		t.Fatalf("man --install = %d; %s", code, errOut)
@@ -91,5 +92,65 @@ func TestRun_ManInstall(t *testing.T) {
 	c, out, _ = testCLI()
 	if code := c.Run(t.Context(), []string{"man", "--install"}); code != 0 || !strings.Contains(out.String(), "PATH") {
 		t.Errorf("off PATH: %d, %q; want a note that man will not find it", code, out)
+	}
+}
+
+// A binary reached through a symlink on PATH — ~/.local/bin/collage pointing
+// at ~/go/bin/collage — installs beside the directory on PATH, the one man
+// derives a man directory from, not beside the link's target.
+func TestRun_ManInstall_ThroughASymlink(t *testing.T) {
+	root := t.TempDir()
+	realBin, linkBin := filepath.Join(root, "go", "bin"), filepath.Join(root, "local", "bin")
+	for _, dir := range []string{realBin, linkBin} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	exe := filepath.Join(realBin, "collage")
+	if err := os.WriteFile(exe, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(exe, filepath.Join(linkBin, "collage")); err != nil {
+		t.Fatal(err)
+	}
+	executable = func() (string, error) { return exe, nil }
+	t.Cleanup(func() { executable = os.Executable })
+	t.Setenv("PATH", linkBin+string(os.PathListSeparator)+"/usr/bin")
+	t.Setenv("MANPATH", "")
+
+	c, out, errOut := testCLI()
+	if code := c.Run(t.Context(), []string{"man", "--install"}); code != 0 {
+		t.Fatalf("man --install = %d; %s", code, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(root, "local", "share", "man", "man1", "collage.1")); err != nil {
+		t.Errorf("not installed beside the PATH directory: %v; stdout %q", err, out)
+	}
+	if strings.Contains(out.String(), "not on PATH") {
+		t.Errorf("warned about PATH for a binary reached through PATH: %q", out)
+	}
+}
+
+// With MANPATH set and no empty entry in it, man looks nowhere PATH suggests.
+func TestRun_ManInstall_WarnsAboutManpath(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(bin, "collage")
+	if err := os.WriteFile(exe, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	executable = func() (string, error) { return exe, nil }
+	t.Cleanup(func() { executable = os.Executable })
+	t.Setenv("PATH", bin)
+	for manpath, warn := range map[string]bool{"/usr/share/man": true, "/usr/share/man:": false, "": false} {
+		t.Setenv("MANPATH", manpath)
+		c, out, _ := testCLI()
+		if code := c.Run(t.Context(), []string{"man", "--install"}); code != 0 {
+			t.Fatalf("man --install = %d", code)
+		}
+		if got := strings.Contains(out.String(), "MANPATH"); got != warn {
+			t.Errorf("MANPATH=%q: warned %v, want %v: %q", manpath, got, warn, out)
+		}
 	}
 }

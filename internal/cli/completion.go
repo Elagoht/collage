@@ -29,23 +29,33 @@ collage is upgraded. Commands a project's plugins add are not completed.
 var completionScripts = map[string]string{
 	// Written for bash 3.2, macOS's own: no compopt, mapfile or readarray, and
 	// eval rather than source <(…), which 3.2 ignores.
+	// Written for bash 3.2, macOS's own: no compopt, mapfile or readarray, and
+	// eval rather than source <(…), which 3.2 ignores. The words come from the
+	// line itself, not COMP_WORDS, which bash splits at "=", "@" and ":" and
+	// differently by version; readline replaces only $2, the end of the word it
+	// decided on, so each candidate is handed over without what precedes it.
 	"bash": `# collage completion for bash
 _collage() {
-    local cur="${COMP_WORDS[COMP_CWORD]}"
-    local out c files=0
-    # Before IFS changes: bash 3.2 joins a quoted array slice with IFS.
-    out=$(collage __complete "${COMP_WORDS[@]:1:COMP_CWORD}" 2>/dev/null)
-    local IFS=$'\n'
+    local line="${COMP_LINE:0:COMP_POINT}"
+    local cur="${line##*[[:space:]]}"
+    local -a words
+    read -a words <<< "${line%"$cur"}"
+    local out
+    out=$(collage __complete "${words[@]:1}" "$cur" 2>/dev/null)
+    # $2 is the text readline will replace: the end of cur after its last word
+    # break, which readline decides (an "=" splits; an "@" stays in the word).
+    local keep="${cur:0:${#cur}-${#2}}"
+    local IFS=$'\n' c files=0
     COMPREPLY=()
     for c in $out; do
         if [ "$c" = ":files" ]; then
             files=1
-        else
-            COMPREPLY+=("$c")
+        elif [ "${c:0:${#keep}}" = "$keep" ]; then
+            COMPREPLY+=("${c:${#keep}}")
         fi
     done
     if [ "$files" = 1 ]; then
-        COMPREPLY=($(compgen -f -- "$cur"))
+        COMPREPLY=($(compgen -f -- "${cur:${#keep}}"))
     fi
 }
 complete -o filenames -F _collage collage
@@ -56,6 +66,7 @@ _collage() {
     local -a lines
     lines=("${(@f)$(collage __complete "${(@)words[2,CURRENT]}" 2>/dev/null)}")
     if (( ${lines[(Ie):files]} )); then
+        compset -P '*='
         _files
         return
     fi

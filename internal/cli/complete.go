@@ -154,24 +154,14 @@ func complete(args []string) (candidates []string, files bool) {
 	}
 	fs := specFlags(path)
 
-	// A flag's value: "--template=de" in one word, as zsh and fish pass it;
-	// "--template" "=" "de", as bash splits it at its word breaks; or the word
-	// after a flag that takes one.
+	// A flag's value: "--template=de" in one word, or the word after a flag
+	// that takes one.
 	if name, value, ok := strings.Cut(cur, "="); ok && strings.HasPrefix(name, "-") {
 		values, files := flagValueCandidates(fs, strings.TrimLeft(name, "-"), value)
 		return prefixEach(name+"=", values), files
 	}
-	if n := len(rest); n >= 2 && rest[n-1] == "=" && strings.HasPrefix(rest[n-2], "-") {
-		return flagValueCandidates(fs, strings.TrimLeft(rest[n-2], "-"), cur)
-	}
 	if n := len(rest); n >= 1 && strings.HasPrefix(rest[n-1], "-") && !strings.Contains(rest[n-1], "=") {
 		if f := fs.Lookup(strings.TrimLeft(rest[n-1], "-")); f != nil && !isBoolFlag(f) {
-			// bash hands over a bare "=" as the word right after typing
-			// "--template=", and replaces exactly that word: keep it.
-			if value, ok := strings.CutPrefix(cur, "="); ok {
-				values, files := flagValueCandidates(fs, f.Name, value)
-				return prefixEach("=", values), files
-			}
 			return flagValueCandidates(fs, f.Name, cur)
 		}
 	}

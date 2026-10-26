@@ -19,7 +19,7 @@ collage plugin del <owner/name | module path> [-dir dir]
 collage plugin check [-release] [-run] [dir]
 collage ai init [-dir dir]
 collage completion bash|zsh|fish
-collage man [-install]
+collage man [--install]
 collage version
 collage help [command]
 ```
@@ -750,10 +750,12 @@ completion, so a new flag completes the day it exists. Commands a project's
 plugins add run through the project's own binary and are not completed.
 
 `collage man` prints collage(1), made from every command's own `help` text.
-`collage man -install` writes it to `../share/man/man1/collage.1` beside the
-directory the binary is in — `$(go env GOPATH)/share/man` for `go install` — which
-`man` searches for every directory on `PATH`, so `man collage` works with nothing
-else set up. It says so when the binary's directory is not on `PATH`.
+`collage man --install` writes it to `../share/man/man1/collage.1` beside the
+directory on `PATH` that holds `collage` — `$(go env GOPATH)/share/man` for `go
+install`, `~/.local/share/man` for a link in `~/.local/bin` — which `man` searches
+for every directory on `PATH`, so `man collage` works with nothing else set up. It
+says so when the binary is not on `PATH`, or when `MANPATH` is set without the
+empty entry that keeps those directories in.
 
 `completion`, `man` and `__complete` are reserved: a plugin command by one of those
 names is refused, as for every built-in.
