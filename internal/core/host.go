@@ -32,15 +32,22 @@ import (
 // The forwarding methods are deliberately not promoted from an embedded *App: an
 // embedded field promotes the whole method set, which is the thing being prevented.
 type hostView struct {
-	// ConfigSource is this plugin's name and the application's plugin
-	// configuration, which collage.PluginConfig reads. Its one method is
-	// unexported, so embedding it promotes nothing a plugin could call.
-	plugin.ConfigSource
+	// configSource is this plugin's name and its own section of the plugin
+	// configuration, which collage.PluginConfig reads. Embedded under an
+	// unexported name, and holding only unexported fields, so the value has no
+	// exported field a plugin could read another plugin's section through; its
+	// one method is unexported, so embedding it promotes nothing a plugin could
+	// call.
+	configSource
 	app *App
 	// name is the plugin this view was made for, so Use knows whose middleware
 	// it is adding.
 	name string
 }
+
+// configSource is plugin.ConfigSource under a name of this package's own: an
+// embedded field is named after its type, and an alias names it unexported.
+type configSource = plugin.ConfigSource
 
 // hostView, not *App, is what plugin.Init receives, so it is what must satisfy
 // plugin.Host. The assertion is here rather than in a test so that dropping one of
@@ -174,9 +181,11 @@ func (h *hostView) ServeStatus(w http.ResponseWriter, r *http.Request, status in
 // have no cache to reach. Handing over a Host whose methods are all technically
 // callable and mostly meaningless is worse than handing over a smaller interface.
 type configHostView struct {
-	// ConfigSource is what collage.PluginConfig reads; see hostView.
-	plugin.ConfigSource
+	// configSource is what collage.PluginConfig reads; see hostView.
+	configSource
 	app *App
+	// name is the plugin this view was made for.
+	name string
 	// closed is set when this plugin's Configure returns. A plugin can keep
 	// its ConfigHost, and the maps AddTemplateFunc and AddRenderFunc write are
 	// read by every render from then on: a write after Configure would race
@@ -262,7 +271,7 @@ func (h *configHostView) AddRenderFunc(name string, factory func(rc *types.Rende
 // is logged, since the method has no error to return.
 func (h *configHostView) WrapMount(wrap func(fs.FS) fs.FS) {
 	if h.closed.Load() {
-		h.app.logger.Warn("collage: WrapMount called after Configure returned; nothing was wrapped", "plugin", h.Name)
+		h.app.logger.Warn("collage: WrapMount called after Configure returned; nothing was wrapped", "plugin", h.name)
 		return
 	}
 	if wrap == nil {

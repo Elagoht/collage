@@ -17,7 +17,7 @@ func source(section string) ConfigSource {
 	if section != "" {
 		cfg["test/p"] = json.RawMessage(section)
 	}
-	return ConfigSource{Name: "test/p", Config: cfg}
+	return NewConfigSource("test/p", cfg)
 }
 
 func TestPluginConfig(t *testing.T) {

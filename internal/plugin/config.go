@@ -18,15 +18,24 @@ type ConfigReader interface {
 	pluginConfig() (section json.RawMessage, name string)
 }
 
-// ConfigSource is the plugin's name and the application's plugin
-// configuration. A host embeds it to satisfy ConfigReader.
+// ConfigSource is one plugin's name and its own section of the application's
+// plugin configuration. A host embeds it to satisfy ConfigReader. Its fields are
+// unexported and the section is a copy, so a host carries nothing a plugin could
+// read or write with reflect: not another plugin's section, not the
+// application's map.
 type ConfigSource struct {
-	Name   string
-	Config map[string]json.RawMessage
+	name    string
+	section json.RawMessage
+}
+
+// NewConfigSource returns the ConfigSource of the plugin named name: a copy of
+// its section of config, which may be nil.
+func NewConfigSource(name string, config map[string]json.RawMessage) ConfigSource {
+	return ConfigSource{name: name, section: bytes.Clone(config[name])}
 }
 
 func (s ConfigSource) pluginConfig() (json.RawMessage, string) {
-	return s.Config[s.Name], s.Name
+	return s.section, s.name
 }
 
 // PluginConfig returns the plugin's configuration decoded over defaults. With no

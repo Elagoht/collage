@@ -74,7 +74,7 @@ func TestFindPlugin_None(t *testing.T) {
 // A host collage did not make (a test double) has no plugins to offer.
 // plugin.ConfigSource satisfies ConfigReader on its own, as a test double does.
 func TestFindPlugin_ForeignHost(t *testing.T) {
-	if _, ok := collage.FindPlugin[*carrier](plugin.ConfigSource{Name: "x/y"}); ok {
+	if _, ok := collage.FindPlugin[*carrier](plugin.NewConfigSource("x/y", nil)); ok {
 		t.Fatal("found a plugin through a host with none")
 	}
 }

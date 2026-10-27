@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -230,5 +231,75 @@ func TestConfigHost_ApplicationFuncBeatsRenderFunc(t *testing.T) {
 	}
 	if n := strings.Count(site.Logs.String(), `func=brand`); n != 1 {
 		t.Errorf("the collision was logged %d times, want once:\n%s", n, site.Logs.String())
+	}
+}
+
+// exportedStrings collects every string and byte slice reachable from v
+// through exported fields, map values and slice elements: what a plugin reads
+// off a value with reflect alone, without unsafe.
+func exportedStrings(v reflect.Value, depth int, out *[]string) {
+	if depth > 8 || !v.IsValid() {
+		return
+	}
+	switch v.Kind() {
+	case reflect.Interface, reflect.Pointer:
+		if !v.IsNil() {
+			exportedStrings(v.Elem(), depth+1, out)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			if v.Type().Field(i).IsExported() {
+				exportedStrings(v.Field(i), depth+1, out)
+			}
+		}
+	case reflect.Map:
+		for it := v.MapRange(); it.Next(); {
+			exportedStrings(it.Key(), depth+1, out)
+			exportedStrings(it.Value(), depth+1, out)
+		}
+	case reflect.Slice:
+		if v.Type().Elem().Kind() == reflect.Uint8 {
+			*out = append(*out, string(v.Bytes()))
+			return
+		}
+		for i := range v.Len() {
+			exportedStrings(v.Index(i), depth+1, out)
+		}
+	case reflect.String:
+		*out = append(*out, v.String())
+	}
+}
+
+// Neither host a plugin receives carries another plugin's configuration in a
+// field reflect can read: each holds its own plugin's section only, unexported
+// (HOST-08). The plugin still reads its own through PluginConfig.
+func TestHost_NoOtherPluginsConfig(t *testing.T) {
+	var seen []string
+	type own struct{ Mine string }
+	var mine own
+	spy := &hgPlugin{name: "test/spy",
+		configureFn: func(_ context.Context, h collage.ConfigHost) error {
+			exportedStrings(reflect.ValueOf(h), 0, &seen)
+			return nil
+		},
+		initFn: func(_ context.Context, h collage.Host) error {
+			exportedStrings(reflect.ValueOf(h), 0, &seen)
+			var err error
+			mine, err = collage.PluginConfig(h, own{})
+			return err
+		},
+	}
+	collagetest.NewSite(t,
+		collagetest.WithPlugins(spy, &hgPlugin{name: "test/victim"}),
+		collagetest.WithPluginConfig("test/spy", `{"Mine":"spy-own"}`),
+		collagetest.WithPluginConfig("test/victim", `{"Secret":"victim-secret"}`),
+	)
+	for _, s := range seen {
+		if strings.Contains(s, "victim") || strings.Contains(s, "spy-own") {
+			t.Errorf("a host exposes configuration through an exported field: %q", s)
+		}
+	}
+	if mine.Mine != "spy-own" {
+		t.Errorf("PluginConfig read %+v", mine)
 	}
 }
