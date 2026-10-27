@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"html/template"
@@ -66,11 +67,20 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 	if err != nil {
 		return nil, err
 	}
+	// A middleware rendering a fragment for the request it was handed — itself
+	// a fragment's — passes through itself again, and again, until the stack
+	// runs out. A few levels are someone's design; past them it is that loop.
+	depth := fragmentDepth(r.Context()) + 1
+	if depth > maxFragmentDepth {
+		return nil, fmt.Errorf("%w: %d renders deep", errFragmentDepth, depth-1)
+	}
 	target, err := a.fragmentTarget(req)
 	if err != nil {
 		return nil, err
 	}
-	forFragment := fragmentRequest(r, target)
+	ctx, done := fragmentContext(r.Context(), depth)
+	defer done()
+	forFragment := fragmentRequest(r, target).WithContext(ctx)
 	// Resolved before the chain as well as at its end: a URL that reaches no
 	// fragment is refused without a middleware counting it — a rate limit, a
 	// ban list — as a request the reader made.
@@ -78,23 +88,92 @@ func (a *App) RenderFragment(r *http.Request, req plugin.FragmentRequest) (*plug
 		return nil, err
 	}
 
+	// Written by the render, which ServeFragment does not return before it has
+	// finished, and read only once it has returned.
 	var out *plugin.FragmentRender
 	var renderErr error
-	reached, status, err := handler.ServeFragment(forFragment, func(w http.ResponseWriter, r *http.Request) {
+	served, status, err := handler.ServeFragment(forFragment, func(w http.ResponseWriter, r *http.Request) {
 		out, renderErr = a.renderFragmentFor(w, r)
 	})
 	if err != nil {
 		return nil, err
 	}
-	// A middleware answered: the request never reached the page, so the reader
-	// is refused as a guard would refuse them.
-	if !reached {
+	// A middleware answered: the request never reached the page, or the
+	// middleware answered over the render — a recovering one, a timeout — so
+	// the reader is refused as a guard would refuse them.
+	if !served {
 		return nil, fmt.Errorf("%w: a middleware answered %d for %q", types.ErrGuardRefused, status, target.Path)
 	}
 	if renderErr != nil {
 		return nil, renderErr
 	}
+	if out == nil {
+		return nil, fmt.Errorf("collage: fragment %q rendered nothing", target.Path)
+	}
 	return out, nil
+}
+
+// maxFragmentDepth is how many RenderFragment calls may be under way within one
+// another's middleware chain: a middleware rendering a fragment for the request
+// it was handed is one level more.
+const maxFragmentDepth = 4
+
+// errFragmentDepth is RenderFragment's answer past maxFragmentDepth.
+var errFragmentDepth = errors.New("collage: RenderFragment called from the middleware of a fragment it is rendering")
+
+// fragmentDepthKey marks a fragment request's context with how many
+// RenderFragment calls it is within.
+type fragmentDepthKey struct{}
+
+func fragmentDepth(ctx context.Context) int {
+	depth, _ := ctx.Value(fragmentDepthKey{}).(int)
+	return depth
+}
+
+// fragmentContext is the context of a fragment request made for a caller whose
+// context is parent: it ends when parent does, with parent's deadline and cause,
+// but it carries none of parent's values. parent is the stream's, usually, and
+// what the stream's middleware put there — a signed-in user, a "this path is
+// public" mark — was decided for the stream's path. A request to the fragment's
+// URL carries what its own middleware puts there, and so does this one.
+//
+// What a request from the wire has before any middleware runs is kept: the
+// server and the local address net/http puts there, and whether this is a
+// static build's capture. The depth marks how many renders deep this is, and
+// the render waits for fresh data: a plugin re-renders a fragment because an
+// invalidation touched it, and pushes what it gets to readers who will not ask
+// again, so a stale value served here would be the push, and the refresh that
+// replaced it a moment later would reach nobody. A trace span parent carries is
+// not kept: the tracer's key is its own, and a push is no request to trace.
+//
+// done releases it, and must be called when the render is over.
+func fragmentContext(parent context.Context, depth int) (context.Context, context.CancelFunc) {
+	base := context.Background()
+	if server := parent.Value(http.ServerContextKey); server != nil {
+		base = context.WithValue(base, http.ServerContextKey, server)
+	}
+	if local := parent.Value(http.LocalAddrContextKey); local != nil {
+		base = context.WithValue(base, http.LocalAddrContextKey, local)
+	}
+	if types.IsCapture(parent) {
+		base = types.WithCapture(base)
+	}
+	base = context.WithValue(base, fragmentDepthKey{}, depth)
+	base = types.WithFreshData(base)
+
+	ctx, cancel := context.WithCancelCause(base)
+	stop := context.AfterFunc(parent, func() { cancel(context.Cause(parent)) })
+	release := func() {}
+	if deadline, ok := parent.Deadline(); ok {
+		var cancelDeadline context.CancelFunc
+		ctx, cancelDeadline = context.WithDeadline(ctx, deadline)
+		release = cancelDeadline
+	}
+	return ctx, func() {
+		stop()
+		release()
+		cancel(context.Canceled)
+	}
 }
 
 // errStarting is RenderFragment's answer while the application is starting.
@@ -328,7 +407,7 @@ func (a *App) namedFragmentPath(req plugin.FragmentRequest) (string, error) {
 
 // fragmentRequest is the request a reader would send for target: a GET carrying
 // r's host, client address, TLS state, headers and cookies — what decides who
-// the reader is — and its context, so the render ends when r's stream does.
+// the reader is. Not r's context: see fragmentContext.
 //
 // Built fresh rather than cloned: a clone keeps r's path values, and a guard
 // deciding on r.PathValue would judge the stream's values, not the fragment's.
@@ -363,12 +442,8 @@ func fragmentRequest(r *http.Request, target *url.URL) *http.Request {
 		RequestURI: u.RequestURI(),
 		TLS:        r.TLS,
 	}
-	// Fresh data, too: a plugin re-renders a fragment because an invalidation
-	// touched it, and pushes what it gets to readers who will not ask again. A
-	// stale value served here would be the push, and the refresh that replaced
-	// it a moment later would reach nobody. So the render waits on the
-	// upstream, and an upstream that is down is an error the plugin handles.
-	return out.WithContext(types.WithFreshData(r.Context()))
+	// Its context is the caller's to give it: see fragmentContext.
+	return out
 }
 
 // fragmentMatch is what a fragment path's URL resolved to.

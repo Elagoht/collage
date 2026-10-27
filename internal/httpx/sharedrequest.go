@@ -99,10 +99,13 @@ func safeContext(parent context.Context, devMode bool, logger *slog.Logger) cont
 // render Shared, so a plugin pushing that one render to many readers pushes
 // nothing of the reader it happened to be made for.
 //
-// ok is false when r carries a value declared with collage.Vary. Such a render
-// differs by more than its URL and host, and is not to be shared on those alone.
+// ok is false when r carries a value declared with collage.Vary, or a
+// middleware called collage.SkipCache for it. The first render differs by more
+// than its URL and host, and is not to be shared on those alone; the second is
+// rendered for its reader over HTTP — a preview, a signed-in view — and so it is
+// here.
 func ShareableRequest(r *http.Request, cacheParams []string, devMode bool, logger *slog.Logger) (shared *http.Request, ok bool) {
-	if len(requestVary(r)) > 0 {
+	if len(requestVary(r)) > 0 || skipsCache(r) {
 		return nil, false
 	}
 	shared = sharedRequest(r, cacheParams)
