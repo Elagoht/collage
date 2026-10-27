@@ -198,7 +198,11 @@ type SlotEngine struct {
 	// and could not parse, with the error. A source is Go code and cannot change
 	// while the program runs, so parsing it again is only a write lock and a
 	// clone of the whole template set, per render, to fail the same way.
-	failedSources  sync.Map
+	failedSources sync.Map
+	// missedKeys remembers, by page, fragment and key, the Key.Get misses a
+	// fragment rendered on its own has already been warned about in
+	// development; see bindKeyMiss.
+	missedKeys     sync.Map
 	maxDepth       int
 	defaultTimeout time.Duration
 	metrics        observability.Metrics

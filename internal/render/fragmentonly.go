@@ -103,6 +103,7 @@ func (e *SlotEngine) RenderFragmentResult(ctx context.Context, rc *types.RenderC
 	span.SetAttribute("locale", rc.Locale)
 	rc = rc.WithContext(ctx)
 	e.bindAssets(rc)
+	e.bindKeyMiss(rc, f)
 
 	state := &renderState{
 		page:       name,
@@ -139,4 +140,28 @@ func (e *SlotEngine) RenderFragmentResult(ctx context.Context, rc *types.RenderC
 	state.addTags(types.DeclaredTags(rc))
 	result.DependencyTags = state.sortedTags(nil)
 	return result, nil
+}
+
+// bindKeyMiss has, in development, a Get in this render that finds nothing say
+// so — once per page, fragment and key for the life of the process. Started
+// below the page's root, the render never ran the ancestors' data handlers, so a
+// value one of them stores with Key.Set is not there, and the fragment renders
+// with the zero value without a word. That is by design: answering a part of a
+// page must not render the rest of it. The warning is what keeps it from being
+// a silent one. Outside development nothing is bound and Get pays one
+// comparison.
+func (e *SlotEngine) bindKeyMiss(rc *types.RenderContext, f *types.Fragment) {
+	if !e.devMode || e.logger == nil || rc.Page == nil || f == types.PageRoot(rc.Page) {
+		return
+	}
+	page, fragment := rc.Page.Name, f.Name
+	types.BindKeyMiss(rc, func(key string) {
+		if _, seen := e.missedKeys.LoadOrStore(page+"\x00"+fragment+"\x00"+key, struct{}{}); seen {
+			return
+		}
+		e.logger.Warn("collage: a fragment rendered on its own read a key nothing in this render set, and got the zero value; "+
+			"a fragment answered at its own path or pushed renders without its ancestors, so their data handlers did not run — "+
+			"load the value in the fragment itself with collage.Once or collage.Cached",
+			"page", page, "fragment", fragment, "key", key)
+	})
 }
