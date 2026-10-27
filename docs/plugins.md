@@ -209,8 +209,10 @@ middleware and guards about a change, call it once per reader: a `Shared` render
 is made once and the readers after the first get a copy, each with their own
 forgery token and `PersonaliseHook` pass, so a change costs one render however
 many readers it reaches. The kept render is made again once a tag it depended on
-— `PathTag` of its URL among them — is invalidated, and for a page rendered per
-request, a second after it was made. Nothing is kept in development.
+— `PathTag` of its URL among them — is invalidated, once the page's cache
+lifetime has passed, and a second after it was made for a page rendered per
+request, with the cache off, or with a store shared between instances. Nothing is
+kept in development.
 
 ### Streams and shutdown
 

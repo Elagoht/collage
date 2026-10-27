@@ -220,8 +220,9 @@ type Host = interface {
 	// through, so calling it for each reader of a change costs one render: the
 	// readers after the first get a copy of it, each with their own token and
 	// PersonaliseHook pass. It is made again once a tag it depended on — its
-	// path's and host's among them — is invalidated, and for a page rendered per
-	// request, a second after it was made.
+	// path's and host's among them — is invalidated, once the page's cache
+	// lifetime has passed, and a second after it was made for a page rendered per
+	// request, with the cache off, or with a store shared between instances.
 	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
 	// ServeStatus answers r with status and the page the application shows for
 	// it — its not-found page for 404 and 410, its error page otherwise — for a
