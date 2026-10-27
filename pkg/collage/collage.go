@@ -101,7 +101,9 @@ type Host = interface {
 	// Unlike App.Handle's default, it runs inside the middleware chain, the
 	// application's and every plugin's, as if mounted WithMiddleware: a
 	// plugin's endpoint is part of the site, and may read the session or tenant
-	// a middleware resolved, or rely on a basicauth guarding /metrics.
+	// a middleware resolved, or rely on a basicauth guarding /metrics. Its
+	// request body is bounded at Server.MaxBodyBytes before the chain, as a
+	// page's is, so the site's middleware never reads an unbounded body there.
 	Handle(prefix string, handler http.Handler) error
 
 	// --- Wrapping requests ---

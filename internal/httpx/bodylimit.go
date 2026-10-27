@@ -81,8 +81,9 @@ func boundBody(w http.ResponseWriter, r *http.Request, limit int64) *limitedBody
 // Before, not only in the action. Middleware runs first, and one that read the
 // body — a method override parsing the form, a logger, a signature check —
 // read it unbounded, and left it parsed for the action, whose own limit then
-// had nothing left to bound. A handler mounted with Handle is left alone: its
-// body is the application's own business, as it always was.
+// had nothing left to bound. A handler the application mounted with Handle is
+// left alone: its body is the application's own business, as it always was. A
+// plugin's, which is Bounded, is not.
 //
 // The bound is also kept in the returned request's context. A middleware that
 // buffered the body and put a fresh reader in its place — io.ReadAll, then
@@ -93,7 +94,7 @@ func (h *Handler) boundBeforeMiddleware(w http.ResponseWriter, r *http.Request) 
 		return r
 	}
 	for _, mount := range h.handlers {
-		if mount.Matches(r.URL.Path) {
+		if mount.Matches(r.URL.Path) && !mount.Bounded {
 			return r
 		}
 	}

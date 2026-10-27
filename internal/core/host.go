@@ -9,6 +9,7 @@ import (
 	"sync/atomic"
 
 	"github.com/Elagoht/collage/internal/asset"
+	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/template"
 	"github.com/Elagoht/collage/internal/types"
@@ -135,8 +136,12 @@ func (h *hostView) OpenMounted(urlPath string) (fs.File, error) {
 // /metrics a basicauth was registered to guard — not an application's own API
 // that brings its own middleware, so it keeps what every mount had before
 // v0.67.0, and the Host interface keeps its shape.
+//
+// Its request body is bounded at Server.MaxBodyBytes before the chain, as a
+// page's is, so another plugin's middleware reading a body there reads at
+// most that much; the handler reads the same bounded body.
 func (h *hostView) Handle(prefix string, handler http.Handler) error {
-	return h.app.Handle(prefix, handler, WithMiddleware())
+	return h.app.Handle(prefix, handler, WithMiddleware(), func(m *httpx.HandlerMount) { m.Bounded = true })
 }
 
 // RenderFragment renders one fragment a page opened at its own URL, in parts.

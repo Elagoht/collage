@@ -38,6 +38,13 @@ type HandlerMount struct {
 	// forgot to describe is one the site's middleware still guards, rather than
 	// one an authentication middleware silently stops covering.
 	Bare bool
+	// Bounded bounds the request body at the application's MaxBodyBytes before
+	// the middleware chain, as for a page: what a plugin's Host.Handle mounts.
+	// A plugin's endpoint is inside the chain, and every other plugin's
+	// middleware that reads a body — a form parser, a logger — would otherwise
+	// read one there with no bound. The application's own mounts leave it
+	// false: their body is the application's business.
+	Bounded bool
 }
 
 // Matches reports whether the mount answers path.

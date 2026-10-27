@@ -1,15 +1,18 @@
 package collage_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -301,5 +304,51 @@ func TestHost_NoOtherPluginsConfig(t *testing.T) {
 	}
 	if mine.Mine != "spy-own" {
 		t.Errorf("PluginConfig read %+v", mine)
+	}
+}
+
+// A request under a plugin's Host.Handle prefix runs inside the middleware
+// chain, so its body is bounded at MaxBodyBytes before the middleware reads
+// it, as for a page; the application's own App.Handle, WithMiddleware or not,
+// keeps its documented unbounded body (HOST-10).
+func TestHost_HandleBodyBoundedBeforeMiddleware(t *testing.T) {
+	var mu sync.Mutex
+	read := map[string]int{}
+	reader := &hgPlugin{name: "test/reader", initFn: func(_ context.Context, h collage.Host) error {
+		return h.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					b, _ := io.ReadAll(r.Body)
+					mu.Lock()
+					read[r.URL.Path] = len(b)
+					mu.Unlock()
+					r.Body = io.NopCloser(bytes.NewReader(b))
+				}
+				next.ServeHTTP(w, r)
+			})
+		})
+	}}
+	noContent := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	stream := &hgPlugin{name: "test/stream", initFn: func(_ context.Context, h collage.Host) error {
+		return h.Handle("/_stream/", noContent)
+	}}
+	site := collagetest.NewSite(t,
+		collagetest.WithPlugins(reader, stream),
+		collagetest.WithConfig(func(c *collage.Config) { c.Server.MaxBodyBytes = 1 << 10 }),
+		collagetest.WithSetup(func(app *collage.App) error {
+			return app.Handle("/api/", noContent, collage.WithMiddleware())
+		}),
+	)
+	body := strings.Repeat("A", 1<<16)
+	for _, path := range []string{"/_stream/x", "/api/x"} {
+		req := site.Request(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/octet-stream")
+		site.Do(req)
+	}
+	if n := read["/_stream/x"]; n > 1<<10 {
+		t.Errorf("middleware read %d bytes under a plugin's Handle prefix, limit 1024", n)
+	}
+	if n := read["/api/x"]; n != 1<<16 {
+		t.Errorf("middleware read %d bytes under App.Handle WithMiddleware, want the whole body", n)
 	}
 }
