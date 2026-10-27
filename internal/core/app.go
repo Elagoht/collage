@@ -1561,9 +1561,10 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 				keys = append(keys, entry.Key)
 			}
 			if host, path, ok := httpx.DecodeSharedMeta(entry.Meta); ok {
-				// Lowered as the host tag the tracker's entries come from is,
-				// so a page both know is one entry.
-				addEntry(plugin.InvalidatedEntry{Host: ascii.LowerString(host), Path: path})
+				// Spelled as the host tag the tracker's entries come from is,
+				// so a page both know is one entry — and an entry an older
+				// instance wrote with a port is named as a new one's is.
+				addEntry(plugin.InvalidatedEntry{Host: cache.Host(host), Path: path})
 			}
 		}
 		reached = keys
