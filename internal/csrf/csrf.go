@@ -481,8 +481,10 @@ func (g *Guard) valid(token string) bool {
 	}
 	// The signature has already established issued was not tampered with, so the
 	// only thing left to reject is a token simply too old. A future issue time can
-	// come of clock skew between instances sharing a key; it is not refused, since
-	// it only shortens the token's own life.
+	// come of clock skew between instances sharing a key; it is not refused, and it
+	// lengthens the token's life by the skew: the age below is negative until the
+	// clock catches up. Only an instance holding the key can mint such a token, so
+	// the cost is bounded by how far apart the instances' clocks are.
 	return g.now().Unix()-seconds <= int64(g.maxAge/time.Second)
 }
 
