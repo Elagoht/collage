@@ -1089,8 +1089,8 @@ type personalised struct {
 // on a site with no PersonaliseHook plugin.
 //
 // Then every PersonaliseHook plugin rewrites the body for this reader, in
-// registration order; a hook that fails is returned as the error, for the caller to
-// answer as its kind of response must. The content returned with an error is the
+// registration order. A forgery token that cannot be issued, or a hook that fails,
+// is returned as the error, for the caller to answer as its kind of response must. The content returned with an error is the
 // one before any hook ran, never a partly rewritten one, and the token's cookie is
 // not sent: the error page answering instead sends its own if it carries a form.
 func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []byte, etag string) (personalised, error) {
@@ -1107,13 +1107,14 @@ func (h *Handler) personalise(w http.ResponseWriter, r *http.Request, content []
 		token, _, err = h.csrf.TokenFor(r)
 		if err != nil {
 			// Nothing to substitute with. Serving the marker would render a form
-			// that is refused on submission with nothing to explain why, so this
-			// is a failure rather than a body.
-			h.logger.Error("collage: could not issue a forgery token", "err", err)
-		} else {
-			content = h.csrf.Personalise(content, token)
-			cookie = h.csrf.Cookie(r, token)
+			// that is refused on submission with nothing to explain why — and
+			// put on the wire the one string a later body could plant to be
+			// handed each reader's token — so this is a failure rather than a
+			// body: the caller answers it as a 500, and no cookie is sent.
+			return original, fmt.Errorf("collage: could not issue a forgery token: %w", err)
 		}
+		content = h.csrf.Personalise(content, token)
+		cookie = h.csrf.Cookie(r, token)
 	}
 	personal := cookie != nil
 

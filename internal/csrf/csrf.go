@@ -33,6 +33,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -80,6 +81,7 @@ type Guard struct {
 	headerName string
 	maxAge     time.Duration // 0 disables the age check
 	now        func() time.Time
+	random     io.Reader // nil is crypto/rand
 	origin     *http.CrossOriginProtection
 	trusted    []netip.Prefix
 }
@@ -107,6 +109,10 @@ type Config struct {
 	TrustedProxies []netip.Prefix
 	// Now overrides the clock, for tests.
 	Now func() time.Time
+	// Random overrides where a token's nonce is read from, for tests: nil is
+	// crypto/rand, which does not fail. A source that does is how a test reaches
+	// the path a failed TokenFor takes.
+	Random io.Reader
 }
 
 // DefaultMaxAge is the token lifetime used when Config.MaxAge is zero: long
@@ -128,6 +134,7 @@ func New(cfg Config) (*Guard, error) {
 		headerName: cfg.HeaderName,
 		maxAge:     cfg.MaxAge,
 		now:        cfg.Now,
+		random:     cfg.Random,
 		origin:     http.NewCrossOriginProtection(),
 		trusted:    slices.Clone(cfg.TrustedProxies),
 	}
@@ -451,7 +458,11 @@ func parseForm(r *http.Request) error {
 // moving it forward.
 func (g *Guard) mint() (string, error) {
 	nonce := make([]byte, 32)
-	if _, err := rand.Read(nonce); err != nil {
+	read := rand.Read
+	if g.random != nil {
+		read = func(b []byte) (int, error) { return io.ReadFull(g.random, b) }
+	}
+	if _, err := read(nonce); err != nil {
 		return "", err
 	}
 	payload := base64.RawURLEncoding.EncodeToString(nonce) + "." + strconv.FormatInt(g.now().Unix(), 10)
