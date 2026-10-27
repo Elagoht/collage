@@ -416,9 +416,8 @@ func TestApp_ConcurrentUse(t *testing.T) {
 			if _, ok := app.Page("home"); !ok {
 				t.Error("Page(home) not found")
 			}
-			if err := app.RegisterCommand(plugin.Command{Name: "cmd"}); err != nil &&
-				!errors.Is(err, ErrDuplicateCommand) {
-				t.Errorf("RegisterCommand: %v", err)
+			if err := app.RegisterCommand(plugin.Command{Name: "cmd"}); !errors.Is(err, ErrAppStarted) {
+				t.Errorf("RegisterCommand after start = %v, want ErrAppStarted", err)
 			}
 		})
 	}
@@ -1142,14 +1141,15 @@ func TestPluginHost_CannotRecoverTheApp(t *testing.T) {
 	if spy.host.Logger() != app.Logger() {
 		t.Error("Host.Logger does not return the application's logger")
 	}
-	if err := spy.host.InvalidateTags(context.Background(), "homepage"); err != nil {
-		t.Errorf("Host.InvalidateTags: %v", err)
+	if _, ok := spy.host.(interface {
+		InvalidateTags(context.Context, ...string) error
+	}); ok {
+		t.Error("Host exposes InvalidateTags, which is the application's, not a plugin's")
 	}
-	if err := spy.host.RegisterCommand(plugin.Command{Name: "host-view-command"}); err != nil {
-		t.Errorf("Host.RegisterCommand: %v", err)
-	}
-	if cmds := app.Commands(); len(cmds) != 1 || cmds[0].Name != "host-view-command" {
-		t.Errorf("Commands() = %v, want the command registered through the Host", cmds)
+	// Registration through the Host closes with the application's: a command
+	// registered after start could never be dispatched.
+	if err := spy.host.RegisterCommand(plugin.Command{Name: "host-view-command"}); !errors.Is(err, ErrAppStarted) {
+		t.Errorf("Host.RegisterCommand after start = %v, want ErrAppStarted", err)
 	}
 }
 
