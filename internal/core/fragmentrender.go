@@ -40,8 +40,9 @@ var ErrNoRequest = errors.New("collage: no request to render for")
 // for the fragment at all: it is the stream's, which the stream's own path let
 // through. So the render is made for a GET to the fragment's URL, carrying r's
 // host, client address, headers and cookies, and nothing else of r's — not its
-// path values, its body or its method — and that request goes through what a
-// request to the URL goes through:
+// path values, its body, its method or its context's values (see
+// fragmentContext) — and that request goes through what a request to the URL
+// goes through:
 //   - the application's and every plugin's middleware, in ServeHTTP's order, for
 //     the fragment's path. One that answers instead of passing the request on —
 //     a basicauth's 401, a rate limit's 429, a redirect to a login page — refuses
@@ -55,6 +56,10 @@ var ErrNoRequest = errors.New("collage: no request to render for")
 //
 // The request hooks are not run, nor the span and metrics: no request reached
 // the server.
+//
+// A Shared render is kept, after this reader's chain and guards have passed, and
+// handed to the next reader they pass: see fragmentMemo. The token and the hooks
+// run on each reader's copy.
 //
 // It starts the application if nothing has yet, as Handler does, and refuses to
 // render while a start is running — from a plugin's Init, say — since the

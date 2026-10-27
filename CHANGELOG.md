@@ -19,9 +19,10 @@
     framework's live page, which nothing read.
 - **A `ConfigHost` closes when its plugin's `Configure` returns.** A plugin that
   kept it gets the new `ErrConfigureClosed` from `AddTemplateFunc` and
-  `AddRenderFunc`, and a late `WrapMount` wraps nothing and is logged. A late
-  render function used to be written into the map every render reads, which the
-  Go runtime aborts the process on.
+  `AddRenderFunc`, a late `WrapMount` wraps nothing and is logged, and
+  `collage.FindPlugin` through it finds nothing. A late render function used to
+  be written into the map every render reads, which the Go runtime aborts the
+  process on.
 - **`RegisterCommand` refuses names it could never run, and closes at Start.** A
   `collage-` name is the dispatcher's own, and a plugin's command may not take one
   of the `collage` binary's commands (`build`, `serve`…): both
@@ -36,6 +37,20 @@
   `index`, `print`…) and escapers (`html`, `js`, `urlquery`, html/template's own)
   with `ErrDuplicateTemplateFunc`; a plugin's `html` was all the escaping a value
   piped through it got. No elagoht plugin uses one.
+
+### Added
+
+- **A `Shared` fragment is rendered once per change, however many readers
+  `RenderFragment` is called for.** Once a reader's middleware and guards have
+  passed, a `Shared` render already made for the same host, URL, locale and
+  cached query is handed over as a copy, with the reader's own forgery token and
+  `PersonaliseHook` pass; readers arriving during the render wait for it. It is
+  made again once a tag it depended on — its URL's `PathTag` and its host's among
+  them — is invalidated or purged, after the page's cache lifetime, and for a
+  page rendered per request (or with the cache off, or a store shared between
+  instances) a second after it was made. At most 4096 renders or 32 MiB
+  (`Cache.MaxBytes`, if lower) are kept. Never in development, nor for a reader
+  whose request skips the cache.
 
 ### Changed
 
@@ -52,6 +67,15 @@
   wrapping `ErrPanic`. Called while the application is starting (from a plugin's
   `Init`), RenderFragment returns an error rather than render without the chain;
   called before any start, it starts the application, as `Handler` does.
+  The request ends when the caller's does but carries none of its context
+  values: what the stream's middleware set there was about the stream's path. A
+  trace span the caller carries is not its parent. It never returns nil, nil:
+  a middleware that recovers a panic from the guard or the render is `ErrPanic`,
+  one that answers over the render (`http.TimeoutHandler`'s 503) is
+  `ErrGuardRefused`, and a render the chain left running is waited for. A
+  middleware's `SkipCache` makes the render the reader's own, not `Shared`, as
+  over HTTP, and a middleware rendering a fragment for its own fragment request
+  is refused a few levels deep.
 - **By name, `FragmentRequest` builds the fragment's URL from its pattern** in
   the requested locale, as `FragmentURL` does, so parameters no request could
   carry (an undeclared name, a value with `/` outside a catch-all, `.`, `..`,
@@ -89,7 +113,9 @@
   a parameterised fragment path was bypassed by any client of collage-live or
   collage-websocket; an allow-list guard denied legitimate readers.
 - **Path-scoped middleware protects fragment paths from streams**:
-  `/_live/stream/?f=/admin/stats` no longer reads a fragment basicauth protects.
+  `/_live/stream/?f=/admin/stats` no longer reads a fragment basicauth protects,
+  nor one an application's own middleware protects when that middleware marked
+  the stream's path public in its context.
 - **`PersonaliseHook` runs on what RenderFragment returns**, on the markup and
   on each hoisted item; a render a hook made personal is not `Shared`. collage-secure's nonce placeholder and
   collage-honeypot's marker no longer reach pushed fragments, and pushed

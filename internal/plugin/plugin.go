@@ -197,7 +197,9 @@ type Host = interface {
 	//
 	// r is the reader's request — usually the stream's — and the render is made for
 	// a GET to the fragment's URL carrying r's host, client address, headers and
-	// cookies, and none of r's path values, body or method. That request passes the
+	// cookies, and none of r's path values, body, method or context values — it
+	// ends when r's context does, but what r's own middleware put there was about
+	// r's path, not the fragment's. That request passes the
 	// application's and every plugin's middleware for the fragment's path, in
 	// ServeHTTP's order, then the page's and fragment's guards, which read the
 	// URL's parameters with r.PathValue. A middleware that answers instead of
@@ -210,7 +212,16 @@ type Host = interface {
 	//
 	// Unlike a request, it never renders from a stale collage.Cached value: it
 	// waits for the upstream, and an upstream that fails is an error. A panic in a
-	// middleware is an error wrapping ErrPanic.
+	// middleware, or one a middleware recovered from the guard or the render, is
+	// an error wrapping ErrPanic; a middleware that answers over the render — a
+	// http.TimeoutHandler — is ErrGuardRefused. It never returns nil, nil.
+	//
+	// A Shared render is made once for every reader the middleware and guards let
+	// through, so calling it for each reader of a change costs one render: the
+	// readers after the first get a copy of it, each with their own token and
+	// PersonaliseHook pass. It is made again once a tag it depended on — its
+	// path's and host's among them — is invalidated, and for a page rendered per
+	// request, a second after it was made.
 	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
 	// ServeStatus answers r with status and the page the application shows for
 	// it — its not-found page for 404 and 410, its error page otherwise — for a

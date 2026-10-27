@@ -199,6 +199,19 @@ A `Shared` render may go to every connection watching the same URL on the same
 host (`r.Host`) — not across hosts, where an origin resolver gives each its own
 absolute URLs.
 
+Each call is a request to the fragment's URL for the reader whose request you
+pass: it carries that request's host, client address, headers and cookies — not
+its context values, which the stream's own middleware set for the stream's path —
+and passes the application's and every plugin's middleware and the fragment's
+guards. A middleware that answers (a 401, a 429, a timeout's 503) or a guard that
+refuses is `ErrGuardRefused`; a panic is `ErrPanic`. To ask each reader's
+middleware and guards about a change, call it once per reader: a `Shared` render
+is made once and the readers after the first get a copy, each with their own
+forgery token and `PersonaliseHook` pass, so a change costs one render however
+many readers it reaches. The kept render is made again once a tag it depended on
+— `PathTag` of its URL among them — is invalidated, and for a page rendered per
+request, a second after it was made. Nothing is kept in development.
+
 ### Streams and shutdown
 
 A plugin's `Shutdown` runs after the server has stopped, and the server stops by
