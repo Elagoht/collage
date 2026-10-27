@@ -142,7 +142,7 @@ project already has.
 | scheduled or background jobs | `elagoht/jobs` | goroutines with tickers |
 | robots.txt, sitemap, meta tags, structured data, icons | `@site` | hand-written tags and files |
 | a blog: `@site` plus feed, contents, share images | `@blog` | |
-| Markdown files as page data | `elagoht/markdown` | a Markdown loader |
+| rendering Markdown text, front matter into your own type | `elagoht/markdown` | a hand-wired Markdown renderer |
 | code highlighting | `elagoht/highlight` | |
 | search on a static site | `elagoht/search` | |
 | resized, modern-format images | `elagoht/opti-image` | |
