@@ -187,14 +187,27 @@ type Host = interface {
 	// --- Acting at request time ---
 	//
 	// RenderFragment renders one fragment a page opened at its own URL with
-	// WithFragmentPath, for r, as a request to that URL would — and hands back the
-	// parts rather than a response, so it can travel over a stream the plugin
-	// owns. A fragment the page did not open is ErrUnknownFragmentPath: nothing is
-	// reachable here that is not reachable over HTTP. The fragment's guard runs
-	// for r as it would for a request to that URL, and a refusal is
-	// ErrGuardRefused: send that reader nothing. Unlike a request, it never
-	// renders from a stale collage.Cached value: it waits for the upstream, and
-	// an upstream that fails is an error.
+	// WithFragmentPath, for r, as a request to that URL would be served — and hands
+	// back the parts rather than a response, so it can travel over a stream the
+	// plugin owns. A fragment the page did not open is ErrUnknownFragmentPath:
+	// nothing is reachable here that is not reachable over HTTP.
+	//
+	// r is the reader's request — usually the stream's — and the render is made for
+	// a GET to the fragment's URL carrying r's host, client address, headers and
+	// cookies, and none of r's path values, body or method. That request passes the
+	// application's and every plugin's middleware for the fragment's path, in
+	// ServeHTTP's order, then the page's and fragment's guards, which read the
+	// URL's parameters with r.PathValue. A middleware that answers instead of
+	// passing it on (a 401, a 429, a redirect), or a guard that refuses, is
+	// ErrGuardRefused: send that reader nothing. What a middleware writes, and the
+	// headers and cookies it sets, are dropped; what it puts in the context the
+	// guard and the render read. Every PersonaliseHook runs on the markup and on
+	// each hoisted item, and a render a hook made personal is not Shared. So each
+	// call is a request to the middleware: a rate limit counts it.
+	//
+	// Unlike a request, it never renders from a stale collage.Cached value: it
+	// waits for the upstream, and an upstream that fails is an error. A panic in a
+	// middleware is an error wrapping ErrPanic.
 	RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error)
 	// ServeStatus answers r with status and the page the application shows for
 	// it — its not-found page for 404 and 410, its error page otherwise — for a
@@ -263,7 +276,9 @@ type FragmentRender struct {
 	// page, fragment, locale and parameters on the same host (r.Host) at this
 	// moment: the page is one the framework caches for every reader, or every
 	// data handler in the subtree is declared Static or Shared and none has a
-	// slot resolver — and the markup carries no forgery token. Such a render is
+	// slot resolver — and the markup carries no forgery token and nothing a
+	// PersonaliseHook made personal, nor was a cache dimension declared for it with
+	// collage.Vary by a middleware. Such a render is
 	// made from a request stripped of the reader's cookies, headers and context
 	// values, as the page cache's is. Only a shared render may be rendered once
 	// and sent to many readers, and only to readers on the host it was made

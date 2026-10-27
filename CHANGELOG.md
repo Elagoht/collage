@@ -35,6 +35,27 @@
   with `ErrDuplicateTemplateFunc`; a plugin's `html` was all the escaping a value
   piped through it got. No elagoht plugin uses one.
 
+### Changed
+
+- **`Host.RenderFragment` / `App.RenderFragment` serve the fragment as a request
+  to its URL would be.** The render is made for a GET to the fragment's URL
+  carrying the caller's host, client address, headers and cookies — not its path
+  values, body or method — and that request now passes the application's and
+  every plugin's middleware for the fragment's path, in `ServeHTTP`'s order. A
+  middleware that answers instead of calling next (a basicauth 401, a ratelimit
+  429, a login redirect) is `ErrGuardRefused` naming the status; what it wrote,
+  and the headers and cookies it set, are dropped; context values it sets reach
+  the guard and the render. Every push a plugin renders is a request to the
+  middleware: a rate limit counts each one. A panicking middleware is an error
+  wrapping `ErrPanic`. Called while the application is starting (from a plugin's
+  `Init`), RenderFragment returns an error rather than render without the chain;
+  called before any start, it starts the application, as `Handler` does.
+- **By name, `FragmentRequest` builds the fragment's URL from its pattern** in
+  the requested locale, as `FragmentURL` does, so parameters no request could
+  carry (an undeclared name, a value with `/` outside a catch-all, `.`, `..`,
+  empty) and a locale the fragment has no path in are `ErrUnknownFragmentPath`.
+  A path `ServeHTTP` would redirect to its clean spelling is refused too.
+
 ### Fixed
 
 - **`Host.Pages` and `Host.Page` copy every container a page holds.**
@@ -61,6 +82,20 @@
   character dropped every plugin's rules; now only it is left out. A `From` or
   `To` holding a space, which a host's redirect file reads as a field separator,
   fails the build like any other malformed rule.
+- **Guards reached through RenderFragment read the fragment URL's parameters**
+  with `r.PathValue`, and never the caller's own. A deny-list guard on
+  a parameterised fragment path was bypassed by any client of collage-live or
+  collage-websocket; an allow-list guard denied legitimate readers.
+- **Path-scoped middleware protects fragment paths from streams**:
+  `/_live/stream/?f=/admin/stats` no longer reads a fragment basicauth protects.
+- **`PersonaliseHook` runs on what RenderFragment returns**, on the markup and
+  on each hoisted item; a render a hook made personal is not `Shared`. collage-secure's nonce placeholder and
+  collage-honeypot's marker no longer reach pushed fragments, and pushed
+  honeypot forms are accepted.
+- **`PersonaliseEvent.Personal` is sticky**: once a hook sets it, a
+  later hook assigning it cannot clear it, so a nonce'd body is never answered
+  with public `Cache-Control` or a 304.
+
 
 ## v0.77.0
 

@@ -122,6 +122,12 @@ func compose(middleware []Middleware, final http.Handler) http.Handler {
 
 // serveChained is the innermost handler of the middleware chain.
 func (h *Handler) serveChained(w http.ResponseWriter, r *http.Request) {
+	// A fragment render's run through the chain ends in the render, not in
+	// routing: see ServeFragment.
+	if run := fragmentRunOf(w, r); run != nil {
+		run.arrive(w, r)
+		return
+	}
 	state, ok := r.Context().Value(chainStateKey{}).(*chainState)
 	if !ok {
 		// A middleware replaced the request context rather than deriving from

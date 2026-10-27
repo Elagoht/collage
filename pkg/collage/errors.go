@@ -272,7 +272,8 @@ var (
 	// it, every missing record is a 500 and a page-specific 404 page is unreachable.
 	ErrNotFound = types.ErrNotFound
 	// ErrGuardRefused is returned by RenderFragment when the fragment's guard
-	// refuses the reader: the plugin sends that reader nothing.
+	// refuses the reader, or a middleware answers its request instead of passing
+	// it on: the plugin sends that reader nothing.
 	ErrGuardRefused = types.ErrGuardRefused
 	// ErrInvalidGuardDecision is returned when a guard's decision cannot be
 	// written as an answer.
