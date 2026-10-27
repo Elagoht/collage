@@ -593,7 +593,11 @@ process down.
 - `OnBeforeAction` — the first error stops dispatch and fails the request: `413`
   when it wraps `*http.MaxBytesError`, as a body past the action's limit read
   through `ev.Form()` does, and `500` otherwise. The first plugin to set
-  `ev.Result` is the last one asked, and the handler never runs.
+  `ev.Result` is the last one asked, and the handler never runs. `ev.Result` is a
+  full answer, made exactly as a handler's result is: one setting more than one of
+  `Location`, `Fragment`, `Page` and `Body` is refused with a 500, its
+  `InvalidateTags` are invalidated before the response, and its `Location` is
+  warmed. `Location` and `Status` go out as given, as a handler's do.
 - `OnCacheInvalidate` — dispatched from `InvalidateTags`, not from a request.
   Every plugin is called, even after one before it failed or panicked; each error
   is logged and joined into what `InvalidateTags` returns.

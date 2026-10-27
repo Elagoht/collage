@@ -189,8 +189,11 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		return h.serveFailure(w, r, route.failure(actionErrorStatus(err), stageBeforeAction,
 			fmt.Errorf("collage: action %q: %w", action.Name, err)))
 	}
+	// A hook's result is a full answer: it goes through what a handler's does —
+	// the ambiguity check, its InvalidateTags, the warm of its Location — not
+	// straight to the writer, which used to drop its invalidation unseen.
 	if before.Result != nil {
-		return h.writeActionResult(w, r, rc, match, before.Result, route)
+		return h.answerAction(w, r, rc, match, action, before.Result, route, writeDeadline)
 	}
 
 	result, err := action.Handler(ctx, rc)
@@ -229,6 +232,23 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 		result = &types.ActionResult{Status: http.StatusNoContent}
 	}
 
+	return h.answerAction(w, r, rc, match, action, result, route, writeDeadline)
+}
+
+// answerAction answers an action's request with result, whether the handler
+// returned it or a BeforeActionHook set it: one path, so a hook's result is
+// held to the same rules and has the same effects as a handler's.
+func (h *Handler) answerAction(
+	w http.ResponseWriter,
+	r *http.Request,
+	rc *types.RenderContext,
+	match *router.MatchResult,
+	action *types.Action,
+	result *types.ActionResult,
+	route *routeRef,
+	writeDeadline time.Time,
+) int {
+	ctx := r.Context()
 	// Refused before anything is invalidated: a result refused with a 500 tells
 	// the reader the action failed, and must not have changed what they read next.
 	if err := checkUnambiguousResult(result); err != nil {
@@ -355,7 +375,8 @@ const FetchHeader = "Collage-Fetch"
 // LocationHeader carries an action's redirect to a request marked with FetchHeader.
 const LocationHeader = "Collage-Location"
 
-// writeActionResult writes the response an action asked for.
+// writeActionResult writes the response an action asked for. It is reached only
+// through answerAction, which has refused an ambiguous result already.
 //
 // Exactly one of Location, Fragment, Page and Body decides the body, checked in that
 // order. A result that sets none of them is a bare status, which is what a DELETE
@@ -368,12 +389,6 @@ func (h *Handler) writeActionResult(
 	result *types.ActionResult,
 	route *routeRef,
 ) int {
-	// Checked again here for a BeforeAction hook's result, which reaches this
-	// without passing the check in serveAction; checking twice costs nothing.
-	if err := checkUnambiguousResult(result); err != nil {
-		return h.serveFailure(w, r, route.failure(http.StatusInternalServerError, stageRender, err))
-	}
-
 	header := w.Header()
 	for name, values := range result.Header {
 		for _, value := range values {

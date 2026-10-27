@@ -389,7 +389,12 @@ type BeforeActionEvent struct {
 	// body alone.
 	Request *http.Request
 	// Result, when a plugin sets it, is what the request is answered with in
-	// place of the handler's result: a refusal, a redirect.
+	// place of the handler's result: a refusal, a redirect. It is a full answer,
+	// held to what a handler's result is: one that sets more than one of
+	// Location, Fragment, Page and Body is refused with
+	// ErrAmbiguousActionResult, its InvalidateTags are invalidated before the
+	// response, and a Location it redirects to is warmed after them. Location
+	// and Status are written as given, as a handler's are.
 	Result *types.ActionResult
 }
 
