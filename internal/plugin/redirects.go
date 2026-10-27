@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -28,9 +29,13 @@ type RedirectSource interface {
 
 // PluginRedirects collects the rules of every RedirectSource, in registration
 // order, each stamped with its plugin's name and checked for control
-// characters.
+// characters. A rule holding one is left out and named in the returned error,
+// joined with the others'; every other rule is still returned, so one plugin's
+// bad rule does not drop the rest. The static build checks the rest of a
+// rule's shape (internal/build).
 func (r *Registry) PluginRedirects() ([]BuiltRedirect, error) {
 	var out []BuiltRedirect
+	var failures error
 	for _, p := range r.snapshot() {
 		source, ok := p.(RedirectSource)
 		if !ok {
@@ -41,15 +46,17 @@ func (r *Registry) PluginRedirects() ([]BuiltRedirect, error) {
 			rules = source.Redirects()
 			return nil
 		}); err != nil {
-			return nil, err
+			failures = errors.Join(failures, err)
+			continue
 		}
 		for _, rule := range rules {
 			if err := types.RedirectTextError(rule.From, rule.To); err != nil {
-				return nil, fmt.Errorf("collage: plugin %q redirects: %w", p.Name(), err)
+				failures = errors.Join(failures, fmt.Errorf("collage: plugin %q redirects: %w", p.Name(), err))
+				continue
 			}
 			rule.Source = p.Name()
 			out = append(out, rule)
 		}
 	}
-	return out, nil
+	return out, failures
 }

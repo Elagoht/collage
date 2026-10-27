@@ -37,3 +37,22 @@ func TestRegistry_PluginRedirects(t *testing.T) {
 		t.Errorf("err = %v, want ErrInvalidRedirect naming the plugin", err)
 	}
 }
+
+// A rule with a control character is dropped with an error naming its plugin,
+// and every other rule, of that plugin and the others, is still collected: one
+// bad rule used to drop every plugin's (HOOKS-08).
+func TestRegistry_PluginRedirectsDropsOnlyTheBadRule(t *testing.T) {
+	r := NewRegistry(nil)
+	mustRegister(t, r, redirectsPlugin{name: "a", rules: []BuiltRedirect{
+		{From: "/x\r\n", To: "/y", Status: 301},
+		{From: "/ok", To: "/y", Status: 301},
+	}})
+	mustRegister(t, r, redirectsPlugin{name: "b", rules: []BuiltRedirect{{From: "/gone", Status: 410}}})
+	got, err := r.PluginRedirects()
+	if !errors.Is(err, types.ErrInvalidRedirect) {
+		t.Errorf("err = %v, want ErrInvalidRedirect", err)
+	}
+	if len(got) != 2 || got[0].From != "/ok" || got[1].Source != "b" {
+		t.Errorf("PluginRedirects = %+v, want the two good rules", got)
+	}
+}

@@ -40,6 +40,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/asset"
@@ -856,7 +857,9 @@ func pathKey(path string) string {
 // checkPluginRedirect holds a RedirectSource rule to what the router holds a
 // registered redirect to — a From it can parse, starting with one "/", and a
 // To whose every placeholder From captures — except that To may be an absolute
-// http or https URL, and a 410 has no To at all.
+// http or https URL, and a 410 has no To at all. Neither may hold a space,
+// which a host's redirect file would read as a field separator. A rule it
+// refuses is left out of BuildFinishedEvent.Redirects and fails the build.
 func checkPluginRedirect(r plugin.BuiltRedirect) (*router.Pattern, error) {
 	switch r.Status {
 	case 301, 302, 307, 308, 410:
@@ -869,6 +872,14 @@ func checkPluginRedirect(r plugin.BuiltRedirect) (*router.Pattern, error) {
 	}
 	if strings.HasPrefix(r.From, "//") {
 		return nil, invalid("from must start with a single \"/\"")
+	}
+	// A host's redirect file separates its fields with spaces: "/a b /c 301"
+	// is a rule from /a to b with a status of /c. The router never matches a
+	// path with a raw space, so no rule needs one.
+	for _, field := range []struct{ name, value string }{{"from", r.From}, {"to", r.To}} {
+		if strings.ContainsFunc(field.value, unicode.IsSpace) {
+			return nil, invalid(fmt.Sprintf("%s %q holds a space; percent-encode it", field.name, field.value))
+		}
 	}
 	p, err := router.CompilePattern(r.From)
 	if err != nil {

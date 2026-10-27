@@ -172,6 +172,9 @@ func TestBuild_FailsOnAMalformedPluginRedirect(t *testing.T) {
 		{From: "/z", To: "ftp://example.com/x", Status: 301},
 		{From: "/z", To: "https:///x", Status: 301},
 		{From: "/z", To: "new", Status: 302},
+		{From: "/a b", To: "/c", Status: 301},
+		{From: "/z", To: "/c 200!", Status: 301},
+		{From: "/z", To: "https://example.com/a\u00a0b", Status: 301},
 	} {
 		app := newRedirectingRenderer()
 		r.Source = "legacy"
