@@ -378,13 +378,25 @@ func (r *Registry) AfterRender(ctx context.Context, ev *AfterRenderEvent) error 
 // left. It stops and returns a wrapped error at the first hook failure, including
 // a contained panic. A nil Registry, or one with no plugin implementing the hook,
 // is a no-op that returns nil.
+//
+// Personal only ever goes from false to true. A hook that made the body this
+// reader's — a nonce in it — has said the response must not be stored or
+// answered 304, and a later hook assigning Personal from a test of its own
+// ("ev.Personal = mine") is not saying otherwise: it knows nothing of the
+// earlier hook's change. Were the plain assignment to win, a nonce'd body would
+// go out with the page's public Cache-Control, and a shared cache would hand
+// one reader's nonce to every other.
 func (r *Registry) Personalise(ctx context.Context, ev *PersonaliseEvent) error {
+	personal := ev.Personal
 	for _, p := range r.snapshot() {
 		hook, ok := p.(PersonaliseHook)
 		if !ok {
 			continue
 		}
-		if err := runHook(p.Name(), "OnPersonalise", func() error { return hook.OnPersonalise(ctx, ev) }); err != nil {
+		err := runHook(p.Name(), "OnPersonalise", func() error { return hook.OnPersonalise(ctx, ev) })
+		personal = personal || ev.Personal
+		ev.Personal = personal
+		if err != nil {
 			return err
 		}
 	}

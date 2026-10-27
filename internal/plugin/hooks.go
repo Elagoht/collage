@@ -54,8 +54,11 @@ type AfterRenderHook interface {
 // body. On a page it runs before the development overlay is added; on an error
 // page, or a page an action answers with, the overlay is already in the body.
 // It is called for a page (from the cache or fresh), a fragment path or
-// fragment read, an action's HTML answer and an error page. A document is not
-// HTML and gets no call.
+// fragment read, an action's HTML answer and an error page — and for what
+// Host.RenderFragment returns, which a plugin pushes over a stream of its own:
+// once for its markup and once for each item it hoisted, all with the same
+// request and one header map that goes nowhere, since the plugin's stream
+// carries no response headers. A document is not HTML and gets no call.
 type PersonaliseHook interface {
 	OnPersonalise(ctx context.Context, ev *PersonaliseEvent) error
 }
@@ -77,7 +80,11 @@ type PersonaliseEvent struct {
 	// the cache nor a fragment read is answered 304, not even to
 	// "If-None-Match: *". It overrides a handler's own
 	// Cache-Control: a fragment read is answered "private, no-cache" and an
-	// action's HTML "private, no-store".
+	// action's HTML "private, no-store". A RenderFragment result it is set on is
+	// not Shared.
+	//
+	// A hook sets it and never clears it: once one hook has set it, it stays set
+	// for every later hook and for the response, whatever a later hook assigns.
 	Personal bool
 }
 
