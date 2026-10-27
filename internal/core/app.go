@@ -547,6 +547,17 @@ func New(cfg Config) (*App, error) {
 			logger.Warn("collage: Config.Template.Funcs names a function bound for every render; yours is never called", "func", name)
 		}
 	}
+	// The application's function wins a name a plugin's also has. A plugin's
+	// render function is bound anew on every render, over the parsed FuncMap, so
+	// it is dropped here, or it would beat the application's at every render; a
+	// template function loses in the merge below. Said once, now, since the
+	// plugin's function then never runs.
+	for name := range cfg.Template.Funcs {
+		if _, theirs := app.pluginFuncs[name]; theirs {
+			delete(app.renderFuncs, name)
+			logger.Warn("collage: Config.Template.Funcs names a plugin's template function; yours is the one called", "func", name)
+		}
+	}
 	funcs := make(map[string]any, len(app.pluginFuncs)+len(cfg.Template.Funcs)) // any: html/template.FuncMap's own value type
 	maps.Copy(funcs, app.pluginFuncs)
 	maps.Copy(funcs, cfg.Template.Funcs)

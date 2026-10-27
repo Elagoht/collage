@@ -212,10 +212,25 @@ func (h *configHostView) AddTemplateFunc(name string, fn any) error { // any: re
 	// A plugin's function under a built-in's name would replace the built-in
 	// every template was written against, without a word; AddRenderFunc refuses
 	// the same names.
+	if err := reservedFunc(name); err != nil {
+		return err
+	}
+	h.app.pluginFuncs[name] = fn
+	return nil
+}
+
+// reservedFunc refuses a name a plugin's template function may not take: one
+// of the framework's built-ins, or one of the template language's own — "eq",
+// "len", "html", "urlquery" — which would replace it in every template of the
+// site, the escapers included. ErrDuplicateTemplateFunc, as for a name another
+// plugin holds: two parties would be claiming one name.
+func reservedFunc(name string) error {
 	if _, reserved := template.DefaultFuncs()[name]; reserved {
 		return fmt.Errorf("%w: %q is the framework's own", plugin.ErrDuplicateTemplateFunc, name)
 	}
-	h.app.pluginFuncs[name] = fn
+	if template.LanguageBuiltin(name) {
+		return fmt.Errorf("%w: %q is the template language's own", plugin.ErrDuplicateTemplateFunc, name)
+	}
 	return nil
 }
 
@@ -230,8 +245,8 @@ func (h *configHostView) AddRenderFunc(name string, factory func(rc *types.Rende
 	if _, taken := h.app.pluginFuncs[name]; taken {
 		return fmt.Errorf("%w: %q", plugin.ErrDuplicateTemplateFunc, name)
 	}
-	if _, reserved := template.DefaultFuncs()[name]; reserved {
-		return fmt.Errorf("%w: %q is the framework's own", plugin.ErrDuplicateTemplateFunc, name)
+	if err := reservedFunc(name); err != nil {
+		return err
 	}
 	// A stand-in for parsing, which needs every name the templates call; the
 	// render engine binds factory's function in its place on every render.

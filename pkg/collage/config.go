@@ -244,7 +244,10 @@ type TemplateConfig struct {
 	// framework's built-in function map (safeHTML, safeURL, dict, default, upper,
 	// lower, title, join, formatTime, and the per-render functions below). It is
 	// merged over the built-ins, and over any functions plugins contributed, at
-	// construction, so an entry here under a built-in name replaces that built-in.
+	// construction, so an entry here under a built-in name replaces that built-in,
+	// and one under a plugin's function's name — AddTemplateFunc's or
+	// AddRenderFunc's — is the one every render calls; New logs each such name
+	// once.
 	//
 	// It must be set before New: html/template resolves a function name at
 	// execution time but can only call a name that was already in the map when the

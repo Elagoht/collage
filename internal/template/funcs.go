@@ -83,6 +83,28 @@ func DefaultFuncs() template.FuncMap {
 	}
 }
 
+// languageBuiltins are the functions text/template defines itself, which
+// html/template keeps: html, js and urlquery among them are escapers, and
+// html/template adds no escaper of its own after a value already piped through
+// one, so whatever function answers to those names is all the escaping that
+// value gets.
+var languageBuiltins = map[string]struct{}{
+	"and": {}, "call": {}, "html": {}, "index": {}, "slice": {}, "js": {}, "len": {}, "not": {},
+	"or": {}, "print": {}, "printf": {}, "println": {}, "urlquery": {},
+	"eq": {}, "ge": {}, "gt": {}, "le": {}, "lt": {}, "ne": {},
+}
+
+// LanguageBuiltin reports whether name is one of the template language's own
+// functions — text/template's builtins, or a name html/template's escaping
+// inserts into a template ("_html_template_…", "_eval_args_"). A FuncMap entry
+// under one of them replaces it in every template that FuncMap parses.
+func LanguageBuiltin(name string) bool {
+	if _, ok := languageBuiltins[name]; ok {
+		return true
+	}
+	return strings.HasPrefix(name, "_html_template_") || name == "_eval_args_"
+}
+
 // RenderBound lists the built-ins the render engine binds anew for every render,
 // because each needs that render: its slots, its request, its locale. A function
 // an application registers under one of these names is never the one that runs.

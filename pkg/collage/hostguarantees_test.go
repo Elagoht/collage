@@ -171,3 +171,64 @@ func TestConfigHost_ClosedPerPlugin(t *testing.T) {
 		t.Errorf("AddTemplateFunc through another plugin's Configure = %v, want ErrConfigureClosed", lateErr)
 	}
 }
+
+// text/template's builtins and html/template's escapers are refused by both
+// AddTemplateFunc and AddRenderFunc: a plugin's "eq" would decide every
+// template's comparisons, and its "html" or "urlquery" would be the only
+// escaping a value piped through it gets (HOST-03).
+func TestConfigHost_RefusesTemplateLanguageBuiltins(t *testing.T) {
+	names := []string{"and", "call", "html", "index", "slice", "js", "len", "not", "or", "print",
+		"printf", "println", "urlquery", "eq", "ge", "gt", "le", "lt", "ne",
+		"_html_template_htmlescaper", "_html_template_urlfilter", "_eval_args_"}
+	got := map[string][2]error{}
+	p := &hgPlugin{configureFn: func(_ context.Context, h collage.ConfigHost) error {
+		for _, name := range names {
+			got[name] = [2]error{
+				h.AddTemplateFunc(name, func(...string) string { return "PLUGIN" }),
+				h.AddRenderFunc(name, func(*collage.RenderContext) any { return func(...string) string { return "PLUGIN" } }),
+			}
+		}
+		return nil
+	}}
+	site := collagetest.NewSite(t,
+		collagetest.WithPlugins(p),
+		collagetest.WithTemplates(map[string]string{
+			"home.html": `{{if eq "guest" "admin"}}ADMIN{{else}}guest{{end}} {{"<b>" | html}} <a href="/s?q={{"x&admin=1" | urlquery}}">s</a>`,
+		}),
+	)
+	for _, name := range names {
+		for i, err := range got[name] {
+			if !errors.Is(err, collage.ErrDuplicateTemplateFunc) {
+				t.Errorf("%s (%s) = %v, want ErrDuplicateTemplateFunc", []string{"AddTemplateFunc", "AddRenderFunc"}[i], name, err)
+			}
+		}
+	}
+	body := site.Get("/").WantStatus(http.StatusOK).Body
+	if !strings.Contains(body, "guest &lt;b&gt; ") || !strings.Contains(body, "q=x%26admin%3D1") {
+		t.Errorf("body = %q", body)
+	}
+}
+
+// The application's own Config.Template.Funcs win over a plugin's
+// AddRenderFunc of the same name, as they already did over AddTemplateFunc, and
+// the collision is logged once when the application is built (PLUGB-05).
+func TestConfigHost_ApplicationFuncBeatsRenderFunc(t *testing.T) {
+	p := &hgPlugin{configureFn: func(_ context.Context, h collage.ConfigHost) error {
+		return h.AddRenderFunc("brand", func(*collage.RenderContext) any { return func() string { return "PLUGIN" } })
+	}}
+	site := collagetest.NewSite(t,
+		collagetest.WithPlugins(p),
+		collagetest.WithTemplates(map[string]string{"home.html": `{{brand}}`}),
+		collagetest.WithConfig(func(c *collage.Config) {
+			c.Template.Funcs = map[string]any{"brand": func() string { return "APP" }}
+		}),
+	)
+	for range 2 {
+		if body := site.Get("/").WantStatus(http.StatusOK).Body; !strings.Contains(body, "APP") {
+			t.Errorf("body = %q, want the application's function", body)
+		}
+	}
+	if n := strings.Count(site.Logs.String(), `func=brand`); n != 1 {
+		t.Errorf("the collision was logged %d times, want once:\n%s", n, site.Logs.String())
+	}
+}
