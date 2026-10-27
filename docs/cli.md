@@ -1040,6 +1040,11 @@ rather than three copies of them. The builder:
 - refuses to run at all when `OutDir` resolves — after following symlinks — to a
   filesystem root, and refuses to `Clean` (though it still writes) when it
   resolves to a repository root (`ErrDangerousOutDir`);
+- refuses a `WithStaticParams` value holding a backslash or a NUL
+  (`ErrRouteParams`, that one file): on Windows a backslash is a separator, and
+  `x\..\..\about` under `/blog/{slug}` would land on another page's file inside
+  `OutDir`. It is refused on every platform, so a build behaves the same
+  wherever it runs;
 - checks every resolved output path for containment with `filepath.Rel`, not a
   string prefix, so `/outsibling` cannot pass a check meant to require containment
   in `/out` (`ErrPathEscapesOutDir`);

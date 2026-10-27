@@ -1283,6 +1283,10 @@ func expandPattern(ctx context.Context, kind, name, locale, pattern string, list
 	var instances []pathInstance
 	var errs []error
 	for _, params := range sets {
+		if err := checkFileParams(pattern, params); err != nil {
+			errs = append(errs, fmt.Errorf("collage: static params for %s %q locale %q: %w", kind, name, locale, err))
+			continue
+		}
 		built, err := router.BuildPath(pattern, params)
 		if err == nil {
 			built, err = url.PathUnescape(built)
@@ -1294,6 +1298,33 @@ func expandPattern(ctx context.Context, kind, name, locale, pattern string, list
 		instances = append(instances, pathInstance{path: built, params: params})
 	}
 	return instances, nil, errs
+}
+
+// checkFileParams refuses a StaticParams value that cannot name a file safely.
+//
+// A built path becomes a file path through filepath.FromSlash, which on Windows
+// leaves a backslash as the separator it is there: "x\..\..\about" under
+// "/blog/{slug}" would be written to about\index.html, inside OutDir and so past
+// the containment check, over another page's file — and the collision check
+// compares URL paths, which differ. On Unix the same value is a literal file
+// name no static host would serve for the URL a link spells. A NUL is a byte the
+// router refuses in a request and no file system takes in a name. Both are
+// refused for every placeholder, catch-all included, on every platform, so a
+// build behaves the same wherever it runs. A link built at run time is not
+// affected: BuildPath escapes a backslash, and a request may carry one.
+func checkFileParams(pattern string, params map[string]string) error {
+	names := make([]string, 0, len(params))
+	for name := range params {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		if i := strings.IndexAny(params[name], "\\\x00"); i >= 0 {
+			return fmt.Errorf("%w: %q: %q holds %q, which a static build cannot write as a file name on every platform",
+				types.ErrRouteParams, pattern, name, params[name][i:i+1])
+		}
+	}
+	return nil
 }
 
 // callStaticParams calls list, turning a panic into ErrBuildPanic: it is user code

@@ -192,7 +192,9 @@ func (b *PageBuilder) Incremental(ttl time.Duration) *PageBuilder {
 //
 // It is called once per locale the page has a path in, and each map must fill that
 // locale's pattern exactly — a missing or extra name fails that one file, as a link
-// built by name would. The build makes the path, locale prefix included, and hands
+// built by name would. A value holding a backslash or a NUL fails that file with
+// ErrRouteParams too: a backslash is a path separator on Windows, where it would
+// write over another page's file. The build makes the path, locale prefix included, and hands
 // the values to the page's data handlers as a request to that path would.
 //
 // Only a build calls it. A running server answers every value the pattern

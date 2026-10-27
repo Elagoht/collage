@@ -618,14 +618,23 @@ func TestNextjs_AParamValueRoundTripsThroughItsLink(t *testing.T) {
 // Next.js: test/e2e/prerender-fallback-encoding ("should output paths
 // correctly"). A static build writes each value under a name of its own, one
 // directory deep: a "%2F" that is text stays text, and nothing a value holds
-// becomes a directory of its own or lands outside the one it belongs in.
+// becomes a directory of its own or lands outside the one it belongs in. A
+// backslash is the exception, refused rather than written (see
+// TestNextjs_ABuildRefusesValuesThatDoNotFitThePattern): it is a separator on
+// Windows, and a running server still answers it.
 func TestNextjs_ABuildWritesEachValueUnderItsOwnName(t *testing.T) {
-	app := paramApp(t, encodedSlugs...)
+	var buildable []string
+	for _, value := range encodedSlugs {
+		if !strings.Contains(value, `\`) {
+			buildable = append(buildable, value)
+		}
+	}
+	app := paramApp(t, buildable...)
 	out := t.TempDir()
 	if _, err := collage.Build(context.Background(), app, collage.BuildOptions{OutDir: out}); err != nil {
 		t.Fatalf("Build: %v", err)
 	}
-	for _, value := range encodedSlugs {
+	for _, value := range buildable {
 		file := filepath.Join(out, "blog", value, "index.html")
 		data, err := os.ReadFile(file)
 		if err != nil {
@@ -637,8 +646,8 @@ func TestNextjs_ABuildWritesEachValueUnderItsOwnName(t *testing.T) {
 		}
 	}
 	entries, _ := os.ReadDir(filepath.Join(out, "blog"))
-	if len(entries) != len(encodedSlugs) {
-		t.Errorf("blog/ holds %d entries, want %d", len(entries), len(encodedSlugs))
+	if len(entries) != len(buildable) {
+		t.Errorf("blog/ holds %d entries, want %d", len(entries), len(buildable))
 	}
 }
 
@@ -657,6 +666,7 @@ func TestNextjs_ABuildRefusesValuesThatDoNotFitThePattern(t *testing.T) {
 		{"dot", map[string]string{"slug": "."}},
 		{"slash", map[string]string{"slug": "../escape"}},
 		{"empty", map[string]string{"slug": ""}},
+		{"backslash", map[string]string{"slug": `x\..\..\about`}},
 	} {
 		app, err := collage.New(&collage.Config{
 			Server: collage.ServerConfig{Host: "localhost", Port: 3000},
