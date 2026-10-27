@@ -98,6 +98,11 @@ var ErrEmptyCommandName = errors.New("collage: empty command name")
 // Name is already registered.
 var ErrDuplicateCommand = errors.New("collage: duplicate command name")
 
+// ErrInvalidCommandName is returned by RegisterCommand for a name no command
+// line can carry as one argument: whitespace or a control character in it, a
+// leading "-" that flag parsing takes, a shell metacharacter.
+var ErrInvalidCommandName = errors.New("collage: invalid command name")
+
 // ErrInvalidCacheType is returned by New when Config.Cache.Enabled is true,
 // Config.Cache.Store is nil, and Config.Cache.Type names an implementation this
 // package cannot build. pkg/collage exports it as ErrInvalidCacheType.

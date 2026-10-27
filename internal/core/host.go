@@ -109,8 +109,9 @@ func (h *hostView) Logger() *slog.Logger {
 }
 
 // RegisterCommand registers cmd as one of the application's CLI subcommands.
+// A plugin's command may not take one of the collage binary's own names.
 func (h *hostView) RegisterCommand(cmd plugin.Command) error {
-	return h.app.RegisterCommand(cmd)
+	return h.app.registerCommand(cmd, true)
 }
 
 // RegisterDocument registers a document the plugin contributes.

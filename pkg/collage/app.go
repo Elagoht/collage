@@ -83,8 +83,10 @@ func (a *App) RegisterAction(action *Action) error { return a.c.RegisterAction(a
 func (a *App) RegisterPlugin(p Plugin) error { return a.c.RegisterPlugin(p) }
 
 // RegisterCommand registers cmd as a CLI subcommand DispatchCommands can run. An
-// empty or repeated name is refused. Unlike the other Register methods it still
-// works after startup, because plugins contribute commands from their Init.
+// empty or repeated name, a "collage-" name (DispatchCommands' own) and one
+// that is not a single shell word are refused. It is open while plugins' Init
+// runs, since plugins contribute commands from there, and closed with
+// ErrAppStarted once the application has started.
 func (a *App) RegisterCommand(cmd Command) error { return a.c.RegisterCommand(cmd) }
 
 // Commands returns the registered CLI subcommands in registration order, as a copy.

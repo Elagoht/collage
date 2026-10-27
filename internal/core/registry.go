@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 
 	"github.com/Elagoht/collage/internal/plugin"
 	"github.com/Elagoht/collage/internal/types"
@@ -609,20 +610,43 @@ func (a *App) RegisterPlugin(p plugin.Plugin) error {
 }
 
 // RegisterCommand registers cmd as a CLI subcommand, rejecting an empty name
-// (ErrEmptyCommandName) and a name another command already holds
-// (ErrDuplicateCommand).
+// (ErrEmptyCommandName), a name that is not one shell word
+// (ErrInvalidCommandName), a "collage-" name — DispatchCommands answers
+// "collage-check" and "collage-inspect" itself, and the prefix is kept for its
+// own — and a name another command already holds (both ErrDuplicateCommand).
 //
-// Unlike the other registration methods it is not closed by ErrAppStarted: plugins
-// contribute their commands from inside Init, which runs as part of starting the
-// application.
+// It is closed by ErrAppStarted like the other registration methods, but later:
+// plugins contribute their commands from inside Init, which runs as part of
+// starting the application, and the application is started only once every
+// Init has returned. A command registered after that would never be
+// dispatched: DispatchCommands has started the application before it looks.
 func (a *App) RegisterCommand(cmd plugin.Command) error {
+	return a.registerCommand(cmd, false)
+}
+
+// registerCommand is RegisterCommand; fromPlugin also refuses the collage
+// binary's own command names (plugin.CLICommands), which an application's own
+// command may take.
+func (a *App) registerCommand(cmd plugin.Command, fromPlugin bool) error {
 	if cmd.Name == "" {
 		return ErrEmptyCommandName
+	}
+	if !shellWord(cmd.Name) {
+		return fmt.Errorf("%w: %q is not one word a shell passes as it is", ErrInvalidCommandName, cmd.Name)
+	}
+	if strings.HasPrefix(cmd.Name, "collage-") {
+		return fmt.Errorf("%w: %q: collage- names are the dispatcher's own", ErrDuplicateCommand, cmd.Name)
+	}
+	if fromPlugin && slices.Contains(plugin.CLICommands, cmd.Name) {
+		return fmt.Errorf("%w: %q is a command of the collage binary", ErrDuplicateCommand, cmd.Name)
 	}
 
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if a.started {
+		return fmt.Errorf("%w: cannot register command %q", ErrAppStarted, cmd.Name)
+	}
 	for i := range a.commands {
 		if a.commands[i].Name == cmd.Name {
 			return fmt.Errorf("%w: %q", ErrDuplicateCommand, cmd.Name)
@@ -630,6 +654,20 @@ func (a *App) RegisterCommand(cmd plugin.Command) error {
 	}
 	a.commands = append(a.commands, cmd)
 	return nil
+}
+
+// shellWord reports whether name is one word a shell passes unchanged and flag
+// parsing leaves alone: ASCII letters, digits, "-", "_", ".", ":", beginning
+// with a letter or a digit.
+func shellWord(name string) bool {
+	for i := range len(name) {
+		c := name[i]
+		alnum := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+		if !alnum && (i == 0 || !strings.ContainsRune("-_.:", rune(c))) {
+			return false
+		}
+	}
+	return true
 }
 
 // Commands returns the CLI subcommands plugins contributed, in registration order,

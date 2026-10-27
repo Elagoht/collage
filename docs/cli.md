@@ -860,9 +860,11 @@ program may go on to serve it: once a command has run, call `App.Shutdown`
 yourself, as above, so that every plugin's `Shutdown` runs. `collage.Main`
 does.
 
-Within the application, a command with an empty name or a name another command
-already holds is rejected at `RegisterCommand` (`collage.ErrDuplicateCommand` for
-a repeated name). See [plugins](plugins.md).
+Within the application, `RegisterCommand` rejects an empty name, one that is not a
+single shell word (`collage.ErrInvalidCommandName`), a `collage-` name and a name
+another command already holds (both `collage.ErrDuplicateCommand`); a plugin's
+command may not take a `collage` built-in's name either. After the application has
+started it is `collage.ErrAppStarted`. See [plugins](plugins.md).
 
 ## The static builder
 

@@ -352,3 +352,47 @@ func TestHost_HandleBodyBoundedBeforeMiddleware(t *testing.T) {
 		t.Errorf("middleware read %d bytes under App.Handle WithMiddleware, want the whole body", n)
 	}
 }
+
+// RegisterCommand refuses a name it could never run: one the dispatcher
+// answers itself ("collage-check", and every "collage-" name), one that is not
+// a single shell word, and, from a plugin, one of the collage binary's own
+// commands. After Start it is ErrAppStarted, as every registrar is (HOST-04).
+func TestRegisterCommand_RefusesUnreachableNames(t *testing.T) {
+	run := func(context.Context, []string) error { return nil }
+	got := map[string]error{}
+	var kept collage.Host
+	p := &hgPlugin{initFn: func(_ context.Context, h collage.Host) error {
+		kept = h
+		for _, name := range []string{"collage-check", "collage-inspect", "collage-routes", " seed", "-h", "a b", "x\ny", "build", "serve", "seed-db"} {
+			got[name] = h.RegisterCommand(collage.Command{Name: name, Run: run})
+		}
+		return nil
+	}}
+	var appBuild error
+	site := collagetest.NewSite(t, collagetest.WithPlugins(p), collagetest.WithSetup(func(app *collage.App) error {
+		appBuild = app.RegisterCommand(collage.Command{Name: "build", Run: run})
+		return nil
+	}))
+	for _, name := range []string{"collage-check", "collage-inspect", "collage-routes", "build", "serve"} {
+		if !errors.Is(got[name], collage.ErrDuplicateCommand) {
+			t.Errorf("RegisterCommand(%q) = %v, want ErrDuplicateCommand", name, got[name])
+		}
+	}
+	for _, name := range []string{" seed", "-h", "a b", "x\ny"} {
+		if !errors.Is(got[name], collage.ErrInvalidCommandName) {
+			t.Errorf("RegisterCommand(%q) = %v, want ErrInvalidCommandName", name, got[name])
+		}
+	}
+	if got["seed-db"] != nil {
+		t.Errorf("RegisterCommand(seed-db) = %v", got["seed-db"])
+	}
+	if appBuild != nil {
+		t.Errorf("the application's own command named build = %v; it runs as go run . build", appBuild)
+	}
+	if err := kept.RegisterCommand(collage.Command{Name: "late", Run: run}); !errors.Is(err, collage.ErrAppStarted) {
+		t.Errorf("RegisterCommand after Start = %v, want ErrAppStarted", err)
+	}
+	if err := site.App.RegisterCommand(collage.Command{Name: "later", Run: run}); !errors.Is(err, collage.ErrAppStarted) {
+		t.Errorf("App.RegisterCommand after Start = %v, want ErrAppStarted", err)
+	}
+}

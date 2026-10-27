@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"strings"
 	"testing"
 
@@ -295,5 +296,24 @@ func TestVersion_ComesFromTheBuild(t *testing.T) {
 	// here. What matters is that it is not a literal somebody typed.
 	if Version != "devel" {
 		t.Errorf("Version = %q in a test binary, want %q — it is not being read from the build", Version, "devel")
+	}
+}
+
+// plugin.CLICommands is what a plugin's command may not be named; it lists
+// every command the binary answers, so none can be shadowed.
+func TestCLICommands_ListsEveryBuiltin(t *testing.T) {
+	names := []string{completeCommand}
+	for _, b := range builtins {
+		names = append(names, b.name)
+	}
+	for _, name := range names {
+		if !slices.Contains(plugin.CLICommands, name) {
+			t.Errorf("plugin.CLICommands lacks %q", name)
+		}
+	}
+	for _, name := range plugin.CLICommands {
+		if !isBuiltin(name) {
+			t.Errorf("plugin.CLICommands has %q, which is not a built-in", name)
+		}
 	}
 }

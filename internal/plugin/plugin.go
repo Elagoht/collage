@@ -282,7 +282,10 @@ type FragmentRender struct {
 
 // Command is a CLI subcommand a plugin contributes via Host.RegisterCommand.
 type Command struct {
-	// Name is the subcommand's name, as typed on the command line.
+	// Name is the subcommand's name, as typed on the command line: one shell
+	// word of ASCII letters, digits, "-", "_", ".", ":", beginning with a letter
+	// or a digit. A "collage-" name is the dispatcher's own, and a plugin may
+	// not take one of the collage binary's commands (CLICommands).
 	Name string
 	// Usage is a short usage string shown in help output.
 	Usage string
@@ -290,4 +293,13 @@ type Command struct {
 	Short string
 	// Run executes the command with the given arguments.
 	Run func(ctx context.Context, args []string) error
+}
+
+// CLICommands are the collage binary's own commands. A plugin's command may not
+// take one of these names: "go run . build" and "collage build" doing different
+// things is a trap for whoever types the wrong one. internal/cli's test keeps
+// the list in step with the binary.
+var CLICommands = []string{
+	"new", "add", "plugin", "ai", "dev", "build", "export", "serve", "routes", "inspect", "check",
+	"completion", "man", "version", "help", "__complete",
 }

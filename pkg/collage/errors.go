@@ -73,8 +73,14 @@ var (
 	// already holds.
 	ErrDuplicatePage = core.ErrDuplicatePage
 	// ErrDuplicateCommand is returned by App.RegisterCommand for a name another command
-	// already holds.
+	// already holds, or one that is not the application's to take: a "collage-" name,
+	// which DispatchCommands keeps for its own, and — from a plugin's
+	// Host.RegisterCommand — one of the collage binary's commands.
 	ErrDuplicateCommand = core.ErrDuplicateCommand
+	// ErrInvalidCommandName is returned by App.RegisterCommand and
+	// Host.RegisterCommand for a name a command line cannot carry as one word:
+	// whitespace, a control character, a leading "-", a shell metacharacter.
+	ErrInvalidCommandName = core.ErrInvalidCommandName
 	// ErrUnknownCommand is returned by DispatchCommands when args is empty or names no
 	// command any registered plugin contributed. It is the signal to fall through to
 	// whatever the program does by default — serving, building, or printing its own

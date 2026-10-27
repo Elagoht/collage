@@ -610,21 +610,25 @@ what earlier ones changed.
    there and then, and a later `app.Shutdown` does not shut them down again, nor
    a plugin whose `Init` never ran or failed.
 
-`RegisterCommand` is the one registration call deliberately exempt from
-`ErrAppStarted`: plugins register commands from inside `Init`, which by definition
-runs as part of starting.
+`RegisterCommand` stays open while every plugin's `Init` runs, since plugins
+register commands from inside it, and is closed with `ErrAppStarted` once the
+application has started: `DispatchCommands` starts the application before it looks
+for a command, so one registered later would never run.
 
 ## Commands
 
 A registered command reaches `app.Commands()`, and your own `main` dispatches it
 by name with `collage.DispatchCommands` — run as `go run . <command>`, because the
 `collage` binary never loads your plugins, and so never sees their commands. A
-scaffolded `main.go` already does this. A command with an empty name, or a name
-another command already holds, is refused at `RegisterCommand`
-(`collage.ErrDuplicateCommand` for a repeated name). Name it something
-other than the binary's built-ins (`new`, `dev`, `build`, `export`, `serve`,
-`version`, `help`) all the same: `go run . build` and `collage build` doing
-different things is a trap for whoever types the wrong one. See
+scaffolded `main.go` already does this. `RegisterCommand` refuses a name it could
+never run: an empty one, one that is not a single shell word (ASCII letters,
+digits, `-` `_` `.` `:`, starting with a letter or digit;
+`collage.ErrInvalidCommandName`), a `collage-` name, which `DispatchCommands`
+answers itself (`collage-check`, `collage-inspect`), and a name another command
+already holds (both `collage.ErrDuplicateCommand`). A plugin's command may not
+take one of the `collage` binary's own names either (`new`, `dev`, `build`,
+`export`, `serve`, `version`, `help`…): `go run . build` and `collage build`
+doing different things is a trap for whoever types the wrong one. See
 [the CLI](cli.md#plugin-commands).
 
 ```go
