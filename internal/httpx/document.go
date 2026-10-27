@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -67,7 +66,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			Params:  match.PathParams,
 			Vary:    queryVary(r.URL, doc.CacheParams),
 			Request: requestVary(r),
-			Host:    ascii.LowerString(r.Host),
+			Host:    cache.Host(r.Host),
 		})
 		lookupStart := time.Now()
 		content, etag, isStale, found := h.cacheGet(ctx, key)

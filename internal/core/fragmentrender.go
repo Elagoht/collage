@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -342,7 +341,7 @@ func (a *App) memoKey(r *http.Request, at fragmentMatch) string {
 		Locale: at.locale,
 		Params: at.params,
 		Vary:   []string{"fragment:" + at.page.Name + "/" + at.fragment.Name, "query:" + r.URL.RawQuery},
-		Host:   ascii.LowerString(r.Host),
+		Host:   cache.Host(r.Host),
 	})
 }
 
@@ -366,7 +365,7 @@ func (a *App) memoAge(page *types.Page) time.Duration {
 // memoTags are the tags beside its own a kept render is dropped by: those an
 // invalidation by the URL's path or host names, as for a cached page.
 func memoTags(r *http.Request) []string {
-	return []string{types.PathTag(r.URL.Path), types.HostTag(ascii.LowerString(r.Host))}
+	return []string{types.PathTag(r.URL.Path), types.HostTag(cache.Host(r.Host))}
 }
 
 // personaliseFragment runs every PersonaliseHook over out's markup and over each

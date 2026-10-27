@@ -30,9 +30,12 @@ type KeyInput struct {
 	// because Vary carries the raw query — and a query is chosen by whoever sent
 	// the request, so sharing a section would let one spell another's key.
 	Request []string
-	// Host is the host the request named. A render may build an absolute URL
-	// from it — a canonical link, an og:url — and a request carrying another
-	// Host would otherwise write that render into the entry everyone is served.
+	// Host is the host the request named, as Host spells it: lower-case, no
+	// port, no trailing dot. A render may build an absolute URL from it — a
+	// canonical link, an og:url — and a request carrying another Host would
+	// otherwise write that render into the entry everyone is served; the shared
+	// render is given the same spelling, so normalising it here shares an entry
+	// only between requests whose render is the same.
 	Host string
 }
 

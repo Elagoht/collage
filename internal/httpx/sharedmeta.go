@@ -221,7 +221,7 @@ func (h *Handler) writeShared(r *http.Request, shared cache.SharedCache, key str
 	detached := context.WithoutCancel(ctx)
 	writeCtx, cancel := context.WithTimeout(detached, sharedStoreTimeout)
 	defer cancel()
-	etag, outcome, err := shared.SetSince(writeCtx, key, content, ttl, routeTags, encodeSharedMeta(r.Host, r.URL.Path, rcp), mark.shared)
+	etag, outcome, err := shared.SetSince(writeCtx, key, content, ttl, routeTags, encodeSharedMeta(cache.Host(r.Host), r.URL.Path, rcp), mark.shared)
 	h.sharedHealth.Done(detached, "page write", key, err)
 	if err != nil {
 		return ""

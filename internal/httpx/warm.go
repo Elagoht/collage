@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/observability"
 	"github.com/Elagoht/collage/internal/render"
@@ -277,7 +276,7 @@ func newRecipe(r *http.Request, cacheParams []string, document bool) recipe {
 		}
 	}
 	return recipe{
-		host:     r.Host,
+		host:     cache.Host(r.Host),
 		path:     r.URL.Path,
 		rawPath:  r.URL.RawPath,
 		query:    strings.Join(queryVary(r.URL, cacheParams), ""),
@@ -470,12 +469,12 @@ func (s *recipes) drop(key string) {
 // The one whose vary entries are vary, if there is one, comes first, and matched
 // says there is: it is the variant a request declaring vary lands on.
 func (s *recipes) forURL(host string, target *url.URL, vary []string) (keys []string, matched bool) {
-	host = ascii.LowerString(host)
+	host = cache.Host(host)
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	for node := s.newest; node != nil; node = node.older {
 		rc := node.recipe
-		if rc.path == target.Path && ascii.LowerString(rc.host) == host &&
+		if rc.path == target.Path && cache.Host(rc.host) == host &&
 			strings.Join(queryVary(target, rc.cacheParams), "") == rc.query {
 			keys = append(keys, node.key)
 			if !matched && slices.Equal(rc.vary, vary) {
@@ -1384,13 +1383,14 @@ func sameOriginTarget(r *http.Request, location string) (target *url.URL, ok boo
 		return nil, false
 	}
 	if loc.Scheme != "" || loc.Host != "" {
-		// url.Parse lowercases the scheme; a host compares without case, as the
-		// cache key's does. A scheme with no host ("http:/p") is left alone:
-		// what a browser makes of it is not worth guessing at.
+		// url.Parse lowercases the scheme; a host compares as the cache key
+		// spells it — no case, no port, no trailing dot; see cache.Host. A
+		// scheme with no host ("http:/p") is left alone: what a browser makes
+		// of it is not worth guessing at.
 		if loc.Scheme != "" && loc.Scheme != "http" && loc.Scheme != "https" {
 			return nil, false
 		}
-		if loc.Host == "" || ascii.LowerString(loc.Host) != ascii.LowerString(r.Host) {
+		if loc.Host == "" || cache.Host(loc.Host) != cache.Host(r.Host) {
 			return nil, false
 		}
 	}

@@ -916,7 +916,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			Params:  match.PathParams,
 			Vary:    queryVary(r.URL, page.CacheParams),
 			Request: requestVary(r),
-			Host:    ascii.LowerString(r.Host),
+			Host:    cache.Host(r.Host),
 		})
 		lookupStart := time.Now()
 		// Never read from the cache in development.
@@ -1775,7 +1775,7 @@ func cleanLocation(cleaned, rawQuery string) string {
 func withRouteTags(tags []string, host, path string) []string {
 	out := make([]string, 0, len(tags)+2)
 	out = append(out, tags...)
-	return append(out, types.PathTag(path), types.HostTag(ascii.LowerString(host)))
+	return append(out, types.PathTag(path), types.HostTag(cache.Host(host)))
 }
 
 // ttlFor returns the cache TTL for a route with the given strategy and cacheTTL:

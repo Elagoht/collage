@@ -128,7 +128,8 @@ The key is the SHA-256 of an unambiguous, length-prefixed serialisation of:
   `WithCacheParams`, when it named any (see
   [below](#which-query-parameters-are-part-of-the-key)),
 - any values middleware declared with `collage.Vary` (see [`Vary`](#vary)),
-- the request's host.
+- the request's host, normalised: lower-case, with no port and no trailing dot,
+  and an IPv6 address in brackets in its canonical text.
 
 Every field is self-delimiting, so no two distinct inputs can collide by
 concatenation, and the whole key is prefixed `v2:` so the scheme can change later
@@ -136,12 +137,22 @@ without colliding with keys made by this one.
 
 The host is there because a render may build an absolute URL from `r.Host` — a
 canonical link, an `og:url` — and one request naming another host would otherwise
-write that into the entry every reader is served.
+write that into the entry every reader is served. It is normalised because the
+client chooses how to spell it: `EXAMPLE.com:8080`, `example.com.` and
+`example.com` are one site, and keeping each spelling apart made every port and
+every case a render and an entry of their own — a cheap way to push the pages
+everyone reads out of a bounded cache. The shared render is given the same
+normalised host, so the spelling one request used is never written into what
+another is served. **A cacheable page's render no longer sees the port in
+`r.Host`;** a site served on a port that is not the scheme's default builds its
+absolute URLs from `Config.BaseURL` (`collage.BaseURL(rc)`), which keeps it. A
+dynamic page sees the request's `Host` as sent.
 
 ## What a shared render sees
 
 A render stored in the cache is served to every reader whose request has its key,
-so it is handed only what the key holds: the path, the host, the query parameters
+so it is handed only what the key holds: the path, the host (normalised, as the
+key holds it), the query parameters
 in the key, and the headers middleware declared with `collage.Vary`. Not the
 reader's cookies, `Authorization`, address or client certificate, and not a query
 parameter `WithCacheParams` left out. A handler on a cacheable page that reads a
@@ -169,7 +180,7 @@ every reader served a copy asked for the same host, and the origin the render bu
 absolute URLs against is theirs too. A static build has no request and gets
 `Config.BaseURL`. A site with no `OriginResolver` plugin sees no difference. When
 an invalidation reaches entries, `CacheInvalidateEvent.Entries` names each one's host
-as well as its path.
+— normalised, as the key holds it — as well as its path.
 
 The page cache is kept per host; [`collage.Cached`](#caching-data-not-only-pages)
 is not. Its store is one per process, keyed only by the key you give it, so on a

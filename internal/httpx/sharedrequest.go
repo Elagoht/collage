@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/types"
 )
 
@@ -21,7 +22,8 @@ import (
 // tracking parameter frozen into a page. The promise a cacheable page makes,
 // that its output is the same for everyone, is kept here instead of trusted.
 //
-// What stays is what the key is made of: the path, the host, the query
+// What stays is what the key is made of: the path, the host (as cache.Host
+// spells it, the key's spelling, outside a capture), the query
 // parameters the page names with CacheParams (all of them when it names none,
 // since then the whole query is in the key), and the headers middleware declared
 // with collage.Vary.
@@ -52,6 +54,17 @@ func sharedRequest(r *http.Request, cacheParams []string) *http.Request {
 	shared.Form, shared.PostForm, shared.MultipartForm = nil, nil, nil
 	shared.Body, shared.ContentLength, shared.Trailer = http.NoBody, 0, nil
 	shared.RemoteAddr = ""
+	// The host as the key spells it, so the render a request with one
+	// spelling makes — "EXAMPLE.com:8080" — does not write that spelling into
+	// the entry a request with another is served. A capture keeps its own:
+	// it is the application asking itself, in process, for the BaseURL's
+	// host, port included, and nothing a client chose.
+	if !types.IsCapture(r.Context()) {
+		shared.Host = cache.Host(r.Host)
+		if shared.URL.Host != "" {
+			shared.URL.Host = shared.Host
+		}
+	}
 	if r.TLS != nil {
 		// Still TLS, so a scheme reads right; not the reader's certificate.
 		state := *r.TLS
