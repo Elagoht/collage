@@ -427,3 +427,42 @@ func TestInvalidateTags_DispatchSurvivesFailingHooks(t *testing.T) {
 		t.Errorf("InvalidateTags = %v, want both failures", err)
 	}
 }
+
+// A fragment read carrying a form is answered with an ETag over the body
+// before its forgery token is masked: the same for every response to one
+// reader, so If-None-Match earns a 304, and the ETag RenderFragment reports for
+// that reader (HOOKS-02).
+func TestFragmentRead_ETagOverUnmaskedBody(t *testing.T) {
+	f := collage.NewFragment("f", "f.html").Build()
+	site := collagetest.NewSite(t,
+		collagetest.WithConfig(func(c *collage.Config) {
+			c.Security.CSRFKey = []byte(strings.Repeat("k", 32))
+		}),
+		collagetest.WithTemplates(map[string]string{"f.html": `<form method="post">{{csrfToken}}</form>`}),
+		collagetest.WithRegister(collage.NewPage("p").WithContent(f).WithPath("en", "/p").
+			WithFragmentPath("en", "/p/f", f).Build()),
+	)
+	first := site.Get("/p/f").WantStatus(http.StatusOK)
+	cookie, err := http.ParseSetCookie(first.Header.Get("Set-Cookie"))
+	if err != nil {
+		t.Fatalf("no forgery cookie: %v", err)
+	}
+	a := site.Get("/p/f").WantStatus(http.StatusOK).Header.Get("ETag")
+	b := site.Get("/p/f").WantStatus(http.StatusOK).Header.Get("ETag")
+	if a == "" || a != b {
+		t.Fatalf("ETags %q then %q for one reader", a, b)
+	}
+	req := site.Request(http.MethodGet, "/p/f", nil)
+	req.Header.Set("If-None-Match", b)
+	site.Do(req).WantStatus(http.StatusNotModified)
+
+	r := httptest.NewRequest(http.MethodGet, "/p", nil)
+	r.AddCookie(cookie)
+	rendered, err := site.App.RenderFragment(r, collage.FragmentRequest{Path: "/p/f"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rendered.ETag != b {
+		t.Errorf("RenderFragment ETag %q, the path's %q", rendered.ETag, b)
+	}
+}

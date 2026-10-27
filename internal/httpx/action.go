@@ -555,8 +555,10 @@ func (h *Handler) writeActionHTML(w http.ResponseWriter, r *http.Request, status
 //
 // A fragment refreshed on a timer is usually unchanged, and the render happens
 // either way; what the 304 saves is the body on the wire and the client's work
-// comparing it. The ETag is the hash of the body as sent, after the reader's own
-// forgery token went in, so it never names bytes this reader was not given.
+// comparing it. The ETag is the hash of the body after the reader's own forgery
+// token went in and before it is masked, as a page's is: the same in every
+// response to this reader, where the masked body differs every time, and the
+// ETag RenderFragment reports for them. See csrf.Guard.Mask.
 //
 // Revalidated rather than unstored: "private, no-cache" lets the reader's own
 // browser keep the body and ask whether it still holds, where "no-store" would
@@ -565,7 +567,8 @@ func (h *Handler) writeActionHTML(w http.ResponseWriter, r *http.Request, status
 // unless a PersonaliseHook made the body personal: the handler declared a body it
 // knew, not the one a plugin made of it.
 func (h *Handler) writeFragmentRead(w http.ResponseWriter, r *http.Request, html []byte, cacheControlSet bool) int {
-	p, err := h.personalise(w, r, html, "")
+	// personalise rehashes a body its token or a hook changed, before masking.
+	p, err := h.personalise(w, r, html, cache.ETag(html))
 	if err != nil {
 		return h.serveFailure(w, r, failureFor(r, http.StatusInternalServerError, stagePlugin, err))
 	}
@@ -574,7 +577,7 @@ func (h *Handler) writeFragmentRead(w http.ResponseWriter, r *http.Request, html
 	if !cacheControlSet || p.hookPersonal {
 		header.Set("Cache-Control", "private, no-cache")
 	}
-	etag := cache.ETag(html)
+	etag := p.etag
 	header.Set("ETag", etag)
 	// Not for a body a hook made personal, as for a cached page: only "*" could
 	// match its new ETag, and it names nothing this reader holds.
