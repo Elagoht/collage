@@ -96,6 +96,11 @@ type MatchResult struct {
 	// matched the request. This is not an error: Page, Document, and RedirectTo
 	// are all empty, but Locale is still the request's resolved locale.
 	IsNotFound bool
+	// Malformed reports, alongside IsNotFound, that the path could not be
+	// decoded into segments at all — bad percent-encoding, an encoded "/" or a
+	// NUL — so no route could ever have matched it. The request is reported
+	// under a bounded label rather than its path, which is the scanner's.
+	Malformed bool
 }
 
 // ClaimedPath is one URL path pattern the router answers to, as reported by
@@ -297,7 +302,7 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 	if !ok {
 		// Malformed percent-encoding from the wire is a 404, not a 500, and so
 		// is an encoded "/": see decodeSegments.
-		return &MatchResult{Locale: locale, IsNotFound: true}, nil
+		return &MatchResult{Locale: locale, IsNotFound: true, Malformed: true}, nil
 	}
 
 	if redirectNode, params, ok := rt.redirectTree.match(segments); ok {

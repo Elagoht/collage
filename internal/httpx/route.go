@@ -53,13 +53,20 @@ const (
 	// about what it serves, and an HTML page is the one answer it can be sure is
 	// wrong for an API.
 	routeKindHandler
+	// routeKindRejected is a request refused by path normalisation before it
+	// could reach a route: a dot segment or a doubled slash redirected to the
+	// clean spelling, an encoded slash or a NUL answered not found. It is
+	// recorded after the answer is written, which is the site's own HTML
+	// not-found page or a redirect, so it decides only how the request is
+	// reported: under a bounded label, never the scanner's path.
+	routeKindRejected
 )
 
 // plainText reports whether a failure on a route of this kind must be written as
 // plain text rather than as the HTML error page. It is the single expression of
 // the rule routeKind exists for.
 func (k routeKind) plainText() bool {
-	return k != routeKindPage
+	return k != routeKindPage && k != routeKindRejected
 }
 
 // routeRef is the one record of what the request in flight resolved to. serve
@@ -109,6 +116,16 @@ func (ref *routeRef) resolved(kind routeKind, name string) {
 	ref.label = name
 }
 
+// rejected records that the request was refused by path normalisation. It has
+// no pattern or locale: the label is the whole of what is reported, so a metric
+// or a trace keyed by route has one value for every refused spelling.
+func (ref *routeRef) rejected() {
+	ref.kind = routeKindRejected
+	ref.name = ""
+	ref.label = types.RouteNameNormalise
+	ref.pattern, ref.locale = "", ""
+}
+
 // resolvedPage records that the request resolved to the page named name.
 func (ref *routeRef) resolvedPage(name string) {
 	ref.kind = routeKindPage
@@ -126,6 +143,8 @@ func (k routeKind) String() string {
 		return types.RouteKindAction
 	case routeKindHandler:
 		return types.RouteKindHandler
+	case routeKindRejected:
+		return types.RouteKindRejected
 	default:
 		return types.RouteKindPage
 	}

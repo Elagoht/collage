@@ -455,7 +455,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// frame shares, so a hook, a metric or a trace can name the route instead of
 	// the raw path. See RouteInfo. Ahead of the request hooks: a hook keeps the
 	// context it was handed and reads the route from it once the response is
-	// written. A request answered before routing leaves it empty.
+	// written. A request refused by path normalisation below records itself as
+	// rejected; see routeRef.rejected.
 	route := &routeRef{start: time.Now(), routes: &h.routes}
 	r = r.WithContext(context.WithValue(r.Context(), routeCtxKey{}, route))
 	if h.origins != nil {
@@ -471,6 +472,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// answered before anything of the application runs.
 	r, finish := h.plugins.Request(r)
 
+	// After the request hooks, whose trace is the span's parent, and before the
+	// path checks below, so a request they refuse is timed, traced and counted
+	// like any other — under a bounded label, not its path. See rejected.
+	start := time.Now()
+	ctx, span := h.startRequestSpan(r)
+	r = r.WithContext(ctx)
+
+	var status int
 	// Before middleware and routing, so that a check on a path — "skip
 	// /_collage/", "protect /admin/" — never meets "/_collage/../admin" and lets
 	// it through to the page behind it.
@@ -482,23 +491,28 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// here, before a middleware reads the decoded path it spells.
 		if strings.Contains(ascii.LowerString(r.URL.EscapedPath()), "%2f") {
 			h.ServeStatus(w, r, http.StatusNotFound)
-			finish(http.StatusNotFound)
-			return
+			status = http.StatusNotFound
+		} else {
+			status = redirectClean(w, r, cleaned)
 		}
-		finish(redirectClean(w, r, cleaned))
-		return
+		route.rejected()
+	} else {
+		r = withVarySet(r)
+		status = h.serveGuarded(w, r, route)
 	}
 
-	start := time.Now()
-
-	ctx, span := h.startRequestSpan(r)
-	r = withVarySet(r.WithContext(ctx))
-
-	status := h.serveGuarded(w, r, route)
-
+	// A refused path is the scanner's, one per probe: it is named neither in
+	// the trace nor in the metric, which read the route instead.
+	path := r.URL.Path
+	if route.kind == routeKindRejected {
+		path = ""
+	}
+	if path != "" {
+		span.SetAttribute("http.path", path)
+	}
 	span.SetAttribute("http.status_code", strconv.Itoa(status))
 	span.End()
-	h.metrics.HTTPResponse(ctx, status, r.URL.Path, time.Since(start))
+	h.metrics.HTTPResponse(ctx, status, path, time.Since(start))
 	finish(status)
 }
 
@@ -541,9 +555,21 @@ func (h *Handler) startRequestSpan(r *http.Request) (ctx context.Context, span o
 	}()
 
 	ctx, span = h.tracer.StartSpan(r.Context(), "collage.http")
-	span.SetAttribute("http.method", r.Method)
-	span.SetAttribute("http.path", r.URL.Path)
+	span.SetAttribute("http.method", methodLabel(r.Method))
 	return ctx, span
+}
+
+// methodLabel is the method as the request span records it: a standard method
+// as itself, anything else — net/http accepts any token, "get" and "X00001"
+// included — as "OTHER", so a client inventing methods cannot make one span
+// attribute value per request.
+func methodLabel(method string) string {
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPost, http.MethodPut, http.MethodPatch,
+		http.MethodDelete, http.MethodConnect, http.MethodOptions, http.MethodTrace:
+		return method
+	}
+	return "OTHER"
 }
 
 // queryVary turns a request's query into the cache-key dimensions a route declares.
@@ -834,13 +860,19 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 	// an interface the embedding application may implement itself, and there is
 	// nothing to render either way.
 	if match.IsNotFound || match.Page == nil {
-		return h.serveFailure(w, r, failure{
+		status := h.serveFailure(w, r, failure{
 			status: http.StatusNotFound,
 			err:    fmt.Errorf("%w: %q", ErrNoRoute, r.URL.Path),
 			page:   match.Page,
 			locale: match.Locale,
 			stage:  stageNotFound,
 		})
+		// After the answer, which is the site's not-found page like any other:
+		// only what the metric and the trace call it changes. See rejected.
+		if match.Malformed {
+			route.rejected()
+		}
+		return status
 	}
 
 	page := match.Page

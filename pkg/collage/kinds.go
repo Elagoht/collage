@@ -17,7 +17,18 @@ const (
 	RouteKindMount = types.RouteKindMount
 	// RouteKindHandler is a request answered by an http.Handler given to Handle.
 	RouteKindHandler = types.RouteKindHandler
+	// RouteKindRejected is a request refused before it could reach a route,
+	// because of how its path is spelled: a dot segment or a doubled slash
+	// redirected to the clean spelling, an encoded slash or a NUL answered 404.
+	// Its Name is RouteNameNormalise, and it has no Pattern or Locale, so a
+	// metric or a trace labelled by route stays bounded whatever path a scanner
+	// sends.
+	RouteKindRejected = types.RouteKindRejected
 )
+
+// RouteNameNormalise is Route.Name for RouteKindRejected: the request was
+// refused by path normalisation.
+const RouteNameNormalise = types.RouteNameNormalise
 
 // Built file kinds: what a static build wrote, as BuildFinishedEvent reports it
 // in BuiltFile.Kind. The set may grow.

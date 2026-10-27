@@ -272,3 +272,12 @@ redirected to its clean spelling before anything reads it, middleware, plugins a
 your own handlers included: 301 for GET and HEAD, 308 for a method that carries a body, the query
 kept. A middleware that skips `/_collage/` or protects `/admin/` therefore never
 meets `/_collage/../admin`.
+
+A request refused this way — the clean-path redirect, the 404 for an encoded slash
+in a path that needed cleaning, and the router's 404 for a path no route can ever
+match (an encoded slash `/a%2fb`, a NUL `/a%00`, malformed percent-encoding) — is
+timed, traced and counted like any other, but under a bounded label rather than
+its path, which is a scanner's: `collage.RouteInfo` reports `Kind`
+`collage.RouteKindRejected` (`"rejected"`) and `Name` `collage.RouteNameNormalise`
+(`"normalise"`), `Metrics.HTTPResponse` is given an empty path, and the request
+span carries no `http.path`.

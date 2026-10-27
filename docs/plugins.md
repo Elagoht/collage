@@ -441,15 +441,22 @@ It also sees the requests collage answers before routing: a path with an encoded
 slash (`/a%2f..%2fb`), answered 404, and a dirty path (`/a/../b`, `//b`),
 redirected to its clean spelling with 301, or 308 for a method other than GET and
 HEAD. These are a scanner's probes more often than not, so a plugin counting them —
-a ban, a log line — must see them. For such a request `RouteInfo` is the zero `Route` and
-`r.URL` is the raw path as it came in; `Metrics.HTTPResponse` and collage's request
-span are not called for it. The development reload stream is the one request no
-hook sees.
+a ban, a log line — must see them. `r.URL` is the raw path as it came in, and once
+the response is written `RouteInfo` reports `Kind` `collage.RouteKindRejected`
+(`"rejected"`) and `Name` `collage.RouteNameNormalise` (`"normalise"`), as it does
+for the router's 404 for a path no route can match (`/a%2fb`, a NUL). A label
+built from `RouteInfo` stays bounded; one built from the path does not.
+`Metrics.HTTPResponse` and collage's request span see these requests too, with no
+path. The development reload stream is the one request no hook sees.
+
+Collage's own request span, `collage.http`, records `http.method` bucketed: the
+standard methods as themselves, anything else a client sends as `OTHER`.
 
 `collage.RouteInfo(ctx)` reports what the request resolved to — a `Route` whose
 `Kind` is `collage.RouteKindPage`, `RouteKindDocument`, `RouteKindAction`,
-`RouteKindMount` or `RouteKindHandler` (`"page"`, `"document"`, `"action"`,
-`"mount"`, `"handler"`; the set may grow) and whose
+`RouteKindMount`, `RouteKindHandler` or `RouteKindRejected` (`"page"`,
+`"document"`, `"action"`, `"mount"`, `"handler"`, `"rejected"`; the set may grow)
+and whose
 `Name` is the registered name or prefix — from that context, which
 `Metrics.HTTPResponse` also receives: a metric or a span can be labelled with the
 route rather than the raw path. It carries the pattern the route was registered

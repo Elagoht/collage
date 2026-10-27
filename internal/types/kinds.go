@@ -12,7 +12,12 @@ const (
 	RouteKindAction   = "action"
 	RouteKindMount    = "mount"
 	RouteKindHandler  = "handler"
+	RouteKindRejected = "rejected"
 )
+
+// RouteNameNormalise is the Route.Name of a request refused by path
+// normalisation, under RouteKindRejected.
+const RouteNameNormalise = "normalise"
 
 // Built file kinds, as a static build reports them in BuiltFile.Kind.
 const (

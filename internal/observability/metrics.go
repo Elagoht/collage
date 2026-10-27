@@ -24,7 +24,10 @@ type Metrics interface {
 	// CacheEvent reports a single cache operation and the key it acted on.
 	CacheEvent(ctx context.Context, event CacheEvent, key string)
 	// HTTPResponse reports a completed HTTP response: its status code, the request
-	// path, and how long it took to produce.
+	// path, and how long it took to produce. The path is empty for a request
+	// refused by path normalisation — a dot segment, a doubled slash, an encoded
+	// slash — whose route ctx reports as rejected: it is a scanner's, one per
+	// probe. Label by the route in ctx, not by the path.
 	HTTPResponse(ctx context.Context, status int, path string, d time.Duration)
 	// Invalidation reports a cache invalidation: the tags it was requested for and
 	// how many cache keys it reached. keys counts the keys the caller resolved from

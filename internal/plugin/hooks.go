@@ -140,9 +140,11 @@ type CacheInvalidateHook interface {
 //
 // It also sees the requests collage answers before routing: a path with an
 // encoded slash, answered 404, and a dirty path, redirected to its clean spelling
-// with 301 or 308. For those RouteInfo is zero and r.URL is the raw path as it came
-// in. The function OnRequest returns is called once, unless serving the request
-// panics.
+// with 301 or 308. For those r.URL is the raw path as it came in, and once the
+// response is written RouteInfo reports the rejected kind under the name
+// "normalise" — as it does for the router's 404 for a path no route can match —
+// so a label built from it stays bounded. The function OnRequest returns is
+// called once, unless serving the request panics.
 type RequestHook interface {
 	// OnRequest returns the context to serve r under, derived from r's, and a
 	// function collage calls with the status once the response is written. The

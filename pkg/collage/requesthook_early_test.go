@@ -84,13 +84,14 @@ func TestRequestHook_SeesEarlyRejections(t *testing.T) {
 		want           int
 		route          string
 	}{
-		// Decoded, "/x/y" is clean: routing answers it, as before.
-		{http.MethodGet, "/x%2fy", http.StatusNotFound, ":"},
-		// Decoded, these are dirty: answered before routing, so no route.
-		{http.MethodGet, "/x/%2fy", http.StatusNotFound, ":"},
-		{http.MethodGet, "/a%2f..%2fb", http.StatusNotFound, ":"},
-		{http.MethodGet, "/a/../b", http.StatusMovedPermanently, ":"},
-		{http.MethodPost, "/a/../b", http.StatusPermanentRedirect, ":"},
+		// Decoded, "/x/y" is clean: routing refuses its encoded slash. It
+		// reaches no route, and is reported as refused.
+		{http.MethodGet, "/x%2fy", http.StatusNotFound, "rejected:normalise"},
+		// Decoded, these are dirty: answered before routing, as refused.
+		{http.MethodGet, "/x/%2fy", http.StatusNotFound, "rejected:normalise"},
+		{http.MethodGet, "/a%2f..%2fb", http.StatusNotFound, "rejected:normalise"},
+		{http.MethodGet, "/a/../b", http.StatusMovedPermanently, "rejected:normalise"},
+		{http.MethodPost, "/a/../b", http.StatusPermanentRedirect, "rejected:normalise"},
 		{http.MethodGet, "/b", http.StatusOK, "page:b"},
 	}
 	for _, tt := range tests {
