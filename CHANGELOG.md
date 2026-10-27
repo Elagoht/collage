@@ -1,5 +1,54 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **A cached page is keyed and rendered under one spelling of its host.**
+  `EXAMPLE.com:8080`, `example.com.` and `example.com` share one entry, as do
+  `[0:0::1]:9` and `[::1]`: the host is lower-cased, its port and trailing dot are
+  dropped, and an IPv6 address is written in brackets in its canonical form. Every
+  spelling used to be a render and an entry of its own, so a client varying `Host`
+  could push the pages everyone reads out of a bounded cache. The shared render is
+  given the same host, so **a cacheable page's data handler no longer sees the port
+  in `r.Host`**; a site on a non-default port builds absolute URLs from
+  `Config.BaseURL` (`collage.BaseURL(rc)`). A dynamic page still sees `Host` as
+  sent, and so does a capture. `CacheInvalidateEvent.Entries` reports the host in
+  the same spelling. Entries already on disk stay readable.
+- **HEAD no longer runs an action that does not declare it.** It fell back to a
+  `GET` action and ran its handler; it is now 405 with the action's own `Allow`
+  list (`GET, OPTIONS`). An action that is a read and should answer `HEAD`
+  declares it: `WithMethods(http.MethodGet, http.MethodHead)`. A page's fragment
+  URL still answers both.
+- **Requests refused by path normalisation reach `Metrics` and the request span.**
+  The clean-path redirect for `/a/../b` and `//b`, the 404 for an encoded slash in
+  a path that needed cleaning, and the router's 404 for a path no route can match
+  (`/a%2fb`, a NUL) are timed, traced and counted, under the new
+  `RouteKindRejected` and `RouteNameNormalise` with an empty path, not the path a
+  scanner sent. `RouteInfo` in a `RequestHook`'s finish function reports them the
+  same way; it used to be the zero `Route`. A `%2f` 404 is no longer counted under
+  its decoded path.
+- **The `collage.http` span records `http.method` bucketed**: the standard methods
+  as themselves, anything else a client sends as `OTHER`. It sets `http.path` when
+  the response is written, and not at all for a refused path.
+- **In development, registering an action that answers only `GET` (or `GET` and
+  `HEAD`) logs a warning**: a safe method carries no forgery check, so any site can
+  make a reader's browser call it.
+
+### Fixed
+
+- **A forgery token that cannot be issued fails the response with a 500** instead
+  of serving the page with the token's placeholder in its form.
+- **A static build refuses a `WithStaticParams` value holding a backslash or a
+  NUL** with `ErrRouteParams`. On Windows a backslash is a separator, and
+  `x\..\..\about` under `/blog/{slug}` was written over another page's file.
+- **A `BeforeActionHook`'s `ev.Result` is answered as a handler's result is.** Its
+  `InvalidateTags` used to be dropped and its `Location` not warmed; it is now
+  invalidated before the response and warmed, and an ambiguous one is refused as
+  before. `Location` and `Status` go out as given, as a handler's do.
+- The comment on a forgery token issued in the future said clock skew shortens
+  its life; it lengthens it by the skew.
+
 ## v0.78.0
 
 ### Breaking
