@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Elagoht/collage/internal/plugin"
 )
 
 // writeFiles writes files, by path relative to dir, into dir.
@@ -472,6 +474,9 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 		"--page to no page":              {args: []string{"action", "auth/forget", "--page", "auth/nope"}, want: "pages/auth/nope.go does not exist"},
 		"--page on a page":               {args: []string{"page", "panel/users", "--page", "auth/login"}, want: "--page attaches an action"},
 		"--guard on an action, no guard": {args: []string{"action", "auth/forget", "--path", "/forget", "--guard", "staff"}, want: "guards/ declares no Staff; write it first with: collage add guard staff"},
+		"a command --name with a space":  {args: []string{"command", "seed", "--name", "db seed"}, want: `--name "db seed" is not one shell word`},
+		"a command --name like a flag":   {args: []string{"command", "seed", "--name", "-seed"}, want: `--name "-seed" is not one shell word`},
+		"a command --name with a $":      {args: []string{"command", "seed", "--name", "se$ed"}, want: `--name "se$ed" is not one shell word`},
 		"a command name in use":          {args: []string{"command", "seedAgain", "--name", "seed"}, setup: map[string]string{"commands/seed.go": "package commands\n\nimport \"github.com/Elagoht/collage/pkg/collage\"\n\nfunc Seed() collage.Command { return collage.Command{Name: \"seed\"} }\n"}, want: `a command named "seed" already exists, in commands/seed.go`},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -574,6 +579,25 @@ func TestNames(t *testing.T) {
 		g := generator{req: addRequest{name: name}}
 		if got := [3]string{pascal(name), camel(name), g.title()}; got != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
+		}
+	}
+}
+
+// A command's --name is checked by the rule RegisterCommand applies, so add
+// writes no command the application refuses at start, and refuses none it
+// accepts: a name in any script is one shell word.
+func TestAdd_CommandNameIsRegisterCommandsRule(t *testing.T) {
+	for name, ok := range map[string]bool{
+		"çalıştır": true, "seed-db": true, "db:seed": true, "v2": true, "名前": true,
+		"db seed": false, "-seed": false, "_seed": false, "se;ed": false, "se\u0000ed": false, "se\ted": false,
+	} {
+		req := addRequest{kind: "command", ident: name}
+		err := req.parseTarget("seed")
+		if ok != (err == nil) {
+			t.Errorf("command --name %q: %v", name, err)
+		}
+		if ok != plugin.CommandWord(name) {
+			t.Errorf("plugin.CommandWord(%q) = %v", name, !ok)
 		}
 	}
 }

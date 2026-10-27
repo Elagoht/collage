@@ -363,7 +363,7 @@ func TestRegisterCommand_RefusesUnreachableNames(t *testing.T) {
 	var kept collage.Host
 	p := &hgPlugin{initFn: func(_ context.Context, h collage.Host) error {
 		kept = h
-		for _, name := range []string{"collage-check", "collage-inspect", "collage-routes", " seed", "-h", "a b", "x\ny", "build", "serve", "seed-db"} {
+		for _, name := range []string{"collage-check", "collage-inspect", "collage-routes", " seed", "-h", "a b", "x\ny", "build", "serve", "seed-db", "çalıştır", "名前", "se;ed", "se$ed", "a\u00a0b", "\xff"} {
 			got[name] = h.RegisterCommand(collage.Command{Name: name, Run: run})
 		}
 		return nil
@@ -378,13 +378,17 @@ func TestRegisterCommand_RefusesUnreachableNames(t *testing.T) {
 			t.Errorf("RegisterCommand(%q) = %v, want ErrDuplicateCommand", name, got[name])
 		}
 	}
-	for _, name := range []string{" seed", "-h", "a b", "x\ny"} {
+	for _, name := range []string{" seed", "-h", "a b", "x\ny", "se;ed", "se$ed", "a\u00a0b", "\xff"} {
 		if !errors.Is(got[name], collage.ErrInvalidCommandName) {
 			t.Errorf("RegisterCommand(%q) = %v, want ErrInvalidCommandName", name, got[name])
 		}
 	}
-	if got["seed-db"] != nil {
-		t.Errorf("RegisterCommand(seed-db) = %v", got["seed-db"])
+	// A name in any script is one shell word, as collage add command, which
+	// takes any Go name, writes it.
+	for _, name := range []string{"seed-db", "çalıştır", "名前"} {
+		if got[name] != nil {
+			t.Errorf("RegisterCommand(%q) = %v", name, got[name])
+		}
 	}
 	if appBuild != nil {
 		t.Errorf("the application's own command named build = %v; it runs as go run . build", appBuild)

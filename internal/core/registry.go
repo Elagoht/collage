@@ -657,18 +657,9 @@ func (a *App) registerCommand(cmd plugin.Command, fromPlugin bool) error {
 }
 
 // shellWord reports whether name is one word a shell passes unchanged and flag
-// parsing leaves alone: ASCII letters, digits, "-", "_", ".", ":", beginning
-// with a letter or a digit.
-func shellWord(name string) bool {
-	for i := range len(name) {
-		c := name[i]
-		alnum := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
-		if !alnum && (i == 0 || !strings.ContainsRune("-_.:", rune(c))) {
-			return false
-		}
-	}
-	return true
-}
+// parsing leaves alone: see plugin.CommandWord, which collage add command
+// checks too.
+func shellWord(name string) bool { return plugin.CommandWord(name) }
 
 // Commands returns the CLI subcommands plugins contributed, in registration order,
 // as a copy: appending to or reordering the returned slice does not affect the

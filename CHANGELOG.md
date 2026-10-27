@@ -25,8 +25,10 @@
 - **`RegisterCommand` refuses names it could never run, and closes at Start.** A
   `collage-` name is the dispatcher's own, and a plugin's command may not take one
   of the `collage` binary's commands (`build`, `serve`…): both
-  `ErrDuplicateCommand`. A name that is not one shell word is the new
-  `ErrInvalidCommandName`. After the application has started it is
+  `ErrDuplicateCommand`. A name that is not one shell word — letters and
+  digits of any script, `-` `_` `.` `:`, a letter or digit first; no space, no
+  shell syntax — is the new `ErrInvalidCommandName`, and `collage add command`
+  refuses such a `--name` too. After the application has started it is
   `ErrAppStarted`; a command registered then was never dispatched. An
   application's own command may still be named after a `collage` built-in.
 - **A plugin's template function may not take a name of the template language.**

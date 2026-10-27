@@ -37,6 +37,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/types"
@@ -298,8 +301,8 @@ type FragmentRender struct {
 // Command is a CLI subcommand a plugin contributes via Host.RegisterCommand.
 type Command struct {
 	// Name is the subcommand's name, as typed on the command line: one shell
-	// word of ASCII letters, digits, "-", "_", ".", ":", beginning with a letter
-	// or a digit. A "collage-" name is the dispatcher's own, and a plugin may
+	// word of letters and digits — any script's — and "-", "_", ".", ":",
+	// beginning with a letter or a digit (CommandWord). A "collage-" name is the dispatcher's own, and a plugin may
 	// not take one of the collage binary's commands (CLICommands).
 	Name string
 	// Usage is a short usage string shown in help output.
@@ -308,6 +311,27 @@ type Command struct {
 	Short string
 	// Run executes the command with the given arguments.
 	Run func(ctx context.Context, args []string) error
+}
+
+// CommandWord reports whether name may name a command: one word a shell passes
+// unchanged and flag parsing leaves alone. Letters and digits of any script —
+// "çalıştır" as well as "seed" — and "-", "_", ".", ":" after the first, which
+// is a letter or a digit, so a name is never taken for a flag. No space, no
+// control character, nothing a shell reads as syntax, and valid UTF-8.
+// RegisterCommand refuses any other name, and collage add command writes none.
+func CommandWord(name string) bool {
+	if name == "" || !utf8.ValidString(name) {
+		return false
+	}
+	for i, c := range name {
+		if unicode.IsLetter(c) || unicode.IsDigit(c) {
+			continue
+		}
+		if i == 0 || !strings.ContainsRune("-_.:", c) {
+			return false
+		}
+	}
+	return true
 }
 
 // CLICommands are the collage binary's own commands. A plugin's command may not

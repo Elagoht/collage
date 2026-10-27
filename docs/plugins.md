@@ -620,8 +620,8 @@ A registered command reaches `app.Commands()`, and your own `main` dispatches it
 by name with `collage.DispatchCommands` — run as `go run . <command>`, because the
 `collage` binary never loads your plugins, and so never sees their commands. A
 scaffolded `main.go` already does this. `RegisterCommand` refuses a name it could
-never run: an empty one, one that is not a single shell word (ASCII letters,
-digits, `-` `_` `.` `:`, starting with a letter or digit;
+never run: an empty one, one that is not a single shell word (letters and
+digits of any script, `-` `_` `.` `:`, starting with a letter or digit;
 `collage.ErrInvalidCommandName`), a `collage-` name, which `DispatchCommands`
 answers itself (`collage-check`, `collage-inspect`), and a name another command
 already holds (both `collage.ErrDuplicateCommand`). A plugin's command may not

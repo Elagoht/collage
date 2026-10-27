@@ -16,6 +16,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/Elagoht/collage/internal/plugin"
 )
 
 // ErrAddUsage is returned by the "add" command for arguments it cannot act on.
@@ -291,6 +293,11 @@ func (r *addRequest) parseTarget(target string) error {
 	}
 	if r.ident == "" {
 		r.ident = r.name
+	}
+	// A command's name is typed after "go run .": RegisterCommand refuses one
+	// that is not one shell word, so add writes none.
+	if r.kind == "command" && !plugin.CommandWord(r.ident) {
+		return fmt.Errorf("%w: --name %q is not one shell word: letters, digits, - _ . :, a letter or digit first", ErrAddUsage, r.ident)
 	}
 	if r.path == "" && (r.kind == "page" || r.kind == "document") {
 		r.path = "/" + strings.Join(append(slices.Clone(r.area), r.name), "/")
