@@ -80,18 +80,15 @@ type Plugin = interface {
 // It does NOT make what it hands out immutable. Pages and Page return *Page, a
 // plain struct of exported fields, so a plugin holding one can write through it.
 // To keep that from corrupting the framework's own registered pages, Pages and
-// Page return a defensive copy: the Page struct itself copied, along with its
-// Paths, Redirects, and DependencyTags containers (so mutating those on the
-// returned value cannot reach the original). The copy's layout and content
-// fragments, NotFoundPage and ErrorPage are left shared with the original, not
-// deep-copied — fragment mutation is a separate concern this interface does not
-// attempt to guard against either, and these two calls are startup/CLI-path, so
-// the shallow-copy cost is irrelevant. The framework's own Host is held to this.
-//
-// A copied container is copied one level deep, which is as far as this can go
-// without reflection: replacing a Page.Paths entry on the copy is safe, but writing
-// through a value that entry holds, were it a map, a slice, or a pointer, would
-// reach the original.
+// Page return a defensive copy: the Page struct itself, every slice and map it
+// holds — Paths, LayoutChain, CacheParams, DependencyTags, FragmentPaths and each
+// of its per-locale maps — and the Redirect and Action values behind Redirects
+// and Actions, each Action's Paths and Methods included. Writing any of them on
+// the returned value cannot reach the original. What stays shared is the
+// fragments: the layout chain's elements, ContentFragment, the values of
+// FragmentPaths, and NotFoundPage and ErrorPage — fragment mutation is a separate
+// concern this interface does not attempt to guard against. The framework's own
+// Host is held to this.
 //
 // The per-request hook events are a deliberate exception: they carry the
 // framework's live *Page rather than a copy, to avoid that allocation on every
@@ -170,10 +167,8 @@ type Host = interface {
 	//
 	// Pages returns every page registered with the application, each a defensive
 	// copy — see the Host doc comment for exactly what "defensive copy" means
-	// here. Mutating a returned Page does not affect the framework's own, with the
-	// one limit that a copied container is copied one level deep: replacing a
-	// Page.Paths entry on the copy is safe, but writing through a value that entry
-	// holds, were it a nested map, slice, or pointer, reaches the original.
+	// here. Mutating a returned Page's fields, containers, redirects or actions
+	// does not affect the framework's own; its fragments are shared.
 	Pages() []*types.Page
 	// Page returns the page registered under name, and whether one was found.
 	// The returned Page is a defensive copy, on the same terms as Pages.

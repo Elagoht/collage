@@ -116,10 +116,12 @@ type Host = interface {
 	// --- Reading the site map ---
 	//
 	// Pages returns every page registered with the application, each a defensive
-	// copy: the Page and its Paths, Redirects and DependencyTags are copied, so
-	// mutating them does not affect the framework's own. The copy goes one level
-	// deep — writing through a value a copied container holds reaches the
-	// original — and the fragment pointers are shared.
+	// copy: the Page, every slice and map it holds — Paths, CacheParams,
+	// FragmentPaths and its per-locale maps, DependencyTags — and the Redirect
+	// and Action values behind Redirects and Actions are copied, so mutating
+	// them does not affect the framework's own. The fragments are shared: the
+	// layouts, the content fragment, the fragments FragmentPaths holds, and
+	// NotFoundPage and ErrorPage.
 	Pages() []*Page
 	// Page returns the page registered under name, and whether one was found.
 	// The returned Page is a defensive copy, on the same terms as Pages.

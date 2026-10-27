@@ -3,7 +3,6 @@ package core
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"sort"
 
@@ -682,41 +681,36 @@ func (a *App) Page(name string) (*types.Page, bool) {
 // copyPage returns a defensive copy of p, as plugin.Host requires of Pages and
 // Page. Without it a plugin holding a returned *types.Page could write straight
 // through it into the framework's live state: types.Page is a plain struct of
-// exported fields.
+// exported fields, and the router, the cache key and URL building read the
+// registered page's containers at request time.
 //
-// What is copied: the Page struct itself, its Paths map, its DependencyTags slice,
-// and its Redirects — both the slice and the *types.Redirect values it points at.
-// Copying only the slice would stop a plugin adding, removing, or reordering
-// redirects but not mutating one through a shared element pointer, so the values
-// are copied too.
+// What is copied: the Page struct itself and every slice and map it holds —
+// Paths, LayoutChain, CacheParams, DependencyTags, FragmentPaths and each of its
+// per-locale maps (types.ClonePage) — and the values behind Redirects and
+// Actions, each *types.Redirect and each *types.Action with its Paths and
+// Methods. A container whose elements were shared would let a plugin rewrite one
+// element in place, which is as live as rewriting the container.
 //
-// What stays shared, deliberately: the layout fragment (types.LayoutFragment),
-// ContentFragment, NotFoundPage, and ErrorPage. Fragment trees are not deep-copied
-// — a plugin that mutates a fragment reached through one of these pointers is
-// mutating live framework state, which plugin.Host documents as out of scope for
-// this copy and which the package doc there calls undefined behaviour. NotFoundPage
-// and ErrorPage are pages in their own right and are returned copied when they are
-// asked for by name.
+// What stays shared, deliberately: the fragments — the layout chain's elements,
+// the layout fragment, ContentFragment and the values of FragmentPaths — and
+// NotFoundPage and ErrorPage. Fragment trees are not deep-copied: a plugin that
+// mutates a fragment reached through one of these pointers is mutating live
+// framework state, which plugin.Host documents as out of scope for this copy.
+// NotFoundPage and ErrorPage are pages in their own right and are returned
+// copied when they are asked for by name.
 func copyPage(p *types.Page) *types.Page {
-	if p == nil {
+	copied := types.ClonePage(p)
+	if copied == nil {
 		return nil
 	}
-
-	copied := *p
-	copied.Paths = maps.Clone(p.Paths)
-	copied.DependencyTags = slices.Clone(p.DependencyTags)
-	copied.LayoutChain = slices.Clone(p.LayoutChain)
-
-	if p.Redirects != nil {
-		copied.Redirects = make([]*types.Redirect, len(p.Redirects))
-		for i, redirect := range p.Redirects {
-			if redirect == nil {
-				continue
-			}
+	for i, redirect := range copied.Redirects {
+		if redirect != nil {
 			value := *redirect
 			copied.Redirects[i] = &value
 		}
 	}
-
-	return &copied
+	for i, action := range copied.Actions {
+		copied.Actions[i] = types.CloneAction(action)
+	}
+	return copied
 }
