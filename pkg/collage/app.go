@@ -205,7 +205,9 @@ func (a *App) RenderDocumentPath(ctx context.Context, path, locale string, param
 
 // RenderFragment renders, for r, one fragment a page opened at its own URL with
 // WithFragmentPath, and returns its markup, what it hoisted, its tags and whether
-// one render serves every reader — for pushing fragments over a stream.
+// one render serves every reader — for pushing fragments over a stream. It is
+// served as a request to the fragment's URL would be: the middleware, the guards
+// and the PersonaliseHooks run for it. See Host.RenderFragment.
 func (a *App) RenderFragment(r *http.Request, req FragmentRequest) (*FragmentRender, error) {
 	return a.c.RenderFragment(r, req)
 }

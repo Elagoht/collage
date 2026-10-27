@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+<!-- Host hardening §1: RenderFragment is equivalent to an HTTP request for the fragment's URL. -->
+
+### Changed
+
+- **`Host.RenderFragment` / `App.RenderFragment` serve the fragment as a request
+  to its URL would be.** The render is made for a GET to the fragment's URL
+  carrying the caller's host, client address, headers and cookies — not its path
+  values, body or method — and that request now passes the application's and
+  every plugin's middleware for the fragment's path, in `ServeHTTP`'s order. A
+  middleware that answers instead of calling next (a basicauth 401, a ratelimit
+  429, a login redirect) is `ErrGuardRefused` naming the status; what it wrote,
+  and the headers and cookies it set, are dropped; context values it sets reach
+  the guard and the render. Every push a plugin renders is a request to the
+  middleware: a rate limit counts each one. A panicking middleware is an error
+  wrapping `ErrPanic`. Called while the application is starting (from a plugin's
+  `Init`), RenderFragment returns an error rather than render without the chain;
+  called before any start, it starts the application, as `Handler` does.
+- **By name, `FragmentRequest` builds the fragment's URL from its pattern** in
+  the requested locale, as `FragmentURL` does, so parameters no request could
+  carry (an undeclared name, a value with `/` outside a catch-all, `.`, `..`,
+  empty) and a locale the fragment has no path in are `ErrUnknownFragmentPath`.
+  A path `ServeHTTP` would redirect to its clean spelling is refused too.
+
+### Fixed
+
+- **Guards reached through RenderFragment read the fragment URL's parameters**
+  with `r.PathValue`, and never the caller's own (HOST-07). A deny-list guard on
+  a parameterised fragment path was bypassed by any client of collage-live or
+  collage-websocket; an allow-list guard denied legitimate readers.
+- **Path-scoped middleware protects fragment paths from streams** (PLUGA-B01):
+  `/_live/stream/?f=/admin/stats` no longer reads a fragment basicauth protects.
+- **`PersonaliseHook` runs on what RenderFragment returns** (HOOKS-01,
+  PLUGA-01, PLUGA-B03), on the markup and on each hoisted item; a render a hook
+  made personal is not `Shared`. collage-secure's nonce placeholder and
+  collage-honeypot's marker no longer reach pushed fragments, and pushed
+  honeypot forms are accepted.
+- **`PersonaliseEvent.Personal` is sticky** (HOOKS-07): once a hook sets it, a
+  later hook assigning it cannot clear it, so a nonce'd body is never answered
+  with public `Cache-Control` or a 304.
+
 ## v0.77.0
 
 ### Added
