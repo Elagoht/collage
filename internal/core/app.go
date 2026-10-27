@@ -348,6 +348,9 @@ type App struct {
 	sharedHealth *cache.SharedHealth
 	// tracker resolves dependency tags back to the cache keys built from them.
 	tracker dependency.Tracker
+	// fragmentMemo keeps RenderFragment's Shared renders, so one change pushed
+	// to many readers is rendered once. See fragmentMemo.
+	fragmentMemo *fragmentMemo
 	// routes resolves a request to a page, a redirect, or a not-found result.
 	routes router.Router
 	// buildID is BuildID's answer, worked out once.
@@ -677,6 +680,7 @@ func New(cfg Config) (*App, error) {
 	})
 	app.store = store
 	app.tracker = tracker
+	app.fragmentMemo = newFragmentMemo(cfg.Cache.MaxBytes)
 	// One spelling per page, as with the locale prefix: the other one redirects.
 	slash := router.SlashNever
 	if cfg.TrailingSlash {
@@ -1611,6 +1615,13 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 		if err := tagged.Invalidate(ctx, tags); err != nil {
 			failures = errors.Join(failures, fmt.Errorf("collage: invalidate tags %v: %w", tags, err))
 		}
+	}
+
+	// RenderFragment's kept renders, before the plugins hear of it: a plugin
+	// pushing what changed re-renders on hearing, and must not be handed the
+	// render the invalidation replaced.
+	if a.fragmentMemo != nil {
+		a.fragmentMemo.drop(tags)
 	}
 
 	// The event carries its own copy of tags: CacheInvalidateEvent documents Tags

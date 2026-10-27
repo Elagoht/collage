@@ -9,7 +9,9 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/Elagoht/collage/internal/ascii"
 	"github.com/Elagoht/collage/internal/cache"
 	"github.com/Elagoht/collage/internal/httpx"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -261,8 +263,18 @@ func (a *App) renderFragmentAt(header http.Header, r *http.Request) (*plugin.Fra
 			shared, renderFor = false, r
 		}
 	}
-	rc := types.NewRenderContext(renderFor.Context(), renderFor, page, at.locale, at.params)
-	result, err := renderer.RenderFragmentResult(renderFor.Context(), rc, fragment)
+	renderNow := func(ctx context.Context) (*render.FragmentResult, error) {
+		rc := types.NewRenderContext(ctx, renderFor, page, at.locale, at.params)
+		return renderer.RenderFragmentResult(ctx, rc, fragment)
+	}
+	var result *render.FragmentResult
+	if shared && a.memoizes() {
+		// This reader passed the chain and the guards; the render every reader
+		// so allowed gets is the one another's call may have made already.
+		result, err = a.fragmentMemo.get(renderFor.Context(), a.memoKey(renderFor, at), a.memoAge(page), memoTags(renderFor), renderNow)
+	} else {
+		result, err = renderNow(renderFor.Context())
+	}
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
 	}
@@ -270,7 +282,7 @@ func (a *App) renderFragmentAt(header http.Header, r *http.Request) (*plugin.Fra
 	out := &plugin.FragmentRender{
 		HTML:           result.HTML,
 		Head:           slices.Clone(result.Head),
-		DependencyTags: result.DependencyTags,
+		DependencyTags: slices.Clone(result.DependencyTags),
 		Shared:         shared,
 	}
 	var token string
@@ -306,6 +318,50 @@ func (a *App) renderFragmentAt(header http.Header, r *http.Request) (*plugin.Fra
 		out.HTML = a.csrf.Mask(out.HTML, token)
 	}
 	return out, http.StatusOK, nil
+}
+
+// memoizes reports whether RenderFragment keeps its Shared renders: not in
+// development, where a template edit must show on the next push.
+func (a *App) memoizes() bool {
+	return a.fragmentMemo != nil && !a.devMode
+}
+
+// memoKey is what one Shared render of the fragment at r's URL is kept under:
+// the URL as the router keys it — the path, its parameters and locale, the
+// query the page caches on (all of r's there is, from ShareableRequest) — and
+// the host, as the page cache keys a render. The build is not in it: the memo
+// lives as long as the process.
+func (a *App) memoKey(r *http.Request, at fragmentMatch) string {
+	return cache.Key(cache.KeyInput{
+		Path:   r.URL.Path,
+		Locale: at.locale,
+		Params: at.params,
+		Vary:   []string{"fragment:" + at.page.Name + "/" + at.fragment.Name, "query:" + r.URL.RawQuery},
+		Host:   ascii.LowerString(r.Host),
+	})
+}
+
+// memoAge is how long a Shared render of a fragment of page is reused: the
+// page's cache lifetime for a page cached for everyone — until invalidated for a
+// Static one — and memoWindow for a page rendered per request, and for every
+// page with the cache off, where every request renders. With a store shared
+// between instances, memoWindow at most: an invalidation another instance made
+// reaches its store, not this memo.
+func (a *App) memoAge(page *types.Page) time.Duration {
+	if !page.Strategy.Cacheable() || a.store == nil {
+		return memoWindow
+	}
+	age := page.CacheTTL
+	if _, shared := a.store.(cache.SharedCache); shared && (age == 0 || age > memoWindow) {
+		age = memoWindow
+	}
+	return age
+}
+
+// memoTags are the tags beside its own a kept render is dropped by: those an
+// invalidation by the URL's path or host names, as for a cached page.
+func memoTags(r *http.Request) []string {
+	return []string{types.PathTag(r.URL.Path), types.HostTag(ascii.LowerString(r.Host))}
 }
 
 // personaliseFragment runs every PersonaliseHook over out's markup and over each
