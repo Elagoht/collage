@@ -456,7 +456,6 @@ func (fakeHost) DevMode() bool                                               { r
 func (fakeHost) BaseURL() string                                             { return "" }
 func (fakeHost) Pages() []*types.Page                                        { return nil }
 func (fakeHost) Page(name string) (*types.Page, bool)                        { return nil, false }
-func (fakeHost) InvalidateTags(ctx context.Context, tags ...string) error    { return nil }
 func (fakeHost) Logger() *slog.Logger                                        { return slog.Default() }
 func (fakeHost) RegisterCommand(cmd Command) error                           { return nil }
 func (fakeHost) RegisterDocument(doc *types.Document) error                  { return nil }

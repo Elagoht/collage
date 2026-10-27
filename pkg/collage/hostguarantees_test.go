@@ -466,3 +466,16 @@ func TestFragmentRead_ETagOverUnmaskedBody(t *testing.T) {
 		t.Errorf("RenderFragment ETag %q, the path's %q", rendered.ETag, b)
 	}
 }
+
+// ErrorEvent and BeforeActionEvent carry no live *Page: no plugin read it, and
+// a hook holding one could write the framework's page while requests read it.
+func TestEvents_CarryNoLivePage(t *testing.T) {
+	for _, typ := range []reflect.Type{
+		reflect.TypeFor[collage.ErrorEvent](),
+		reflect.TypeFor[collage.BeforeActionEvent](),
+	} {
+		if _, ok := typ.FieldByName("Page"); ok {
+			t.Errorf("%v has a Page field", typ)
+		}
+	}
+}

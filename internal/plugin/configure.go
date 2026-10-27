@@ -44,16 +44,6 @@ type Configurer interface {
 type ConfigHost = interface {
 	// DevMode reports whether the application is running in development mode.
 	DevMode() bool
-	// BaseURL returns the site's public origin without a trailing slash — the
-	// scheme and host an absolute URL is built on, from Config.BaseURL — or "" when
-	// the application set none, in which case a plugin that needs one takes its own.
-	BaseURL() string
-	// OriginFor is host's public origin: an OriginResolver's, else Config.BaseURL,
-	// which may be "". host is lower-cased, without its port.
-	OriginFor(ctx context.Context, host string) string
-	// MultiOrigin reports whether a plugin implementing OriginResolver is
-	// registered — among those registered so far, at Configure time.
-	MultiOrigin() bool
 	// Logger returns the application's structured logger.
 	Logger() *slog.Logger
 	// AddTemplateFunc registers fn as a template function under name. It returns

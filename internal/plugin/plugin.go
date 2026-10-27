@@ -200,16 +200,16 @@ type Host = interface {
 	// it — its not-found page for 404 and 410, its error page otherwise — for a
 	// plugin answering a request itself that should look like the site.
 	ServeStatus(w http.ResponseWriter, r *http.Request, status int)
-	// InvalidateTags invalidates every cache entry associated with any of tags.
-	InvalidateTags(ctx context.Context, tags ...string) error
 
 	// ConfigReader lets collage.PluginConfig read this plugin's configuration.
 	ConfigReader
 }
 
-// Lister is implemented by the hosts collage hands plugins: the application's
-// plugins, in the order they are listed, whether or not each has been
-// configured or initialised yet. collage.FindPlugin reads it.
+// Lister is implemented by the ConfigHost collage hands a plugin's Configure:
+// the application's plugins, in the order they are listed, whether or not each
+// has been configured yet. collage.FindPlugin reads it. The Host given to Init
+// does not implement it: a plugin that needs another finds it in Configure and
+// keeps it.
 type Lister interface {
 	ApplicationPlugins() []Plugin
 }

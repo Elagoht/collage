@@ -33,9 +33,6 @@ func TestHostView_ForwardsCapabilities(t *testing.T) {
 	if _, ok := host.Page("nothing"); ok {
 		t.Fatal("Page through Host found a page that was never registered")
 	}
-	if err := host.InvalidateTags(t.Context(), "tag"); err != nil {
-		t.Fatalf("InvalidateTags through Host = %v, want nil", err)
-	}
 }
 
 // ---------------------------------------------------------------------------

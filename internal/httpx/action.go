@@ -181,7 +181,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, match *rou
 
 	// After the limit and the forgery check, so a plugin reads the body as the
 	// handler would; before the handler, so a refusal changes nothing.
-	before := &plugin.BeforeActionEvent{Action: action, Page: match.Page, Locale: match.Locale, Request: r}
+	before := &plugin.BeforeActionEvent{Action: action, Locale: match.Locale, Request: r}
 	if err := h.plugins.BeforeAction(ctx, before); err != nil {
 		if f, cut := bodyCutOff(route, stageBeforeAction, action, body, err); cut {
 			return h.serveFailure(w, r, f)

@@ -9,21 +9,15 @@ import (
 	"github.com/Elagoht/collage/pkg/collage"
 )
 
-// baseURLReader is a plugin that records what Host.BaseURL and ConfigHost.BaseURL
-// reported to it, one in Init and one in Configure.
+// baseURLReader is a plugin that records what Host.BaseURL reported to it in
+// Init.
 type baseURLReader struct {
-	fromConfigure string
-	fromInit      string
+	fromInit string
 }
 
 func (p *baseURLReader) Name() string                   { return "test/baseurl" }
 func (p *baseURLReader) Version() string                { return "0" }
 func (p *baseURLReader) Shutdown(context.Context) error { return nil }
-
-func (p *baseURLReader) Configure(_ context.Context, host collage.ConfigHost) error {
-	p.fromConfigure = host.BaseURL()
-	return nil
-}
 
 func (p *baseURLReader) Init(_ context.Context, host collage.Host) error {
 	p.fromInit = host.BaseURL()
@@ -83,8 +77,8 @@ func TestConfig_BaseURLValidation(t *testing.T) {
 }
 
 // TestBaseURL_ReachesAPluginNormalized: an application's BaseURL reaches a plugin
-// through both Host.BaseURL (in Init) and ConfigHost.BaseURL (in Configure), with
-// the trailing slash trimmed, so a plugin can join a path to it cleanly.
+// through Host.BaseURL in Init, with the trailing slash trimmed, so a plugin can
+// join a path to it cleanly.
 func TestBaseURL_ReachesAPluginNormalized(t *testing.T) {
 	p := &baseURLReader{}
 	app, err := collage.New(&collage.Config{
@@ -100,9 +94,6 @@ func TestBaseURL_ReachesAPluginNormalized(t *testing.T) {
 	_ = app.Handler() // building the handler runs plugin Init
 
 	const want = "https://example.com"
-	if p.fromConfigure != want {
-		t.Errorf("ConfigHost.BaseURL in Configure = %q, want %q", p.fromConfigure, want)
-	}
 	if p.fromInit != want {
 		t.Errorf("Host.BaseURL in Init = %q, want %q", p.fromInit, want)
 	}

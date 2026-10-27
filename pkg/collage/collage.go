@@ -151,8 +151,6 @@ type Host = interface {
 	// it — its not-found page for 404 and 410, its error page otherwise — for a
 	// plugin answering a request itself that should look like the site.
 	ServeStatus(w http.ResponseWriter, r *http.Request, status int)
-	// InvalidateTags invalidates every cache entry associated with any of tags.
-	InvalidateTags(ctx context.Context, tags ...string) error
 
 	// ConfigReader lets PluginConfig read this plugin's configuration.
 	ConfigReader
@@ -351,19 +349,11 @@ type Configurer = plugin.Configurer
 
 // ConfigHost is the narrower capability surface Configure receives. At that point
 // the application has registered nothing, so there are no pages to read and
-// nothing to invalidate.
+// nothing to invalidate. The site's origins are Host's to answer, in Init, when
+// every plugin — an OriginResolver among them — is known.
 type ConfigHost = interface {
 	// DevMode reports whether the application is running in development mode.
 	DevMode() bool
-	// BaseURL returns the site's public origin without a trailing slash, from
-	// Config.BaseURL, or "" when the application set none.
-	BaseURL() string
-	// OriginFor is host's public origin: an OriginResolver's, else Config.BaseURL,
-	// which may be "". host is lower-cased, without its port.
-	OriginFor(ctx context.Context, host string) string
-	// MultiOrigin reports whether a plugin implementing OriginResolver is
-	// registered — among those registered so far, at Configure time.
-	MultiOrigin() bool
 	// Logger returns the application's structured logger.
 	Logger() *slog.Logger
 	// AddTemplateFunc registers fn as a template function under name. It returns

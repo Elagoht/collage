@@ -63,19 +63,6 @@ func (h *hostView) OriginFor(ctx context.Context, host string) string {
 // MultiOrigin reports whether a plugin implementing OriginResolver is registered.
 func (h *hostView) MultiOrigin() bool { return h.app.plugins.HasOriginResolver() }
 
-// OriginFor returns host's public origin. See App.OriginFor.
-func (h *configHostView) OriginFor(ctx context.Context, host string) string {
-	return h.app.OriginFor(ctx, host)
-}
-
-// MultiOrigin reports whether a plugin implementing OriginResolver is registered —
-// among those registered so far, at Configure time.
-func (h *configHostView) MultiOrigin() bool { return h.app.plugins.HasOriginResolver() }
-
-// ApplicationPlugins is plugin.Lister: every plugin the application has, in
-// order. collage.FindPlugin reads it.
-func (h *hostView) ApplicationPlugins() []plugin.Plugin { return h.app.plugins.Plugins() }
-
 // DevMode reports whether the application is running in development mode.
 func (h *hostView) DevMode() bool {
 	return h.app.DevMode()
@@ -96,11 +83,6 @@ func (h *hostView) Pages() []*types.Page {
 // was found.
 func (h *hostView) Page(name string) (*types.Page, bool) {
 	return h.app.Page(name)
-}
-
-// InvalidateTags invalidates every cache entry associated with any of tags.
-func (h *hostView) InvalidateTags(ctx context.Context, tags ...string) error {
-	return h.app.InvalidateTags(ctx, tags...)
 }
 
 // Logger returns the application's structured logger.
@@ -183,8 +165,8 @@ func (h *hostView) ServeStatus(w http.ResponseWriter, r *http.Request, status in
 //
 // It is a separate type from hostView rather than a subset of it because the two
 // phases genuinely offer different things: at Configure time the application has
-// registered nothing, so Pages would return an empty slice and InvalidateTags would
-// have no cache to reach. Handing over a Host whose methods are all technically
+// registered nothing, so Pages would return an empty slice and there would be no
+// cache to reach. Handing over a Host whose methods are all technically
 // callable and mostly meaningless is worse than handing over a smaller interface.
 type configHostView struct {
 	// configSource is what collage.PluginConfig reads; see hostView.
@@ -201,16 +183,14 @@ type configHostView struct {
 
 var _ plugin.ConfigHost = (*configHostView)(nil)
 
-// ApplicationPlugins is plugin.Lister, as on hostView: a plugin looking for
-// another in Configure finds it whether it is listed before or after.
+// ApplicationPlugins is plugin.Lister: a plugin looking for another in Configure
+// finds it whether it is listed before or after. Only the ConfigHost has it;
+// hostView, the Init host, does not, so no plugin reaches another's live
+// instance from Init or at request time.
 func (h *configHostView) ApplicationPlugins() []plugin.Plugin { return h.app.plugins.Plugins() }
 
 // DevMode reports whether the application is running in development mode.
 func (h *configHostView) DevMode() bool { return h.app.cfg.DevMode }
-
-// BaseURL returns the site's public origin without a trailing slash, or "" when
-// the application set none.
-func (h *configHostView) BaseURL() string { return h.app.cfg.BaseURL }
 
 // Logger returns the application's structured logger.
 func (h *configHostView) Logger() *slog.Logger { return h.app.logger }

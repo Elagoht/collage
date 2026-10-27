@@ -51,14 +51,18 @@ func (s *seeker) Init(_ context.Context, host collage.Host) error {
 }
 func (s *seeker) Shutdown(context.Context) error { return nil }
 
-// A plugin finds another by type, in Configure and in Init, wherever the other
-// sits in the list: listed after it, it is found before it was configured.
+// A plugin finds another by type in Configure, wherever the other sits in the
+// list: listed after it, it is found before it was configured. From Init it
+// finds nothing: the Init host does not list the application's plugins.
 func TestFindPlugin(t *testing.T) {
 	c := &carrier{name: "test/carrier"}
 	s := &seeker{}
 	newStartedApp(t, s, c)
-	if s.inConfigure != c || s.inInit != c {
-		t.Fatalf("Configure found %p, Init found %p, want %p", s.inConfigure, s.inInit, c)
+	if s.inConfigure != c {
+		t.Fatalf("Configure found %p, want %p", s.inConfigure, c)
+	}
+	if s.inInit != nil {
+		t.Fatalf("Init found %p through a host that lists no plugins", s.inInit)
 	}
 }
 

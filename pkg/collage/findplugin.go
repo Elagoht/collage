@@ -4,10 +4,10 @@ import "github.com/Elagoht/collage/internal/plugin"
 
 // FindPlugin returns the application's plugin of type T, and whether there is
 // one: the first in the list, when several are. host is the ConfigHost given to
-// Configure or the Host given to Init. The plugin is found wherever it is
-// listed, and may not be configured or initialised yet. A plugin that needs
-// another to be set up first calls it from Configure, which runs before any
-// plugin is built.
+// Configure; the plugin is found wherever it is listed, and may not be
+// configured yet. Call it from Configure, which runs before any plugin is
+// built, and keep what it finds: the Host given to Init lists no plugins, so
+// FindPlugin from Init reports false.
 //
 //	lv, ok := collage.FindPlugin[*live.Plugin](host)
 //

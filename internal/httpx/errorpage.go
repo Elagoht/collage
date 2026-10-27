@@ -251,7 +251,6 @@ func (h *Handler) dispatchError(r *http.Request, f failure) {
 	// rather than handing it back, precisely so error handling cannot recurse.
 	_ = h.plugins.Error(r.Context(), &plugin.ErrorEvent{
 		Err:     f.err,
-		Page:    f.page,
 		Path:    r.URL.Path,
 		Stage:   f.stage,
 		Status:  f.status,
@@ -306,7 +305,7 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 	ctx := r.Context()
 	fail := func(message string, err error) ([]byte, bool) {
 		h.logger.Error(message, "page", page.Name, "status", f.status, "error", err)
-		h.reportErrorPageFailure(r, page, err)
+		h.reportErrorPageFailure(r, err)
 		return nil, false
 	}
 
@@ -355,14 +354,13 @@ func (h *Handler) renderErrorPage(r *http.Request, page *types.Page, f failure) 
 // It dispatches without logging, since the caller has already logged the specific
 // failure, and it cannot recurse: Registry.Error logs and swallows a failing
 // ErrorHook by contract rather than handing it back to be handled again.
-func (h *Handler) reportErrorPageFailure(r *http.Request, page *types.Page, err error) {
+func (h *Handler) reportErrorPageFailure(r *http.Request, err error) {
 	// The status is 500 whatever the failure being answered was, a 404 included:
 	// what this event reports is not the reader's failure but the application's
 	// own error page breaking, which is a server error in its own right. The
 	// response itself keeps the status of the failure it answers.
 	_ = h.plugins.Error(r.Context(), &plugin.ErrorEvent{
 		Err:     err,
-		Page:    page,
 		Path:    r.URL.Path,
 		Stage:   stageErrorPage,
 		Status:  http.StatusInternalServerError,

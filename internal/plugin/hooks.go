@@ -370,9 +370,6 @@ type BeforeActionEvent struct {
 	// Action is the action matched. Not copied for this event, and not defended
 	// against mutation.
 	Action *types.Action
-	// Page is the page whose URL the action answers on, or nil for an action on
-	// a path of its own.
-	Page *types.Page
 	// Locale is the locale the request was matched in.
 	Locale string
 	// Request is the request. Its body is bounded by the action's limit, and a
@@ -476,8 +473,7 @@ type AfterRenderEvent struct {
 // CacheInvalidateEvent describes a cache invalidation that has just happened.
 type CacheInvalidateEvent struct {
 	// Tags are the dependency tags that were invalidated. This event's own copy;
-	// a plugin that wants to trigger an invalidation uses Host.InvalidateTags
-	// instead of trying to feed this back into one.
+	// a plugin's hook does not feed this back into an invalidation.
 	Tags []string
 	// Entries are the cached pages and documents the invalidation invalidated (marked stale on the built-in
 	// stores), with the
@@ -502,11 +498,6 @@ type InvalidatedEntry struct {
 type ErrorEvent struct {
 	// Err is the error that occurred. This event's own value.
 	Err error
-	// Page is the live Page being processed when the error occurred, or nil when
-	// the error occurred before a page was resolved, for example when no route
-	// matched the request. When non-nil, it is not copied for this event and not
-	// defended against mutation; see BeforeRenderEvent.Page.
-	Page *types.Page
 	// Path is the request path being processed when the error occurred. This
 	// event's own copy.
 	Path string
