@@ -162,7 +162,9 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 
 A plugin therefore has no way to reach the router, the cache, the render engine,
 the template set, or any page it was not explicitly handed — it can add routes and
-invalidate tags through these methods, but not reach the structures behind them. That is the structural
+render fragments through these methods, but not reach the structures behind them.
+Invalidating is the application's (`App.InvalidateTags`); a plugin hears of it
+with `OnCacheInvalidate`. That is the structural
 half of the framework's rule that plugins cannot mutate core state.
 
 ### Pushing fragments

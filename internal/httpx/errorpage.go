@@ -162,8 +162,7 @@ func (h *Handler) ServeStatus(w http.ResponseWriter, r *http.Request, status int
 //
 // When f names a document, the log record also names it, so an operator chasing a
 // failing sitemap or feed can tell which document broke. It is deliberately left
-// off ErrorEvent: ErrorEvent.Page already exists for a page and stays nil here for a
-// document, since the event's Path already identifies the route, and widening a
+// off ErrorEvent: the event's Path already identifies the route, and widening a
 // public plugin struct just to carry a name for a log line is not worth it.
 func (h *Handler) reportError(r *http.Request, f failure) {
 	// A warm's failure, such as its cache write's, is the warmer's to report.
