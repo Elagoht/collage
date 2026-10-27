@@ -67,7 +67,31 @@ func (a *App) RegisterAction(action *types.Action) error {
 	}
 	a.actions[action.Name] = action
 	a.actionOrder = append(a.actionOrder, action)
+	a.warnSafeOnlyAction(action)
 	return nil
+}
+
+// safeOnlyActionWarning is what warnSafeOnlyAction logs.
+const safeOnlyActionWarning = "collage: this action answers only GET or HEAD, so it runs with no request-forgery check: " +
+	"any site can make a reader's browser call it with a link or an image. " +
+	"If it changes anything, declare POST (or PUT, PATCH, DELETE) instead"
+
+// warnSafeOnlyAction tells a developer, in development, about an action whose
+// methods are all safe ones. A safe method carries no forgery token by design —
+// a token in a URL is a token in a log file — so such an action is a state change
+// any page on the web can trigger, unless it changes nothing, which an action
+// rarely means. A warning, not a refusal: a read that is an action, a JSON
+// endpoint, is legitimate.
+func (a *App) warnSafeOnlyAction(action *types.Action) {
+	if !a.devMode {
+		return
+	}
+	for _, method := range action.Methods {
+		if !types.SafeMethod(method) {
+			return
+		}
+	}
+	a.logger.Warn(safeOnlyActionWarning, "action", action.Name, "methods", action.Methods)
 }
 
 // Actions returns every registered action in registration order, as a copy.
@@ -134,8 +158,9 @@ func methodList(methods []string) string {
 
 // registerFragmentPaths adds the URLs a page opened for its own fragments.
 //
-// Each becomes an action answering GET, which is what it is: a request for a part of
-// a page, answered by rendering that part. Reusing the action route rather than
+// Each becomes an action answering GET and HEAD, which is what it is: a request for
+// a part of a page, answered by rendering that part — a read, like the page, so HEAD
+// is declared rather than left to a fallback actions no longer have. Reusing the action route rather than
 // inventing a third kind means one method table, one 405, one OPTIONS answer for
 // every URL the framework serves.
 func (a *App) registerFragmentPaths(page *types.Page) error {
@@ -148,7 +173,7 @@ func (a *App) registerFragmentPaths(page *types.Page) error {
 			action := &types.Action{
 				Name:    page.Name + ":" + fragment.Name,
 				Paths:   map[string]string{locale: pattern},
-				Methods: []string{"GET"},
+				Methods: []string{http.MethodGet, http.MethodHead},
 				Handler: func(ctx context.Context, rc *types.RenderContext) (*types.ActionResult, error) {
 					// The page's guards and the fragment's own: see
 					// fragmentGuard. The decision is validated before it

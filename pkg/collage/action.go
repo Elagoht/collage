@@ -90,7 +90,13 @@ func (b *ActionBuilder) WithPath(locale, pattern string) *ActionBuilder {
 }
 
 // WithMethods declares the HTTP methods this action answers. A request to its path
-// with any other method is a 405 carrying an Allow header.
+// with any other method is a 405 carrying an Allow header. HEAD is one of them:
+// it does not fall back to a GET action, whose handler may change something, so
+// an action that is a read and should answer HEAD declares it beside GET.
+//
+// GET and HEAD carry no forgery token, by design, so an action answering only
+// those is a state change any site can make a reader's browser trigger; in
+// development registering one is warned about.
 //
 // OPTIONS, TRACE and CONNECT are refused at registration with
 // ErrInvalidActionMethod: the router answers OPTIONS itself, and the other two

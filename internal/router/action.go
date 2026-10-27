@@ -153,13 +153,9 @@ func allowedMethods(n *node) []string {
 		allowed[http.MethodGet] = struct{}{}
 		allowed[http.MethodHead] = struct{}{}
 	}
+	// An action answers what it declares and nothing more: see resolve.
 	for method := range n.actions {
 		allowed[method] = struct{}{}
-		// A handler that answers GET answers HEAD: the response is the same one
-		// with the body dropped, and net/http does the dropping.
-		if method == http.MethodGet {
-			allowed[http.MethodHead] = struct{}{}
-		}
 	}
 
 	out := make([]string, 0, len(allowed))
@@ -173,7 +169,11 @@ func allowedMethods(n *node) []string {
 // resolve decides what answers a request for this node with this method.
 //
 // An action wins over a page for the method it declares, and a page answers GET and
-// HEAD when no action claims them. Anything else is refused rather than rendered: a
+// HEAD when no action claims them. An action answers only the methods it declares:
+// HEAD does not fall back to a GET action, because an action is a handler that may
+// change something — a GET action does so with no forgery check, by design — and a
+// HEAD that ran it would be a second, quieter way to. An action that is a read and
+// wants HEAD declares it. Anything else is refused rather than rendered: a
 // POST that quietly renders a page is a form submission the application never saw,
 // and the reader gets a page that looks like nothing happened.
 func resolve(n *node, method string) (page *types.Page, doc *types.Document, action *types.Action, allowed bool) {
@@ -183,11 +183,6 @@ func resolve(n *node, method string) (page *types.Page, doc *types.Document, act
 		// inherits its protection from — and so does the handler, which
 		// answers a refused form with it as rc.Page.
 		return n.page, nil, a, true
-	}
-	if method == http.MethodHead {
-		if a, ok := n.actions[http.MethodGet]; ok {
-			return n.page, nil, a, true
-		}
 	}
 	if (method == http.MethodGet || method == http.MethodHead) && (n.page != nil || n.document != nil) {
 		return n.page, n.document, nil, true

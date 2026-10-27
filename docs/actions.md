@@ -52,6 +52,18 @@ saw the submission.
 `OPTIONS` is answered from the same list, so what a 405 offers and what an `OPTIONS`
 reports cannot disagree.
 
+An action answers exactly the methods it declares. A page answers `HEAD` as a `GET`
+with the body dropped, because rendering a page is a read; an action's handler may
+change something, so `HEAD` does not fall back to a `GET` action and is answered 405
+(`Allow: GET, OPTIONS`) without running it. An action that is a read and should
+answer `HEAD` declares it: `WithMethods(http.MethodGet, http.MethodHead)`. A page's
+fragment URL is a read and answers both.
+
+An action that declares only `GET` (or `GET` and `HEAD`) runs with no forgery check
+— see [Forgery protection](#forgery-protection) — so any site can make a reader's browser call it
+with a link or an `<img>`. In development, registering one logs a warning; if it
+changes anything, give it `POST`.
+
 `OPTIONS`, `TRACE` and `CONNECT` belong to the server, not to an action, and
 registering an action that declares one fails with
 `collage.ErrInvalidActionMethod`, naming the action and the method. The router
