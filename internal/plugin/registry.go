@@ -429,20 +429,25 @@ func stamp(findings []types.Finding, from int, plugin string) {
 }
 
 // CacheInvalidate dispatches ev to every registered plugin implementing
-// CacheInvalidateHook, in registration order. It stops and returns a wrapped error
-// at the first hook failure, including a contained panic. A nil Registry, or a
-// registry with no plugin implementing the hook, is a no-op that returns nil.
+// CacheInvalidateHook, in registration order. The invalidation has already
+// happened, so every hook hears of it: a failure, a contained panic included, is
+// logged and dispatch goes on, and the failures come back joined. One plugin
+// failing used to keep every later one — a CDN purge, a live update — from
+// hearing of it. A nil Registry, or a registry with no plugin implementing the
+// hook, is a no-op that returns nil.
 func (r *Registry) CacheInvalidate(ctx context.Context, ev *CacheInvalidateEvent) error {
+	var failures error
 	for _, p := range r.snapshot() {
 		hook, ok := p.(CacheInvalidateHook)
 		if !ok {
 			continue
 		}
 		if err := runHook(p.Name(), "OnCacheInvalidate", func() error { return hook.OnCacheInvalidate(ctx, ev) }); err != nil {
-			return err
+			r.logOrDefault().Error("plugin OnCacheInvalidate hook failed", "plugin", p.Name(), "error", err)
+			failures = errors.Join(failures, err)
 		}
 	}
-	return nil
+	return failures
 }
 
 // Error dispatches ev to every registered plugin implementing ErrorHook, in

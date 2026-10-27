@@ -116,7 +116,9 @@ type DocumentRenderedEvent struct {
 // invalidation.
 type CacheInvalidateHook interface {
 	// OnCacheInvalidate is called after the cache entries for ev.Tags have been
-	// invalidated.
+	// invalidated. Every implementing plugin is called, in registration order,
+	// whether or not one before it failed; InvalidateTags returns the failures
+	// joined.
 	OnCacheInvalidate(ctx context.Context, ev *CacheInvalidateEvent) error
 }
 

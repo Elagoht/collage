@@ -396,3 +396,34 @@ func TestRegisterCommand_RefusesUnreachableNames(t *testing.T) {
 		t.Errorf("App.RegisterCommand after Start = %v, want ErrAppStarted", err)
 	}
 }
+
+// invalidateWatcher is a CacheInvalidateHook that fails as told, or counts.
+type invalidateWatcher struct {
+	hgPlugin
+	fail  func() error
+	calls int
+}
+
+func (p *invalidateWatcher) OnCacheInvalidate(context.Context, *collage.CacheInvalidateEvent) error {
+	p.calls++
+	if p.fail != nil {
+		return p.fail()
+	}
+	return nil
+}
+
+// Every CacheInvalidateHook hears of an invalidation, even after one before it
+// failed or panicked; InvalidateTags returns their failures joined (HOOKS-04).
+func TestInvalidateTags_DispatchSurvivesFailingHooks(t *testing.T) {
+	panics := &invalidateWatcher{hgPlugin: hgPlugin{name: "test/panics"}, fail: func() error { panic("cdn client nil") }}
+	fails := &invalidateWatcher{hgPlugin: hgPlugin{name: "test/fails"}, fail: func() error { return errors.New("purge refused") }}
+	last := &invalidateWatcher{hgPlugin: hgPlugin{name: "test/last"}}
+	site := collagetest.NewSite(t, collagetest.WithPlugins(panics, fails, last))
+	err := site.App.InvalidateTags(context.Background(), "post:1")
+	if last.calls != 1 || fails.calls != 1 {
+		t.Errorf("hooks after a failing one were called %d and %d times, want 1", fails.calls, last.calls)
+	}
+	if err == nil || !strings.Contains(err.Error(), "cdn client nil") || !strings.Contains(err.Error(), "purge refused") {
+		t.Errorf("InvalidateTags = %v, want both failures", err)
+	}
+}
