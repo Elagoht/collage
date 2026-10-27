@@ -70,6 +70,11 @@ type renderShared struct {
 	// tags are the dependency tags declared through Cached, merged into the
 	// render's own when it finishes.
 	tags []string
+	// missed is told the name of every key a Get found nothing under. It is
+	// set before the render starts and never changed, so it is read without
+	// mu; nil — always, outside development — costs Get one comparison. See
+	// BindKeyMiss.
+	missed func(key string)
 }
 
 // NewRenderContext builds a RenderContext for one render. It copies params into a

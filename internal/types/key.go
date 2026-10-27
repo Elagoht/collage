@@ -53,7 +53,22 @@ func (k Key[T]) id() keyID {
 
 // Get returns the value stored under k in rc's render, and whether one was.
 func (k Key[T]) Get(rc *RenderContext) (T, bool) {
-	return k.In(rc.bag(false))
+	v, ok := k.In(rc.bag(false))
+	if !ok && rc != nil && rc.state != nil && rc.state.missed != nil {
+		rc.state.missed(k.name)
+	}
+	return v, ok
+}
+
+// BindKeyMiss has every Get in rc's render that finds nothing tell missed the
+// key's name. The render engine binds it, in development, to a render that
+// starts below its page's root, where an ancestor's Set never happens. It must
+// be bound before the render's fragments run; a nil missed unbinds it.
+func BindKeyMiss(rc *RenderContext, missed func(key string)) {
+	if rc == nil || rc.state == nil {
+		return
+	}
+	rc.state.missed = missed
 }
 
 // Set stores v under k in rc's render. Sibling fragments' data handlers run at

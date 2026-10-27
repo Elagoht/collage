@@ -146,3 +146,23 @@ func TestKey_NilInterfaceValue(t *testing.T) {
 		t.Errorf("Key[any] after Set(nil) = %v, %v; want nil, true", v, ok)
 	}
 }
+
+// A Get that misses tells what BindKeyMiss bound, with the key's name, and a
+// hit tells nothing. Unbound, a miss allocates nothing: it is the production
+// path.
+func TestKey_GetMissTellsBoundCallback(t *testing.T) {
+	rc := NewRenderContext(context.Background(), nil, nil, "en", nil)
+	k := NewKey[int]("count")
+	if allocs := testing.AllocsPerRun(100, func() { k.Get(rc) }); allocs != 0 {
+		t.Errorf("unbound Get miss allocated %v times, want 0", allocs)
+	}
+
+	var missed []string
+	BindKeyMiss(rc, func(key string) { missed = append(missed, key) })
+	k.Get(rc.WithContext(context.Background()))
+	k.Set(rc, 1)
+	k.Get(rc)
+	if len(missed) != 1 || missed[0] != "count" {
+		t.Errorf("missed = %v, want [count]", missed)
+	}
+}
