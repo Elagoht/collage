@@ -1,5 +1,67 @@
 # Changelog
 
+## v0.78.0
+
+### Breaking
+
+- **The plugin surface is narrower before v1.** Each of these had no user in any
+  elagoht plugin:
+  - `Host.InvalidateTags` is gone. Invalidating is the application's:
+    `App.InvalidateTags` and `ActionResult.InvalidateTags` are unchanged, and a
+    plugin observes an invalidation with `OnCacheInvalidate`.
+  - `ConfigHost.BaseURL`, `ConfigHost.OriginFor` and `ConfigHost.MultiOrigin` are
+    gone. `Host` keeps all three; read them in `Init`, where every plugin, an
+    `OriginResolver` among them, is known.
+  - The `Host` given to `Init` no longer lists the application's plugins, so
+    `collage.FindPlugin` from `Init` reports false. Call it from `Configure` and
+    keep what it finds, as live and websocket do.
+  - `ErrorEvent.Page` and `BeforeActionEvent.Page` are gone: a hook was handed the
+    framework's live page, which nothing read.
+- **A `ConfigHost` closes when its plugin's `Configure` returns.** A plugin that
+  kept it gets the new `ErrConfigureClosed` from `AddTemplateFunc` and
+  `AddRenderFunc`, and a late `WrapMount` wraps nothing and is logged. A late
+  render function used to be written into the map every render reads, which the
+  Go runtime aborts the process on.
+- **`RegisterCommand` refuses names it could never run, and closes at Start.** A
+  `collage-` name is the dispatcher's own, and a plugin's command may not take one
+  of the `collage` binary's commands (`build`, `serve`…): both
+  `ErrDuplicateCommand`. A name that is not one shell word is the new
+  `ErrInvalidCommandName`. After the application has started it is
+  `ErrAppStarted`; a command registered then was never dispatched. An
+  application's own command may still be named after a `collage` built-in.
+- **A plugin's template function may not take a name of the template language.**
+  `AddTemplateFunc` and `AddRenderFunc` refuse Go's builtins (`eq`, `len`,
+  `index`, `print`…) and escapers (`html`, `js`, `urlquery`, html/template's own)
+  with `ErrDuplicateTemplateFunc`; a plugin's `html` was all the escaping a value
+  piped through it got. No elagoht plugin uses one.
+
+### Fixed
+
+- **`Host.Pages` and `Host.Page` copy every container a page holds.**
+  `CacheParams`, `FragmentPaths` and its per-locale maps, and each `Action` with
+  its `Methods` were shared with the live page, so a plugin writing its copy
+  changed the cache key, the fragment URLs and the forgery warning. Only the
+  fragments stay shared, as documented.
+- **The application's `Config.Template.Funcs` win over a plugin's
+  `AddRenderFunc`**, as they already did over `AddTemplateFunc` and as documented;
+  `New` logs the collision once.
+- **A host carries only its own plugin's configuration.** Every host embedded an
+  exported field holding the whole `Config.PluginConfig`, so reflect read and
+  rewrote another plugin's section.
+- **A plugin's `Host.Handle` prefix bounds the request body at
+  `Server.MaxBodyBytes` before the middleware**, as a page does; every plugin's
+  middleware read it unbounded there. `App.Handle` is unchanged.
+- **Every `CacheInvalidateHook` hears of an invalidation**, even after one before
+  it failed or panicked; failures are logged and returned joined. One failing
+  plugin used to keep a CDN purge or a live update from running.
+- **A fragment read's ETag is hashed before the forgery token is masked.** A
+  fragment with a form now earns a 304, and its ETag equals the one
+  `RenderFragment` reports.
+- **Plugin redirect rules are checked rule by rule.** One rule with a control
+  character dropped every plugin's rules; now only it is left out. A `From` or
+  `To` holding a space, which a host's redirect file reads as a field separator,
+  fails the build like any other malformed rule.
+
 ## v0.77.0
 
 ### Added
