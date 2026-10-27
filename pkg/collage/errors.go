@@ -464,6 +464,11 @@ var (
 	// ErrDuplicateTemplateFunc is returned by ConfigHost.AddTemplateFunc when another
 	// plugin already registered that name.
 	ErrDuplicateTemplateFunc = plugin.ErrDuplicateTemplateFunc
+	// ErrConfigureClosed is returned by ConfigHost.AddTemplateFunc and
+	// AddRenderFunc called after the plugin's Configure returned, from a
+	// ConfigHost it kept. Nothing is added: templates are parsed when
+	// construction finishes, and requests render with what was registered by then.
+	ErrConfigureClosed = plugin.ErrConfigureClosed
 	// ErrUnknownPluginConfig is returned when the application starts — by Start,
 	// Handler, ListenAndServe or a render, not by New, because a plugin can still be
 	// registered in between — if Config.PluginConfig holds a key

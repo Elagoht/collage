@@ -2,9 +2,15 @@ package collage_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io/fs"
 	"net/http"
+	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/Elagoht/collage/pkg/collage"
@@ -99,5 +105,69 @@ func TestHost_PageCopySharesNoContainer(t *testing.T) {
 	site.Get("/search/injected").WantStatus(http.StatusNotFound)
 	if got := site.Get("/find").WantStatus(http.StatusMovedPermanently).Header.Get("Location"); got != "/search" {
 		t.Errorf("redirect Location = %q", got)
+	}
+}
+
+// A ConfigHost kept past Configure refuses AddTemplateFunc and AddRenderFunc
+// with ErrConfigureClosed, and a late WrapMount changes nothing, while requests
+// render: a late render function used to be written into the map every render
+// ranges over (HOST-02). Run under -race.
+func TestConfigHost_ClosedAfterConfigure(t *testing.T) {
+	var kept collage.ConfigHost
+	p := &hgPlugin{configureFn: func(_ context.Context, h collage.ConfigHost) error {
+		kept = h
+		return h.AddRenderFunc("early", func(*collage.RenderContext) any { return func() string { return "e" } })
+	}}
+	site := collagetest.NewSite(t,
+		collagetest.WithPlugins(p),
+		collagetest.WithTemplates(map[string]string{"home.html": `{{early}}`}),
+		collagetest.WithSetup(func(app *collage.App) error {
+			return app.Mount("/static/", fstest.MapFS{"a.txt": {Data: []byte("original")}})
+		}),
+	)
+	h := site.App.Handler()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 50 {
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/", nil))
+		}
+	}()
+	for i := range 50 {
+		name := fmt.Sprintf("late%d", i)
+		if err := kept.AddRenderFunc(name, func(*collage.RenderContext) any { return func() string { return "l" } }); !errors.Is(err, collage.ErrConfigureClosed) {
+			t.Fatalf("late AddRenderFunc = %v, want ErrConfigureClosed", err)
+		}
+	}
+	<-done
+	if err := kept.AddTemplateFunc("lateFunc", func() string { return "late" }); !errors.Is(err, collage.ErrConfigureClosed) {
+		t.Errorf("late AddTemplateFunc = %v, want ErrConfigureClosed", err)
+	}
+	kept.WrapMount(func(fs.FS) fs.FS { return fstest.MapFS{"a.txt": {Data: []byte("wrapped")}} })
+	if body := site.Get("/static/a.txt").WantStatus(http.StatusOK).Body; body != "original" {
+		t.Errorf("a late WrapMount reached a mount: %q", body)
+	}
+	if !strings.Contains(site.Logs.String(), "WrapMount") {
+		t.Errorf("a late WrapMount was not logged:\n%s", site.Logs.String())
+	}
+}
+
+// A plugin's ConfigHost closes when its own Configure returns, not when every
+// plugin's has: a host one plugin kept is refused during the next one's
+// Configure.
+func TestConfigHost_ClosedPerPlugin(t *testing.T) {
+	var kept collage.ConfigHost
+	var lateErr error
+	first := &hgPlugin{name: "test/first", configureFn: func(_ context.Context, h collage.ConfigHost) error {
+		kept = h
+		return nil
+	}}
+	second := &hgPlugin{name: "test/second", configureFn: func(context.Context, collage.ConfigHost) error {
+		lateErr = kept.AddTemplateFunc("sneaky", func() string { return "x" })
+		return nil
+	}}
+	collagetest.NewSite(t, collagetest.WithPlugins(first, second))
+	if !errors.Is(lateErr, collage.ErrConfigureClosed) {
+		t.Errorf("AddTemplateFunc through another plugin's Configure = %v, want ErrConfigureClosed", lateErr)
 	}
 }

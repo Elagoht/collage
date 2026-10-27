@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -61,7 +62,8 @@ type ConfigHost = interface {
 	// nobody would find from the rendered output.
 	//
 	// It must be called from Configure. Templates are parsed when construction
-	// finishes, and a function added after that is one no template can call.
+	// finishes, and a function added after that is one no template can call: a
+	// call after Configure returned is ErrConfigureClosed and adds nothing.
 	AddTemplateFunc(name string, fn any) error // any: restates html/template.FuncMap's own value type
 	// WrapMount registers a transformation applied to every mounted filesystem, in
 	// the order the wrappers were registered.
@@ -72,6 +74,9 @@ type ConfigHost = interface {
 	// return the wrong slice of a file whose advertised length no longer matches.
 	// A minifier returns an fs.FS whose files are already minified, and
 	// ServeContent keeps working on whatever it is handed.
+	//
+	// It must be called from Configure. A call after Configure returned wraps
+	// nothing and is logged.
 	WrapMount(wrap func(fs.FS) fs.FS)
 	// AddRenderFunc registers a template function made anew for each render:
 	// factory is called with the render's context and returns the function the
@@ -79,8 +84,9 @@ type ConfigHost = interface {
 	// BeforeRender, the render's locale. AddTemplateFunc's functions are fixed for
 	// the life of the application and cannot.
 	//
-	// Like AddTemplateFunc it must be called from Configure, and a name another
-	// plugin registered is ErrDuplicateTemplateFunc.
+	// Like AddTemplateFunc it must be called from Configure (later is
+	// ErrConfigureClosed), and a name another plugin registered is
+	// ErrDuplicateTemplateFunc.
 	AddRenderFunc(name string, factory func(rc *types.RenderContext) any) error // any: html/template.FuncMap's own value type
 	// ConfigReader lets collage.PluginConfig read this plugin's configuration.
 	ConfigReader
@@ -89,6 +95,14 @@ type ConfigHost = interface {
 // ErrDuplicateTemplateFunc is returned by ConfigHost.AddTemplateFunc when a name is
 // already registered by another plugin.
 var ErrDuplicateTemplateFunc = fmt.Errorf("collage: duplicate plugin template function")
+
+// ErrConfigureClosed is returned by ConfigHost.AddTemplateFunc and AddRenderFunc
+// called after the plugin's Configure returned, from a ConfigHost the plugin
+// kept. The call changes nothing. Templates are parsed once construction
+// finishes, and requests render with the functions registered by then: a
+// function added later is one no template can call, and adding one while
+// requests render races every render.
+var ErrConfigureClosed = errors.New("collage: plugin configuration is closed: call it from Configure")
 
 // ErrUnknownPluginConfig is returned when the application's plugin configuration
 // holds a key matching no registered plugin.
@@ -99,13 +113,16 @@ var ErrDuplicateTemplateFunc = fmt.Errorf("collage: duplicate plugin template fu
 var ErrUnknownPluginConfig = fmt.Errorf("collage: plugin configuration names no registered plugin")
 
 // Configure calls Configure on every registered plugin implementing Configurer, in
-// registration order, stopping at the first failure.
+// registration order, stopping at the first failure. hostFor returns the host a
+// plugin's Configure receives and the function that closes it, which Configure
+// calls as soon as that plugin's Configure returns, whatever it returned: a host
+// the plugin kept refuses what it is asked afterwards (ErrConfigureClosed).
 //
 // Unlike Init it does not roll back: nothing has been acquired yet, because the
 // application is still being built and a plugin has nowhere to put a resource it
 // would need to release. A failure here aborts construction, and the application
 // never exists.
-func (r *Registry) Configure(ctx context.Context, hostFor func(name string) ConfigHost) error {
+func (r *Registry) Configure(ctx context.Context, hostFor func(name string) (ConfigHost, func())) error {
 	if r == nil {
 		return nil
 	}
@@ -114,8 +131,10 @@ func (r *Registry) Configure(ctx context.Context, hostFor func(name string) Conf
 		if !ok {
 			continue
 		}
-		host := hostFor(p.Name())
-		if err := safeCall(func() error { return configurer.Configure(ctx, host) }); err != nil {
+		host, closeHost := hostFor(p.Name())
+		err := safeCall(func() error { return configurer.Configure(ctx, host) })
+		closeHost()
+		if err != nil {
 			return fmt.Errorf("collage: plugin %q configure: %w", p.Name(), err)
 		}
 	}

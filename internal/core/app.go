@@ -531,8 +531,9 @@ func New(cfg Config) (*App, error) {
 		}
 		app.middleware = append(app.middleware, middlewareSlot{plugin: p.Name()})
 	}
-	if err := app.plugins.Configure(context.Background(), func(name string) plugin.ConfigHost {
-		return &configHostView{ConfigSource: plugin.ConfigSource{Name: name, Config: app.cfg.PluginConfig}, app: app}
+	if err := app.plugins.Configure(context.Background(), func(name string) (plugin.ConfigHost, func()) {
+		host := &configHostView{ConfigSource: plugin.ConfigSource{Name: name, Config: app.cfg.PluginConfig}, app: app}
+		return host, func() { host.closed.Store(true) }
 	}); err != nil {
 		return nil, err
 	}

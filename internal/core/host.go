@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/plugin"
@@ -176,6 +177,11 @@ type configHostView struct {
 	// ConfigSource is what collage.PluginConfig reads; see hostView.
 	plugin.ConfigSource
 	app *App
+	// closed is set when this plugin's Configure returns. A plugin can keep
+	// its ConfigHost, and the maps AddTemplateFunc and AddRenderFunc write are
+	// read by every render from then on: a write after Configure would race
+	// them, and could not reach a template parsed already anyway.
+	closed atomic.Bool
 }
 
 var _ plugin.ConfigHost = (*configHostView)(nil)
@@ -197,6 +203,9 @@ func (h *configHostView) Logger() *slog.Logger { return h.app.logger }
 // AddTemplateFunc registers fn under name, for every template parsed after this
 // call — which, since Configure runs before parsing, means all of them.
 func (h *configHostView) AddTemplateFunc(name string, fn any) error { // any: restates html/template.FuncMap's own value type
+	if h.closed.Load() {
+		return fmt.Errorf("%w: AddTemplateFunc(%q)", plugin.ErrConfigureClosed, name)
+	}
 	if _, taken := h.app.pluginFuncs[name]; taken {
 		return fmt.Errorf("%w: %q", plugin.ErrDuplicateTemplateFunc, name)
 	}
@@ -212,6 +221,9 @@ func (h *configHostView) AddTemplateFunc(name string, fn any) error { // any: re
 
 // AddRenderFunc registers a template function made anew for each render.
 func (h *configHostView) AddRenderFunc(name string, factory func(rc *types.RenderContext) any) error { // any: html/template.FuncMap's own value type
+	if h.closed.Load() {
+		return fmt.Errorf("%w: AddRenderFunc(%q)", plugin.ErrConfigureClosed, name)
+	}
 	if factory == nil {
 		return fmt.Errorf("collage: nil render function factory for %q", name)
 	}
@@ -230,8 +242,14 @@ func (h *configHostView) AddRenderFunc(name string, factory func(rc *types.Rende
 	return nil
 }
 
-// WrapMount registers a transformation applied to every mounted filesystem.
+// WrapMount registers a transformation applied to every mounted filesystem. A
+// call after Configure returned wraps nothing — the mounts may be serving — and
+// is logged, since the method has no error to return.
 func (h *configHostView) WrapMount(wrap func(fs.FS) fs.FS) {
+	if h.closed.Load() {
+		h.app.logger.Warn("collage: WrapMount called after Configure returned; nothing was wrapped", "plugin", h.Name)
+		return
+	}
 	if wrap == nil {
 		return
 	}

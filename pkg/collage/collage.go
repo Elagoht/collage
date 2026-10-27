@@ -367,17 +367,21 @@ type ConfigHost = interface {
 	// AddTemplateFunc registers fn as a template function under name. It returns
 	// ErrDuplicateTemplateFunc when another plugin already registered that name.
 	// It must be called from Configure: templates are parsed when construction
-	// finishes, and a function added after that is one no template can call.
+	// finishes, and a function added after that is one no template can call. A
+	// call after Configure returned is ErrConfigureClosed and adds nothing.
 	AddTemplateFunc(name string, fn any) error // any: restates html/template.FuncMap's own value type
 	// WrapMount registers a transformation applied to every mounted filesystem, in
 	// the order the wrappers were registered. A minifier returns an fs.FS whose
-	// files are already minified; Range requests keep working on it.
+	// files are already minified; Range requests keep working on it. It must be
+	// called from Configure: a call after Configure returned wraps nothing and is
+	// logged.
 	WrapMount(wrap func(fs.FS) fs.FS)
 	// AddRenderFunc registers a template function made anew for each render:
 	// factory is called with the render's context and returns the function the
 	// templates call, which can then read what that render holds — a nonce set in
 	// BeforeRender, the render's locale. Like AddTemplateFunc it must be called
-	// from Configure, and a name already registered is ErrDuplicateTemplateFunc.
+	// from Configure (later is ErrConfigureClosed), and a name already registered
+	// is ErrDuplicateTemplateFunc.
 	AddRenderFunc(name string, factory func(rc *RenderContext) any) error // any: html/template.FuncMap's own value type
 	// ConfigReader lets PluginConfig read this plugin's configuration.
 	ConfigReader
