@@ -51,6 +51,13 @@
   instances) a second after it was made. At most 4096 renders or 32 MiB
   (`Cache.MaxBytes`, if lower) are kept. Never in development, nor for a reader
   whose request skips the cache.
+- **A fragment rendered on its own says when it reads a key nothing set.** At
+  its own path or pushed with `RenderFragment`, a fragment renders without its
+  ancestors, so a value one of them stored with `Key.Set` is absent and the
+  fragment rendered the zero value without a word. In development such a
+  `Key.Get` miss now logs a warning naming the page, the fragment and the key,
+  once per process, pointing at `collage.Once` or `Cached`. Nothing changes in
+  production, and a full page render never warns.
 
 ### Changed
 

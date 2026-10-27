@@ -577,7 +577,10 @@ render that created it.
 Keyed values work because a parent's data handler returns before its children's
 start: a fragment can read what an ancestor's handler stored. Siblings' handlers
 run concurrently; `Get`, `Set` and `collage.Once` hold the render's lock — see
-[how a page's fragments run](#how-a-pages-fragments-run).
+[how a page's fragments run](#how-a-pages-fragments-run). A fragment answered at
+[its own URL](actions.md#a-fragment-at-its-own-url), or pushed, renders without
+its ancestors, so their `Set` never happens there: load the value in the fragment
+with `collage.Once`.
 
 > **`rc.Page` is not yours to write to.** Every other member of the render context
 > is request-scoped; `Page` is a pointer to the one `*collage.Page` the framework
