@@ -251,7 +251,7 @@ error instead, so a program that starts a server never loses it.
 
 A plugin cannot mutate core state directly: that is the framework's rule. So
 `Plugin.Init` receives a `collage.Host` — `DevMode`, `Pages`, `Page`,
-`InvalidateTags`, `Logger`, `RegisterCommand`, `Config`,
+`Logger`, `RegisterCommand`, `Config`,
 `RegisterDocument`, `Mount` — and not the `*App`. A plugin has no way to reach the
 router, the cache, the render engine, the template set, or any page it was not
 explicitly handed; it can add to the application through those methods, but not
@@ -268,8 +268,8 @@ assertion to find.
 
 **`Host` limits reachability, not mutability, and the framework does not pretend
 otherwise.** `*collage.Page` is a plain struct of exported fields. `Host.Pages`
-and `Host.Page` return a defensive copy (the struct, plus its `Paths`,
-`Redirects`, and `DependencyTags` containers), but the per-request event
+and `Host.Page` return a defensive copy (the struct, every slice and map it
+holds, and its `Redirect` and `Action` values; only the fragments stay shared), but the per-request event
 types deliberately carry the framework's *live* `*Page` — copying a page and its
 fragment tree on every render would defeat a cache-first framework's hot path. A
 plugin holding an event's `*Page` can write straight through it, and doing so

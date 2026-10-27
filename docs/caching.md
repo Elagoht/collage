@@ -307,8 +307,10 @@ that is what you know:
 app.InvalidateTags(ctx, collage.PathTag("/blog/hello"))
 ```
 
-Plugins observe invalidation through `OnCacheInvalidate`, and a plugin triggers
-one through `Host.InvalidateTags`. The event names the tags, and — in `Paths` —
+Plugins observe invalidation through `OnCacheInvalidate`; every plugin
+implementing it is called, even after one before it failed, and the failures come
+back joined from `InvalidateTags`. Triggering one is the application's. The event
+names the tags, and — in `Paths` —
 the URL paths of the cached entries it invalidated: what a CDN has to purge, and a
 search engine be told has changed. A page that was never cached is not in it.
 

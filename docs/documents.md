@@ -236,9 +236,6 @@ served — so what is stored is what the plugin produced. A plugin that stamps e
 page from `OnAfterRender` alone stamps nothing on a sitemap; see
 [plugins](plugins.md#documents).
 
-`ErrorEvent.Page` is `nil` for a document failure — the event's `Path` already
-identifies the route, and the framework's own log line names the document.
-
 ## Locales
 
 `Paths` is locale-keyed, like a page's, so a per-locale document needs no new

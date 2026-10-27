@@ -143,14 +143,13 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | `DevMode() bool` | Whether the application is in development mode |
 | `Pages() []*Page` | Every registered page, each a defensive copy |
 | `Page(name) (*Page, bool)` | One page by name, a defensive copy |
-| `InvalidateTags(ctx, tags...) error` | Invalidate cache entries by tag |
 | `Logger() *slog.Logger` | The application's structured logger |
 | `RegisterCommand(Command) error` | Contribute a CLI subcommand |
 | `ConfigReader` (embedded) | What `collage.PluginConfig(host, defaults)` reads this plugin's section of `Config.PluginConfig` through — see [Configuration](#configuration) |
 | `RegisterDocument(*Document) error` | Contribute a document |
 | `Mount(prefix, fsys, opts...) error` | Serve a filesystem under a prefix |
 | `OpenMounted(urlPath) (fs.File, error)` | Read one of the site's own files by the URL it is served at — `/static/icon.png`: from disk in development, embedded in a built binary |
-| `Handle(prefix, http.Handler) error` | Serve a handler under a prefix ending in `/`, or at one exact path without it (`/metrics`), as `App.Handle` does — an event stream, a WebSocket — but always inside the middleware chain, as `App.Handle` does only with `WithMiddleware()` |
+| `Handle(prefix, http.Handler) error` | Serve a handler under a prefix ending in `/`, or at one exact path without it (`/metrics`), as `App.Handle` does — an event stream, a WebSocket — but always inside the middleware chain, as `App.Handle` does only with `WithMiddleware()`, and with the request body bounded at `Server.MaxBodyBytes` before the chain, as a page's is |
 | `RenderFragment(r, FragmentRequest) (*FragmentRender, error)` | Render a fragment a page opened with `WithFragmentPath`, in parts — see below |
 | `Use(middleware) error` | Wrap every request, where the plugin was registered: for one in `Config.Plugins`, outside the application's own middleware — but not one for a handler the application mounted with `App.Handle` without `WithMiddleware()`; see [http.md](http.md) |
 | `URL(name, locale, params) (string, error)` | The path of a page or document, as `App.URL` builds it |
@@ -263,10 +262,11 @@ build the method for yet.
 
 **`Host` limits reachability, not mutability.** `*collage.Page` is a plain struct
 of exported fields. `Pages` and `Page` hand back a defensive copy — the struct,
-plus its `Paths`, `Redirects`, and `DependencyTags` containers — so writing
-through one of those cannot reach the framework's own page. But the fragment
-pointers inside it (`LayoutChain`, `ContentFragment`, `NotFoundPage`,
-`ErrorPage`) stay shared, and the per-request **event** types carry the live
+every slice and map it holds (`Paths`, `CacheParams`, `FragmentPaths` and its
+per-locale maps, `DependencyTags`, `LayoutChain`) and its `Redirect` and `Action`
+values — so writing through one of those cannot reach the framework's own page.
+But the fragments inside it (`LayoutChain`'s elements, `ContentFragment`,
+`FragmentPaths`' values, `NotFoundPage`, `ErrorPage`) stay shared, and the per-request **event** types carry the live
 `*Page` rather than a copy, deliberately: copying a page and its fragment tree on
 every render would defeat a cache-first framework's hot path.
 
@@ -502,10 +502,8 @@ A document (`collage.NewDocument`) dispatches `OnDocumentRendered`,
 one: `AfterRenderEvent.HTML` would be a lie for a zip file or a JPEG, and there is
 no `*Page` for `BeforeRenderEvent.Page` to carry. A plugin that post-processes output implements `OnDocumentRendered` for
 documents (see [Documents](#documents) below); one that stamps every page from
-`OnAfterRender` alone stamps nothing on a sitemap. `ErrorEvent.Page` is `nil` for
-a document failure — the event's `Path` already identifies the route, and the
-framework's own log line names the document. See `docs/documents.md` for the full
-reasoning; this table and that page are kept in agreement on it.
+`OnAfterRender` alone stamps nothing on a sitemap. See `docs/documents.md` for the
+full reasoning; this table and that page are kept in agreement on it.
 
 A mounted asset request dispatches only `OnError`, and only for a 4xx or 5xx
 response, or for a panic recovered while serving it: an asset is neither a page
@@ -572,8 +570,9 @@ process down.
   when it wraps `*http.MaxBytesError`, as a body past the action's limit read
   through `ev.Form()` does, and `500` otherwise. The first plugin to set
   `ev.Result` is the last one asked, and the handler never runs.
-- `OnCacheInvalidate` — dispatched from `InvalidateTags`, not from a request; an
-  error is joined into what `InvalidateTags` returns.
+- `OnCacheInvalidate` — dispatched from `InvalidateTags`, not from a request.
+  Every plugin is called, even after one before it failed or panicked; each error
+  is logged and joined into what `InvalidateTags` returns.
 - `OnError` — an error is logged and swallowed, and dispatch continues to the
   remaining plugins. An error handler that itself errors must not recurse into
   another round of error handling.
@@ -681,11 +680,30 @@ app, err := collage.New(&collage.Config{
 | `DevMode`, `Logger`, `collage.PluginConfig(host, …)` | yes | yes |
 | `AddTemplateFunc`, `AddRenderFunc` | yes | — |
 | `WrapMount` | yes | — |
-| `Pages`, `Page`, `InvalidateTags` | — | yes |
+| `collage.FindPlugin[T](host)` | yes | — |
+| `Pages`, `Page` | — | yes |
 | `URL`, `Locales`, `PageURLs`, `OriginFor`, `MultiOrigin` | — | yes |
 | `RegisterDocument`, `Mount`, `OpenMounted`, `Handle`, `Use` | — | yes |
 | `RenderFragment` | — | yes |
 | `RegisterCommand` | — | yes |
+
+A plugin finds another with `collage.FindPlugin[T](host)` in `Configure`, and
+keeps what it finds: the `Host` given to `Init` lists no plugins, so
+`FindPlugin` from `Init` reports false. Invalidating the cache is the
+application's (`App.InvalidateTags`, `ActionResult.InvalidateTags`); a plugin
+observes it with `OnCacheInvalidate`.
+
+A `ConfigHost` closes when the plugin's `Configure` returns. A plugin that kept
+it gets `collage.ErrConfigureClosed` from a later `AddTemplateFunc` or
+`AddRenderFunc`, and a later `WrapMount` wraps nothing and is logged: templates
+are parsed once construction finishes, and requests render with what was
+registered by then.
+
+A template function may not take a name the framework or the template language
+already has — `pageURL`, `eq`, `len`, `html`, `urlquery` and the rest of Go's
+builtins — nor one another plugin holds: each is `ErrDuplicateTemplateFunc`. A
+name the application sets in `Config.Template.Funcs` wins over a plugin's, for
+`AddRenderFunc` as for `AddTemplateFunc`, and `New` logs it once.
 
 `AddTemplateFunc`'s function is one value for the life of the application.
 `AddRenderFunc` takes a factory instead, called for each render with its
