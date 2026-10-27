@@ -176,6 +176,54 @@ func TestConfigHost_ClosedPerPlugin(t *testing.T) {
 	}
 }
 
+// A ConfigHost kept past Configure lists no plugin: collage.FindPlugin through
+// it reports false, as through the Host Init receives.
+func TestConfigHost_ListsNothingAfterConfigure(t *testing.T) {
+	var kept collage.ConfigHost
+	var during bool
+	p := &hgPlugin{configureFn: func(_ context.Context, h collage.ConfigHost) error {
+		kept = h
+		_, during = collage.FindPlugin[*hgPlugin](h)
+		return nil
+	}}
+	collagetest.NewSite(t, collagetest.WithPlugins(p))
+	if !during {
+		t.Error("FindPlugin from Configure found nothing")
+	}
+	if found, ok := collage.FindPlugin[*hgPlugin](kept); ok {
+		t.Errorf("FindPlugin through a ConfigHost kept past Configure = %v", found)
+	}
+}
+
+// A ConfigHost written to from a goroutine of the plugin's own while
+// Configure returns: each call is refused or lands before the maps are read.
+// Run under -race.
+func TestConfigHost_CloseRacesNoWrite(t *testing.T) {
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	p := &hgPlugin{configureFn: func(_ context.Context, h collage.ConfigHost) error {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; ; i++ {
+				err := h.AddTemplateFunc(fmt.Sprintf("racing%d", i), func() string { return "" })
+				if errors.Is(err, collage.ErrConfigureClosed) {
+					return
+				}
+				select {
+				case <-stop:
+					return
+				default:
+				}
+			}
+		}()
+		return nil
+	}}
+	collagetest.NewSite(t, collagetest.WithPlugins(p))
+	close(stop)
+	wg.Wait()
+}
+
 // text/template's builtins and html/template's escapers are refused by both
 // AddTemplateFunc and AddRenderFunc: a plugin's "eq" would decide every
 // template's comparisons, and its "html" or "urlquery" would be the only

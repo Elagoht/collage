@@ -319,6 +319,12 @@ type App struct {
 	// mountWrappers transform every mounted filesystem, in the order plugins
 	// registered them during Configure.
 	mountWrappers []func(fs.FS) fs.FS
+	// configMu guards pluginFuncs, renderFuncs and mountWrappers while plugins
+	// configure, and each ConfigHost's closed flag: a plugin may keep its
+	// ConfigHost and call it from a goroutine of its own, and every host writes
+	// the same maps. A write checks closed under the lock it writes under, so
+	// none lands once its Configure has returned.
+	configMu sync.Mutex
 	// logger is the structured logger handed to the handler, the plugin registry,
 	// and plugins through Host.Logger.
 	logger *slog.Logger
@@ -538,7 +544,11 @@ func New(cfg Config) (*App, error) {
 	}
 	if err := app.plugins.Configure(context.Background(), func(name string) (plugin.ConfigHost, func()) {
 		host := &configHostView{configSource: plugin.NewConfigSource(name, app.cfg.PluginConfig), app: app, name: name}
-		return host, func() { host.closed.Store(true) }
+		return host, func() {
+			app.configMu.Lock()
+			host.closed = true
+			app.configMu.Unlock()
+		}
 	}); err != nil {
 		return nil, err
 	}

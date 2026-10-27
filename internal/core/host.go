@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"sync/atomic"
 
 	"github.com/Elagoht/collage/internal/asset"
 	"github.com/Elagoht/collage/internal/httpx"
@@ -177,8 +176,9 @@ type configHostView struct {
 	// closed is set when this plugin's Configure returns. A plugin can keep
 	// its ConfigHost, and the maps AddTemplateFunc and AddRenderFunc write are
 	// read by every render from then on: a write after Configure would race
-	// them, and could not reach a template parsed already anyway.
-	closed atomic.Bool
+	// them, and could not reach a template parsed already anyway. Guarded by
+	// app.configMu, which every write to those maps holds.
+	closed bool
 }
 
 var _ plugin.ConfigHost = (*configHostView)(nil)
@@ -186,8 +186,17 @@ var _ plugin.ConfigHost = (*configHostView)(nil)
 // ApplicationPlugins is plugin.Lister: a plugin looking for another in Configure
 // finds it whether it is listed before or after. Only the ConfigHost has it;
 // hostView, the Init host, does not, so no plugin reaches another's live
-// instance from Init or at request time.
-func (h *configHostView) ApplicationPlugins() []plugin.Plugin { return h.app.plugins.Plugins() }
+// instance from Init or at request time — nor from a ConfigHost kept past its
+// Configure, which lists nothing.
+func (h *configHostView) ApplicationPlugins() []plugin.Plugin {
+	h.app.configMu.Lock()
+	closed := h.closed
+	h.app.configMu.Unlock()
+	if closed {
+		return nil
+	}
+	return h.app.plugins.Plugins()
+}
 
 // DevMode reports whether the application is running in development mode.
 func (h *configHostView) DevMode() bool { return h.app.cfg.DevMode }
@@ -198,7 +207,9 @@ func (h *configHostView) Logger() *slog.Logger { return h.app.logger }
 // AddTemplateFunc registers fn under name, for every template parsed after this
 // call — which, since Configure runs before parsing, means all of them.
 func (h *configHostView) AddTemplateFunc(name string, fn any) error { // any: restates html/template.FuncMap's own value type
-	if h.closed.Load() {
+	h.app.configMu.Lock()
+	defer h.app.configMu.Unlock()
+	if h.closed {
 		return fmt.Errorf("%w: AddTemplateFunc(%q)", plugin.ErrConfigureClosed, name)
 	}
 	if _, taken := h.app.pluginFuncs[name]; taken {
@@ -231,7 +242,9 @@ func reservedFunc(name string) error {
 
 // AddRenderFunc registers a template function made anew for each render.
 func (h *configHostView) AddRenderFunc(name string, factory func(rc *types.RenderContext) any) error { // any: html/template.FuncMap's own value type
-	if h.closed.Load() {
+	h.app.configMu.Lock()
+	defer h.app.configMu.Unlock()
+	if h.closed {
 		return fmt.Errorf("%w: AddRenderFunc(%q)", plugin.ErrConfigureClosed, name)
 	}
 	if factory == nil {
@@ -256,7 +269,9 @@ func (h *configHostView) AddRenderFunc(name string, factory func(rc *types.Rende
 // call after Configure returned wraps nothing — the mounts may be serving — and
 // is logged, since the method has no error to return.
 func (h *configHostView) WrapMount(wrap func(fs.FS) fs.FS) {
-	if h.closed.Load() {
+	h.app.configMu.Lock()
+	defer h.app.configMu.Unlock()
+	if h.closed {
 		h.app.logger.Warn("collage: WrapMount called after Configure returned; nothing was wrapped", "plugin", h.name)
 		return
 	}
