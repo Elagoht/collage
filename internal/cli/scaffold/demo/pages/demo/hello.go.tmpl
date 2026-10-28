@@ -1,7 +1,7 @@
 package pages
 
 import (
-	"@@MODULE@@/actions"
+	demoactions "@@MODULE@@/actions/demo"
 	"@@MODULE@@/fragments/layouts"
 	fragments "@@MODULE@@/fragments/pages/demo"
 
@@ -15,7 +15,7 @@ func Hello() *collage.Page {
 		WithLayouts(layouts.Master()).
 		WithContent(fragments.Hello()).
 		WithPath("en", "/hello").
-		WithActionFor(actions.Hello()).
+		WithActionFor(demoactions.Hello()).
 		Dynamic().
 		Build()
 }

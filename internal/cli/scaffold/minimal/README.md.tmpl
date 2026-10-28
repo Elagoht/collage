@@ -26,7 +26,7 @@ guard, a middleware or a command, and registers it in `routes.go`:
 ```
 collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
 collage add fragment blog/sidebar   # fragments/blog/sidebar.go, for a slot
-collage add action blog/comment     # actions/blog.go, the action and its handler
+collage add action blog/comment     # actions/blog/comment.go, the action and its handler
 collage add document feed --path /feed.xml --type application/xml
 collage add action blog/like --page blog/post   # attached to that page
 collage add layout panel            # a layout that nests inside the site's

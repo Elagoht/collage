@@ -198,10 +198,19 @@ func declaredCommands(root string) (map[string]string, error) {
 // and the edit that imports it when f does not yet — as pkgName, or pkgName
 // with a number when that name is taken.
 func ensureImport(proj project, f parsedFile, pkgPath, pkgName string) (string, []edit) {
+	return ensureImportAs(proj, f, pkgPath, pkgName, "")
+}
+
+// ensureImportAs is ensureImport importing the package as alias, unless alias
+// is empty.
+func ensureImportAs(proj project, f parsedFile, pkgPath, pkgName, alias string) (string, []edit) {
 	if ident, ok := importedAs(proj, f.ast, pkgPath); ok {
 		return ident, nil
 	}
 	ident := pkgName
+	if alias != "" {
+		ident = alias
+	}
 	if taken := identsInUse(proj, f.ast); slices.Contains(taken, ident) {
 		for n := 2; ; n++ {
 			if candidate := ident + strconv.Itoa(n); !slices.Contains(taken, candidate) {
@@ -278,11 +287,11 @@ func registerStatement(proj project, method, pkgPath, pkgName string, expr func(
 	return nil, fmt.Sprintf("register it yourself, in the function that builds the app: app.%s(%s)", method, expr(pkgName)), nil
 }
 
-// attachToPage returns the change that adds .WithActionFor(actions.<Name>())
-// to the page the request's --page names, before the Build that ends its
+// attachToPage returns the change that adds .WithActionFor(<alias>.<Name>()),
+// the action from the package at pkgPath, to the page the request's --page names, before the Build that ends its
 // NewPage chain. The file must hold exactly one such chain: with none, or
 // several, it changes nothing and returns the line to add.
-func (g generator) attachToPage() (*fileChange, string, error) {
+func (g generator) attachToPage(pkgPath, alias string) (*fileChange, string, error) {
 	area, name := g.req.page[:len(g.req.page)-1], g.req.page[len(g.req.page)-1]
 	path := filepath.Join(append(append([]string{g.proj.dir, "pages"}, area...), name+".go")...)
 	rel := filepath.ToSlash(strings.TrimPrefix(path, g.proj.dir+string(filepath.Separator)))
@@ -306,11 +315,15 @@ func (g generator) attachToPage() (*fileChange, string, error) {
 		builds = append(builds, sel)
 		return true
 	})
-	attach := fmt.Sprintf(".WithActionFor(actions.%s())", g.pascal)
+	shown := alias
+	if shown == "" {
+		shown = "actions"
+	}
+	attach := fmt.Sprintf(".WithActionFor(%s.%s())", shown, g.pascal)
 	if len(builds) != 1 {
 		return nil, fmt.Sprintf("%s has %d NewPage chains; attach it yourself: %s", rel, len(builds), attach), nil
 	}
-	ident, edits := ensureImport(g.proj, f, g.proj.module+"/actions", "actions")
+	ident, edits := ensureImportAs(g.proj, f, pkgPath, "actions", alias)
 	edits = append(edits, edit{
 		offset: f.fset.Position(builds[0].Sel.Pos()).Offset,
 		text:   fmt.Sprintf("WithActionFor(%s.%s()).\n", ident, g.pascal),

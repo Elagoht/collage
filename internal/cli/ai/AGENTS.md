@@ -31,7 +31,7 @@ Docs: https://collage.furkanbaytekin.dev/en/docs/introduction/
 | a page's content | `fragments/pages/<area>/<name>.go`, one fragment per file, with its view type and data handler |
 | a fragment for a slot (`collage add fragment`) | `fragments/<area>/<name>.go`, one per file |
 | a layout | `fragments/layouts/<name>.go` + `templates/layouts/<name>.html` |
-| actions: form posts, endpoints | `actions/<area>.go`, the area's `collage.NewAction(...)...Build()` constructors, each followed by its handler factory `<name>Handler() collage.ActionHandlerFunc` |
+| actions: form posts, endpoints | `actions/<area>/<name>.go`, one action per file: its `collage.NewAction(...)...Build()` constructor, then its handler factory `<name>Handler() collage.ActionHandlerFunc`; package `actions`, imported as `<area>actions` |
 | guards, middleware, commands, documents | `guards/`, `middleware/`, `commands/`, `documents/`, one per file |
 | state, queries, database access | `data/<thing>/` |
 | form validation | `validations/<area>.go` |

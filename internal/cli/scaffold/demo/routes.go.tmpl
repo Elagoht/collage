@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"@@MODULE@@/actions"
+	demoactions "@@MODULE@@/actions/demo"
 	"@@MODULE@@/documents"
 	"@@MODULE@@/pages"
 	demopages "@@MODULE@@/pages/demo"
@@ -22,7 +22,7 @@ func register(app *collage.App) error {
 		documents.Health(),
 		// Actions a page attaches with WithActionFor are registered with it;
 		// this one has a URL of its own.
-		actions.Count(),
+		demoactions.Count(),
 	); err != nil {
 		return err
 	}

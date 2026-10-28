@@ -77,7 +77,7 @@ one page saying hello instead — the default.
 
 Where to look next: `pages/` has one file per page, by area, and `fragments/pages/`
 each page's content beside it; `fragments/layouts/` the layout, `actions/` the
-endpoints, each beside its handler; `routes.go` registers them, and
+endpoints, one per file by area, each with its handler; `routes.go` registers them, and
 `main.go` has the configuration. `collage add page blog/post` writes a new page in
 that layout and registers it. The rest of this file is what those are made of, and
 [docs/](docs/) is the detail.

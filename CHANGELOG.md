@@ -11,14 +11,20 @@
   one a failed first build already showed; an open page reloads onto it by itself
   and back onto the program once a change compiles. An unreadable environment
   file does the same.
-- **An action's handler lives in the action's file.** `collage new` and
-  `collage add action` no longer write `actions/funcs/`: `actions/<area>.go` holds
-  each builder with its handler factory under it, `WithHandler(commentHandler())`
-  and `func commentHandler() collage.ActionHandlerFunc`, the way a fragment keeps
-  its data handler. A project that has `actions/funcs/` keeps working, and
-  `collage add action` adds new handlers beside their builders without touching
-  it; to move over, cut each `funcs.X()` into its action's file as an unexported
-  `xHandler()` and delete the package. `AGENTS.md` (`collage ai init`) says so.
+- **Actions are one per file, by area, with their handler.** `collage new` and
+  `collage add action blog/comment` write `actions/blog/comment.go`, as
+  `add page` writes `pages/blog/post.go`: the builder, then its handler factory
+  under it — `WithHandler(commentHandler())` and
+  `func commentHandler() collage.ActionHandlerFunc`, the way a fragment keeps its
+  data handler. Its package is `actions`, imported as `blogactions` in
+  `routes.go` and in a page that attaches it; an action with no area is
+  `actions/<name>.go`. `actions/funcs/` and the one-file-per-area
+  `actions/<area>.go` are gone, and an action's area may be nested like a page's.
+  A project laid out the old way keeps working, and `collage add action` leaves
+  its files alone. To move over: give each action a file in `actions/<area>/`,
+  move its `funcs.X()` in under it as an unexported `xHandler()`, import the
+  folder as `<area>actions` where it was `actions`, and delete `actions/funcs`.
+  `AGENTS.md` (`collage ai init`) says so.
 
 ## v0.79.0
 

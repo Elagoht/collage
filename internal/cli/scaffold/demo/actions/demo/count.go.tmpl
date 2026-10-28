@@ -39,24 +39,3 @@ func countHandler() collage.ActionHandlerFunc {
 		return result, nil
 	}
 }
-
-// Returns the action the hello form posts to. It has no path of its own: the
-// hello page attaches it with WithActionFor, so it answers at the page's URL, and
-// it shares the page's name.
-func Hello() *collage.Action {
-	return collage.NewAction("hello").
-		WithMethods(http.MethodPost).
-		WithHandler(helloHandler()).
-		Build()
-}
-
-// Answers the hello form with the page it was posted to, which is rc.Page; that
-// page's data handler reads the name from the post.
-func helloHandler() collage.ActionHandlerFunc {
-	return func(
-		_ context.Context,
-		rc *collage.RenderContext,
-	) (*collage.ActionResult, error) {
-		return collage.RenderPage(rc.Page), nil
-	}
-}

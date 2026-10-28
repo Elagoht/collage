@@ -32,8 +32,8 @@ scaffolds, and registers it in routes.go:
 
   page       pages/<area>/<name>.go, and its content in fragments/pages/<area>/<name>.go
   fragment   fragments/<area>/<name>.go alone, for a slot of a page or a layout
-  action     a builder and its handler in actions/<area>.go; registered when it
-             has a --path, attached to a page otherwise
+  action     actions/<area>/<name>.go, the action and its handler; registered
+             when it has a --path, attached to a page otherwise
   document   documents/<name>.go
   layout     fragments/layouts/<name>.go, a layout that nests inside the site's
              own around a page's content; add page --layout wraps a page in it
@@ -287,9 +287,6 @@ func (r *addRequest) parseTarget(target string) error {
 				return fmt.Errorf("%w: --page %q is not a page add page could have written: [area/]name", ErrAddUsage, strings.Join(r.page, "/"))
 			}
 		}
-	}
-	if r.kind == "action" && len(r.area) > 1 {
-		return fmt.Errorf("%w: an action's area is one file, actions/<area>.go: %q has %d", ErrAddUsage, target, len(r.area))
 	}
 	if r.ident == "" {
 		r.ident = r.name
@@ -742,18 +739,19 @@ func (g generator) fragment(forPage bool) ([]fileChange, string, error) {
 	return append([]fileChange{{path: filepath.Join(dir, g.req.name+".go"), content: []byte(b.String())}}, changes...), pkg, nil
 }
 
-// action adds a builder and its handler to actions/<area>.go, creating the file
-// when it is not there, and registers the action when it has a path of its own.
-// The handler sits under its builder, the way a fragment's data handler does.
+// action writes actions/<area>/<name>.go, one action per file as a page is:
+// its builder, and its handler under it the way a fragment keeps its data
+// handler. It registers the action when it has a path of its own, and attaches
+// it to its page otherwise.
 func (g generator) action(notes []string) ([]fileChange, []string, error) {
-	domain := g.req.name
-	if len(g.req.area) == 1 {
-		domain = g.req.area[0]
-	}
-	actionsDir := filepath.Join(g.proj.dir, "actions")
+	dir := g.areaDir("actions")
 	handlerName := g.camel + "Handler"
-	if err := checkIdentifiers(g.proj, actionsDir, g.pascal, handlerName); err != nil {
+	if err := checkIdentifiers(g.proj, dir, g.pascal, handlerName); err != nil {
 		return nil, nil, err
+	}
+	path := filepath.Join(dir, g.req.name+".go")
+	if _, err := os.Stat(path); err == nil {
+		return nil, nil, fmt.Errorf("%s exists; collage add does not overwrite", path)
 	}
 
 	standalone := g.req.path != ""
@@ -794,18 +792,29 @@ func (g generator) action(notes []string) ([]fileChange, []string, error) {
 	} else if standalone {
 		notes = append(notes, "no guard: an action on its own URL has no page's guards; give it one with --guard <name>, or check access in its handler")
 	}
-	builderFile, err := appendToFile(g.proj, filepath.Join(actionsDir, domain+".go"), "actions", builderImports, builder.String())
+	builderFile, err := appendToFile(g.proj, path, "actions", builderImports, builder.String())
 	if err != nil {
 		return nil, nil, err
 	}
 	changes := []fileChange{builderFile}
 
+	// An area's actions are imported as <area>actions, the way its pages are
+	// <area>pages: actions/blog is blogactions in routes.go and in a page.
+	pkgPath := g.importPath("actions")
+	alias := ""
+	if len(g.req.area) > 0 {
+		alias = areaIdent(g.req.area[len(g.req.area)-1]) + "actions"
+	}
 	if !standalone {
 		if g.req.page == nil {
-			notes = append(notes, fmt.Sprintf("attach it to its page: .WithActionFor(actions.%s()), or add it with --page", g.pascal))
+			ident := alias
+			if ident == "" {
+				ident = "actions"
+			}
+			notes = append(notes, fmt.Sprintf("attach it to its page: .WithActionFor(%s.%s()), importing %q, or add it with --page", ident, g.pascal, pkgPath))
 			return changes, notes, nil
 		}
-		page, note, err := g.attachToPage()
+		page, note, err := g.attachToPage(pkgPath, alias)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -814,7 +823,7 @@ func (g generator) action(notes []string) ([]fileChange, []string, error) {
 		}
 		return changes, append(notes, note), nil
 	}
-	routes, note, err := registerInRoutes(g.proj, "action", g.proj.module+"/actions", "", "actions", func(ident string) string {
+	routes, note, err := registerInRoutes(g.proj, "action", pkgPath, alias, "actions", func(ident string) string {
 		return ident + "." + g.pascal + "()"
 	})
 	if err != nil {

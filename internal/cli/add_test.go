@@ -97,6 +97,7 @@ func TestAdd_DemoProjectBuildsAndStarts(t *testing.T) {
 		{"middleware", "later"},
 		{"command", "greet", "--name", "say-hi"},
 		{"action", "staff/fire", "--path", "/api/fire", "--guard", "staff"},
+		{"action", "subscribe", "--path", "/api/subscribe"},
 	} {
 		if code, _, stderr := add(t, target, args...); code != 0 {
 			t.Fatalf("add %v = %d; %s", args, code, stderr)
@@ -156,8 +157,19 @@ func Stamp(next http.Handler) http.Handler {
 	wantInOrder(t, readFile(t, target, "fragments/layouts/panel.go"), "//collage:nested", "func Panel() *collage.Fragment", `{{slot "content"}}`)
 	// --page attaches the action before the chain's Build; middleware keeps
 	// the order it was added in; commands are registered beside it.
-	wantInOrder(t, readFile(t, target, "pages/panelled.go"), `"collageaddtest/actions"`, "WithActionFor(actions.Promote()).", "Build()")
-	wantInOrder(t, readFile(t, target, "actions/staff.go"), `"collageaddtest/guards"`, "func Fire() *collage.Action", "WithGuard(guards.Staff).", "WithHandler(fireHandler()).", "func fireHandler() collage.ActionHandlerFunc")
+	// Actions are one per file, by area, as pages are, and an area's are
+	// imported as <area>actions.
+	wantInOrder(t, readFile(t, target, "pages/panelled.go"), `staffactions "collageaddtest/actions/staff"`, "WithActionFor(staffactions.Promote()).", "Build()")
+	wantInOrder(t, readFile(t, target, "actions/staff/fire.go"), "package actions", `"collageaddtest/guards"`, "func Fire() *collage.Action", "WithGuard(guards.Staff).", "WithHandler(fireHandler()).", "func fireHandler() collage.ActionHandlerFunc")
+	wantInOrder(t, readFile(t, target, "actions/blog/comment.go"), "func Comment() *collage.Action", "func commentHandler() collage.ActionHandlerFunc")
+	if !strings.Contains(routes, `blogactions "collageaddtest/actions/blog"`) || !strings.Contains(routes, "blogactions.Ping(),") || !strings.Contains(routes, "staffactions.Fire(),") {
+		t.Errorf("the area's actions are not registered under <area>actions:\n%s", routes)
+	}
+	// One with no area is actions/<name>.go, and registered as actions.
+	wantInOrder(t, readFile(t, target, "actions/subscribe.go"), "package actions", "func Subscribe() *collage.Action")
+	if !strings.Contains(routes, `"collageaddtest/actions"`) || !strings.Contains(routes, "actions.Subscribe(),") {
+		t.Errorf("the action with no area is not registered as actions.Subscribe():\n%s", routes)
+	}
 	wantInOrder(t, routes, `"collageaddtest/commands"`, `"collageaddtest/middleware"`,
 		"func register(app *collage.App) error {", "app.RegisterCommand(commands.Greet())",
 		"app.Use(middleware.Stamp)", "app.Use(middleware.Later)", "app.Register(")
@@ -392,12 +404,13 @@ func TestAdd_ARegisterPageIsNotTheAppsRegister(t *testing.T) {
 	if after := readFile(t, dir, "routes.go"); after != before {
 		t.Errorf("routes.go was edited:\n%s", after)
 	}
-	// A project that still keeps its handlers in actions/funcs gets the new one
-	// beside its builder, and its funcs package is left as it was.
-	wantInOrder(t, readFile(t, dir, "actions/auth.go"), "\t\"context\"\n\t\"net/http\"\n\n\t\"sdy/actions/funcs\"\n",
-		"func Logout()", "func Refresh()", `WithPath("tr", "/yenile")`, "WithHandler(refreshHandler()).", "func refreshHandler() collage.ActionHandlerFunc")
-	if strings.Contains(readFile(t, dir, "actions/funcs/auth.go"), "Refresh") {
-		t.Error("the new handler was written into actions/funcs")
+	// A project laid out before actions had folders — actions/auth.go and
+	// actions/funcs — gets the new one in a folder of its own, beside its
+	// handler, and the old files are left as they were.
+	wantInOrder(t, readFile(t, dir, "actions/auth/refresh.go"), "package actions", "\t\"context\"\n\t\"net/http\"\n",
+		"func Refresh()", `WithPath("tr", "/yenile")`, "WithHandler(refreshHandler()).", "func refreshHandler() collage.ActionHandlerFunc")
+	if strings.Contains(readFile(t, dir, "actions/auth.go"), "Refresh") || strings.Contains(readFile(t, dir, "actions/funcs/auth.go"), "Refresh") {
+		t.Error("the new action was written into the old files")
 	}
 }
 
@@ -458,7 +471,7 @@ func TestAdd_RefusesBeforeWritingAnything(t *testing.T) {
 	}{
 		"a page name the project uses":   {args: []string{"page", "account/login"}, want: `a page named "login" already exists, in pages/auth/login.go`},
 		"an existing file":               {args: []string{"page", "panel/settings"}, setup: map[string]string{"pages/panel/settings.go": "package pages\n"}, want: "exists; collage add does not overwrite"},
-		"a declared identifier":          {args: []string{"action", "auth/logout", "--name", "sign-out"}, want: "actions/auth.go already declares Logout"},
+		"a declared identifier":          {args: []string{"action", "auth/logout", "--name", "sign-out"}, setup: map[string]string{"actions/auth/session.go": "package actions\n\nfunc Logout() {}\n"}, want: "actions/auth/session.go already declares Logout"},
 		"a name that is not one":         {args: []string{"page", "blog/story-detail"}, want: `"story-detail" is not a Go name`},
 		"a name that cannot export":      {args: []string{"fragment", "_hidden"}, want: "is not a Go name"},
 		"a directory that is not one":    {args: []string{"fragment", "9x/widget"}, want: `"9x" is not a directory name`},

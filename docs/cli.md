@@ -185,7 +185,7 @@ grows into, with a test file that drives all of it through `app.Handler()` with
 pages/<area>/<name>.go            a page: its layouts, content, path, actions
 fragments/layouts/master.go       Master(), the layout every page wraps itself in
 fragments/pages/<area>/<name>.go  each page's content, mirroring pages/
-actions/<area>.go                 actions and their handlers, one file per area
+actions/<area>/<name>.go          an action and its handler, one per file
 documents/<name>.go               routes that are not HTML
 data/<domain>/                    state, by domain
 templates/layouts/                the layouts' HTML
@@ -234,7 +234,7 @@ collage add fragment blog/sidebar   # fragments/blog/sidebar.go, for a slot
 collage add fragment layouts/partials/siteFooter --file
                                     # fragments/layouts/partials/siteFooter.go
                                     # + templates/layouts/partials/siteFooter.html
-collage add action blog/comment     # actions/blog.go, the action and its handler
+collage add action blog/comment     # actions/blog/comment.go, the action and its handler
 collage add action blog/ping --path /api/ping
 collage add document feed --path /feed.xml --type application/xml
 collage add action blog/like --page blog/post   # attached to pages/blog/post.go
@@ -255,19 +255,21 @@ collage add command seed            # commands/seed.go + app.RegisterCommand
   service the handler needs is a parameter added to both (see
   [Data handlers](fragments.md#data-handlers)). Its path is
   `/<area>/<name>` unless `--path` says otherwise.
-- **An action** gets a builder appended to `actions/<area>.go`, created when it is
-  not there, and its handler under it: `<name>Handler()`, a factory like a
-  fragment's data handler, so a service it needs is a parameter away. A project
-  that still keeps handlers in `actions/funcs/` keeps them there; the new one goes
-  beside its builder all the same. With `--path` it
+- **An action** is `actions/<area>/<name>.go`, one per file as a page is: its
+  builder, and its handler under it — `<name>Handler()`, a factory like a
+  fragment's data handler, so a service it needs is a parameter away. Its package
+  is `actions`, imported as `<area>actions` (`blogactions`), the way an area's
+  pages are `<area>pages`; with no area it is `actions/<name>.go`. A project laid
+  out before this — `actions/<area>.go`, `actions/funcs/` — keeps those files
+  untouched; new actions go into folders beside them. With `--path` it
   answers at a URL of its own and is registered; without one it answers at the
   page it is attached to, and the command prints the `.WithActionFor(...)` to add.
 - **A document** is `documents/<name>.go`, `text/plain` unless `--type` says
   otherwise.
 - **`--page <[area/]name>`** attaches a new action to that page instead of
-  printing how: it adds `.WithActionFor(actions.Like())` before the `Build()`
+  printing how: it adds `.WithActionFor(blogactions.Like())` before the `Build()`
   that ends the page's `NewPage` chain in `pages/<area>/<name>.go`, importing
-  `actions`. A page file holding more than one chain is left alone, and the
+  the action's package. A page file holding more than one chain is left alone, and the
   line to add is printed. It cannot go with `--path`.
 - **A layout** is `fragments/layouts/<name>.go`, a layout that nests inside the
   site's own around a page's content, `<div class="<name>">{{slot "content"}}</div>`
