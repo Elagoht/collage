@@ -181,6 +181,7 @@ jobs:
           - collage-favicon
           - collage-feed
           - collage-flash
+          - collage-gesso
           - collage-health
           - collage-highlight
           - collage-honeypot
