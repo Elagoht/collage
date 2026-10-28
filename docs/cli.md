@@ -185,8 +185,7 @@ grows into, with a test file that drives all of it through `app.Handler()` with
 pages/<area>/<name>.go            a page: its layouts, content, path, actions
 fragments/layouts/master.go       Master(), the layout every page wraps itself in
 fragments/pages/<area>/<name>.go  each page's content, mirroring pages/
-actions/<area>.go                 action builders, one file per area
-actions/funcs/<area>.go           their handlers
+actions/<area>.go                 actions and their handlers, one file per area
 documents/<name>.go               routes that are not HTML
 data/<domain>/                    state, by domain
 templates/layouts/                the layouts' HTML
@@ -235,7 +234,7 @@ collage add fragment blog/sidebar   # fragments/blog/sidebar.go, for a slot
 collage add fragment layouts/partials/siteFooter --file
                                     # fragments/layouts/partials/siteFooter.go
                                     # + templates/layouts/partials/siteFooter.html
-collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
+collage add action blog/comment     # actions/blog.go, the action and its handler
 collage add action blog/ping --path /api/ping
 collage add document feed --path /feed.xml --type application/xml
 collage add action blog/like --page blog/post   # attached to pages/blog/post.go
@@ -256,8 +255,11 @@ collage add command seed            # commands/seed.go + app.RegisterCommand
   service the handler needs is a parameter added to both (see
   [Data handlers](fragments.md#data-handlers)). Its path is
   `/<area>/<name>` unless `--path` says otherwise.
-- **An action** gets a builder appended to `actions/<area>.go` and a handler to
-  `actions/funcs/<area>.go`, either created when it is not there. With `--path` it
+- **An action** gets a builder appended to `actions/<area>.go`, created when it is
+  not there, and its handler under it: `<name>Handler()`, a factory like a
+  fragment's data handler, so a service it needs is a parameter away. A project
+  that still keeps handlers in `actions/funcs/` keeps them there; the new one goes
+  beside its builder all the same. With `--path` it
   answers at a URL of its own and is registered; without one it answers at the
   page it is attached to, and the command prints the `.WithActionFor(...)` to add.
 - **A document** is `documents/<name>.go`, `text/plain` unless `--type` says
@@ -414,8 +416,9 @@ tool to install:
   set off a rebuild.
 - **The new build is made first.** Only once it compiles is the old process
   stopped — interrupted, so it drains like it would on Ctrl-C — and the new one
-  started. A change that does not compile leaves the last good build serving, with
-  the compiler's error on screen.
+  started. A change that does not compile stops the old process all the same: a
+  build left serving no longer matches the code, and with the terminal out of
+  sight nothing says so. The browser gets the compiler's error instead (below).
 - **Development builds embed nothing.** They are built with `-tags collage_dev`,
   and the scaffold keeps its `//go:embed` line in `embed.go`, constrained with
   `//go:build !collage_dev`; `embed_dev.go` declares the same `files` as the
@@ -440,9 +443,10 @@ tool to install:
   (`localhost:6060` by default), and passes each request on to the program, which
   it starts with `HOST` and `PORT` set to a loopback address of its own. A request
   made while the program starts waits for it. When there is no program — it
-  exited, or the first build failed — the page is a 503 showing what the program or
+  exited, or a build failed — the page is a 503 showing what the program or
   the compiler printed, and it reloads by itself once a change brings the program
-  back. A page already open when the program exits reloads onto that error.
+  back. A page already open when the program exits or a build fails reloads onto that
+  error.
 - **Only this machine's names are answered.** A request whose `Host` is not
   localhost (or a name under `.localhost`), an IP address, a reserved name
   (`example.com`, `*.test`, …), the `HOST` it was started with, or a name in

@@ -280,23 +280,32 @@ func TestDev_WarnsAboutFilesEmbeddedIntoDevelopmentBuilds(t *testing.T) {
 	}
 }
 
-// A change that does not compile leaves the last good build serving.
-func TestDev_AFailedBuildKeepsTheLastGoodOne(t *testing.T) {
-	runner, stderr, stop := devSession(t, map[string]string{"main.go": "package main"})
+// A change that does not compile stops the running program, and the browser is
+// shown the compiler's output rather than a build that no longer matches the
+// code. The next change that compiles starts it again.
+func TestDev_AFailedBuildStopsTheRunningOne(t *testing.T) {
+	runner := newDevRunner()
+	runner.setProgram(serveProgram(0, func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "app")
+	}))
+	runner.buildOutput = "./main.go:3:2: undefined: recipes\n" // printed only once a build fails
+	_, _, stop := devSessionWith(t, map[string]string{"main.go": "package main"}, runner)
 	waitStarted(t, runner)
+	if status, body := devGet(t, "/"); status != http.StatusOK || body != "app" {
+		t.Fatalf("GET = %d %q, want the running program", status, body)
+	}
 
 	runner.failBuild.Store(true)
 	writeProjectFile(t, "main.go", "package main // broken")
 	deadline := time.Now().Add(5 * time.Second)
-	for runner.buildCount() < 2 && time.Now().Before(deadline) {
+	for runner.stopped.Load() == 0 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	expectNoStart(t, runner, 100*time.Millisecond)
-	if runner.stopped.Load() != 0 {
-		t.Error("the running program was stopped for a build that failed")
+	if runner.stopped.Load() != 1 {
+		t.Fatal("the running program was not stopped for a build that failed")
 	}
-	if !strings.Contains(stderr.String(), "last good build is still serving") {
-		t.Errorf("stderr = %q, want it to say the last build is still serving", stderr.String())
+	if status, body := devGet(t, "/"); status != http.StatusServiceUnavailable || !strings.Contains(body, "undefined: recipes") {
+		t.Errorf("GET = %d, want 503 with the compiler's output:\n%s", status, body)
 	}
 
 	runner.failBuild.Store(false)

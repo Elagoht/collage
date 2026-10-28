@@ -32,8 +32,8 @@ scaffolds, and registers it in routes.go:
 
   page       pages/<area>/<name>.go, and its content in fragments/pages/<area>/<name>.go
   fragment   fragments/<area>/<name>.go alone, for a slot of a page or a layout
-  action     a builder in actions/<area>.go and its handler in actions/funcs/<area>.go;
-             registered when it has a --path, attached to a page otherwise
+  action     a builder and its handler in actions/<area>.go; registered when it
+             has a --path, attached to a page otherwise
   document   documents/<name>.go
   layout     fragments/layouts/<name>.go, a layout that nests inside the site's
              own around a page's content; add page --layout wraps a page in it
@@ -742,20 +742,17 @@ func (g generator) fragment(forPage bool) ([]fileChange, string, error) {
 	return append([]fileChange{{path: filepath.Join(dir, g.req.name+".go"), content: []byte(b.String())}}, changes...), pkg, nil
 }
 
-// action adds a builder to actions/<area>.go and its handler to
-// actions/funcs/<area>.go, creating either file when it is not there, and
-// registers the action when it has a path of its own.
+// action adds a builder and its handler to actions/<area>.go, creating the file
+// when it is not there, and registers the action when it has a path of its own.
+// The handler sits under its builder, the way a fragment's data handler does.
 func (g generator) action(notes []string) ([]fileChange, []string, error) {
 	domain := g.req.name
 	if len(g.req.area) == 1 {
 		domain = g.req.area[0]
 	}
 	actionsDir := filepath.Join(g.proj.dir, "actions")
-	funcsDir := filepath.Join(actionsDir, "funcs")
-	if err := checkIdentifiers(g.proj, actionsDir, g.pascal); err != nil {
-		return nil, nil, err
-	}
-	if err := checkIdentifiers(g.proj, funcsDir, g.pascal); err != nil {
+	handlerName := g.camel + "Handler"
+	if err := checkIdentifiers(g.proj, actionsDir, g.pascal, handlerName); err != nil {
 		return nil, nil, err
 	}
 
@@ -774,17 +771,20 @@ func (g generator) action(notes []string) ([]fileChange, []string, error) {
 	if g.req.guard != "" {
 		fmt.Fprintf(&builder, "\t\tWithGuard(guards.%s).\n", pascal(g.req.guard))
 	}
-	fmt.Fprintf(&builder, "\t\tWithHandler(funcs.%s()).\n\t\tBuild()\n}\n", g.pascal)
+	fmt.Fprintf(&builder, "\t\tWithHandler(%s()).\n\t\tBuild()\n}\n", handlerName)
 
-	var handler strings.Builder
-	fmt.Fprintf(&handler, "\n// Answers the %s action.\nfunc %s() collage.ActionHandlerFunc {\n\treturn func(\n\t\t_ context.Context,\n", g.req.name, g.pascal)
+	// A factory rather than the handler itself, so what the handler works
+	// through — a service, a store — is one parameter away, as with a
+	// fragment's data handler.
+	fmt.Fprintf(&builder, "\n// Answers the %s action. What it works through — a service, a store — comes\n// in as %s's parameters, passed on by %s.\n", g.req.name, handlerName, g.pascal)
+	fmt.Fprintf(&builder, "func %s() collage.ActionHandlerFunc {\n\treturn func(\n\t\t_ context.Context,\n", handlerName)
 	if standalone {
-		handler.WriteString("\t\t_ *collage.RenderContext,\n\t) (*collage.ActionResult, error) {\n\t\treturn collage.Status(http.StatusNoContent), nil\n\t}\n}\n")
+		builder.WriteString("\t\t_ *collage.RenderContext,\n\t) (*collage.ActionResult, error) {\n\t\treturn collage.Status(http.StatusNoContent), nil\n\t}\n}\n")
 	} else {
-		handler.WriteString("\t\trc *collage.RenderContext,\n\t) (*collage.ActionResult, error) {\n\t\treturn collage.RenderPage(rc.Page), nil\n\t}\n}\n")
+		builder.WriteString("\t\trc *collage.RenderContext,\n\t) (*collage.ActionResult, error) {\n\t\treturn collage.RenderPage(rc.Page), nil\n\t}\n}\n")
 	}
 
-	builderImports := []importSpec{{path: "net/http"}, {path: g.proj.module + "/actions/funcs"}, {path: collageImport}}
+	builderImports := []importSpec{{path: "context"}, {path: "net/http"}, {path: collageImport}}
 	if g.req.guard != "" {
 		if err := g.checkGuardExists(); err != nil {
 			return nil, nil, err
@@ -794,19 +794,11 @@ func (g generator) action(notes []string) ([]fileChange, []string, error) {
 	} else if standalone {
 		notes = append(notes, "no guard: an action on its own URL has no page's guards; give it one with --guard <name>, or check access in its handler")
 	}
-	handlerImports := []importSpec{{path: "context"}, {path: collageImport}}
-	if standalone {
-		handlerImports = append(handlerImports, importSpec{path: "net/http"})
-	}
 	builderFile, err := appendToFile(g.proj, filepath.Join(actionsDir, domain+".go"), "actions", builderImports, builder.String())
 	if err != nil {
 		return nil, nil, err
 	}
-	handlerFile, err := appendToFile(g.proj, filepath.Join(funcsDir, domain+".go"), "funcs", handlerImports, handler.String())
-	if err != nil {
-		return nil, nil, err
-	}
-	changes := []fileChange{builderFile, handlerFile}
+	changes := []fileChange{builderFile}
 
 	if !standalone {
 		if g.req.page == nil {

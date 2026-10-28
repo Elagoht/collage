@@ -40,7 +40,7 @@ func TestManagedSection_NamesRealThings(t *testing.T) {
 			t.Errorf("section does not name the bundle @%s", b.Name)
 		}
 	}
-	for _, s := range []string{"collage plugin add", "collage check", "collage add layout", "validations/", "utils/", "actions/funcs/", "routes.go",
+	for _, s := range []string{"collage plugin add", "collage check", "collage add layout", "validations/", "utils/", "Handler() collage.ActionHandlerFunc", "routes.go",
 		"fragments/<area>/<name>.go", "WithDependencyTags", "session.RequireUser", "--page", "if err := rc.HoistStylesheet", "layout needs `--file`"} {
 		if !strings.Contains(got, s) {
 			t.Errorf("section does not mention %q", s)

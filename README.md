@@ -71,13 +71,13 @@ collage serve    # serves dist/ the way a static host would
 
 Under `collage dev`, saving a template reloads the page in the browser, and saving
 Go code rebuilds and restarts the program and then reloads the page — no external
-watcher, nothing to install. A change that does not compile leaves the last good
-build running. Plain `collage new mysite`, without `--template demo`, starts from
+watcher, nothing to install. A change that does not compile stops the program and puts
+the compiler's error in the browser. Plain `collage new mysite`, without `--template demo`, starts from
 one page saying hello instead — the default.
 
 Where to look next: `pages/` has one file per page, by area, and `fragments/pages/`
 each page's content beside it; `fragments/layouts/` the layout, `actions/` the
-endpoints with their handlers in `actions/funcs/`; `routes.go` registers them, and
+endpoints, each beside its handler; `routes.go` registers them, and
 `main.go` has the configuration. `collage add page blog/post` writes a new page in
 that layout and registers it. The rest of this file is what those are made of, and
 [docs/](docs/) is the detail.

@@ -157,7 +157,7 @@ func Stamp(next http.Handler) http.Handler {
 	// --page attaches the action before the chain's Build; middleware keeps
 	// the order it was added in; commands are registered beside it.
 	wantInOrder(t, readFile(t, target, "pages/panelled.go"), `"collageaddtest/actions"`, "WithActionFor(actions.Promote()).", "Build()")
-	wantInOrder(t, readFile(t, target, "actions/staff.go"), `"collageaddtest/guards"`, "func Fire() *collage.Action", "WithGuard(guards.Staff).", "WithHandler(funcs.Fire())")
+	wantInOrder(t, readFile(t, target, "actions/staff.go"), `"collageaddtest/guards"`, "func Fire() *collage.Action", "WithGuard(guards.Staff).", "WithHandler(fireHandler()).", "func fireHandler() collage.ActionHandlerFunc")
 	wantInOrder(t, routes, `"collageaddtest/commands"`, `"collageaddtest/middleware"`,
 		"func register(app *collage.App) error {", "app.RegisterCommand(commands.Greet())",
 		"app.Use(middleware.Stamp)", "app.Use(middleware.Later)", "app.Register(")
@@ -392,8 +392,13 @@ func TestAdd_ARegisterPageIsNotTheAppsRegister(t *testing.T) {
 	if after := readFile(t, dir, "routes.go"); after != before {
 		t.Errorf("routes.go was edited:\n%s", after)
 	}
-	wantInOrder(t, readFile(t, dir, "actions/auth.go"), "func Logout()", "func Refresh()", `WithPath("tr", "/yenile")`)
-	wantInOrder(t, readFile(t, dir, "actions/funcs/auth.go"), "\t\"context\"\n\t\"net/http\"\n", "func Logout()", "func Refresh()")
+	// A project that still keeps its handlers in actions/funcs gets the new one
+	// beside its builder, and its funcs package is left as it was.
+	wantInOrder(t, readFile(t, dir, "actions/auth.go"), "\t\"context\"\n\t\"net/http\"\n\n\t\"sdy/actions/funcs\"\n",
+		"func Logout()", "func Refresh()", `WithPath("tr", "/yenile")`, "WithHandler(refreshHandler()).", "func refreshHandler() collage.ActionHandlerFunc")
+	if strings.Contains(readFile(t, dir, "actions/funcs/auth.go"), "Refresh") {
+		t.Error("the new handler was written into actions/funcs")
+	}
 }
 
 func TestAdd_TemplateFileUsesTheConfiguredRoot(t *testing.T) {

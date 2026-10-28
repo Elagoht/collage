@@ -1,9 +1,10 @@
 package actions
 
 import (
+	"context"
 	"net/http"
 
-	"@@MODULE@@/actions/funcs"
+	"@@MODULE@@/data/count"
 
 	"github.com/Elagoht/collage/pkg/collage"
 )
@@ -13,8 +14,30 @@ func Count() *collage.Action {
 	return collage.NewAction("count").
 		WithPath("en", "/api/count").
 		WithMethods(http.MethodPost).
-		WithHandler(funcs.Count()).
+		WithHandler(countHandler()).
 		Build()
+}
+
+// Types the count action's JSON answer.
+type countResponse struct {
+	Count int64 `json:"count"`
+}
+
+// Adds one to the count and answers with the new value as JSON.
+func countHandler() collage.ActionHandlerFunc {
+	return func(
+		_ context.Context,
+		_ *collage.RenderContext,
+	) (*collage.ActionResult, error) {
+		result, err := collage.JSON(http.StatusOK, countResponse{Count: count.Increment()})
+		if err != nil {
+			return nil, err
+		}
+		// The features page is cached and shows the count, so this is what keeps
+		// it true: its entry is dropped, and the next reader gets a fresh render.
+		result.InvalidateTags = []string{count.Tag}
+		return result, nil
+	}
 }
 
 // Returns the action the hello form posts to. It has no path of its own: the
@@ -23,6 +46,17 @@ func Count() *collage.Action {
 func Hello() *collage.Action {
 	return collage.NewAction("hello").
 		WithMethods(http.MethodPost).
-		WithHandler(funcs.Hello()).
+		WithHandler(helloHandler()).
 		Build()
+}
+
+// Answers the hello form with the page it was posted to, which is rc.Page; that
+// page's data handler reads the name from the post.
+func helloHandler() collage.ActionHandlerFunc {
+	return func(
+		_ context.Context,
+		rc *collage.RenderContext,
+	) (*collage.ActionResult, error) {
+		return collage.RenderPage(rc.Page), nil
+	}
 }

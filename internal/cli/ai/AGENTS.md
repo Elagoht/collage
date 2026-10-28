@@ -31,8 +31,7 @@ Docs: https://collage.furkanbaytekin.dev/en/docs/introduction/
 | a page's content | `fragments/pages/<area>/<name>.go`, one fragment per file, with its view type and data handler |
 | a fragment for a slot (`collage add fragment`) | `fragments/<area>/<name>.go`, one per file |
 | a layout | `fragments/layouts/<name>.go` + `templates/layouts/<name>.html` |
-| actions: form posts, endpoints | `actions/<area>.go`, the area's `collage.NewAction(...)...Build()` constructors |
-| action handlers | `actions/funcs/<area>.go`, only the `collage.ActionHandlerFunc`s of `actions/` |
+| actions: form posts, endpoints | `actions/<area>.go`, the area's `collage.NewAction(...)...Build()` constructors, each followed by its handler factory `<name>Handler() collage.ActionHandlerFunc` |
 | guards, middleware, commands, documents | `guards/`, `middleware/`, `commands/`, `documents/`, one per file |
 | state, queries, database access | `data/<thing>/` |
 | form validation | `validations/<area>.go` |
@@ -42,8 +41,9 @@ Docs: https://collage.furkanbaytekin.dev/en/docs/introduction/
 - Never mix kinds in one file: no page or fragment in an action file, no action
   in a page file. Why: every kind has one place, so the next person, and
   `collage add`, finds it there.
-- `actions/funcs/` holds action handlers and nothing else. What they call goes
-  in `data/`, `validations/` or `utils/`.
+- An action's handler sits under its builder, in the same file, the way a
+  fragment's data handler does. What it calls goes in `data/`, `validations/` or
+  `utils/`.
 - A form's checks live in `validations/<area>.go`, one function per form, e.g.
   `func Signup(v *validate.Validator)` declaring `v.Field("email").Required().Email()`;
   the handler calls `v := validate.Form(rc)`, then `validations.Signup(v)`.

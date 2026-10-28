@@ -17,7 +17,8 @@ The site is at http://localhost:6060. `collage dev` reads `.env.development`
 (or `.env` when there is none) and runs the project in development mode:
 templates and static files are read from disk on every request, and the page
 reloads itself when one changes. A change to Go code is rebuilt and restarted for you;
-one that does not compile leaves the last good build running and says why.
+one that does not compile stops the program, and the browser shows the
+compiler's error until a change compiles again.
 
 A variable set in your shell wins over the file, so `PORT=4000 collage dev`
 still works. The program reads them too: `go run .` and the built binary load
@@ -36,7 +37,7 @@ routes.go     every page, document and action — a new route goes here
 main_test.go  the tests, driving app.Handler() with pkg/collagetest
 pages/        a page per file, by area: pages/demo/hello.go is the hello page
 fragments/    layouts/, and pages/: each page's content, mirroring pages/
-actions/      POST and friends, by domain; their handlers in actions/funcs/
+actions/      POST and friends, by domain, each beside its handler
 documents/    routes that are not HTML, like /healthz
 data/         state, by domain: the demo's in-memory count
 templates/    the HTML kept in files; small fragments keep theirs inline
@@ -65,7 +66,7 @@ guard, a middleware or a command in this layout, and registers it in
 collage add page blog/post          # pages/blog/post.go + fragments/pages/blog/post.go
 collage add page blog/post --file   # the template in templates/pages/blog/post.html
 collage add fragment blog/sidebar   # fragments/blog/sidebar.go, for a slot
-collage add action blog/comment     # actions/blog.go + actions/funcs/blog.go
+collage add action blog/comment     # actions/blog.go, the action and its handler
 collage add document feed --path /feed.xml --type application/xml
 collage add action blog/like --page blog/post   # attached to that page
 collage add layout panel            # a layout that nests inside the site's

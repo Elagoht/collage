@@ -181,7 +181,7 @@ func TestRun_New_ScaffoldsExpectedFiles(t *testing.T) {
 		filepath.Join("pages", "demo", "hello.go"),
 		filepath.Join("fragments", "layouts", "master.go"),
 		filepath.Join("fragments", "pages", "home.go"),
-		filepath.Join("actions", "funcs", "demo.go"),
+		filepath.Join("actions", "demo.go"),
 		filepath.Join("data", "count", "count.go"),
 		filepath.Join("templates", "layouts", "master.html"),
 		filepath.Join("static", "app.css"),

@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **A change that does not compile stops `collage dev`'s program.** The last good
+  build used to keep serving, with the compiler's error only in the terminal — out
+  of sight, the page looked current while the code had moved on. The program is
+  now stopped and the browser gets the 503 page with the compiler's output, the
+  one a failed first build already showed; an open page reloads onto it by itself
+  and back onto the program once a change compiles. An unreadable environment
+  file does the same.
+- **An action's handler lives in the action's file.** `collage new` and
+  `collage add action` no longer write `actions/funcs/`: `actions/<area>.go` holds
+  each builder with its handler factory under it, `WithHandler(commentHandler())`
+  and `func commentHandler() collage.ActionHandlerFunc`, the way a fragment keeps
+  its data handler. A project that has `actions/funcs/` keeps working, and
+  `collage add action` adds new handlers beside their builders without touching
+  it; to move over, cut each `funcs.X()` into its action's file as an unexported
+  `xHandler()` and delete the package. `AGENTS.md` (`collage ai init`) says so.
+
 ## v0.79.0
 
 ### Changed

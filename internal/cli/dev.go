@@ -58,8 +58,10 @@ What is watched is what the program is made of: .go files (test files aside),
 go.mod and go.sum, and the environment file below. Hidden directories, bin,
 dist, node_modules, testdata and vendor are not looked at, so nothing the
 running program writes — its cache, an export — can trigger a rebuild. The new
-build is made before the old process is stopped: a change that does not
-compile leaves the last good build serving, and says why.
+build is made before the old process is stopped. A change that does not
+compile stops it all the same, so the browser shows the compiler's output
+rather than a build that no longer matches the code, and reloads by itself
+once a change compiles again.
 
 Variables are read from .env.development in the current directory, or from
 .env when there is no .env.development — one file, never both. It holds
@@ -79,7 +81,7 @@ The browser talks to "collage dev" itself, at HOST and PORT as the program
 would read them (localhost:6060 by default), and each request is passed on to
 the program, which is started with HOST and PORT set to a loopback address of
 its own. A request made while the program is starting waits for it. When there
-is no program — it exited, or the first build failed — the page is its output,
+is no program — it exited, or a build failed — the page is its output,
 and it reloads by itself once a change brings the program back.
 `
 
@@ -272,7 +274,7 @@ func (l *devLoop) warnEmbedded() {
 }
 
 // restart builds the program and, if the build succeeds, replaces the running
-// one with it. A failed build leaves the running one alone.
+// one with it. A failed build stops the running one, and the proxy serves why.
 func (l *devLoop) restart(ctx context.Context) {
 	// Read on every restart, so an edited environment file takes effect — it is
 	// watched for exactly that reason.
@@ -284,9 +286,8 @@ func (l *devLoop) restart(ctx context.Context) {
 	env, loaded, err := loadDevEnv(".", os.LookupEnv)
 	if err != nil {
 		l.log.Error("collage dev: " + err.Error())
-		if l.current == nil {
-			l.proxy.down(fmt.Sprintf("collage: dev: %v\n", err))
-		}
+		l.proxy.down(fmt.Sprintf("collage: dev: %v\n", err))
+		l.stopCurrent()
 		return
 	}
 	if loaded != "" && loaded != l.loaded {
@@ -314,12 +315,13 @@ func (l *devLoop) restart(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if l.current != nil {
-			l.log.Error("collage dev: build failed; the last good build is still serving")
-		} else {
-			l.log.Error("collage dev: build failed; waiting for a change")
-			l.proxy.down(buildOutput.String() + "collage: dev: build failed; waiting for a change\n")
-		}
+		// The running build is stopped too: one left serving hides the failure
+		// from a browser whose terminal is out of sight. Down first, so no
+		// request reaches a proxy that is ready with nothing behind it; stopping
+		// ends an open page's reload stream, which reconnects to the error.
+		l.log.Error("collage dev: build failed; waiting for a change")
+		l.proxy.down(buildOutput.String() + "collage: dev: build failed; waiting for a change\n")
+		l.stopCurrent()
 		return
 	}
 
