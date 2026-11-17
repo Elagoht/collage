@@ -56,6 +56,9 @@ func TestBuild_OutputCollisionTouchesNothing(t *testing.T) {
 	}
 
 	outDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outDir, ".collage-export"), nil, 0o644); err != nil {
+		t.Fatal(err) // a directory a previous build made, which is what Clean may empty
+	}
 	old := filepath.Join(outDir, "old.txt")
 	if err := os.WriteFile(old, []byte("previous build"), 0o644); err != nil {
 		t.Fatal(err)
@@ -72,12 +75,12 @@ func TestBuild_OutputCollisionTouchesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 1 || entries[0].Name() != "old.txt" {
+	if len(entries) != 2 || entries[0].Name() != ".collage-export" || entries[1].Name() != "old.txt" {
 		names := make([]string, len(entries))
 		for i, e := range entries {
 			names[i] = e.Name()
 		}
-		t.Fatalf("OutDir holds %v, want only old.txt", names)
+		t.Fatalf("OutDir holds %v, want only the marker and old.txt", names)
 	}
 	if watcher.called {
 		t.Fatal("BuildFinished ran for a build that stopped on a collision")

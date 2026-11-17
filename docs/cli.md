@@ -1044,8 +1044,13 @@ adversarial `fs.FS` yields from a walk — must not be able to write outside
 rather than three copies of them. The builder:
 
 - refuses to run at all when `OutDir` resolves — after following symlinks — to a
-  filesystem root, and refuses to `Clean` (though it still writes) when it
-  resolves to a repository root (`ErrDangerousOutDir`);
+  filesystem root (`ErrDangerousOutDir`). With `Clean` it aborts the whole build,
+  before anything is deleted or written, when `OutDir` is a repository root, the
+  working directory or the module root, a directory above either (`-out ..`), or a
+  non-empty directory no build created: a build leaves `.collage-export` in a
+  directory it made (or found empty), and `Clean` empties only a directory that has
+  it. A populated `static/` you point `-out` at is refused; an old `dist/` from
+  before the marker needs `touch dist/.collage-export` once, or deleting by hand;
 - refuses a `WithStaticParams` value holding a backslash or a NUL
   (`ErrRouteParams`, that one file): on Windows a backslash is a separator, and
   `x\..\..\about` under `/blog/{slug}` would land on another page's file inside

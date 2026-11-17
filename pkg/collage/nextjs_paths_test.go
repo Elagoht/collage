@@ -693,7 +693,7 @@ func TestNextjs_ABuildRefusesValuesThatDoNotFitThePattern(t *testing.T) {
 		}
 		var written []string
 		_ = filepath.WalkDir(out, func(path string, d os.DirEntry, err error) error {
-			if err == nil && !d.IsDir() {
+			if err == nil && !d.IsDir() && d.Name() != ".collage-export" { // the marker is not output
 				written = append(written, path)
 			}
 			return nil

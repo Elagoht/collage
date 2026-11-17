@@ -114,7 +114,7 @@ func TestBuild_AssetCopyCannotEscapeOutDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir(out): %v", err)
 	}
-	if len(entries) != 0 {
+	if len(entries) != 1 || entries[0].Name() != ExportMarker { // the marker is the only thing a build leaves
 		t.Fatalf("OutDir has unexpected entries: %v", entries)
 	}
 
