@@ -196,9 +196,10 @@ contribute pages, documents, mounts and template functions of its own. See
 
 - **No silent failures.** A fragment naming a template that does not exist, a
   fragment bound into a slot its template never calls, a template reading a
-  field its data's type does not have, a page that does not validate, a page
-  referencing an error page that was never registered — all of these fail at
-  startup, by name, not on the first request.
+  field its data's type does not have, a template `html/template` cannot escape
+  (a `<script>` string left open, an attribute left in two states), a page that
+  does not validate, a page referencing an error page that was never registered —
+  all of these fail at startup, by name, not on the first request.
 - **Deterministic output.** Templates execute in order, depth-first; sibling
   fragments fetch their data concurrently, but what they hoist is placed by
   declaration order, not by which finished first. So the same page rendered twice
@@ -253,7 +254,7 @@ app.Handle("/admin/api/", adminAPI, collage.WithMiddleware()) // inside the site
 content depends on a header.
 
 **A cache of your own.** Implement `collage.Cache` and set it on
-`CacheConfig.Store`; `Cache.Type` is then ignored. Implement
+`CacheConfig.Store`; `CacheConfig.Type` is then ignored. Implement
 `collage.TaggedCache` too and the framework calls `SetTagged`, so your store
 indexes the dependency tags itself.
 
@@ -267,7 +268,7 @@ app, err := collage.New(&collage.Config{
 })
 ```
 
-Five methods, no framework internals, and `collage.ETag(content)` if you have no
+Four methods (`Get`, `Set`, `InvalidateKey`, `Clear`), no framework internals, and `collage.ETag(content)` if you have no
 reason to derive your own ETags. [docs/caching.md](docs/caching.md) has a complete
 implementation.
 
