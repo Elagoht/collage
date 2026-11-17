@@ -28,6 +28,15 @@ type header struct {
 	Stale      bool      `json:"stale,omitempty"`
 	StaleSince time.Time `json:"staleSince,omitzero"`
 	Written    time.Time `json:"written"`
+	// Sum is the SHA-256 of the payload, hex. A file cut short or damaged still
+	// parses, and only this tells it from a whole one. Files written before it
+	// existed lack it and are read as they were.
+	Sum string `json:"sum,omitempty"`
+}
+
+func payloadSum(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
 }
 
 type record struct {
@@ -50,6 +59,7 @@ func (d *disk) path(key string) string {
 // write replaces key's file atomically: a reader, or a crash, sees the old
 // file or the new one, never half of either.
 func (d *disk) write(h header, payload []byte) error {
+	h.Sum = payloadSum(payload)
 	line, err := json.Marshal(h)
 	if err != nil {
 		return err
@@ -60,6 +70,11 @@ func (d *disk) write(h header, payload []byte) error {
 	}
 	name := tmp.Name()
 	_, err = tmp.Write(append(append(line, '\n'), payload...))
+	if err == nil {
+		// Synced before the rename, so a power loss cannot leave the new name on
+		// data that never reached the disk.
+		err = tmp.Sync()
+	}
 	if closeErr := tmp.Close(); err == nil {
 		err = closeErr
 	}
@@ -139,6 +154,9 @@ func readRecord(path string) (record, error) {
 	var h header
 	if err := json.Unmarshal(line, &h); err != nil || h.Version != formatVersion || h.Key == "" {
 		return record{}, fmt.Errorf("%w: %s", errCorrupt, filepath.Base(path))
+	}
+	if h.Sum != "" && h.Sum != payloadSum(payload) {
+		return record{}, fmt.Errorf("%w: %s: payload does not match its checksum", errCorrupt, filepath.Base(path))
 	}
 	return record{header: h, payload: payload}, nil
 }

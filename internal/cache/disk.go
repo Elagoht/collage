@@ -48,8 +48,9 @@ type DiskConfig struct {
 	//
 	// Anything that changes when the rendered output could change: a git commit, a
 	// release tag, a build timestamp. Entries are stored under a subdirectory named
-	// for a hash of it, so changing it starts a fresh cache and leaves the old one
-	// to be swept.
+	// for a hash of it, so changing it starts a fresh cache. NewDisk removes the
+	// directories of other builds once nothing has written to them for an hour,
+	// so a volume that outlives many deploys does not keep every one.
 	Version string
 	// DefaultTTL is the TTL used when Set is called with zero or less. Defaults to
 	// five minutes.
@@ -156,11 +157,13 @@ func NewDisk(cfg DiskConfig) (*DiskCache, error) {
 		cfg.MaxBytes = DefaultDiskMaxBytes
 	}
 
-	sum := sha256.Sum256([]byte(cfg.Version))
-	dir := filepath.Join(cfg.Dir, hex.EncodeToString(sum[:8]))
+	name := versionDirName(cfg.Version)
+	dir := filepath.Join(cfg.Dir, name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("collage: disk cache directory %s: %w", dir, err)
 	}
+	sweepOldBuilds(cfg.Dir, name)
+	sweepTemps(dir)
 
 	c := &DiskCache{dir: dir, defaultTTL: cfg.DefaultTTL, maxEntries: cfg.MaxEntries, maxBytes: cfg.MaxBytes, now: cfg.Now}
 	// Count what a previous process left here, so the cap holds across restarts
@@ -169,6 +172,80 @@ func NewDisk(cfg DiskConfig) (*DiskCache, error) {
 	c.entries = c.countEntries()
 	c.bytes = c.storedBytes()
 	return c, nil
+}
+
+// versionDirName is the directory a version's entries live in: 16 lower-case hex
+// characters of its hash.
+func versionDirName(version string) string {
+	sum := sha256.Sum256([]byte(version))
+	return hex.EncodeToString(sum[:8])
+}
+
+// isVersionDirName reports whether name has the shape versionDirName gives, so
+// the sweep touches what this cache made and nothing else under Dir.
+func isVersionDirName(name string) bool {
+	if len(name) != 16 {
+		return false
+	}
+	for _, c := range name {
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// buildGrace is how long a build's directory must have gone without a write
+// before another build's NewDisk removes it. A rolling deploy runs two versions
+// over one Dir for minutes, and the old one is still filling its directory; a
+// directory's modification time moves on every entry created, replaced or
+// removed in it, so an hour of none means no process is using it. Should one
+// come back from that, a write recreates the directory (see writeTemp) and the
+// cost is a cold cache, not an error.
+const buildGrace = time.Hour
+
+// tempGrace is how old a temporary file must be to count as left by a crash. A
+// write takes milliseconds; another process of the same version may have one in
+// flight at this moment.
+const tempGrace = 10 * time.Minute
+
+// sweepOldBuilds removes the version directories under dir other than keep that
+// have not been modified for buildGrace. Only names versionDirName could have
+// produced are considered: dir is the application's, and a data cache or
+// anything else beside the builds is not this cache's to delete. Best-effort: a
+// directory that cannot be removed is tried again by the next start.
+func sweepOldBuilds(dir, keep string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-buildGrace)
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == keep || !isVersionDirName(entry.Name()) {
+			continue
+		}
+		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+			os.RemoveAll(filepath.Join(dir, entry.Name()))
+		}
+	}
+}
+
+// sweepTemps removes the temporary files a crash left in dir. They are skipped by
+// every count and scan, so nothing else would ever remove them.
+func sweepTemps(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-tempGrace)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), ".tmp-") {
+			continue
+		}
+		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+			os.Remove(filepath.Join(dir, entry.Name()))
+		}
+	}
 }
 
 // storedBytes returns the total size of the stored entry files: the set
@@ -709,11 +786,25 @@ func (c *DiskCache) path(key string) (string, bool) {
 // whole new one, never half a write.
 func (c *DiskCache) writeTemp(body []byte) (string, error) {
 	tmp, err := os.CreateTemp(c.dir, ".tmp-*")
+	if errors.Is(err, fs.ErrNotExist) {
+		// Another build's sweep took the directory while this process sat idle.
+		if err = os.MkdirAll(c.dir, 0o755); err == nil {
+			tmp, err = os.CreateTemp(c.dir, ".tmp-*")
+		}
+	}
 	if err != nil {
 		return "", err
 	}
 	name := tmp.Name()
 	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
+		os.Remove(name)
+		return "", err
+	}
+	// Synced before the rename: without it a power loss can leave the new name
+	// pointing at empty or partial data, which the ETag check in readEntry then
+	// has to throw away as a miss.
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(name)
 		return "", err
@@ -748,6 +839,13 @@ func readEntry(path string) (header, []byte, error) {
 	content, err := io.ReadAll(reader)
 	if err != nil {
 		return header{}, nil, err
+	}
+	// The ETag is the hash of the content, so a file cut short or damaged no
+	// longer matches its own header. Served, it would carry the original ETag for
+	// a different body, and a client holding that ETag would be told 304 for a
+	// page it has never seen whole.
+	if ETag(content) != h.ETag {
+		return header{}, nil, fmt.Errorf("%w: content does not match its ETag", errCorruptEntry)
 	}
 	return h, content, nil
 }

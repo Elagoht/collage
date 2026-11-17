@@ -213,7 +213,9 @@ func TestTiered_WarmsFromDiskNewestFirstWithinMemoryLimits(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(back.Dir(), "corrupt"), []byte("not json\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	legacy := []byte(`{"etag":"\"x\"","expiresAt":` + strconv.FormatInt(clk.Now().Add(time.Hour).UnixNano(), 10) + "}\nlegacy")
+	// Its ETag is the real one: every file ever written carried the hash of its
+	// content, and an entry whose ETag does not match is dropped as damaged.
+	legacy := []byte(`{"etag":` + strconv.Quote(ETag([]byte("legacy"))) + `,"expiresAt":` + strconv.FormatInt(clk.Now().Add(time.Hour).UnixNano(), 10) + "}\nlegacy")
 	legacyPath, _ := back.path("legacy")
 	if err := os.WriteFile(legacyPath, legacy, 0o644); err != nil {
 		t.Fatal(err)
