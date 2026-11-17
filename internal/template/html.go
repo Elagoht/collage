@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"text/template/parse"
 )
 
@@ -61,6 +62,9 @@ type HTMLEngine struct {
 	// sources are the templates added as text with AddSource, by name, re-parsed
 	// by every Reload so a dev-mode reload does not lose them.
 	sources map[string]string
+	// clones counts the copies of the set a render had to make because no idle one
+	// was waiting; a test reads it to see that a render reused one.
+	clones atomic.Int64
 }
 
 var _ Engine = (*HTMLEngine)(nil)
@@ -99,9 +103,9 @@ func (e *HTMLEngine) Lookup(path string) bool {
 // A copy is made once and reused, not made for every render: copying the set and
 // escaping it again costs as much as the whole project's templates, on every
 // fragment of every page. A render holds its copy alone, and gives it back only
-// after it succeeded and only once every function it bound is put back to the one
-// the set was parsed with, so nothing bound to one request reaches the next. A copy
-// whose render failed is dropped.
+// after every function it bound is put back to the one the set was parsed with, so
+// nothing bound to one request reaches the next. A render that failed hands its
+// copy back too; only one that panicked drops it.
 //
 // html/template resolves a function name to its implementation at execution time,
 // but it can only call a name that already existed in the FuncMap the template was
@@ -137,6 +141,7 @@ func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path stri
 	clone, _ := idle.Get().(*template.Template)
 	if clone == nil {
 		var err error
+		e.clones.Add(1)
 		if clone, err = tmpl.Clone(); err != nil {
 			return fmt.Errorf("collage: clone template set: %w", err)
 		}
@@ -153,14 +158,20 @@ func (e *HTMLEngine) RenderWithFuncs(ctx context.Context, w io.Writer, path stri
 		out = new(bytes.Buffer)
 	}
 	mark := out.Len()
-	if err := clone.ExecuteTemplate(out, path, data); err != nil {
-		out.Truncate(mark)
-		return err
-	}
+	execErr := clone.ExecuteTemplate(out, path, data)
+	// Handed back whether or not the execution failed. A failure is an ordinary
+	// outcome here — a page whose data is not found fails through every ancestor's
+	// slot — and dropping the copy made each one pay to copy and escape the whole
+	// set again. A panic that escapes ExecuteTemplate skips this, which is the case
+	// worth dropping a copy for: nothing says what state it was left in.
 	if funcs != nil {
 		clone.Funcs(unbound(funcs, base))
 	}
 	idle.Put(clone)
+	if execErr != nil {
+		out.Truncate(mark)
+		return execErr
+	}
 
 	if direct {
 		return nil
