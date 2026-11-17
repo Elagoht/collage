@@ -127,21 +127,30 @@ func TestTrailingSlash_TheOtherSpellingRedirects(t *testing.T) {
 	}
 }
 
-// A document is a file, and an action answers where it was posted: neither is
-// redirected.
-func TestTrailingSlash_DocumentsAndActionsAreNotRedirected(t *testing.T) {
+// A document is a file and an action is spelled as ActionURL spells it, in both
+// modes: without the slash. The spelling with one is redirected, with the method
+// kept for an action, so a middleware comparing r.URL.Path never meets a second
+// spelling of a route it guards.
+func TestTrailingSlash_DocumentsAndActionsKeepTheirSpelling(t *testing.T) {
 	app := slashApp(t, true)
 	if rec := request(app.Handler(), http.MethodGet, "/feed.xml"); rec.Code != http.StatusOK {
 		t.Errorf("GET /feed.xml = %d, want 200", rec.Code)
 	}
-	for _, target := range []string{"/about", "/about/"} {
+	if rec := request(app.Handler(), http.MethodGet, "/feed.xml/"); rec.Code != http.StatusMovedPermanently || rec.Header().Get("Location") != "/feed.xml" {
+		t.Errorf("GET /feed.xml/ = %d to %q, want 301 to /feed.xml", rec.Code, rec.Header().Get("Location"))
+	}
+	post := func(target string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodPost, target, nil)
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		app.Handler().ServeHTTP(rec, req)
-		if rec.Code == http.StatusMovedPermanently || rec.Code == http.StatusPermanentRedirect {
-			t.Errorf("POST %s was redirected to %q", target, rec.Header().Get("Location"))
-		}
+		return rec
+	}
+	if rec := post("/about"); rec.Code == http.StatusMovedPermanently || rec.Code == http.StatusPermanentRedirect {
+		t.Errorf("POST /about was redirected to %q", rec.Header().Get("Location"))
+	}
+	if rec := post("/about/"); rec.Code != http.StatusPermanentRedirect || rec.Header().Get("Location") != "/about" {
+		t.Errorf("POST /about/ = %d to %q, want 308 to /about", rec.Code, rec.Header().Get("Location"))
 	}
 }
 

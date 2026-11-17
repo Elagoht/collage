@@ -47,6 +47,24 @@ func (opts LocaleOptions) checkReachable(owner, locale string) error {
 		types.ErrLocaleUnreachable, owner, locale, opts.Default, opts.supportedLocales())
 }
 
+// checkPrefix refuses a pattern whose first segment is literal text naming a
+// supported locale. resolveLocale takes that segment for the locale prefix and
+// strips it, so the route registered fine and was never the one reached:
+// "/tr/guide.txt" is a request for "/guide.txt" in tr, the link built for it
+// 404s, and a redirect from "/tr/old" fires only at "/tr/tr/old". Failing here
+// turns a dead route into a startup error naming the locale.
+func (opts LocaleOptions) checkPrefix(owner, pattern string) error {
+	segments, err := parsePattern(pattern)
+	if err != nil || len(segments) == 0 || segments[0].kind != segmentStatic {
+		return nil
+	}
+	if locale, ok := matchSupported(opts.supportedLocales(), segments[0].text); ok {
+		return fmt.Errorf("%w: %s has the path %q, but its first segment is the locale %q, which a request takes for the locale prefix and strips; the route could never be reached — rename the segment, or leave the prefix off: the locale is added to the URL for you",
+			types.ErrLocaleUnreachable, owner, pattern, locale)
+	}
+	return nil
+}
+
 // supportedLocales returns opts.Supported with opts.Default appended if it is not
 // already present, so Default is always a valid resolution target.
 func (opts LocaleOptions) supportedLocales() []string {

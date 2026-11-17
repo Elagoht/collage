@@ -10,7 +10,7 @@ import (
 // does not start with "/", contains an empty segment, contains a placeholder with
 // an empty name, holds more than one placeholder in a segment, places a catch-all
 // segment ("{name...}") anywhere but the final segment, or gives a catch-all
-// literal text around it.
+// literal text around it, or uses one placeholder name twice.
 var ErrInvalidPattern = errors.New("collage: invalid pattern")
 
 // segmentKind distinguishes the three kinds of pattern segment.
@@ -155,6 +155,11 @@ func parsePattern(pattern string) ([]patternSegment, error) {
 	}
 	raw := splitPath(pattern)
 	segments := make([]patternSegment, 0, len(raw))
+	// A placeholder name is the key its value is kept under. Two with one name in a
+	// pattern leave a link built from a parameter map with no way to say which is
+	// which, so App.URL failed for the route every time; refusing it here says so
+	// once, at startup.
+	names := make(map[string]bool)
 	for i, part := range raw {
 		if part == "" {
 			return nil, fmt.Errorf("%w: %q contains an empty segment", ErrInvalidPattern, pattern)
@@ -165,6 +170,12 @@ func parsePattern(pattern string) ([]patternSegment, error) {
 		}
 		if seg.kind == segmentCatchAll && i != len(raw)-1 {
 			return nil, fmt.Errorf("%w: %q: catch-all segment %q must be the final segment", ErrInvalidPattern, pattern, part)
+		}
+		if seg.kind != segmentStatic {
+			if names[seg.text] {
+				return nil, fmt.Errorf("%w: %q: the placeholder name %q is used twice; each placeholder in a pattern needs a name of its own", ErrInvalidPattern, pattern, seg.text)
+			}
+			names[seg.text] = true
 		}
 		segments = append(segments, seg)
 	}

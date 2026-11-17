@@ -1,6 +1,8 @@
 package asset
 
 import (
+	"io/fs"
+	"net/url"
 	"path"
 	"strings"
 )
@@ -30,6 +32,13 @@ const fingerprintLen = 16
 // which is a broken page that reports itself as fine.
 func (m *Mount) URL(name string) (string, error) {
 	clean := path.Clean(name)
+	// What the mount will not serve it does not link, for the reason a missing file
+	// is an error: a URL that 404s is a broken page reporting itself as fine. A
+	// dotfile (".env") opened fine here and then 404ed in the mount, and a name
+	// that climbs out of it is no file of the mount's at all.
+	if clean == "." || !fs.ValidPath(clean) || Hidden(clean) {
+		return "", &fs.PathError{Op: "url", Path: name, Err: fs.ErrNotExist}
+	}
 	tag, err := m.tag(clean)
 	if err != nil {
 		return "", err
@@ -43,7 +52,18 @@ func (m *Mount) URL(name string) (string, error) {
 	// fingerprinted copies that something asked for, and no others.
 	m.minted.Store(clean, hashed)
 
-	return m.prefix + hashed, nil
+	return m.prefix + escapePath(hashed), nil
+}
+
+// escapePath percent-escapes each "/"-separated segment of name and keeps the
+// slashes: the file name is text and the link is a URL, so a "#", "?" or "%" in it
+// would otherwise end the path, start a query, or be an escape that is not one.
+func escapePath(name string) string {
+	segments := strings.Split(name, "/")
+	for i, segment := range segments {
+		segments[i] = url.PathEscape(segment)
+	}
+	return strings.Join(segments, "/")
 }
 
 // Fingerprinted returns every fingerprinted name this mount has produced, as a map

@@ -17,12 +17,19 @@ import (
 
 // ErrRedirectShadowsPage is returned at registration time when a redirect's From
 // pattern normalizes to the same path as a page or document already registered
-// for some locale, in either registration order: the redirect would make the
+// for some locale, or matches a literal route path (or is a literal source a route
+// with placeholders answers), in either registration order: the redirect would make the
 // page or document unreachable, or the page or document would make the
 // redirect unreachable, whichever was registered second. The name predates
 // documents sharing the page tree; it covers both route kinds, and a caller
 // handles either collision identically.
 var ErrRedirectShadowsPage = errors.New("collage: redirect shadows a registered page")
+
+// ErrRedirectLoop is returned at registration time when a redirect's destination is
+// a path its own source matches: "/loop" to "/loop", "/docs" to "/docs/" (a source
+// matches with or without its trailing slash), "/blog/{slug}" to "/blog/{slug}".
+// A client following it would never arrive anywhere.
+var ErrRedirectLoop = errors.New("collage: redirect loops back to its own source")
 
 // ErrUnsubstitutedPlaceholder is returned at registration time when a redirect's
 // To template contains a "{name}" placeholder that is not among the parameter
@@ -360,6 +367,27 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 					return rt.canonical(req, locale, "/"+locale+path, permanent(req)), nil
 				}
 			}
+			// Everything else has one spelling too. A document and an action
+			// were served at "/x" and "/x/" alike, so a middleware refusing
+			// r.URL.Path == "/admin/delete" never saw the request for
+			// "/admin/delete/" that ran the same handler. The redirect is the
+			// router's to make, because the middleware cannot know which
+			// spellings reach what; it is 308 for an action so a POST is
+			// posted again.
+			//
+			// A document is a file, so "/sitemap.xml" in both modes, as the
+			// links built for it are — and so is an action, on a page's URL or
+			// off it, as ActionURL spells it: under TrailingSlash the page is
+			// at "/login/" and the form it carries posts to "/login".
+			if ok && (page == nil || action != nil) {
+				mode := rt.slash
+				if mode != SlashEither {
+					mode = SlashNever
+				}
+				if target, redirect := canonicalSlashIn(mode, path); redirect {
+					return rt.canonical(req, locale, target, permanent(req)), nil
+				}
+			}
 			if !ok {
 				return &MatchResult{
 					Locale:           locale,
@@ -412,13 +440,19 @@ func (rt *router) canonical(req *http.Request, locale, target string, status int
 // root follows the rule like any page: "/tr/" under SlashAlways, "/tr" under
 // SlashNever.
 func (rt *router) canonicalSlash(path string) (string, bool) {
-	if rt.slash == SlashEither || path == "/" {
+	return canonicalSlashIn(rt.slash, path)
+}
+
+// canonicalSlashIn is canonicalSlash under mode, which is not always the
+// router's own: see the document and action case in Match.
+func canonicalSlashIn(mode Slash, path string) (string, bool) {
+	if mode == SlashEither || path == "/" {
 		return "", false
 	}
 	// One leading slash, whatever arrived: "//evil.example/" matched against
 	// "/{slug}" must not come back as a Location a browser reads as another host.
 	target := "/" + strings.TrimLeft(path, "/")
-	if rt.slash == SlashAlways {
+	if mode == SlashAlways {
 		if !strings.HasSuffix(target, "/") {
 			target += "/"
 		}
@@ -447,6 +481,9 @@ func (rt *router) Register(page *types.Page) error {
 		normalized := normalizePattern(pattern)
 		owner := fmt.Sprintf("page %q", page.Name)
 		if err := rt.localeOptions.checkReachable(owner, locale); err != nil {
+			return err
+		}
+		if err := rt.localeOptions.checkPrefix(owner, pattern); err != nil {
 			return err
 		}
 		if err := rt.checkRedirectShadow(owner, pattern, locale, normalized); err != nil {
@@ -503,7 +540,36 @@ func (rt *router) checkRedirectShadow(owner, pattern, locale, normalized string)
 		return fmt.Errorf("%w: %s path %q locale %q: redirect %q -> %q already registered there",
 			ErrRedirectShadowsPage, owner, pattern, locale, existing.From, existing.To)
 	}
+	// A literal path a registered redirect with placeholders would take: the
+	// redirect is matched first, so "/{slug}" sends /about.txt away and the
+	// document there is never served. Comparing identical patterns misses it.
+	if literal, ok := literalSegments(pattern); ok {
+		if node, _, matched := rt.redirectTree.match(literal); matched {
+			return fmt.Errorf("%w: %s path %q locale %q: redirect from %q would take every request for it; a redirect is matched before a route, so narrow its source",
+				ErrRedirectShadowsPage, owner, pattern, locale, node.redirectFrom)
+		}
+	}
 	return nil
+}
+
+// literalSegments returns pattern's segments when every one is literal text, and
+// false when it holds a placeholder or is not a valid pattern. A literal path is
+// the one kind a shadow check can run through another pattern's tree and get an
+// exact answer; two patterns that both hold placeholders overlap or not depending
+// on what a request holds, which no registration-time check can know.
+func literalSegments(pattern string) ([]string, bool) {
+	segments, err := parsePattern(pattern)
+	if err != nil {
+		return nil, false
+	}
+	literal := make([]string, len(segments))
+	for i, seg := range segments {
+		if seg.kind != segmentStatic {
+			return nil, false
+		}
+		literal[i] = seg.text
+	}
+	return literal, true
 }
 
 // recordRoutedPath records that owner claims pattern's normalized form for
@@ -532,10 +598,40 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 		return fmt.Errorf("redirect from %q: %w", redirect.From, err)
 	}
 
+	if err := rt.localeOptions.checkPrefix(fmt.Sprintf("redirect from %q", redirect.From), redirect.From); err != nil {
+		return err
+	}
+
 	normalizedFrom := normalizePattern(redirect.From)
 	for _, byPath := range rt.routedPathsByLocale {
 		if owner, ok := byPath[normalizedFrom]; ok {
 			return fmt.Errorf("%w: redirect from %q: %s is registered at that path", ErrRedirectShadowsPage, redirect.From, owner)
+		}
+	}
+
+	// A route this redirect would take, whichever was registered first. Every
+	// literal route is run through a tree holding only this redirect, and a
+	// literal source through each locale's routes: the redirect applies after the
+	// locale prefix is stripped, so it meets every locale's tree.
+	probe := &node{}
+	if end, err := probe.insert(fromSegments); err == nil {
+		end.hasRedirect = true
+		for _, c := range rt.claims {
+			if c.locale == "" {
+				continue
+			}
+			if literal, ok := literalSegments(c.pattern); ok {
+				if _, _, matched := probe.match(literal); matched {
+					return fmt.Errorf("%w: redirect from %q: %s at %q would be taken by it; a redirect is matched before a route, so narrow its source", ErrRedirectShadowsPage, redirect.From, c.owner, c.pattern)
+				}
+			}
+		}
+	}
+	if literal, ok := literalSegments(redirect.From); ok {
+		for locale, tree := range rt.routeTrees {
+			if matched, _, ok := tree.match(literal); ok {
+				return fmt.Errorf("%w: redirect from %q: %s in locale %q answers that path; the redirect would take it, so move one of them", ErrRedirectShadowsPage, redirect.From, routeOwner(matched), locale)
+			}
 		}
 	}
 
@@ -550,6 +646,10 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 		return fmt.Errorf("%w: redirect %q -> %q: placeholder %q", ErrUnsubstitutedPlaceholder, redirect.From, redirect.To, name)
 	}
 
+	if rt.redirectLoops(fromSegments, redirect.To) {
+		return fmt.Errorf("%w: redirect %q -> %q: the destination is matched by the source, so a request for it is redirected again", ErrRedirectLoop, redirect.From, redirect.To)
+	}
+
 	target, err := rt.redirectTree.insert(fromSegments)
 	if err != nil {
 		return fmt.Errorf("redirect from %q: %w", redirect.From, err)
@@ -561,6 +661,7 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	target.redirectTo = redirect.To
 	target.redirectStatus = types.RedirectStatus(redirect)
 	target.redirectCatchAll = catchAll
+	target.redirectFrom = redirect.From
 	rt.redirectFroms[normalizedFrom] = redirect
 	// Locale is empty: the redirect tree is shared across locales, so this
 	// pattern is claimed under every one of them. ClaimedPaths expands that.
@@ -570,6 +671,54 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	})
 
 	return nil
+}
+
+// redirectLoops reports whether the destination to, run back through a redirect
+// from from, would be redirected again. Each placeholder is substituted by itself:
+// "{slug}" is the segment "slug". That is enough to ask whether the source's
+// pattern covers the destination's shape: "/blog/{slug}" to "/blog/{slug}" does, and
+// "/old/{slug}" to "/blog/{slug}" does not. The query and fragment are not part of
+// what is matched, and a leading locale prefix is stripped as a request's is, so
+// "/about" to "/tr/about" loops too. A destination that is not a path on this site
+// is refused when it is served, not here.
+func (rt *router) redirectLoops(from []patternSegment, to string) bool {
+	if i := strings.IndexAny(to, "?#"); i >= 0 {
+		to = to[:i]
+	}
+	if !strings.HasPrefix(to, "/") {
+		return false
+	}
+	destination := splitPath(to)
+	if len(destination) > 0 {
+		if _, ok := matchSupported(rt.localeOptions.supportedLocales(), destination[0]); ok {
+			destination = destination[1:]
+		}
+	}
+	for i, segment := range destination {
+		for _, name := range placeholderNames(segment) {
+			segment = strings.ReplaceAll(segment, "{"+name+"}", name)
+		}
+		destination[i] = segment
+	}
+	probe := &node{}
+	end, err := probe.insert(from)
+	if err != nil {
+		return false
+	}
+	end.hasRedirect = true
+	_, _, matched := probe.match(destination)
+	return matched
+}
+
+// routeOwner describes what answers at n, for an error message.
+func routeOwner(n *node) string {
+	if owner := occupantName(n); owner != "" {
+		return owner
+	}
+	for _, a := range n.actions {
+		return fmt.Sprintf("action %q", a.Name)
+	}
+	return "a route"
 }
 
 // ClaimedPaths implements Router.

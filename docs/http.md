@@ -258,7 +258,13 @@ from a Prometheus plugin, an upload endpoint — are mounted with `Host.Handle`,
 those always run inside the middleware: they are part of the site, and may read
 the session or rely on a `basicauth` in front of them.
 
-The prefix must begin and end with `/` and cannot be `/` alone. A prefix that
+The prefix must begin with `/` and cannot be `/` alone. One ending in `/` claims
+everything beneath it; one without is that exact path — `/metrics`,
+`/.well-known/security.txt`. It must not hold a doubled slash or a dot segment
+(`/a/./b/`, `/a/../b/`), which the clean-path redirect removes before a handler is
+asked, so such a prefix could never match: that is `ErrInvalidPrefix`, with the
+reason in the message. A segment that only *begins* with a dot is fine, so
+`/.well-known/acme-challenge/` can be mounted. A prefix that
 covers a page, a document, an action, a redirect or a mount is refused at startup,
 whichever was registered first — `app.Handle("/api/", …)` next to an action at
 `/api/count` is `ErrMountShadowsRoute`.
@@ -286,3 +292,19 @@ its path, which is a scanner's: `collage.RouteInfo` reports `Kind`
 `collage.RouteKindRejected` (`"rejected"`) and `Name` `collage.RouteNameNormalise`
 (`"normalise"`), `Metrics.HTTPResponse` is given an empty path, and the request
 span carries no `http.path`.
+
+### A trailing slash is the router's, not the middleware's
+
+Every route has one spelling, and the router redirects the other — but it does so
+*after* your middleware, which sees the path as it arrived. A page's other
+spelling is a 301; a document's and an action's is too, with a 308 for a method
+that carries a body, so a form posted to `/admin/delete/` is posted again to
+`/admin/delete`. Documents and actions are spelled without a trailing slash in
+both `TrailingSlash` modes, as `app.URL` and `{{actionURL}}` build them; only
+pages follow `Config.TrailingSlash`.
+
+The consequence for a middleware that guards an exact path: compare the canonical
+spelling, or trim the slash first — `strings.TrimSuffix(r.URL.Path, "/")` — and
+prefer a prefix such as `/admin/` where you can. A check on `"/admin/delete"` alone
+used to be bypassed by `/admin/delete/`; the handler no longer runs at that
+spelling, but the middleware still judges the request that arrived.

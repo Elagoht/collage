@@ -83,6 +83,9 @@ type node struct {
 	redirectTo       string
 	redirectStatus   int
 	redirectCatchAll string
+	// redirectFrom is the pattern as registered, so a shadow check that finds this
+	// node can name the redirect.
+	redirectFrom string
 }
 
 // edge is a dynamic or catch-all outgoing edge: the parameter name it captures,

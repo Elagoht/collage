@@ -43,8 +43,8 @@ var ErrNilHandler = errors.New("collage: nil handler")
 // reported when the handler is built, whichever was registered first. It returns
 // ErrAppStarted once the server has started.
 func (a *App) Handle(prefix string, handler http.Handler, opts ...HandleOption) error {
-	if prefix == "/" || !strings.HasPrefix(prefix, "/") || strings.HasPrefix(prefix, "//") || strings.Contains(prefix, "/.") {
-		return fmt.Errorf("%w: a handler prefix must begin with \"/\" and not be \"/\": %q", asset.ErrInvalidPrefix, prefix)
+	if reason := invalidHandlerPrefix(prefix); reason != "" {
+		return fmt.Errorf("%w: %s: %q", asset.ErrInvalidPrefix, reason, prefix)
 	}
 	if handler == nil {
 		return fmt.Errorf("%w: at %q", ErrNilHandler, prefix)
@@ -66,6 +66,29 @@ func (a *App) Handle(prefix string, handler http.Handler, opts ...HandleOption) 
 	}
 	a.handlers = append(a.handlers, mount)
 	return nil
+}
+
+// invalidHandlerPrefix says why prefix cannot be mounted, or returns "" when it
+// can. A dot segment and a doubled slash are refused because the clean-path
+// redirect sends such a request to its clean spelling before any handler sees it,
+// so the prefix would never match. A segment that merely begins with a dot is
+// fine, and has to be: "/.well-known/" is where ACME challenges, security.txt and
+// app-association files are served from, which a blanket "/." refusal ruled out.
+func invalidHandlerPrefix(prefix string) string {
+	switch {
+	case prefix == "/":
+		return `a handler prefix must not be "/" alone`
+	case !strings.HasPrefix(prefix, "/"):
+		return `a handler prefix must begin with "/"`
+	case strings.Contains(prefix, "//"):
+		return `a handler prefix must not contain "//", which is cleaned away before any handler is asked`
+	}
+	for _, segment := range strings.Split(prefix, "/") {
+		if segment == "." || segment == ".." {
+			return "a handler prefix must not hold a dot segment, which is cleaned away before any handler is asked"
+		}
+	}
+	return ""
 }
 
 // Use adds middleware around the handling of every request, in the standard

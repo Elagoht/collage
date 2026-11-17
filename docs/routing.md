@@ -44,10 +44,19 @@ them from the most specific, then the bare placeholder, then the catch-all — w
 backtracking, so a static match always beats a dynamic one even when the dynamic
 branch would have matched further down.
 
-`/blog` and `/blog/` are the same route. A pattern must start with `/`, must not
+`/blog` and `/blog/` are the same route, with **one address**: a page's other
+spelling is a `301` to it, with the query kept. The address is the one without the
+slash, or with it under `Config.TrailingSlash`. A [document](documents.md) and an
+[action](actions.md) are always spelled without a trailing slash, as `app.URL` and
+`{{actionURL}}` build them: `/sitemap.xml/` is a `301`, and a `POST` to `/login/` is
+a `308` to `/login`, so the body is sent again. See
+[http.md](http.md#a-trailing-slash-is-the-routers-not-the-middlewares) for what that
+means for a middleware that guards an exact path. A pattern must start with `/`, must not
 contain an empty segment or an empty placeholder name, must hold at most one
-placeholder in a segment, and must not put a catch-all anywhere but last;
-anything else is `collage.ErrInvalidPattern` at registration.
+placeholder in a segment, must not use one placeholder name twice
+(`/a/{id}/b/{id}` has no way to say which `id` a link fills), and must not put a
+catch-all anywhere but last; anything else is `collage.ErrInvalidPattern` at
+registration.
 
 ### Text around a placeholder
 
@@ -92,17 +101,23 @@ slug := rc.Param("slug")          // or rc.PathParams["slug"]
 ```
 
 Matching happens on the *escaped* path, split first and percent-decoded one
-segment at a time. A segment that fails to decode is a 404, not a 500, and so is
-one holding an encoded slash (`%2F`). `%2F` is not a separator, so the router
+segment at a time. A segment holding an encoded slash (`%2F`) or a NUL (`%00`) is a
+404, not a 500. A segment whose escape is not one at all — `/blog/a%zz`, a trailing
+`%` — never gets that far through a server: `net/http` answers `400 Bad Request` while
+reading the request line, before collage is asked, and only a path that arrives some
+other way, handed straight to the handler, meets the router's own 404 for it.
+`%2F` is not a separator, so the router
 reads `/public%2Fsecret` as one segment; but a middleware reads the decoded
 `r.URL.Path`, where it is `/public/secret` — two segments — and a router that
 served the one would serve a request the middleware judged as something else. A value
 that is itself a path — `guide/intro` — belongs in a catch-all, `{rest...}`;
 `BuildPath` and `{{pageURL}}` refuse a `/` in a single segment's value.
 
-A page answers `GET` and `HEAD`. Any other method is a 405 carrying an `Allow`
-header, unless an [action](actions.md) claims it for that URL — which is how a form
-posts to the page it sits on. Only `GET` and `HEAD` are eligible to be served from,
+A page answers `GET` and `HEAD`. `OPTIONS` is answered by the router with a `204`
+and an `Allow` header listing what the URL accepts, unless an [action](actions.md)
+claims `OPTIONS` itself. Any other method is a 405 carrying an `Allow` header,
+unless an action claims it for that URL — which is how a form posts to the page it
+sits on. Only `GET` and `HEAD` are eligible to be served from,
 or (for `GET`) to populate, the cache.
 
 ## Locales
@@ -134,6 +149,14 @@ to the wrong spelling is posted again rather than turned into a `GET`, and the
 query string is carried over.
 
 A path registered for one locale only is reachable only in that locale.
+
+**A path cannot begin with a locale's own code.** `/tr/guide.txt` registered under
+`en` would be a request for `/guide.txt` in `tr`, since the first segment is taken
+for the prefix and stripped — the route would answer nothing, and `/en/self.txt`
+would only redirect to a 404. A page, document, action or redirect source whose
+first segment is literal text naming `Default` or a supported locale, in any
+case, is refused at registration with `collage.ErrLocaleUnreachable`. A
+placeholder first segment, or the code anywhere but first, is fine.
 
 **The locale in `WithPath(locale, …)` is not a label.** It names the tree the path
 goes into, and a request reaches that tree only if the locale is `Default` or in
@@ -205,10 +228,24 @@ page := collage.NewPage("blog-post").
 - A placeholder in the destination must be captured by the source pattern, or
   registration fails with `collage.ErrUnsubstitutedPlaceholder` — such a
   placeholder could never be substituted at match time.
+- A destination its own source matches is a loop and is refused with
+  `collage.ErrRedirectLoop`: `/loop` to `/loop`, `/docs` to `/docs/` (a source
+  matches with or without its slash), `/blog/{slug}` to `/blog/{slug}`, and a
+  destination under a locale prefix that the source also matches once it is
+  stripped. The query and fragment are not compared.
 - A redirect whose source collides with a registered page *or document* path is
   rejected in either registration order (`collage.ErrRedirectShadowsPage`): one
   of the two would be unreachable. The sentinel's name predates documents
   sharing the tree; it covers both.
+- That covers a redirect that merely *matches* a route's path, not only one
+  spelled the same. `WithRedirect("/{slug}", "/blog/{slug}", 301)` takes
+  `/about.txt`, so a document there is refused — and so is a catch-all
+  `/old/{rest...}` next to `/old/keep.txt`, and a literal redirect source that a
+  route with a placeholder answers. The error names both. Redirects win over
+  routes, so the check is made rather than the order decided: narrow the
+  redirect's source, or move one of the two. Two patterns that *both* hold
+  placeholders are not compared — whether they overlap depends on the request —
+  so there the redirect still wins.
 - Redirects are matched **before** pages and documents, and the redirect tree is
   shared across locales, since a `Redirect` carries no locale of its own.
 - A captured value is escaped for where it lands: as a path segment in the
@@ -459,6 +496,7 @@ they keep `RegisterNotFoundPage` and `RegisterErrorPage`. `Register` takes a
 | `collage.ErrAmbiguousParameterName` | Two parameter names at one position |
 | `collage.ErrOverlappingPattern` | Two placeholders with text around them that cross: `a{x}` and `{x}b` |
 | `collage.ErrRedirectShadowsPage` | A redirect source that is also a page or document path |
+| `collage.ErrRedirectLoop` | A redirect whose destination its own source matches |
 | `collage.ErrUnsubstitutedPlaceholder` | A redirect destination placeholder the source does not capture |
 | `collage.ErrTemplateRootMissing` | `New`: `Template.Root` does not exist, on disk or within `Template.FS` |
 
