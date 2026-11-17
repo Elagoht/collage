@@ -47,8 +47,9 @@ app.Use(loadUser)
 app.RegisterPlugin(ratelimit.New(ratelimit.Options{KeyFunc: userID}))
 ```
 
-`RegisterPlugin` refuses a plugin that adds template functions, which has to be in
-`Config.Plugins`.
+`RegisterPlugin` refuses a plugin that implements `Configurer`
+(`collage.ErrConfigurerRegisteredLate`), which includes one that adds template
+functions: those have to be in `Config.Plugins`.
 
 It runs before routing, so it sees every request — pages, documents, actions,
 mounts, a plugin's handlers and a handler mounted `WithMiddleware` — except one for
@@ -69,7 +70,9 @@ func pageData(ctx context.Context, rc *collage.RenderContext) (view, []string, e
 }
 ```
 
-A static build renders without a request, so no middleware runs for it.
+A static build renders pages without a request, so no middleware runs for the
+renders. It does ask the handler for each file's path to record the response
+headers the file is deployed with, and middleware runs for those requests.
 
 ## `collage.Vary`: content that depends on the request
 
@@ -93,8 +96,9 @@ app.Use(func(next http.Handler) http.Handler {
 - **The value you resolved enters the key, not the raw header.** `tr-TR,tr;q=0.9`
   and `tr` are one entry, because they are one page; a browser's every spelling of
   its preferences is not a new cache entry.
-- **The header name goes into the response's `Vary` header**, so a CDN or proxy
-  between you and the reader keeps the versions apart too.
+- **The header name goes into the `Vary` header of a publicly cacheable
+  response**, so a CDN or proxy between you and the reader keeps the versions
+  apart too.
 - **Call it from middleware.** The key is computed before the page renders, so
   `Vary` from a data handler returns `collage.ErrVaryTooLate` rather than
   pretending to work.
@@ -280,7 +284,7 @@ post, a small JSON endpoint next to the pages it changes — use an
 
 A path with dot segments or doubled slashes — `/a/../b`, `/a//b`, `/a/./b` — is
 redirected to its clean spelling before anything reads it, middleware, plugins and
-your own handlers included: 301 for GET and HEAD, 308 for a method that carries a body, the query
+your own handlers included: 301 for GET and HEAD, 308 for any other method, the query
 kept. A middleware that skips `/_collage/` or protects `/admin/` therefore never
 meets `/_collage/../admin`.
 

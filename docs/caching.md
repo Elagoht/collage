@@ -28,6 +28,11 @@ A disabled cache is a nil cache: every request renders and nothing is stored.
 | `Static()` | Render once, serve from cache until explicitly invalidated | `public, max-age=0, must-revalidate` |
 | `Incremental(ttl)` | Serve from cache until `ttl` elapses since the render | `public, max-age=<ttl seconds>` |
 
+These are the strategy's own values. A response that sets a cookie, carries a
+forgery token or a `PersonaliseHook`'s output, or is `SkipCache`d is `private,
+no-store`; a guarded page is `private, no-cache`; a response served from a stale
+copy, or degraded, is `no-store`.
+
 ```go
 page := collage.NewPage("blog-post").
 	WithLayouts(layout).
@@ -46,8 +51,8 @@ A page that calls none of the three is resolved when it is registered:
   (`WithData` with `collage.LoadTagged`, `Load` or `Effect`) or a slot resolver, in its
   layout, its content, anything bound into their slots, their fallbacks, or a
   fragment opened with `WithFragmentPath`.
-- **Static** otherwise: a page rendering templates and fixed values —
-  `WithData(collage.Value(v))`, `WithTitle(s)` — renders the same for every reader.
+- **Static** otherwise: a page whose fragments render templates and fixed
+  values — a fragment's `WithData(collage.Value(v))`, `WithTitle(s)` — renders the same for every reader.
 
 A handler means dynamic because it may read the request, a cookie, the clock, and
 nothing outside the function can tell whether it does. The guess costs a render
@@ -110,8 +115,9 @@ defaults to five minutes and a negative value is refused. `collage.Cached` value
 have their own `ttl` argument, and a zero there means the value does not expire.
 
 `Static()` means what it says: its cache entry is written with no practical
-expiry, so `DefaultTTL` does not apply to it. Only `InvalidateTags`, or eviction
-at `MaxEntries`, causes a static page to render again — and when that render
+expiry, so `DefaultTTL` does not apply to it. Only an invalidation or a purge, or the
+cache letting the entry go (eviction at `MaxEntries` or `MaxBytes`, the dependency
+tracker's cap, a restart of a memory cache), causes a static page to render again — and when that render
 fails, the invalidated copy is what answers (see
 [Stale pages](#stale-pages-and-x-collage-cache)). If you want a page to
 expire on a clock, that is `Incremental`.
@@ -417,7 +423,9 @@ successful warm, so skips keep the run one key at a time until one succeeds.
   not asked again for every remaining page; those are left stale, and
   stale-serving applies to them as usual. Skips do not stop it: a page that
   answers 404 (its recipe is dropped), a guarded page (its recipe is dropped, and
-  its first reader renders it), one already fresh, and the two above.
+  its first reader renders it), a URL that no longer answers with its page,
+  one already fresh, a warm that joined a render that did not store, and the two
+  above.
 - **A warm another invalidation overlapped is warmed again.** A render that any
   other `InvalidateTags` or `PurgeTags` overlapped is not stored, as no render is.
   The warmer queues that page again once no invalidation is under way, at most
