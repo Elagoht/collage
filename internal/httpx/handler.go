@@ -504,7 +504,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A refused path is the scanner's, one per probe: it is named neither in
 	// the trace nor in the metric, which read the route instead.
 	path := r.URL.Path
-	if route.kind == routeKindRejected {
+	if route.wasRejected() {
 		path = ""
 	}
 	if path != "" {
@@ -711,12 +711,20 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request, route *ro
 	state := &chainState{route: route}
 	capture := &statusCapturingWriter{ResponseWriter: w}
 	chained := r.WithContext(context.WithValue(r.Context(), chainStateKey{}, state))
+	state.request = chained
 	// A middleware that parsed the form parsed it on this copy, or on one of its
-	// own that serve receives and cleans up after.
-	defer removeMultipart(chained)
+	// own that serve receives and cleans up after. Not while serve is still
+	// running on a goroutine the middleware left behind: removing the files
+	// under a handler that is parsing them would fail it, so serveChained
+	// removes them when it finishes. See chainState.abandon.
+	defer func() {
+		if !state.abandon() {
+			removeMultipart(chained)
+		}
+	}()
 	h.chain.ServeHTTP(capture, chained)
-	if state.status != 0 {
-		return state.status
+	if status := state.result(); status != 0 {
+		return status
 	}
 	return capture.Status()
 }

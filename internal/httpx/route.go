@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -77,10 +78,14 @@ func (k routeKind) plainText() bool {
 // that caught it happened to default to.
 //
 // It is one value per request, created by serveGuarded and passed down by
-// pointer. It is never shared across requests and never read concurrently with
-// being written: serve, and everything it calls, runs on the one goroutine
-// net/http gave the request.
+// pointer, never shared across requests. Serve, and everything it calls, runs on
+// the goroutine net/http gave the request, with one exception: a middleware such
+// as http.TimeoutHandler returns to ServeHTTP while serve is still running on a
+// goroutine of its own, and ServeHTTP then reads what serve is still writing. So
+// the mutable fields are behind mu, and are read and written only through the
+// methods below.
 type routeRef struct {
+	mu sync.Mutex
 	// kind is what the request resolved to. It starts at routeKindPage, which is
 	// also what an unresolved request stays at.
 	kind routeKind
@@ -103,14 +108,25 @@ type routeRef struct {
 	routes *types.Routes
 }
 
+// wasRejected reports whether path normalisation refused the request.
+func (ref *routeRef) wasRejected() bool {
+	ref.mu.Lock()
+	defer ref.mu.Unlock()
+	return ref.kind == routeKindRejected
+}
+
 // at records the pattern and the locale the route matched with.
 func (ref *routeRef) at(pattern, locale string) {
+	ref.mu.Lock()
+	defer ref.mu.Unlock()
 	ref.pattern = pattern
 	ref.locale = locale
 }
 
 // resolved records that the request resolved to a route of kind kind, named name.
 func (ref *routeRef) resolved(kind routeKind, name string) {
+	ref.mu.Lock()
+	defer ref.mu.Unlock()
 	ref.kind = kind
 	ref.name = name
 	ref.label = name
@@ -120,6 +136,8 @@ func (ref *routeRef) resolved(kind routeKind, name string) {
 // no pattern or locale: the label is the whole of what is reported, so a metric
 // or a trace keyed by route has one value for every refused spelling.
 func (ref *routeRef) rejected() {
+	ref.mu.Lock()
+	defer ref.mu.Unlock()
 	ref.kind = routeKindRejected
 	ref.name = ""
 	ref.label = types.RouteNameNormalise
@@ -128,6 +146,8 @@ func (ref *routeRef) rejected() {
 
 // resolvedPage records that the request resolved to the page named name.
 func (ref *routeRef) resolvedPage(name string) {
+	ref.mu.Lock()
+	defer ref.mu.Unlock()
 	ref.kind = routeKindPage
 	ref.label = name
 }
@@ -173,7 +193,12 @@ type Route struct {
 // included. The zero Route means it resolved to nothing, or has not yet.
 func RouteInfo(ctx context.Context) Route {
 	ref, ok := ctx.Value(routeCtxKey{}).(*routeRef)
-	if !ok || ref.label == "" {
+	if !ok {
+		return Route{}
+	}
+	ref.mu.Lock()
+	defer ref.mu.Unlock()
+	if ref.label == "" {
 		return Route{}
 	}
 	return Route{Kind: ref.kind.String(), Name: ref.label, Pattern: ref.pattern, Locale: ref.locale}
@@ -191,7 +216,10 @@ func URL(ctx context.Context, name string, params map[string]string) (string, er
 	if !ok || ref.routes == nil || ref.routes.Page == nil {
 		return "", fmt.Errorf("%w: %q: no request collage is serving", types.ErrUnknownRoute, name)
 	}
-	return ref.routes.URL(name, ref.locale, params)
+	ref.mu.Lock()
+	locale := ref.locale
+	ref.mu.Unlock()
+	return ref.routes.URL(name, locale, params)
 }
 
 // failure returns a failure for this route carrying its kind and name, so the
@@ -199,6 +227,8 @@ func URL(ctx context.Context, name string, params map[string]string) (string, er
 // the failing frame knows. Every failure raised after a route resolves is built
 // through here, which is what keeps the kind from being forgotten at a call site.
 func (ref *routeRef) failure(status int, stage string, err error) failure {
+	ref.mu.Lock()
+	defer ref.mu.Unlock()
 	return failure{
 		status: status,
 		err:    err,
