@@ -432,6 +432,13 @@ func (g *Guard) VerifyHeader(r *http.Request) error {
 // is not a limit on the body — the caller's MaxBytesReader is that.
 const multipartMemory = 32 << 20
 
+// postTooLarge is the text of net/http's error for a urlencoded form over its
+// built-in cap, which it gives no sentinel or type for.
+const postTooLarge = "http: POST too large"
+
+// urlencodedFormCap is that cap, 10 MB.
+const urlencodedFormCap = 10 << 20
+
 // parseForm parses r's body as whichever kind of form it is.
 //
 // ParseForm alone ignores multipart/form-data, and multipart is what
@@ -442,8 +449,17 @@ const multipartMemory = 32 << 20
 // discards its error whenever the body is not multipart — so a URL-encoded body
 // over the size limit would come back as "not multipart" and be refused as a
 // missing token rather than as a body too large to read.
+//
+// A urlencoded body past net/http's own 10 MB form cap fails ParseForm with a
+// plain "http: POST too large", not a MaxBytesError: the cap applies whenever the
+// body is not net/http's own bounded reader, which a bound the framework put on
+// it is not. Left as it came it would be read as a bad token and refused 403, so
+// it is returned as the MaxBytesError it amounts to, for the caller to answer 413.
 func parseForm(r *http.Request) error {
 	if err := r.ParseForm(); err != nil {
+		if err.Error() == postTooLarge {
+			return &http.MaxBytesError{Limit: urlencodedFormCap}
+		}
 		return err
 	}
 	if err := r.ParseMultipartForm(multipartMemory); err != nil && !errors.Is(err, http.ErrNotMultipart) {

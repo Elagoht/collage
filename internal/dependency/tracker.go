@@ -119,6 +119,15 @@ type MemoryTracker struct {
 	// path is a tag of its own; this is the bound that holds however many there
 	// are. Set it, like MaxKeysPerTag, before concurrent use.
 	MaxKeys int
+	// OnEvict, when set, is called with the keys a cap dropped from a tag, or from
+	// the index, as soon as the Track that dropped them has released the lock. A
+	// dropped key is one an invalidation of that tag can no longer reach, so a
+	// cache entry still held for it would be served stale; the owner of the cache
+	// invalidates it here, which makes "no longer tracked under the tag" imply "not
+	// cached". It runs on the goroutine that called Track, with no lock held, and
+	// may be slow: Track does not return until it has. Set it, like the caps,
+	// before concurrent use.
+	OnEvict func(keys []string)
 
 	mu        sync.RWMutex
 	keyToTags map[string]map[string]struct{}
@@ -126,6 +135,8 @@ type MemoryTracker struct {
 	// order holds every key in keyToTags, oldest latest-Track first, for MaxKeys.
 	order   tagEntry
 	dropped uint64
+	// evicted collects the keys a cap dropped during one Track, for OnEvict.
+	evicted []string
 }
 
 var _ Tracker = (*MemoryTracker)(nil)
@@ -168,6 +179,15 @@ func (t *MemoryTracker) Track(ctx context.Context, key string, tags []string) er
 		newSet[tag] = struct{}{}
 	}
 
+	evicted := t.track(key, newSet)
+	if len(evicted) > 0 && t.OnEvict != nil {
+		t.OnEvict(evicted)
+	}
+	return nil
+}
+
+// track is Track's write, under the lock, returning the keys the caps dropped.
+func (t *MemoryTracker) track(key string, newSet map[string]struct{}) (evicted []string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -194,7 +214,16 @@ func (t *MemoryTracker) Track(ctx context.Context, key string, tags []string) er
 		t.reorderLocked(key)
 	}
 
-	return nil
+	// A key dropped from two tags at once is named once.
+	seen := make(map[string]struct{}, len(t.evicted))
+	for _, dropped := range t.evicted {
+		if _, dup := seen[dropped]; !dup {
+			seen[dropped] = struct{}{}
+			evicted = append(evicted, dropped)
+		}
+	}
+	t.evicted = nil
+	return evicted
 }
 
 // reorderLocked moves key to the newest end of t.order, then drops the oldest keys
@@ -213,6 +242,7 @@ func (t *MemoryTracker) reorderLocked(key string) {
 		delete(t.keyToTags, oldest)
 		t.unorderLocked(oldest)
 		t.dropped++
+		t.evicted = append(t.evicted, oldest)
 	}
 }
 
@@ -357,6 +387,7 @@ func (t *MemoryTracker) trackKeyUnderTagLocked(tag, key string) {
 		entry.unlink(entry.head)
 		t.untagKeyLocked(oldest, tag)
 		t.dropped++
+		t.evicted = append(t.evicted, oldest)
 	}
 }
 

@@ -103,9 +103,52 @@ type Middleware = func(http.Handler) http.Handler
 // middleware chain: the route the request resolved to, and the status serve
 // wrote. It travels in the request context, because a middleware passes on a
 // request of its own making and the framework has no other way to reach it.
+//
+// A middleware may return before serve does — http.TimeoutHandler answers 503 and
+// leaves the handler running — so what serve writes and what the frame above reads
+// meet here, behind mu, rather than on the assumption that the one has finished
+// when the other looks.
 type chainState struct {
-	route  *routeRef
-	status int
+	route *routeRef
+	// request is the request the chain was handed, whose multipart files are
+	// removed once nothing is using them.
+	request *http.Request
+
+	mu      sync.Mutex
+	status  int
+	running bool
+	// abandoned is set when the chain returned while serve was still running, and
+	// leaves the cleanup to serveChained.
+	abandoned bool
+}
+
+// result returns the status serve wrote, zero when it has written none yet.
+func (s *chainState) result() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.status
+}
+
+// abandon is called when the chain has returned. It reports whether serve is
+// still running, in which case the cleanup that follows a finished request is
+// serveChained's to do when it ends, not the caller's.
+func (s *chainState) abandon() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running {
+		s.abandoned = true
+	}
+	return s.running
+}
+
+// finish records serve's status and that it has ended, and reports whether the
+// chain had already returned and left the cleanup to it.
+func (s *chainState) finish(status int) (abandoned bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status = status
+	s.running = false
+	return s.abandoned
 }
 
 type chainStateKey struct{}
@@ -136,7 +179,18 @@ func (h *Handler) serveChained(w http.ResponseWriter, r *http.Request) {
 		h.serve(w, r, &routeRef{})
 		return
 	}
-	state.status = h.serve(w, r, state.route)
+	state.mu.Lock()
+	state.running = true
+	state.mu.Unlock()
+	status := 0
+	// Deferred, so a panic out of serve still ends the run: the frame above
+	// recovers it, and must not find serve running for ever.
+	defer func() {
+		if state.finish(status) {
+			removeMultipart(state.request)
+		}
+	}()
+	status = h.serve(w, r, state.route)
 }
 
 // ErrVaryOutsideRequest is returned by Vary for a request that is not being

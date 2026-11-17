@@ -467,8 +467,14 @@ func (s *Store) Invalidate(tags []string) int {
 	s.epoch++
 	now := s.now()
 	marked := 0
+	// A value under two of the tags is reached from each, and counted once.
+	seen := make(map[string]struct{})
 	for _, tag := range tags {
 		for key := range s.byTag[tag] {
+			if _, done := seen[key]; done {
+				continue
+			}
+			seen[key] = struct{}{}
 			if element, ok := s.entries[key]; ok {
 				stored := element.Value.(*entry)
 				s.markStaleLocked(stored, now)

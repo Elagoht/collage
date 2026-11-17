@@ -638,15 +638,38 @@ func New(cfg Config) (*App, error) {
 	// negative MaxEntries means no entry cap on the cache, not an unbounded
 	// tracker: the cache is still bounded by MaxBytes while the tracker is not
 	// pruned on eviction, so each tag keeps the default cap.
+	//
+	// The total is always capped, with a custom Store too. The host tag is
+	// exempt from the per-tag cap (a dropped key would be left with no host),
+	// so MaxKeys is what bounds it: without one, distinct query strings or Host
+	// headers against a cacheable page grew the tracker for as long as the
+	// process ran, behind a Redis-backed cache that never showed the growth.
 	tracker := dependency.NewMemory()
-	switch {
-	case cfg.Cache.MaxEntries > 0:
-		tracker.MaxKeysPerTag = cfg.Cache.MaxEntries
-		if cfg.Cache.Store == nil {
-			tracker.MaxKeys = cfg.Cache.MaxEntries
+	capacity := defaultMaxEntries
+	if cfg.Cache.MaxEntries > 0 {
+		capacity = cfg.Cache.MaxEntries
+	}
+	tracker.MaxKeysPerTag = capacity
+	tracker.MaxKeys = capacity
+	// A key the tracker lets go of is one an invalidation of its tag no longer
+	// reaches, and the store does not know that: it keeps the entry, so a Static
+	// page would be served stale until its TTL, silently. So the entry goes with
+	// the key, which makes "not tracked" imply "not cached" for every store, the
+	// built-in ones too, whose own eviction order need not match the tracker's.
+	// The cost is a render for a page the cap pushed out, which is no worse than
+	// the cache evicting it. Bounded, and not on any request's cancellation: the
+	// Track that dropped it may be the leader's, who has gone.
+	if store != nil {
+		tracker.OnEvict = func(keys []string) {
+			ctx, cancel := context.WithTimeout(context.Background(), trackerEvictTimeout)
+			defer cancel()
+			for _, key := range keys {
+				if err := store.InvalidateKey(ctx, key); err != nil {
+					logger.Warn("collage: a key the dependency tracker dropped could not be removed from the cache, "+
+						"so it may be served stale until it expires", "err", err)
+				}
+			}
 		}
-	default:
-		tracker.MaxKeysPerTag = defaultMaxEntries
 	}
 
 	app.tmpl = tmpl
@@ -1432,6 +1455,14 @@ func (a *App) invalidations() (started, finished uint64) {
 // than let a stalled connection hold the caller.
 const sharedDropTimeout = 5 * time.Second
 
+// trackerEvictTimeout bounds removing from the cache the keys a tracker's cap
+// dropped, for all of them in one Track. See New.
+const trackerEvictTimeout = 5 * time.Second
+
+// invalidationTimeout bounds one invalidation, which runs detached from its
+// caller's context. See dropTags.
+const invalidationTimeout = 30 * time.Second
+
 // dropShared is dropTags's call to a SharedCache: one DropTags, bounded by
 // sharedDropTimeout, returning the page entries it reached.
 func (a *App) dropShared(ctx context.Context, shared cache.SharedCache, tags []string, purge bool) ([]cache.Reached, error) {
@@ -1450,6 +1481,17 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	if len(tags) == 0 {
 		return 0, nil
 	}
+
+	// Not cancelled with the caller. The callers are an action's result and a
+	// webhook, which pass the request's context, and a client that has hung up
+	// is no reason to leave a changed page cached: the tracker and the memory
+	// cache refuse a done context, so the whole call would resolve nothing and
+	// report nothing. The values stay, for the plugins and metrics that read
+	// them. A bound replaces the cancellation, so a store that stalls cannot
+	// hold the caller for ever; a SharedCache's drop has a tighter one of its
+	// own.
+	ctx, cancelDrop := context.WithTimeout(context.WithoutCancel(ctx), invalidationTimeout)
+	defer cancelDrop()
 
 	// The keys reached are warmed once this call is over: deferred before the
 	// finished count is, so it runs after it, because a warm render that began

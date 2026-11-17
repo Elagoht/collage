@@ -100,6 +100,11 @@ app.Use(func(next http.Handler) http.Handler {
   pretending to work.
 - A query string cannot spell a declared dimension: the two are separate parts of
   the key.
+- **A cookie your middleware sets makes the response private.** A cacheable page
+  whose response already carries a `Set-Cookie` when its cache headers are written
+  is sent `Cache-Control: private, no-store` and no `Vary`, so a CDN does not keep
+  one reader's cookie for everyone. The page is still cached here. See
+  [caching](caching.md#cookies-and-cache-control).
 
 This is how to negotiate a language without collage doing it for you — see
 [routing](routing.md#locales) for why it no longer does.

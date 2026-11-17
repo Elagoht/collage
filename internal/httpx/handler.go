@@ -504,7 +504,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// A refused path is the scanner's, one per probe: it is named neither in
 	// the trace nor in the metric, which read the route instead.
 	path := r.URL.Path
-	if route.kind == routeKindRejected {
+	if route.wasRejected() {
 		path = ""
 	}
 	if path != "" {
@@ -609,6 +609,25 @@ func queryVary(u *url.URL, allow []string) []string {
 	return []string{selected.Encode()}
 }
 
+// keyVary is the Vary section of a page's or document's cache key: the query it
+// caches on, and for a request that arrived over TLS, that fact.
+//
+// A shared render is handed r.TLS (see sharedRequest), so a template building an
+// absolute URL from the request writes https:// into its page; keyed without it,
+// the first reader's scheme is the one every reader is served. It is the request's
+// own TLS state and not X-Forwarded-Proto that is keyed, because that is all a
+// shared render can see: its headers are dropped. A plain request adds nothing,
+// so its key is what it was before. The marker holds a NUL, which no query a
+// client sends unescaped can, and the section's entry count already tells an
+// https key's two entries from a plain one's.
+func keyVary(r *http.Request, cacheParams []string) []string {
+	vary := queryVary(r.URL, cacheParams)
+	if r.TLS != nil {
+		vary = append(vary, "scheme\x00https")
+	}
+	return vary
+}
+
 // serveGuarded runs serve and turns a panic escaping it into a 500 on the normal
 // error path — logged, dispatched to every ErrorHook, and counted by the metric
 // ServeHTTP reports — instead of letting it unwind into net/http, which closes the
@@ -692,12 +711,20 @@ func (h *Handler) serveGuarded(w http.ResponseWriter, r *http.Request, route *ro
 	state := &chainState{route: route}
 	capture := &statusCapturingWriter{ResponseWriter: w}
 	chained := r.WithContext(context.WithValue(r.Context(), chainStateKey{}, state))
+	state.request = chained
 	// A middleware that parsed the form parsed it on this copy, or on one of its
-	// own that serve receives and cleans up after.
-	defer removeMultipart(chained)
+	// own that serve receives and cleans up after. Not while serve is still
+	// running on a goroutine the middleware left behind: removing the files
+	// under a handler that is parsing them would fail it, so serveChained
+	// removes them when it finishes. See chainState.abandon.
+	defer func() {
+		if !state.abandon() {
+			removeMultipart(chained)
+		}
+	}()
 	h.chain.ServeHTTP(capture, chained)
-	if state.status != 0 {
-		return state.status
+	if status := state.result(); status != 0 {
+		return status
 	}
 	return capture.Status()
 }
@@ -914,7 +941,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			Path:    r.URL.Path,
 			Locale:  match.Locale,
 			Params:  match.PathParams,
-			Vary:    queryVary(r.URL, page.CacheParams),
+			Vary:    keyVary(r, page.CacheParams),
 			Request: requestVary(r),
 			Host:    cache.Host(r.Host),
 		})
@@ -1522,8 +1549,12 @@ func (h *Handler) invalidatedSince(m invalidationMark) bool {
 	return h.localMark().started != m.started
 }
 
-// foreignMarker matches the forgery-token marker of any key.
-var foreignMarker = regexp.MustCompile(`collage-csrf-[A-Za-z0-9_-]{32}`)
+// foreignMarker matches the rendered field of any key's forgery-token marker: the
+// value attribute csrf.Personalise replaces, not the bare marker. Text that merely
+// looks like one — a post quoting it — is escaped when rendered, so it cannot carry
+// the quote that closes the attribute's opening one, and matching it would drop a
+// good page on every request.
+var foreignMarker = regexp.MustCompile(`value="collage-csrf-[A-Za-z0-9_-]{32}"`)
 
 // staleMarker reports whether content carries a forgery-token marker this
 // application would not replace: another key's, or any at all when forgery
@@ -1534,7 +1565,7 @@ func (h *Handler) staleMarker(content []byte) bool {
 	}
 	current := ""
 	if h.csrf != nil {
-		current = h.csrf.Marker()
+		current = `value="` + h.csrf.Marker() + `"`
 	}
 	for _, found := range foreignMarker.FindAll(content, -1) {
 		if string(found) != current {
@@ -1621,7 +1652,12 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 // A SharedCache is written through writeShared instead, which weighs the write
 // against the store's epoch as well, so an invalidation on any instance counts.
 func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string, mark invalidationMark) string {
-	ctx := r.Context()
+	// r is the shareable request, whose context still wraps the leader's. The
+	// render was detached from the leader so that it finishes, and so does the
+	// write: under a cancelled context a MemoryCache refuses the entry, and a
+	// store that ignores the context keeps it while Track fails, leaving an
+	// entry no invalidation can reach. Values, the warm state among them, stay.
+	ctx := context.WithoutCancel(r.Context())
 	// A static build asking what it answers is not a reader: the build has
 	// written the file, and an entry or a hook call on its behalf would be
 	// state the build left behind.
@@ -1823,6 +1859,14 @@ func (h *Handler) setCacheHeaders(header http.Header, r *http.Request, strategy 
 		// shows the next edit; a browser or a proxy keeping the page would
 		// undo that, and keep the dev overlay's error text besides.
 		control = "no-store"
+	case len(header.Values("Set-Cookie")) > 0:
+		// A cookie a middleware wrote is for the reader who got it. Public, a
+		// CDN would keep this response with its Set-Cookie and hand the same
+		// cookie, a session perhaps, to every reader after. The framework's own
+		// forgery cookie and a PersonaliseHook already made the response
+		// private later; this covers the cookie the framework did not write.
+		// Vary is skipped below with it: there is no shared copy to select.
+		control = "private, no-store"
 	}
 	header.Set("Cache-Control", control)
 

@@ -131,11 +131,22 @@ func (f *flight) do(ctx context.Context, key string, fn func() *outcome) (*outco
 		// The entry is removed before the waiters are woken, so a waiter that
 		// arrives in between starts a fresh render rather than joining one that
 		// has already finished.
+		//
+		// All of it is deferred because fn can panic. Without that the entry
+		// stays in calls and done is never closed, and every later miss on the
+		// key joins the dead render and waits for it until the process
+		// restarts. The waiters read call.out, so a panic leaves them a 500
+		// outcome rather than a nil; the panic itself carries on to serveGuarded,
+		// which recovers it for the leader.
+		call.out = &outcome{fail: &failure{status: http.StatusInternalServerError,
+			err: errors.New("collage: render panicked"), stage: stageRender}}
+		defer func() {
+			f.mu.Lock()
+			delete(f.calls, key)
+			f.mu.Unlock()
+			close(call.done)
+		}()
 		call.out = fn()
-		f.mu.Lock()
-		delete(f.calls, key)
-		f.mu.Unlock()
-		close(call.done)
 
 		return call.out, false
 	}
