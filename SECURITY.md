@@ -16,8 +16,10 @@ and a fix, or a reason there will not be one, as soon as it is understood.
 
 ## Supported versions
 
-Before 1.0, only the latest release gets security fixes. A fix ships as a patch
-release, and its CHANGELOG entry says what was affected.
+A security fix ships as a patch release on the latest v1 minor, and its
+CHANGELOG entry, under **Security**, says what was affected. There are no
+backports: an older minor does not get a fix, so the way to receive one is to
+upgrade to the latest v1 release, which never breaks an application.
 
 ## In scope
 

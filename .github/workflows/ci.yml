@@ -79,9 +79,10 @@ jobs:
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
-  # What changed in the public API against the last release. Before v1.0 it
-  # only reports; from v1.0 on, an incompatible change fails here, and the way
-  # to make one is a v2 module path.
+  # What changed in the public API against the latest final v1 release, which
+  # is the base on every commit after v1.0.0. An incompatible change fails here,
+  # and the way to make one is a v2 module path. On the v1.0.0 tag itself there
+  # is no earlier v1 release, so it compares against v0.80.0 and only reports.
   api:
     name: api
     runs-on: ubuntu-latest
