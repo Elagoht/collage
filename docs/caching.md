@@ -129,7 +129,13 @@ The key is the SHA-256 of an unambiguous, length-prefixed serialisation of:
   [below](#which-query-parameters-are-part-of-the-key)),
 - any values middleware declared with `collage.Vary` (see [`Vary`](#vary)),
 - the request's host, normalised: lower-case, with no port and no trailing dot,
-  and an IPv6 address in brackets in its canonical text.
+  and an IPv6 address in brackets in its canonical text,
+- whether the request arrived over TLS. A shared render is shown that (see
+  [below](#what-a-shared-render-sees)), so a template building an absolute URL
+  from the request writes `https://` into what it renders; a plain request and a
+  TLS one are two entries. It is the request's own TLS state that is keyed, not
+  `X-Forwarded-Proto`, which a shared render cannot see. Behind a proxy that
+  terminates TLS every request is plain, and the key is the one it always was.
 
 Every field is self-delimiting, so no two distinct inputs can collide by
 concatenation, and the whole key is prefixed `v2:` so the scheme can change later
@@ -157,9 +163,11 @@ in the key, and the headers middleware declared with `collage.Vary`. Not the
 reader's cookies, `Authorization`, address or client certificate, and not a query
 parameter `WithCacheParams` left out. A handler on a cacheable page that reads a
 cookie finds none — where it used to find the first reader's, and write it into
-the copy everyone after got. The context is passed whole, so a value middleware
-put there still reaches the render; one that differs between readers belongs in
-`collage.Vary` too.
+the copy everyone after got. The context's values are not passed on: a value
+middleware stored there is hidden from the render, as it would differ between
+readers. Declare it with `collage.Vary` and read it back with `collage.Varied`,
+which is in the key. In development a warning is logged, once per render, when
+a hidden value is actually read.
 
 A page that needs the reader's own request is dynamic, and a dynamic page sees all
 of it. The same holds for a cacheable document.
@@ -218,6 +226,24 @@ it resolved enters collage's own cache key, and the header name goes into the
 response's `Vary` header, so a CDN or proxy between your server and the reader
 keeps the versions apart too. See [http.md](http.md#collagevary-content-that-depends-on-the-request).
 
+With a [`SharedCache`](#a-cache-a-fleet-shares) the raw value is also written into
+the store's entry meta, beside the host and path, so that an instance warming the
+page can send a render the header it varied on. It is the header's value, not the
+resolved one in the key: do not `Vary` on a credential header (see
+[Warming](#warming-after-an-invalidation)).
+
+## Cookies and `Cache-Control`
+
+A cacheable page is sent `public` only when nothing about the response is one
+reader's. A response that carries a `Set-Cookie` before the cache headers are
+written — one a middleware set, a session refresh say — is sent
+`Cache-Control: private, no-store` with no `Vary`, as the framework's own forgery
+cookie and a `PersonaliseHook` already make it. Public, a CDN would store the
+response together with its cookie and hand it to every reader after. The page is
+still cached and served from this server's cache; only its headers change. A
+middleware that sets a cookie on every request therefore makes the page private
+at every CDN: set it only where it is needed, or on a route that is `Dynamic`.
+
 ## Dependency tags
 
 A tag is any string. Two sources contribute to a page's tags, and they are
@@ -260,8 +286,11 @@ string, so any client can mint unlimited distinct keys for one page. Without a
 cap the tracker would grow without bound behind a cache that stays at
 `MaxEntries`. When a tag reaches the cap — `MaxEntries` keys, so 10000 by default — recording a new key under it drops the
 oldest key recorded under that tag: the cache entry itself is untouched and keeps
-being served until it expires, but `InvalidateTags` no longer reaches it. A
-negative `MaxEntries` keeps this per-tag cap at 10000.
+being served until it expires, but `InvalidateTags` no longer reaches it. The
+tracker as a whole is capped the same way, which is what bounds the host tag the
+per-tag cap leaves out, and it is capped whatever the store is: with a custom
+`Store` too, where the keys it holds are the store's own to bound. A zero or
+negative `MaxEntries` caps both at 10000.
 
 ## Invalidating
 
@@ -292,6 +321,12 @@ if err := app.PurgeTags(ctx, "post:"+slug); err != nil {
 
 A custom `Cache.Store` keeps dropping entries on `InvalidateTags`, as before,
 unless it implements [`collage.StaleCache`](#stale-pages-in-your-own-cache).
+
+An invalidation is not cancelled with the context you pass it. Calling
+`InvalidateTags(r.Context(), …)` from a webhook, or returning
+`ActionResult.InvalidateTags` for a request whose client has gone, still drops the
+pages: the call runs with that context's values but not its cancellation, bounded
+at 30 seconds, and a `SharedCache`'s drop at five.
 
 `InvalidateTagsN` returns the number of keys the tags resolved to and the cache
 accepted an invalidation for. It is not a count of entries that were live:
@@ -411,6 +446,14 @@ What follows from those rules:
   anything (tracking parameters, cache-busters) should
   [declare `CacheParams`](#which-query-parameters-are-part-of-the-key), so a junk
   query is the same key as the clean URL.
+
+  What bounds it without `CacheParams` is that only a key a visitor read since
+  its last warm is warmed, and `WarmLimit`. A client can still read 1000 junk
+  variants of a page between two invalidations and have each of them rendered
+  again by the next, a render per request it made, which is no more than the
+  misses it would have cost without warming but arrives after every
+  invalidation. A page that is invalidated often and whose query can be anything
+  wants `CacheParams`, or a lower `WarmLimit`.
 
 The warmed keys are tracked again, so a later invalidation's `OnCacheInvalidate`
 names them again. A run logs one line at info (`collage: warmed pages`, with the
@@ -628,6 +671,12 @@ than as a hit or a miss. It is not a hit — nothing was cached when the request
 — and calling it a miss would suggest it cost a render. Watch it: a count that
 climbs steadily is a page expiring faster than it can be re-made, which is what a
 too-short `Incremental` TTL looks like from the outside.
+
+A document's handler is the same: it runs once for the readers waiting on its
+key, with the first one's context values but not its cancellation, so a feed
+handler that tolerates an upstream error is not handed a cancelled context because
+one reader left. If a render panics, that reader gets a 500 and the readers that
+joined it get the same failure, and the next request renders again.
 
 A request whose own connection goes away stops waiting. The render itself belongs
 to none of the requests waiting on it, so it does not stop when the first of them
@@ -1080,6 +1129,11 @@ that is smaller, so a disk cache can hold up to that much of your process's memo
 on top of the disk. In a small container, set `GOMEMLIMIT` as for a memory cache,
 and lower `MaxBytes` or `MaxEntries` if the tier must hold less (see
 [deployment](deployment.md#a-memory-cache-and-the-containers-limit)).
+
+A write the disk refuses is kept in neither tier, and is reported as a failed
+cache write. Memory keeping it would hold an entry the tag index was never told
+of, which no `InvalidateTags` could reach; instead the page is served uncached and
+rendered again until the disk takes writes again.
 
 **A restart starts warm.** At startup the memory tier is filled from the current
 build's directory, newest entries first, until the next one would make it evict —

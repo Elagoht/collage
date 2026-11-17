@@ -247,6 +247,12 @@ for one action, and a negative value for unbounded. A body past the limit is a 4
 with forgery protection on as well, where reading the token means reading the body:
 an oversized form is refused for its size, not reported as a forged one.
 
+One limit is not `MaxBodyBytes`: net/http reads a urlencoded form of at most 10 MB.
+A urlencoded form past that is a 413 however high `MaxBodyBytes` is when the forgery
+check reads it; a handler that calls `ParseForm` itself gets net/http's error. A
+larger submission is a multipart form, whose files
+spill to disk.
+
 The body is bounded before anything reads it — middleware, a page guard, an
 action's guard, a data handler — with or without middleware, and a page's route is
 held to `Server.MaxBodyBytes` as an action is. A body whose `Content-Length` is over
