@@ -4,11 +4,14 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"mime"
 	"net/http"
 	"path"
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/Elagoht/collage/internal/ascii"
 )
 
 // ErrInvalidPrefix reports a mount or handler prefix that is empty, "/", or not a
@@ -48,6 +51,20 @@ func WithDevMode() Option {
 	return func(m *Mount) { m.devMode = true }
 }
 
+// WithAttachments serves a file whose type can run script on this site's origin —
+// html, xhtml, svg and xml — with "Content-Disposition: attachment", so a browser
+// saves it instead of rendering it.
+//
+// It is for a mount of what readers upload. The mount serves a file as its name
+// says, and a name ending in ".html" or ".svg" says a type that runs: an upload
+// with one would execute as the site, with its cookies and its forms. The sniffing
+// rule that keeps an extensionless file from being served as markup (ContentType)
+// does not reach a file that names its type. Either use this option for such a
+// mount or control which extensions are stored.
+func WithAttachments() Option {
+	return func(m *Mount) { m.attachments = true }
+}
+
 // WithoutBuildCopy stops a static build from copying this mount into its output.
 // Use it for a mount served from a CDN in production, or one large enough that
 // duplicating it into the build directory is not wanted.
@@ -65,6 +82,7 @@ type Mount struct {
 	cacheControl string
 	buildCopy    bool
 	devMode      bool
+	attachments  bool
 	tags         *etagCache
 	// minted records every fingerprinted name URL has handed out, keyed by the
 	// file's own path. A static build reads it to learn which content-addressed
@@ -123,7 +141,7 @@ func (m *Mount) Handles(urlPath string) bool {
 // path outside the mount, or one a request could not reach, is fs.ErrNotExist.
 func (m *Mount) Open(urlPath string) (fs.File, error) {
 	name := path.Clean(strings.TrimPrefix(urlPath, m.prefix))
-	if !m.Handles(urlPath) || !fs.ValidPath(name) || name == "." || Hidden(name) {
+	if !m.Handles(urlPath) || strings.HasSuffix(urlPath, "/") || !fs.ValidPath(name) || name == "." || Hidden(name) {
 		return nil, &fs.PathError{Op: "open", Path: urlPath, Err: fs.ErrNotExist}
 	}
 	return m.fsys.Open(name)
@@ -168,8 +186,12 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("ETag", tag)
 	}
 	// Never text/html for a file whose name does not say so: see ContentType.
-	w.Header().Set("Content-Type", ContentType(name, seeker))
+	ctype := ContentType(name, seeker)
+	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if m.attachments && scriptCapable(name, ctype) {
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": path.Base(name)}))
+	}
 	// A fingerprinted name was minted from these exact bytes and verified against
 	// them above, so it can never describe anything else: there is nothing for a
 	// client to revalidate and no way for the answer to go stale. Everything else
@@ -188,6 +210,25 @@ func (m *Mount) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.ServeContent(w, r, name, info.ModTime(), seeker)
+}
+
+// scriptCapable reports whether a browser given this file would run script from
+// it on the site's own origin: markup types, by the type served or by the name's
+// extension, since a system's type table does not know every one of them.
+func scriptCapable(name, ctype string) bool {
+	switch ascii.LowerString(path.Ext(name)) {
+	case ".html", ".htm", ".xhtml", ".xht", ".svg", ".svgz", ".xml", ".xsl", ".xslt":
+		return true
+	}
+	media, _, err := mime.ParseMediaType(ctype)
+	if err != nil {
+		return false
+	}
+	switch media {
+	case "text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml":
+		return true
+	}
+	return false
 }
 
 // Hidden reports whether any element of name, a slash-separated path within a
@@ -213,6 +254,12 @@ func Hidden(name string) bool {
 // what earns the response its immutable lifetime.
 func (m *Mount) resolve(urlPath string) (name string, fingerprinted bool, ok bool) {
 	if !m.Handles(urlPath) {
+		return "", false, false
+	}
+	// A file has one URL. path.Clean below would otherwise take "app.css/" for
+	// "app.css" and serve it, a second address for the same file that a cache and
+	// a crawler would each keep.
+	if strings.HasSuffix(urlPath, "/") {
 		return "", false, false
 	}
 	name = path.Clean(strings.TrimPrefix(urlPath, m.prefix))
