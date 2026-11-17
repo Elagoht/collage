@@ -151,8 +151,12 @@ func (t *TieredCache) Set(ctx context.Context, key string, content []byte, ttl t
 }
 
 // SetTagged stores content in the disk tier and then the memory tier. A disk
-// error is returned, but only after memory has been written, so the page is
-// served from memory and the caller can report the failure.
+// error is returned and memory is not written: the caller tracks and
+// overlap-checks only a write that succeeded, so a memory copy kept after a
+// failure would be an entry no tag invalidation reaches, stale for its whole TTL.
+// The page is still served to the request that rendered it. Whatever memory held
+// under the key from an earlier write is dropped, as it is no longer what the
+// application last stored.
 //
 // A ttl of zero or less becomes the disk tier's default before either tier sees
 // it. Memory reads a zero default as never expiring while the disk does not, so
@@ -162,10 +166,15 @@ func (t *TieredCache) SetTagged(ctx context.Context, key string, content []byte,
 	if ttl <= 0 {
 		ttl = t.back.defaultTTL
 	}
+	var diskFailed bool
 	err := t.mutate(ctx, func() error {
 		_, err := t.back.SetTagged(ctx, key, content, ttl, tags)
+		diskFailed = err != nil
 		return err
 	}, func(ctx context.Context) error {
+		if diskFailed {
+			return t.front.InvalidateKey(ctx, key)
+		}
 		_, err := t.front.SetTagged(ctx, key, content, ttl, tags)
 		return err
 	})

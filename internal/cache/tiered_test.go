@@ -266,13 +266,22 @@ func TestTiered_WarmsFromDiskNewestFirstWithinMemoryLimits(t *testing.T) {
 	}
 }
 
-func TestTiered_ADiskWriteFailureStillWritesMemory(t *testing.T) {
+// A write the disk refused is kept in neither tier. The caller does not track
+// or overlap-check a write that returned an error, so an entry memory kept
+// anyway would be one no tag invalidation can reach, and a copy of the key it
+// replaced would go on being served as current.
+func TestTiered_ADiskWriteFailureWritesNeitherTier(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("root writes through a read-only directory")
 	}
 	ctx := context.Background()
 	clk := newClock(time.Unix(1_000_000, 0))
 	tier := newTestTier(t, t.TempDir(), clk, MemoryConfig{})
+
+	// An older copy, written while the disk worked.
+	if _, err := tier.SetTagged(ctx, "k", []byte("old page"), time.Hour, []string{"t"}); err != nil {
+		t.Fatalf("SetTagged: %v", err)
+	}
 
 	if err := os.Chmod(tier.Dir(), 0o555); err != nil {
 		t.Fatal(err)
@@ -286,11 +295,8 @@ func TestTiered_ADiskWriteFailureStillWritesMemory(t *testing.T) {
 	if etag != ETag([]byte("page")) {
 		t.Errorf("etag = %q, want the content's ETag even when the disk fails", etag)
 	}
-	if content, _, found := tier.front.Get(ctx, "k"); !found || string(content) != "page" {
-		t.Errorf("memory Get = %q, %v; want the page written despite the disk", content, found)
-	}
-	if content, _, found := tier.Get(ctx, "k"); !found || string(content) != "page" {
-		t.Errorf("tier Get = %q, %v; want the page", content, found)
+	if content, _, found := tier.front.Get(ctx, "k"); found {
+		t.Errorf("memory Get = %q, want nothing: the entry was kept where no tag invalidation reaches it, or the old copy was left", content)
 	}
 }
 
