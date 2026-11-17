@@ -1,5 +1,141 @@
 # Changelog
 
+## v1.0.0
+
+The first stable release. From here on `pkg/collage` and `pkg/collagetest`
+follow semantic versioning: nothing in them breaks within v1, the `api` CI job
+checks every change against the last release, and a break would be a v2 module
+path. `internal/` is not API. `Metrics`, `Tracer`, `Span` and the cache
+interfaces gain no methods within v1; implementers embed `collage.NoopMetrics`,
+`NoopTracer` and `NoopSpan`, and new capabilities arrive as optional interfaces.
+
+This release is the result of a security and correctness audit. No change to an
+exported signature; what an application may have to react to is below.
+
+### Breaking
+
+- **Go 1.26.11 or later.** GO-2026-6859 (a race in `http.MaxBytesReader` that can
+  crash an HTTP/1 server) is fixed in Go 1.26.11 and 1.27.4, and collage's body
+  limit is built on it. `go.mod` and the scaffold require 1.26.11.
+- **Templates `html/template` cannot escape fail at registration.** An unclosed
+  `<script>` string, or `{{if}}` branches that leave an attribute in different
+  states, used to pass startup and fail on the first request — an optional
+  fragment silently missing. Every fragment's root template is now escaped once
+  at registration, and such a template is a registration error naming it.
+- **Routes that could never answer are refused at registration:**
+  - a redirect whose source matches a registered route's path
+    (`ErrRedirectShadowsPage`), such as `/{slug}` next to a document at
+    `/about.txt` — narrow the redirect's source;
+  - a page, document, action or redirect source whose first segment is a
+    supported locale code (`ErrLocaleUnreachable`) — the prefix is added for you;
+  - a redirect whose destination its own source matches, such as `/docs` →
+    `/docs/` (the new `ErrRedirectLoop`);
+  - a pattern that uses one placeholder name twice (`ErrInvalidPattern`).
+- **`Mount.URL` and `{{asset}}` refuse a dotfile or an invalid name** with an error
+  instead of returning a link the mount answers 404.
+- **`{{hoist}}` refuses an area name outside `[A-Za-z0-9_-]`**, which closes a
+  script injection through `{{hoist .Area}}`.
+- **`collage export -clean` (`BuildOptions.Clean`) empties only a directory a
+  collage build created** — it holds a `.collage-export` marker — and refuses the
+  project's own directory or any directory above it (`ErrDangerousOutDir`).
+  `-out .. -clean` used to empty the project's parent, and `-out static -clean`
+  its own assets. A `dist/` exported by an older release needs
+  `touch dist/.collage-export` once before `-clean` will empty it.
+- **`collage new` refuses a name or `--module` that is not a module path** (exit
+  2). `collage new .` scaffolds into the current directory, named after it; it
+  used to write `module .`.
+
+### Added
+
+- `collage.NoopMetrics`, `collage.NoopTracer`, `collage.NoopSpan`, for embedding.
+- `collage.WithAttachments()`: a mount option that serves html, xhtml, svg and xml
+  with `Content-Disposition: attachment`. An uploads mount must use it, or control
+  the extensions it stores — otherwise an uploaded page runs script on the site's
+  origin.
+- `collage.ErrRedirectLoop`.
+
+### Changed
+
+- **An action's and a document's trailing-slash spelling redirects** to the
+  route's one spelling — 308 for an action, 301 for a document — as a page's
+  already did. Both spellings used to be served, so middleware comparing exact
+  paths could be bypassed with `POST /admin/delete/`.
+- **A response that already carries a `Set-Cookie` from middleware is sent
+  `Cache-Control: private, no-store`**, not `public`, so a CDN cannot replay one
+  visitor's cookie to others.
+- **A TLS and a plain request for the same URL are separate cache entries**, as
+  are their Shared fragment renders. TLS requests render once after upgrading.
+- **The dependency tracker is always bounded** — `MaxEntries`, or 10000 when that
+  is not positive, including with a custom `Cache.Store` — and a key it drops is
+  removed from the cache with it, so it is never served stale past an
+  invalidation.
+- **With the disk cache, a failed disk write is not kept in memory either**; the
+  page renders again until the disk recovers.
+- At equal depth, the hoist **later in the page** wins. It used to follow sorted
+  slot name, and a handler-less sibling's title beat one with a handler.
+- A slot resolver may add at most 256 distinct inline `Source`s while rendering;
+  the next fails its fragment with `ErrTooManyInlineSources`.
+- `Key.With` escapes `:` and `\` in a part, so `With("b:c")` and
+  `With("b").With("c")` are different keys. Plain parts keep their names.
+- `app.Handle` accepts `/.well-known/…`; only `.`/`..` segments and `//` are
+  refused, and the error says which.
+- `Mount.URL` escapes each segment of the file name; `/static/app.css/` is a 404.
+- Static export treats paths that differ only in case as a collision
+  (`ErrOutputPathCollision`): on macOS and Windows they are one file.
+- `collage dev` restarts when `plugins-config.json` changes and stops cleanly on
+  SIGHUP; an interrupt during `inspect`, `routes` or `check` removes their
+  temporary binary.
+- `collage add` refuses an area whose package name would be a keyword, `main`,
+  `init` or a predeclared name.
+- The scaffold says `.env` in every place it mentions an environment file.
+- `collagetest.CacheSuite` and `SharedCacheSuite` check more of the documented
+  contract: removal is checked against `GetStale`, tags survive a stale mark,
+  expired is stale, the epoch never goes back across `Clear`, overwrite, default
+  TTL, binary content, concurrency, and a purge's return value. A store that marks
+  instead of removing, or resets its epoch on `Clear`, now fails its suite.
+- The `api` CI job compares the internal types behind `pkg/collage`'s aliases —
+  it used to see almost none of them — and does not count growth of sealed
+  interfaces such as `Host`.
+
+### Fixed
+
+- **A 404 no longer re-clones the template set.** A failed render dropped its
+  pooled copy of every template, so each not-found request rebuilt them: on a
+  300-template project, 581 µs and 12126 allocations against 9.7 µs and 264 now.
+- **`InvalidateTags`, `InvalidateTagsN` and `PurgeTags` invalidate under a
+  cancelled context.** An action whose reader disconnected, or a webhook whose
+  sender timed out, invalidated nothing and the old page was served until its
+  TTL. They now run detached from the caller, bounded at 30s.
+- **A page or document whose first reader disconnected mid-render is cached and
+  tracked.** The write ran under the reader's cancelled context: the memory cache
+  stored nothing, and a store that ignores the context stored an entry no
+  invalidation could reach. A document's handler no longer sees that
+  cancellation either.
+- **A panic in a coalesced render no longer wedges its cache key** until restart;
+  the requests waiting on it get a 500.
+- **Page text that looks like a CSRF marker no longer makes the page
+  uncacheable.**
+- A fragment behind a slot its template never renders no longer changes the
+  page's title, meta or tags, and a failed fragment's hoists no longer stay in the
+  page.
+- A cancelled speculative prefetch no longer fails a later `Once` for the same key,
+  and a panicking `Once` fetch releases its waiters at once.
+- A data race when middleware such as `http.TimeoutHandler` returns before the
+  handler does.
+- A urlencoded form over 10 MB is answered 413, not 403.
+- The disk cache removes other builds' directories once idle for an hour, and
+  stale temporary files at startup; flushes an entry before renaming it into
+  place; and treats an entry whose content does not match its ETag as a miss
+  rather than serving a truncated page. The data cache stores a payload checksum;
+  existing files still load.
+- Concurrent first requests for an asset share one ETag hash.
+- `datacache.Store.Invalidate` counts a value once however many of its tags match.
+- The dev proxy could be marked ready by a program that had already exited.
+- Documentation: the README's minimal application compiles again (`DevMode` is on
+  `Config`), `Cache` has four methods, a fleet needs `SharedCache`, a shared render
+  hides application context values (read them back with `collage.Varied`), and
+  some fifteen smaller corrections across `docs/`.
+
 ## v0.80.0
 
 ### Changed
