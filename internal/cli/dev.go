@@ -17,7 +17,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Elagoht/collage/internal/devhost"
@@ -111,7 +110,7 @@ func (c *CLI) runDev(ctx context.Context, args []string) int {
 
 	// Ctrl-C reaches the running program too, which shuts itself down; this is
 	// what stops the loop around it from exiting before it has.
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, ShutdownSignals...)
 	defer stop()
 
 	// Builds go outside the project, so the watcher never sees them and a

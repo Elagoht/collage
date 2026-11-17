@@ -8,7 +8,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
@@ -66,7 +65,7 @@ func (c *CLI) addPlugins(ctx context.Context, dir string, refs []namedRef) (int,
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); err != nil {
 		return fail(fmt.Errorf("no go.mod in %s", dir))
 	}
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, ShutdownSignals...)
 	defer stop()
 
 	multi := len(refs) > 1
@@ -174,7 +173,7 @@ func (c *CLI) delPlugins(ctx context.Context, dir string, refs []namedRef) int {
 	} else if src == nil {
 		return fail(fmt.Errorf("no plugins.go in %s; nothing to remove", dir))
 	}
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, ShutdownSignals...)
 	defer stop()
 
 	multi := len(refs) > 1
