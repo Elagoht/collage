@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	htmltemplate "html/template"
 
 	"github.com/Elagoht/collage/internal/types"
@@ -40,10 +41,33 @@ func newHoistToken() string {
 }
 
 // hoistFunc is the "hoist" template function for one render.
-func hoistFunc(token string) func(string) htmltemplate.HTML {
-	return func(area string) htmltemplate.HTML {
-		return htmltemplate.HTML(hoistMarker(token, area)) // any: a marker this package wrote, replaced before it reaches a client
+//
+// The marker is an HTML comment returned as safe markup, so an area name that is
+// not plainly a name could close the comment and leave what follows as live HTML
+// — {{hoist .Area}} with a value from a request is one template away. Every area
+// a layout writes is a name it chose, so a name outside [A-Za-z0-9_-] is a
+// mistake, reported as one rather than quietly turned into something else.
+func hoistFunc(token string) func(string) (htmltemplate.HTML, error) {
+	return func(area string) (htmltemplate.HTML, error) {
+		if !validArea(area) {
+			return "", fmt.Errorf("collage: hoist area %q: a name is letters, digits, '_' and '-'", area)
+		}
+		return htmltemplate.HTML(hoistMarker(token, area)), nil // any: a marker this package wrote, replaced before it reaches a client
 	}
+}
+
+// validArea reports whether area is a non-empty run of [A-Za-z0-9_-].
+func validArea(area string) bool {
+	if area == "" {
+		return false
+	}
+	for i := range len(area) {
+		c := area[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
 }
 
 // markedAreas returns the areas html holds a marker for.
