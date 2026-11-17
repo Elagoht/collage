@@ -74,7 +74,7 @@ func (h *Handler) ServeFragment(r *http.Request, serve func(http.ResponseWriter,
 		}
 		h.chain.ServeHTTP(w, r)
 	}()
-	return run.close(w, err)
+	return run.close(err)
 }
 
 // fragmentRun is one ServeFragment's way through the chain. The chain is composed
@@ -153,7 +153,7 @@ func (run *fragmentRun) arrive(w http.ResponseWriter, r *http.Request) {
 // within the chain, the status a middleware answered with otherwise, and the
 // error, chainErr — a panic that escaped the chain — or the panic a middleware
 // recovered from serve.
-func (run *fragmentRun) close(w *fragmentWriter, chainErr error) (served bool, status int, err error) {
+func (run *fragmentRun) close(chainErr error) (served bool, status int, err error) {
 	run.mu.Lock()
 	run.closed = true
 	reached := run.reached
