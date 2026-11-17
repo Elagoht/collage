@@ -131,16 +131,24 @@ with `Get`. It lives as long as one render. When the same data appears on many p
 author card on every post — use `collage.Cached`, which keeps it across pages and
 requests; see [caching](caching.md#caching-data-not-only-pages).
 
-*Two siblings hoisting one key is settled by declaration order.* Not by which handler
-finished first — that would make a page's `<head>` depend on the weather. Innermost
-still wins over depth, exactly as before; at equal depth the later-declared fragment
-wins.
+*Two siblings hoisting one key is settled by their order in the page.* Not by which
+handler finished first — that would make a page's `<head>` depend on the weather.
+Innermost still wins over depth, exactly as before; at equal depth the later fragment
+wins: within a slot, the one bound later, and between slots, the one the template
+renders later. A `Title` set with `WithTitle` counts at its fragment's place like a
+handler's `HoistTitle`.
 
 **A slot the template does not render still costs its handler.** Children are started
 one level ahead, before the template has decided what it will ask for, so a fragment
 behind a conditional slot may fetch for nothing. Its context is cancelled as soon as
 the template is done, and its failure is discarded — a fragment that was never
-rendered cannot fail a page, whether or not it is `Required`.
+rendered cannot fail a page, whether or not it is `Required`. What it declared is
+discarded too: its title, its `Hoist*` calls and the tags of its `Cached` calls
+never reach the page. (A value it stored with `Key.Set` is not rolled back; read
+such a value only from a fragment that is rendered.) The same goes for a fragment
+that fails: its hoists leave with its markup, so an optional fragment's fallback
+does not render under the failed fragment's title. Its tags stay, since they say
+what the page depended on.
 
 ## Building a fragment
 
@@ -213,7 +221,9 @@ The template is code, so it must be a constant. Never build it from data —
 title holds, and each distinct string becomes a template the program keeps until
 it exits. This matters most in a slot resolver, which builds fragments per
 request: its fragments can be inline, but their templates are fixed, and the data
-reaches them through `WithData`, as a value or from a handler.
+reaches them through `WithData`, as a value or from a handler. The engine holds a
+resolver's sources to 256 distinct ones; the next fails its fragment with an error
+saying why, rather than growing the template set a request at a time.
 
 Three limits come with it:
 

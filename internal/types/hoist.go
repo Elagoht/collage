@@ -20,12 +20,12 @@ import (
 // hoistEntry is one declaration, with the position in the tree it was made from.
 type hoistEntry struct {
 	depth int
-	// order is the fragment's launch number within this render. It settles a tie
-	// between two declarations at equal depth, and it exists because data handlers
-	// no longer run in the order they finish: siblings run concurrently, so "the
-	// last one to declare" would mean "whichever goroutine happened to win",
-	// which is not a rule anyone can rely on. Launch order is assigned on the
-	// render's own goroutine, in declaration order, so it is the same on every run.
+	// order is the fragment's number within this render, taken as the walk reaches
+	// it. It settles a tie between two declarations at equal depth, and it exists
+	// because data handlers no longer run in the order they finish: siblings run
+	// concurrently, so "the last one to declare" would mean "whichever goroutine
+	// happened to win", which is not a rule anyone can rely on. It is assigned on
+	// the render's own goroutine, in page order, so it is the same on every run.
 	order int
 	html  template.HTML
 }
@@ -33,14 +33,14 @@ type hoistEntry struct {
 // hoistArea is the declarations for one marker, keyed and ordered.
 type hoistArea struct {
 	// position is where each key is written: at its earliest declaration in the
-	// tree's own order — the declaring fragment's launch number, then the order
+	// tree's own order — the declaring fragment's number, then the order
 	// that fragment declared in. Not in the order declarations arrived: sibling
 	// handlers run concurrently, so arrival order is whichever goroutine won, and
 	// a page's <head> — the order of its stylesheets included — changed from one
 	// request to the next. Earliest rather than winning declaration, so a nested
 	// fragment overriding a title does not move it.
 	position map[string]hoistPosition
-	// declared counts each fragment's declarations so far, by launch number,
+	// declared counts each fragment's declarations so far, by that number,
 	// which is what orders one fragment's own declarations among themselves.
 	declared map[int]int
 	byKey    map[string]hoistEntry
@@ -73,7 +73,7 @@ func NewHoisted() *Hoisted {
 }
 
 // Add records a declaration for area under key, made from a fragment at depth whose
-// launch number is order.
+// number is order.
 //
 // The innermost declaration of a key wins, because depth is what specificity looks
 // like here: a layout naming a default title and an article naming its own are not
@@ -82,10 +82,10 @@ func NewHoisted() *Hoisted {
 // no specificity to settle it, so the rule is arbitrary and therefore stated rather
 // than discovered.
 //
-// "Later" means later in declaration order, not in finishing order. Sibling data
-// handlers run concurrently, so which of two goroutines reaches this function first
-// is not something a page should depend on; order is assigned when fragments are
-// launched, on one goroutine, in the order the tree declares them.
+// "Later" means later in the page, not in finishing order. Sibling data handlers
+// run concurrently, so which of two goroutines reaches this function first is not
+// something a page should depend on; order is assigned as the render's walk reaches
+// each fragment, on one goroutine, in the order they sit in the page.
 //
 // Position is decided by the first declaration of a key, not the winning one.
 // Otherwise a page's <head> would reorder itself depending on whether a nested
@@ -196,4 +196,92 @@ func (h *Hoisted) Areas() []string {
 		names = append(names, name)
 	}
 	return names
+}
+
+// HoistLog is what one fragment declared for the page, held back until the
+// fragment is known to be part of it.
+//
+// A declaration made straight into the collector cannot be taken back, and two
+// kinds of fragment make declarations that must be. A fragment's data handler is
+// started before the template decides whether the fragment is rendered at all, so
+// its title, its robots meta and the tags its Cached calls carry would reach a page
+// that never shows it. And a fragment whose attempt fails has its markup cut back
+// but not what it declared, so an optional "Draft: secret" that errored left its
+// title over the fallback.
+//
+// So each fragment writes into a log of its own, and the log is committed to its
+// parent's — and the root's to the collector — only once the fragment has rendered.
+// Committing a child's log into its parent's, rather than into the collector, is
+// what lets a parent that fails afterwards take its descendants' declarations with
+// it.
+//
+// Tags are different from markup in one respect: a fragment that failed halfway
+// still describes what its output depended on, so a failed fragment's tags are
+// kept (see CommitTo) while its hoists are not.
+type HoistLog struct {
+	mu      sync.Mutex
+	entries []loggedHoist
+	tags    []string
+}
+
+type loggedHoist struct {
+	area, key    string
+	depth, order int
+	html         template.HTML
+}
+
+// NewHoistLog returns an empty log.
+func NewHoistLog() *HoistLog { return &HoistLog{} }
+
+func (l *HoistLog) add(e loggedHoist) {
+	l.mu.Lock()
+	l.entries = append(l.entries, e)
+	l.mu.Unlock()
+}
+
+func (l *HoistLog) addTags(tags []string) {
+	l.mu.Lock()
+	l.tags = append(l.tags, tags...)
+	l.mu.Unlock()
+}
+
+// Place gives everything l holds the position rc's fragment sits at. A prefetched
+// handler declares before its fragment has a place in the page — what the walk
+// numbers is the order fragments are reached in, which a handler running ahead of
+// it cannot know — so its declarations are placed when the walk takes it.
+func (l *HoistLog) Place(rc *RenderContext) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for i := range l.entries {
+		l.entries[i].depth, l.entries[i].order = rc.depth, rc.order
+	}
+}
+
+// CommitTo moves l's declarations to parent: into parent's own log when it has
+// one, otherwise into the render's collector, which is what the root fragment's
+// log reaches. keepHoists false commits only the tags, for a fragment that failed.
+func (l *HoistLog) CommitTo(parent *RenderContext, keepHoists bool) {
+	l.mu.Lock()
+	entries, tags := l.entries, l.tags
+	l.entries, l.tags = nil, nil
+	l.mu.Unlock()
+	if !keepHoists {
+		entries = nil
+	}
+
+	if parent.hlog != nil {
+		parent.hlog.mu.Lock()
+		parent.hlog.entries = append(parent.hlog.entries, entries...)
+		parent.hlog.tags = append(parent.hlog.tags, tags...)
+		parent.hlog.mu.Unlock()
+		return
+	}
+	for _, e := range entries {
+		parent.hoisted.Add(e.area, e.key, e.depth, e.order, e.html)
+	}
+	if len(tags) > 0 && parent.state != nil {
+		parent.state.mu.Lock()
+		parent.state.tags = append(parent.state.tags, tags...)
+		parent.state.mu.Unlock()
+	}
 }

@@ -111,9 +111,16 @@ func Cached[T any](rc *RenderContext, key Key[T], ttl time.Duration, tags []stri
 	}
 
 	rc.state.mu.Lock()
-	rc.state.tags = append(rc.state.tags, tags...)
 	store, uncached := rc.state.data, rc.state.uncached
+	if rc.hlog == nil {
+		rc.state.tags = append(rc.state.tags, tags...)
+	}
 	rc.state.mu.Unlock()
+	if rc.hlog != nil {
+		// Held with the fragment's other declarations: a speculative fragment the
+		// template never renders must not tag the page with what it fetched.
+		rc.hlog.addTags(tags)
+	}
 
 	if store == nil || uncached {
 		// Namespaced, so a Cached key and a Once key the application happens to

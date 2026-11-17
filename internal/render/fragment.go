@@ -35,10 +35,10 @@ type renderState struct {
 	// now overlap, so this can exceed the render's wall-clock time: it is how much
 	// handler work the page cost, not how long the page waited for it.
 	dataTime time.Duration
-	// order numbers fragments in the sequence they are launched. Launching happens
-	// on this goroutine, in declaration order, even though the handlers launched
-	// run concurrently — so the number is the same on every render of a page, and
-	// hoisting can use it to settle ties without depending on which goroutine won.
+	// order numbers fragments in the sequence the walk reaches them, which is the
+	// sequence they sit in the page. The walk is one goroutine, so the number is
+	// the same on every render of a page however the handlers running ahead of it
+	// finish, and hoisting can use it to settle ties.
 	order int
 	// templateTime is the total time spent executing templates, counting each
 	// fragment's template only for itself: the time its descendants spend inside
@@ -136,6 +136,10 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 	state.stack = append(state.stack, f.Name)
 	defer func() { state.stack = state.stack[:len(state.stack)-1] }()
 
+	// What the fragment declares for the page goes to a log of its own and reaches
+	// its parent's only if the fragment rendered; see types.HoistLog.
+	parent := rc
+
 	if len(state.stack) > e.maxDepth {
 		// Fatal rather than absorbable: hitting the depth limit means the tree is
 		// malformed — almost always a fragment bound into one of its own slots —
@@ -151,15 +155,12 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 	// The fragment's position travels in its own context rather than being held as
 	// the engine's "current" depth. A data handler calls Hoist and has no other way
 	// to know how deep it is, and with sibling handlers running at once there is no
-	// single current position to read. A prefetched fragment keeps the position it
-	// was launched with, so what it hoists lands where the tree says it should.
-	depth, order := len(state.stack), 0
-	if pre != nil {
-		depth, order = pre.depth, pre.order
-	} else {
-		order = state.nextOrder()
-	}
-	rc = types.RenderWithFragment(rc, depth, order)
+	// single current position to read. The number is taken as the walk reaches the
+	// fragment, prefetched or not, so "later" at equal depth is later in the page
+	// and the same on every render.
+	rc = types.RenderWithFragment(rc, len(state.stack), state.nextOrder())
+	log := types.NewHoistLog()
+	rc = types.WithHoistLog(rc, log)
 
 	// The metadata slot is reserved on entry so parents appear before the children
 	// that render inside them, and filled in once the outcome is known.
@@ -194,7 +195,10 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 		case f.Fallback != nil:
 			// No prefetch for a fallback: it exists precisely because the primary
 			// failed, which is not known until it has.
-			if fallbackErr := e.attempt(rc, f.Fallback, state, nil, dst); fallbackErr != nil {
+			fallbackLog := types.NewHoistLog()
+			fallbackErr := e.attempt(types.WithHoistLog(rc, fallbackLog), f.Fallback, state, nil, dst)
+			fallbackLog.CommitTo(parent, fallbackErr == nil)
+			if fallbackErr != nil {
 				// A fallback exists to contain a failure, so its own failure is
 				// contained here rather than escalated: the page loses this
 				// fragment's output and records both errors. This holds however the
@@ -224,6 +228,11 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 		}
 	}
 
+	// Only a fragment that rendered keeps what it declared for the page. Its tags
+	// are kept either way: a fragment that failed halfway still says what its
+	// output depended on.
+	log.CommitTo(parent, err == nil)
+
 	total := time.Since(start)
 	meta.Duration = total
 	state.childTotal = childTotalBefore + total
@@ -252,10 +261,10 @@ func (e *SlotEngine) renderFragment(rc *types.RenderContext, f *types.Fragment, 
 func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *renderState, pre *prefetch, dst *bytes.Buffer) error {
 	var data any // any: fragment data is opaque to the framework and flows straight into the template engine, whose parameter is already any
 	// Before the handler, so one of this fragment's own that hoists a title
-	// replaces the fixed one: at the same depth, the later declaration wins. A
-	// prefetched handler may already have finished, so startPrefetch declared it
-	// before launching it.
-	if f.Title != "" && pre == nil {
+	// replaces the fixed one: at the same depth, the later declaration wins. Here,
+	// where the fragment is known to be rendered, even when its handler was started
+	// earlier: a Title declared at launch reached pages that never showed it.
+	if f.Title != "" {
 		rc.HoistTitle(f.Title)
 	}
 	ds := types.FragmentDataSource(f)
@@ -267,6 +276,10 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		var err error
 		var elapsed time.Duration
 		data, tags, elapsed, err = pre.wait()
+		// What the handler declared while it ran ahead is the page's now, at this
+		// fragment's place — and goes if this fragment fails, like its own would.
+		pre.log.Place(rc)
+		pre.log.CommitTo(rc, true)
 		state.dataTime += elapsed
 		state.addTags(tags)
 		if err != nil {
@@ -323,6 +336,14 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 		if !e.tmpl.Lookup(name) {
 			if failed, ok := e.failedSources.Load(name); ok {
 				return wrapFragment(label, f.Name, failed.(error))
+			}
+			// Each source reaching here is new to the engine, and costs it a write
+			// lock and a copy of the whole set, kept for good, success or failure.
+			// A source built from request data would grow both without bound, so
+			// past a cap the fragment fails instead. The count is not undone: a
+			// source that fails is remembered too.
+			if e.runtimeSources.Add(1) > maxRuntimeSources {
+				return wrapFragment(label, f.Name, ErrTooManyInlineSources)
 			}
 			if err := e.tmpl.AddSource(name, f.Source); err != nil {
 				err = types.HumanizeTemplateError(err)
