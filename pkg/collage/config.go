@@ -174,15 +174,19 @@ type SecurityConfig struct {
 	// An empty key is not an error: one is generated and the application logs that
 	// it did. That is right for a first run and wrong to deploy, because a
 	// generated key differs in every process — a token issued before a restart is
-	// refused after it, and one issued by an instance is refused by the next.
+	// refused after it, and one issued by an instance is refused by the next, so a
+	// form submitted across a restart, or to another instance of a fleet, fails.
+	// Set it in production.
 	CSRFKey []byte
-	// CSRFCookieName overrides the cookie a token is carried in.
+	// CSRFCookieName overrides the cookie a token is carried in. Defaults to
+	// "collage_csrf".
 	CSRFCookieName string
 	// CSRFFieldName overrides the form field a token is submitted in — the name
 	// {{csrfToken}} renders and the verifier reads. Defaults to "_csrf".
 	CSRFFieldName string
 	// CSRFHeaderName overrides the header a token may be submitted in, which is
-	// how a fetch() sends one when there is no form to put a field in.
+	// how a fetch() sends one when there is no form to put a field in. Defaults to
+	// "X-CSRF-Token".
 	CSRFHeaderName string
 	// CSRFTrustedOrigins are other origins whose forms may post to this
 	// application, each spelled "scheme://host[:port]" — an admin panel on its own
@@ -223,7 +227,7 @@ type TemplateConfig struct {
 	//	//go:embed templates
 	//	var templates embed.FS
 	//
-	//	collage.New(collage.Config{Template: collage.TemplateConfig{
+	//	collage.New(&collage.Config{Template: collage.TemplateConfig{
 	//		FS:   templates,
 	//		Root: "templates",
 	//	}})
@@ -241,9 +245,9 @@ type TemplateConfig struct {
 	// value means the root of FS itself.
 	Root string
 	// Funcs adds template functions to, and may override entries of, the
-	// framework's built-in function map (safeHTML, safeURL, dict, default, upper,
-	// lower, title, join, formatTime, and the per-render functions below). It is
-	// merged over the built-ins, and over any functions plugins contributed, at
+	// framework's built-in function map, the table of which is in docs/fragments.md
+	// (safeHTML, dict, default, pageURL, json and the rest, and the per-render
+	// functions below). It is merged over the built-ins, and over any functions plugins contributed, at
 	// construction, so an entry here under a built-in name replaces that built-in,
 	// and one under a plugin's function's name — AddTemplateFunc's or
 	// AddRenderFunc's — is the one every render calls; New logs each such name
@@ -314,8 +318,16 @@ type CacheConfig struct {
 	// is nil, or CacheDisk, which keeps entries under Dir across restarts (see Dir
 	// and Version).
 	Type CacheType
-	// DefaultTTL is the cache entry lifetime used when a page does not set its own.
-	// Defaults to 5m.
+	// DefaultTTL is the lifetime a built-in store (CacheMemory or CacheDisk) gives
+	// an entry written with a TTL of zero or less. Defaults to 5m; a negative value
+	// is refused by New.
+	//
+	// A page or document never reaches it: Incremental(ttl) and DocumentBuilder's
+	// equivalent refuse a TTL that is not positive, and Static pages are kept until
+	// invalidated, so every entry the framework writes carries a TTL of its own.
+	// A custom Store is not given this value, and applies its own default to a
+	// Set it receives with a TTL of zero. collage.Cached data has its own TTL
+	// argument, and a zero there means the value never expires, not this value.
 	DefaultTTL time.Duration
 	// MaxEntries caps the number of cache entries. Zero means "use the default"
 	// (the default is 10000); a negative value means unlimited, and is left

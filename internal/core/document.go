@@ -125,6 +125,8 @@ func (a *App) rememberDocument(doc *types.Document) {
 // plugin.Host; Documents is not — nothing outside this package reaches it except
 // the static builder, which only reads it — and types.Document carries no
 // framework-owned state analogous to a page's bound layout for a copy to protect.
+//
+// The returned documents must not be modified: they are the application's own.
 func (a *App) Documents() []*types.Document {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

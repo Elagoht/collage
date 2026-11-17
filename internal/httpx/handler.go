@@ -1779,7 +1779,7 @@ func cleanPath(p string) (string, bool) {
 }
 
 // redirectClean sends the request to the clean spelling of its path, as
-// net/http's ServeMux does: 301 for a read, 308 for anything that carries a body,
+// net/http's ServeMux does: 301 for a read, 308 for every other method,
 // so a form is posted again rather than turned into a GET. It returns the status
 // it wrote, for the request hooks' finish.
 func redirectClean(w http.ResponseWriter, r *http.Request, cleaned string) int {

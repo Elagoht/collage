@@ -141,6 +141,7 @@ func (s *stamp) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) e
 | Method | What it does |
 | --- | --- |
 | `DevMode() bool` | Whether the application is in development mode |
+| `BaseURL() string` | The site's public origin without a trailing slash, from `Config.BaseURL`; empty when the application set none |
 | `Pages() []*Page` | Every registered page, each a defensive copy |
 | `Page(name) (*Page, bool)` | One page by name, a defensive copy |
 | `Logger() *slog.Logger` | The application's structured logger |
@@ -239,10 +240,10 @@ func (p *Plugin) OnDrain() { p.draining.Store(true) }
 `OnDrain` is called once, when the drain starts: before `ServerConfig.DrainDelay`
 is waited out and before `CloseStreams`. It must not block — the server goes on
 serving while the drain lasts, and a slow hook delays every step after it. A
-panic in it is contained and logged at Warn with the plugin's name. Like
-`Shutdown`, it reaches every registered plugin, including one whose `Init` never
-ran — a `Shutdown` before the application started — or failed and was rolled
-back, so it must tolerate being called on a plugin that was never initialised.
+panic in it is contained and logged at Warn with the plugin's name. It reaches
+only a running plugin — one whose `Init` succeeded and whose `Shutdown` has not
+run — so a plugin that failed to initialise, or was rolled back, never hears of a
+drain it was not part of.
 
 A plugin that does work only while the application is serving — a scheduler, a
 queue worker — implements `ServeHook`:
@@ -309,7 +310,7 @@ mutation obvious. Where mutation *is* intended it is explicit —
 | `ErrorHook` | `OnError` | On any failure while serving a request — a page, a document, or a mounted asset alike | nothing |
 | `BuildFinishedHook` | `OnBuildFinished` | Once, when a static build has written every file | reports with `ev.Warn`, `ev.Error` |
 | `StreamCloser` | `CloseStreams` | Once, when shutdown begins, before the server waits for open requests (see "Streams and shutdown") | nothing |
-| `DrainHook` | `OnDrain` | Once, when the drain starts, before `DrainDelay` and `CloseStreams`; may reach a plugin whose `Init` never ran or failed (see "Streams and shutdown") | nothing |
+| `DrainHook` | `OnDrain` | Once, when the drain starts, before `DrainDelay` and `CloseStreams`; only a running plugin hears it (see "Streams and shutdown") | nothing |
 | `ServeHook` | `OnServe` | Once, when `ListenAndServe` has bound its port, before it serves; never from `Start()`, `Handler()` or a build. Its ctx is cancelled when the drain starts | nothing |
 
 Two consequences of where `OnAfterRender` sits are worth stating plainly:
@@ -318,8 +319,7 @@ Two consequences of where `OnAfterRender` sits are worth stating plainly:
   cached, so the post-processing is already baked into the stored bytes. A hook
   that needs to run per request — injecting a nonce, a per-visitor token — must
   not be combined with a cacheable strategy on that page.
-- **A rendered error page runs it too**, and `OnBeforeRender` before it (since
-  v0.7.0), so the 404 a server answers with is minified and annotated like the
+- **A rendered error page runs it too**, and `OnBeforeRender` before it, so the 404 a server answers with is minified and annotated like the
   `404.html` an export writes. So does a page an action answers with — a form
   re-rendered with its validation errors is a page.
 
@@ -625,9 +625,8 @@ what earlier ones changed.
    port and before it serves. Only `ListenAndServe` calls it; its ctx is
    cancelled when the drain starts.
 4. `OnDrain` — once, when a shutdown starts, for a `DrainHook`: before
-   `DrainDelay`, before `CloseStreams` and before the server stops. A `Shutdown`
-   before the application started calls it too, without waiting, on plugins whose
-   `Init` never ran.
+   `DrainDelay`, before `CloseStreams` and before the server stops. Only a plugin
+   whose `Init` succeeded and whose `Shutdown` has not run is called.
 5. `Shutdown` — in reverse registration order, *after* the HTTP server has
    stopped, so a plugin is never torn out from under an in-flight request. Unlike
    `Init`, it never stops early: every plugin is given its chance and the failures
@@ -881,8 +880,8 @@ a literal in the call rather than sharing one value between calls.
 **A key the plugin's options do not have is an error too**, at whatever depth,
 and so is one named after a field tagged `json:"-"`: `collage: elagoht/robots:
 unknown key "dissallow" in plugins-config.json; remove it, or rename it to a key
-the plugin documents`. It stops the application at `Configure` or `Init`, where a
-misspelt or renamed key used to be ignored and the option left at its default.
+the plugin documents`. It stops the application at `Configure` or `Init`, rather than a
+misspelt or renamed key being ignored and the option left at its default.
 The error names the key, not its path, so a nested one is found by its name.
 Keys match fields case-insensitively, as `encoding/json` matches them:
 `"Disallow"` is `disallow`, not an unknown key. Decode the full `Options` type in

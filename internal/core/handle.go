@@ -34,8 +34,8 @@ var ErrNilHandler = errors.New("collage: nil handler")
 // cookie, consent banner or HTML toolbar on the way. Which requests those are is
 // decided on the path as it is once the pre-routing checks have passed it, by the
 // same match routing uses, so a request it lets past the middleware is one only
-// this handler answers. WithMiddleware puts one mount back inside the chain, as
-// every mount was before v0.67.0; a middleware that rewrites a request's path
+// this handler answers. WithMiddleware puts one mount inside the chain, as a
+// page is; a middleware that rewrites a request's path
 // into prefix reaches the handler only then. A plugin's Host.Handle always runs
 // inside the chain.
 //
@@ -133,8 +133,7 @@ func (a *App) Use(middleware func(http.Handler) http.Handler) error {
 type HandleOption func(*httpx.HandlerMount)
 
 // WithMiddleware runs the mounted handler inside the middleware chain — what Use
-// added and every plugin's — as a page is, in the same order: the behaviour every
-// mount had before v0.67.0. Use it for a handler that relies on the site's
+// added and every plugin's — as a page is, in the same order. Use it for a handler that relies on the site's
 // middleware: a basicauth or rate limit registered to guard it, the session it
 // reads, a middleware rewriting requests into its prefix.
 func WithMiddleware() HandleOption {

@@ -10,10 +10,10 @@ app, err := collage.New(&collage.Config{
 	Cache: collage.CacheConfig{
 		Enabled:    true,
 		Type:       collage.CacheMemory, // or collage.CacheDisk; "memory" and "disk" still compile
-		DefaultTTL:    5 * time.Minute,
-		MaxEntries:    10000,
-		MaxBytes:      256 << 20, // 0 means the type's default; negative, unlimited
-		WarmLimit:     0,         // pages re-rendered after an invalidation; 0 means 1000, negative, off
+		DefaultTTL: 5 * time.Minute,
+		MaxEntries: 10000,
+		MaxBytes:   256 << 20, // 0 means the type's default; negative, unlimited
+		WarmLimit:  0,         // pages re-rendered after an invalidation; 0 means 1000, negative, off
 	},
 })
 ```
@@ -27,6 +27,11 @@ A disabled cache is a nil cache: every request renders and nothing is stored.
 | `Dynamic()` | Render every request, never serve from cache | `no-store` |
 | `Static()` | Render once, serve from cache until explicitly invalidated | `public, max-age=0, must-revalidate` |
 | `Incremental(ttl)` | Serve from cache until `ttl` elapses since the render | `public, max-age=<ttl seconds>` |
+
+These are the strategy's own values. A response that sets a cookie, carries a
+forgery token or a `PersonaliseHook`'s output, or is `SkipCache`d is `private,
+no-store`; a guarded page is `private, no-cache`; a response served from a stale
+copy, or degraded, is `no-store`.
 
 ```go
 page := collage.NewPage("blog-post").
@@ -46,8 +51,8 @@ A page that calls none of the three is resolved when it is registered:
   (`WithData` with `collage.LoadTagged`, `Load` or `Effect`) or a slot resolver, in its
   layout, its content, anything bound into their slots, their fallbacks, or a
   fragment opened with `WithFragmentPath`.
-- **Static** otherwise: a page rendering templates and fixed values —
-  `WithData(collage.Value(v))`, `WithTitle(s)` — renders the same for every reader.
+- **Static** otherwise: a page whose fragments render templates and fixed
+  values — a fragment's `WithData(collage.Value(v))`, `WithTitle(s)` — renders the same for every reader.
 
 A handler means dynamic because it may read the request, a cookie, the clock, and
 nothing outside the function can tell whether it does. The guess costs a render
@@ -101,9 +106,18 @@ direction, and a registered page's `Strategy` is always the resolved one.
 `Incremental` without a positive TTL is a registration error
 (`collage.ErrInvalidTTL`), not a page that silently never expires.
 
+`CacheConfig.DefaultTTL` is therefore not what a page's entry lives for: every
+page and document the framework caches carries a TTL of its own, `Incremental`'s
+or the practically unbounded one of `Static()`. It is the lifetime the built-in
+stores (`"memory"` and `"disk"`) give a `Set` made with a TTL of zero or less, which
+is the `Cache` contract's meaning for it; a custom `Store` applies its own. It
+defaults to five minutes and a negative value is refused. `collage.Cached` values
+have their own `ttl` argument, and a zero there means the value does not expire.
+
 `Static()` means what it says: its cache entry is written with no practical
-expiry, so `DefaultTTL` does not apply to it. Only `InvalidateTags`, or eviction
-at `MaxEntries`, causes a static page to render again — and when that render
+expiry, so `DefaultTTL` does not apply to it. Only an invalidation or a purge, or the
+cache letting the entry go (eviction at `MaxEntries` or `MaxBytes`, the dependency
+tracker's cap, a restart of a memory cache), causes a static page to render again — and when that render
 fails, the invalidated copy is what answers (see
 [Stale pages](#stale-pages-and-x-collage-cache)). If you want a page to
 expire on a clock, that is `Incremental`.
@@ -149,7 +163,7 @@ client chooses how to spell it: `EXAMPLE.com:8080`, `example.com.` and
 every case a render and an entry of their own — a cheap way to push the pages
 everyone reads out of a bounded cache. The shared render is given the same
 normalised host, so the spelling one request used is never written into what
-another is served. **A cacheable page's render no longer sees the port in
+another is served. **A cacheable page's render does not see the port in
 `r.Host`;** a site served on a port that is not the scheme's default builds its
 absolute URLs from `Config.BaseURL` (`collage.BaseURL(rc)`), which keeps it. A
 dynamic page sees the request's `Host` as sent.
@@ -162,8 +176,8 @@ key holds it), the query parameters
 in the key, and the headers middleware declared with `collage.Vary`. Not the
 reader's cookies, `Authorization`, address or client certificate, and not a query
 parameter `WithCacheParams` left out. A handler on a cacheable page that reads a
-cookie finds none — where it used to find the first reader's, and write it into
-the copy everyone after got. The context's values are not passed on: a value
+cookie finds none: handing it the first reader's would write it into the copy
+everyone after got. The context's values are not passed on: a value
 middleware stored there is hidden from the render, as it would differ between
 readers. Declare it with `collage.Vary` and read it back with `collage.Varied`,
 which is in the key. In development a warning is logged, once per render, when
@@ -409,7 +423,9 @@ successful warm, so skips keep the run one key at a time until one succeeds.
   not asked again for every remaining page; those are left stale, and
   stale-serving applies to them as usual. Skips do not stop it: a page that
   answers 404 (its recipe is dropped), a guarded page (its recipe is dropped, and
-  its first reader renders it), one already fresh, and the two above.
+  its first reader renders it), a URL that no longer answers with its page,
+  one already fresh, a warm that joined a render that did not store, and the two
+  above.
 - **A warm another invalidation overlapped is warmed again.** A render that any
   other `InvalidateTags` or `PurgeTags` overlapped is not stored, as no render is.
   The warmer queues that page again once no invalidation is under way, at most
@@ -559,7 +575,7 @@ func authorCard(ctx context.Context, rc *collage.RenderContext) (Author, []strin
 }
 ```
 
-Thirty pages by two authors now fetch twice, served or exported.
+Thirty pages by two authors fetch twice, served or exported.
 
 The key is a [`collage.Key`](fragments.md#how-a-pages-fragments-run), the same kind
 the fragments of one render share values through: a name and a type, declared once,
@@ -1167,9 +1183,9 @@ rendered again until the disk takes writes again.
 build's directory, newest entries first, until the next one would make it evict —
 so the pages most recently written are `HIT`s from memory at once, and the rest
 are one read away. Stale entries are warmed too, so a restart in the middle of an
-upstream outage still has them to serve. Files written by v0.62 or earlier carry no
-key in their header, so they are not warmed; they are still served, on the first
-request that reads them.
+upstream outage still has them to serve. A file whose header
+carries no key, or whose name is not the one its key hashes to, is not warmed; it
+is still served, on the first request that reads it.
 
 **Instances do not share a cache through one `Dir`.** Each has its own memory
 tier, and memory's answer is final once it holds a page. An invalidation in one
@@ -1294,7 +1310,7 @@ func (m renderTimes) RenderDuration(_ context.Context, page string, d time.Durat
 
 These interfaces cannot gain a method: that would break every implementation, in
 your code and in the plugins that bridge to Prometheus or OpenTelemetry. A signal
-the framework reports in a later release arrives as a separate, optional interface
+the framework reports later arrives as a separate, optional interface
 that it finds by type assertion — so an implementation that embeds the no-op type
 compiles unchanged, and ignores what it did not ask for. An implementation that
 lists all five `Metrics` methods itself works today and has nothing to gain from

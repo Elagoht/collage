@@ -44,10 +44,10 @@ Actions have names of their own, apart from pages, because a `login` page and a
 
 ## A method nothing answers is a 405
 
-A `POST` to a page with no action used to render the page. It is now a 405 carrying
-an `Allow` header. The old behaviour was wrong in the quietest possible way: the
-reader was handed a page that looks like nothing happened, and the application never
-saw the submission.
+A `POST` to a page with no action is a 405 carrying an `Allow` header, not the
+page. Rendering the page would be wrong in the quietest possible way: the reader
+would be handed a page that looks like nothing happened, and the application would
+never see the submission.
 
 `OPTIONS` is answered from the same list, so what a 405 offers and what an `OPTIONS`
 reports cannot disagree.
@@ -301,10 +301,16 @@ A fragment or page an action answers with is rendered like any other, so a form 
 it carries its token too: a form that replaces itself keeps working on the next
 submission.
 
-The scheme is a signed double-submit cookie: a token is a random nonce and its HMAC
-under `Security.CSRFKey`, and the same value goes in a cookie and in the form.
-Verifying needs the key and nothing else — no session table, no store to configure,
-nothing shared between instances.
+The scheme is a signed double-submit cookie: a token is a random nonce, the time it
+was issued, and their HMAC under `Security.CSRFKey`, and the same value goes in a
+cookie and in the form. Verifying needs the key and the clock and nothing else — no
+session table, no store to configure, nothing shared between instances.
+
+A token expires. The issue time is under the signature, so it cannot be moved, and
+a token older than `Security.CSRFTokenTTL` is refused and a fresh one is minted for
+the next form. The default is 12 hours, long enough that a form filled in at the
+reader's own pace still posts; a negative value keeps a token valid for as long as
+its signature verifies, which is a token with no expiry at all.
 
 The form carries the token masked: XORed with a random pad that is new in every
 response, and prefixed `~`. A response that is compressed and reflects what a
@@ -574,7 +580,7 @@ The answer to a GET carries an `ETag`, the hash of the body as sent, and
 answered `304` with no body. The render still runs; what is saved is the body on
 the wire and the client's work, which for a panel refreshed every few seconds is
 most of it. A handler that sets `Cache-Control` itself keeps its own, unless a
-`PersonaliseHook` made the body personal (since v0.43.0): then it is
+`PersonaliseHook` made the body personal: then it is
 `private, no-cache` whatever the handler set.
 
 The response is never cached by the framework.

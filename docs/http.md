@@ -47,8 +47,9 @@ app.Use(loadUser)
 app.RegisterPlugin(ratelimit.New(ratelimit.Options{KeyFunc: userID}))
 ```
 
-`RegisterPlugin` refuses a plugin that adds template functions, which has to be in
-`Config.Plugins`.
+`RegisterPlugin` refuses a plugin that implements `Configurer`
+(`collage.ErrConfigurerRegisteredLate`), which includes one that adds template
+functions: those have to be in `Config.Plugins`.
 
 It runs before routing, so it sees every request — pages, documents, actions,
 mounts, a plugin's handlers and a handler mounted `WithMiddleware` — except one for
@@ -69,7 +70,9 @@ func pageData(ctx context.Context, rc *collage.RenderContext) (view, []string, e
 }
 ```
 
-A static build renders without a request, so no middleware runs for it.
+A static build renders pages without a request, so no middleware runs for the
+renders. It does ask the handler for each file's path to record the response
+headers the file is deployed with, and middleware runs for those requests.
 
 ## `collage.Vary`: content that depends on the request
 
@@ -93,8 +96,9 @@ app.Use(func(next http.Handler) http.Handler {
 - **The value you resolved enters the key, not the raw header.** `tr-TR,tr;q=0.9`
   and `tr` are one entry, because they are one page; a browser's every spelling of
   its preferences is not a new cache entry.
-- **The header name goes into the response's `Vary` header**, so a CDN or proxy
-  between you and the reader keeps the versions apart too.
+- **The header name goes into the `Vary` header of a publicly cacheable
+  response**, so a CDN or proxy between you and the reader keeps the versions
+  apart too.
 - **Call it from middleware.** The key is computed before the page renders, so
   `Vary` from a data handler returns `collage.ErrVaryTooLate` rather than
   pretending to work.
@@ -107,7 +111,7 @@ app.Use(func(next http.Handler) http.Handler {
   [caching](caching.md#cookies-and-cache-control).
 
 This is how to negotiate a language without collage doing it for you — see
-[routing](routing.md#locales) for why it no longer does.
+[routing](routing.md#locales) for why it does not.
 
 ## `collage.SkipCache`: previews
 
@@ -194,7 +198,7 @@ a page refuses it.
 
 ### No middleware, unless you ask
 
-Since v0.67.0 **no middleware runs for it**: neither what `app.Use` added nor any
+**No middleware runs for it**: neither what `app.Use` added nor any
 plugin's — session, flash, i18n, consent, secure, ratelimit, basicauth, compress,
 fail2ban, accesslog, redirects, tenant, the development toolbar. Your handler, your
 middleware: an API has its own idea of
@@ -246,7 +250,7 @@ prefix ending in `/` claims what begins with it, one without its exact path alon
 (`/api` is not `/apix`, nor `/api/`). Since no page, document, action or mount may
 share a handler's prefix, a request that skips the middleware can only reach that
 handler. One consequence: a middleware that rewrites a request's path *into* a
-plain `Handle` prefix no longer reaches it — the request comes out of the chain,
+plain `Handle` prefix does not reach it — the request comes out of the chain,
 and is routed as everything else the chain hands on, to a 404. Mount the target
 `WithMiddleware` if you rewrite into it. The other way round, a middleware that
 rewrites a path *out of* a plain `Handle` prefix — `/api/legacy` to a page — no
@@ -280,7 +284,7 @@ post, a small JSON endpoint next to the pages it changes — use an
 
 A path with dot segments or doubled slashes — `/a/../b`, `/a//b`, `/a/./b` — is
 redirected to its clean spelling before anything reads it, middleware, plugins and
-your own handlers included: 301 for GET and HEAD, 308 for a method that carries a body, the query
+your own handlers included: 301 for GET and HEAD, 308 for any other method, the query
 kept. A middleware that skips `/_collage/` or protects `/admin/` therefore never
 meets `/_collage/../admin`.
 
@@ -306,5 +310,5 @@ pages follow `Config.TrailingSlash`.
 The consequence for a middleware that guards an exact path: compare the canonical
 spelling, or trim the slash first — `strings.TrimSuffix(r.URL.Path, "/")` — and
 prefer a prefix such as `/admin/` where you can. A check on `"/admin/delete"` alone
-used to be bypassed by `/admin/delete/`; the handler no longer runs at that
-spelling, but the middleware still judges the request that arrived.
+is bypassed by `/admin/delete/`; the handler does not run at that spelling, but
+the middleware still judges the request that arrived.

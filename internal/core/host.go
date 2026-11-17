@@ -116,8 +116,7 @@ func (h *hostView) OpenMounted(urlPath string) (fs.File, error) {
 // Handle but one: inside the middleware chain, always. A plugin's endpoint is
 // part of the site — an event stream reading the reader's session or tenant, a
 // /metrics a basicauth was registered to guard — not an application's own API
-// that brings its own middleware, so it keeps what every mount had before
-// v0.67.0, and the Host interface keeps its shape.
+// that brings its own middleware, so it always gets the chain.
 //
 // Its request body is bounded at Server.MaxBodyBytes before the chain, as a
 // page's is, so another plugin's middleware reading a body there reads at
