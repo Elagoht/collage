@@ -3,6 +3,7 @@ package template
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"text/template/parse"
@@ -307,6 +309,51 @@ func (e *HTMLEngine) AddSource(name, src string) error {
 	e.sources[name] = src
 	e.tmpl = next
 	e.idle = &sync.Pool{}
+	return nil
+}
+
+// Escape runs html/template's contextual escaper over the template at path, as the
+// first render of it would, and returns what it refuses.
+//
+// html/template escapes lazily, on first execution, so a template it cannot escape
+// — a string a <script> never closes, branches that leave an attribute in two
+// different states, a partial that ends inside a tag — parses cleanly and fails on
+// the first request instead of at startup. Escaping is a property of the template
+// set, not of the data, so it can be done here without rendering anything: a probe
+// template that includes path under a branch that is never taken makes the
+// escaper walk it, and nothing runs, so no template function is called.
+//
+// It is meant for the templates a fragment executes as its root, which is the
+// context they are escaped in. A partial that is only ever included from the
+// middle of an attribute is escaped in that context when its includer is, and
+// would fail if probed on its own, so callers do not probe it.
+//
+// The probe runs on a copy of the set; the live set and the copies renders hold
+// are untouched.
+func (e *HTMLEngine) Escape(path string) error {
+	e.mu.RLock()
+	tmpl := e.tmpl
+	e.mu.RUnlock()
+
+	if tmpl.Lookup(path) == nil {
+		return fmt.Errorf("%w: %s", ErrTemplateNotFound, path)
+	}
+	probe, err := tmpl.Clone()
+	if err != nil {
+		return fmt.Errorf("collage: clone template set: %w", err)
+	}
+	const probeName = "collage:escape-probe"
+	if _, err := probe.New(probeName).Parse(`{{if false}}{{template ` + strconv.Quote(path) + ` .}}{{end}}`); err != nil {
+		return err
+	}
+	if err := probe.ExecuteTemplate(io.Discard, probeName, nil); err != nil {
+		var terr *template.Error
+		if errors.As(err, &terr) {
+			return fmt.Errorf("collage: template %s: %w", path, err)
+		}
+		// Anything else came from running the probe, which runs nothing.
+		return err
+	}
 	return nil
 }
 

@@ -360,6 +360,15 @@ func (a *App) checkTemplates(p *types.Page) error {
 			return fmt.Errorf("%w: page %q fragment %q references %s",
 				ErrTemplateNotFound, p.Name, f.Name, describeTemplate(f))
 		}
+		// html/template escapes on a template's first execution, so a template it
+		// cannot escape passes parsing and fails on the first request — for an
+		// optional fragment, as a section that is just missing. Probed here, for
+		// the templates a fragment is the root of, which is the context they run in.
+		if escaper, ok := a.tmpl.(interface{ Escape(path string) error }); ok {
+			if err := escaper.Escape(name); err != nil {
+				return fmt.Errorf("collage: page %q fragment %q: %w", p.Name, f.Name, types.HumanizeTemplateError(err))
+			}
+		}
 		// The type check runs before the slot check, whose early return for a
 		// slot called by a dynamic name would otherwise skip it.
 		findings = append(findings, a.typeFindings(p, f, name)...)
