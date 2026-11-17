@@ -16,9 +16,12 @@ type BuildOptions struct {
 	// locale each page declares in its own paths.
 	Locales []string
 	// Clean removes OutDir's existing contents (not OutDir itself) before writing.
-	// Build refuses to run at all when OutDir resolves to a filesystem root, and
-	// refuses to clean (though it still writes) when OutDir resolves to a
-	// repository root; see ErrDangerousOutDir.
+	// Build refuses to run at all — Clean or not — when OutDir resolves to a
+	// filesystem root. With Clean it also aborts the whole build, before anything
+	// is deleted or written, when OutDir is a repository root, the working
+	// directory or module root or a directory above either, or a non-empty
+	// directory a previous build did not create (it has no .collage-export
+	// marker); see ErrDangerousOutDir.
 	Clean bool
 	// Concurrency bounds how many pages render and write at once. Zero or negative
 	// means 1. The report is the same whatever the value: results are merged back
