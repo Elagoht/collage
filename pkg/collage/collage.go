@@ -532,15 +532,33 @@ const (
 
 // Metrics receives the framework's counters and timings. Implement it to bridge the
 // framework into a metrics backend; a nil Metrics means no-op.
+//
+// Embed NoopMetrics in the implementation. Metrics cannot gain a method without
+// breaking every implementation, so a signal the framework reports later arrives
+// as a separate optional interface, found by type assertion, and an
+// implementation that embeds NoopMetrics keeps compiling and ignores it.
 type Metrics = observability.Metrics
 
+// NoopMetrics is a Metrics whose methods do nothing. Embed it in a Metrics
+// implementation, and define only the methods it measures.
+type NoopMetrics = observability.NoopMetrics
+
 // Tracer starts one span per request, render, and fragment. Implement it to bridge
-// the framework into a tracing backend; a nil Tracer means no-op.
+// the framework into a tracing backend; a nil Tracer means no-op. Embed NoopTracer,
+// for the reason given at Metrics.
 type Tracer = observability.Tracer
 
+// NoopTracer is a Tracer that starts spans which do nothing. Embed it in a Tracer
+// implementation.
+type NoopTracer = observability.NoopTracer
+
 // Span is the unit of work a Tracer starts. A Tracer implementation returns one, so
-// this alias is required to implement Tracer at all.
+// this alias is required to implement Tracer at all. Embed NoopSpan, for the reason
+// given at Metrics.
 type Span = observability.Span
+
+// NoopSpan is a Span whose methods do nothing. Embed it in a Span implementation.
+type NoopSpan = observability.NoopSpan
 
 // CacheEvent identifies a single kind of cache operation reported to Metrics. A
 // Metrics implementation receives one, so this alias is required to implement

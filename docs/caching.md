@@ -303,7 +303,7 @@ other key is still invalidated and the failures are joined into the returned
 error, because a partial invalidation that reports success is how stale pages
 survive a deploy.
 
-When your store implements `collage.TaggedCache`, `Cache.Invalidate(ctx, tags)` is
+When your store implements `collage.TaggedCache`, `Invalidate(ctx, tags)` is
 called as well as the per-key removals the tracker resolved — unless the store is
 also a `StaleCache`, which is asked to mark by tag instead. Entries it drops are
 not included in the returned count — the `Cache` contract gives `Invalidate` no
@@ -321,8 +321,8 @@ app.InvalidateTags(ctx, collage.PathTag("/blog/hello"))
 Plugins observe invalidation through `OnCacheInvalidate`; every plugin
 implementing it is called, even after one before it failed, and the failures come
 back joined from `InvalidateTags`. Triggering one is the application's. The event
-names the tags, and — in `Paths` —
-the URL paths of the cached entries it invalidated: what a CDN has to purge, and a
+names the tags, and — in `Entries` —
+the host and URL path of each cached entry it invalidated: what a CDN has to purge, and a
 search engine be told has changed. A page that was never cached is not in it.
 
 An action that asks for invalidation declaratively, through
@@ -656,9 +656,10 @@ not keyed by the cache key above, not tagged, and not reachable by
 
 That separation is the whole reason assets are a separate mechanism rather than a
 `Document` returning file bytes, and it follows from two properties of this
-cache. It is **in memory and bounded by entry count, not by bytes**: one 50 MB zip
-stored in it would displace thousands of pages under a `MaxEntries` that was
-chosen for pages. And its ETag is a **content hash of the whole body**, which is
+cache. It is **in memory and bounded by entry count and a byte cap (`MaxBytes`)
+chosen for pages**: one 50 MB zip stored in it would displace thousands of pages
+under a `MaxEntries` that was chosen for pages, or be refused outright by a
+`MaxBytes` smaller than it. And its ETag is a **content hash of the whole body**, which is
 the right thing for a rendered page and not viable to recompute over a 500 MB
 file on every request.
 
@@ -747,59 +748,84 @@ The interface is `collage.Cache`:
 type Cache interface {
 	Get(ctx context.Context, key string) (content []byte, etag string, found bool)
 	Set(ctx context.Context, key string, content []byte, ttl time.Duration) (etag string, err error)
-	Invalidate(ctx context.Context, tags []string) error
 	InvalidateKey(ctx context.Context, key string) error
 	Clear(ctx context.Context) error
 }
 ```
 
+Four methods. Invalidating by tag is `Invalidate`, which belongs to
+[`TaggedCache`](#tag-aware-writes), because only a store that records tags at write
+time can do it.
+
 The contract:
 
 - `Get` reports `found == false` for an expired entry, and callers must not mutate
   the returned slice.
+- `Get` has no error, by design: a lookup that cannot be answered is a miss, and
+  the page is rendered. A store that can fail, such as a remote one, reports an
+  outage through its own logging or metrics — or implements
+  [`SharedCache`](#a-cache-a-fleet-shares), whose `GetData` returns one.
 - `Set` returns the ETag the entry is stored under; that value is what the fresh
   response advertises, so it must be the same one `Get` will report later.
   `collage.ETag(content)` computes the framework's own if you have no reason to
   derive your own.
+- `Set` must not keep the slice it is given: the caller may reuse it.
 - A `ttl <= 0` means "use your own default".
 - The only defined failure mode is context cancellation.
 - It is called from request goroutines, so it must be safe for concurrent use.
-- `Invalidate` and `InvalidateKey` remove. A store that implements only these
-  keeps the pre-v0.63 behaviour: an invalidated page is gone, and a re-render that
-  fails fails the request.
+- `InvalidateKey` removes, and a key with no entry is not an error.
+- `Clear` removes everything. The framework never calls it while serving: it is for
+  tests and `collagetest.CacheSuite`, and the tiered cache of `Type: "disk"`, which
+  clears both of its tiers when it is itself cleared.
+- A store that implements only these keeps the pre-v0.63 behaviour: an invalidated
+  page is gone, and a re-render that fails fails the request.
 
-A minimal implementation, using nothing but the public API:
+A minimal implementation, using nothing but the public API. It copies what it is
+given, keeps each entry's expiry, and defaults a `ttl` of zero:
 
 ```go
-// memoStore is a Cache over a map, for illustration.
-type memoStore struct {
-	mu      sync.Mutex
-	entries map[string][]byte
+type memoEntry struct {
+	content []byte
+	expires time.Time
 }
 
-// Get returns the stored bytes for key, if any.
+// memoStore is a Cache over a map, for illustration.
+type memoStore struct {
+	mu         sync.Mutex
+	entries    map[string]memoEntry
+	defaultTTL time.Duration
+}
+
+func newMemoStore(defaultTTL time.Duration) *memoStore {
+	return &memoStore{entries: make(map[string]memoEntry), defaultTTL: defaultTTL}
+}
+
+// Get returns the stored bytes for key, if there are any and they have not
+// expired.
 func (s *memoStore) Get(_ context.Context, key string) ([]byte, string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	content, ok := s.entries[key]
-	if !ok {
+	entry, ok := s.entries[key]
+	if !ok || !time.Now().Before(entry.expires) {
 		return nil, "", false
 	}
-	return content, collage.ETag(content), true
+	return entry.content, collage.ETag(entry.content), true
 }
 
-// Set stores content under key and returns its ETag.
-func (s *memoStore) Set(_ context.Context, key string, content []byte, _ time.Duration) (string, error) {
+// Set stores a copy of content under key and returns its ETag.
+func (s *memoStore) Set(_ context.Context, key string, content []byte, ttl time.Duration) (string, error) {
+	if ttl <= 0 {
+		ttl = s.defaultTTL
+	}
+	stored := bytes.Clone(content) // the caller may reuse its slice
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.entries[key] = content
-	return collage.ETag(content), nil
+	s.entries[key] = memoEntry{content: stored, expires: time.Now().Add(ttl)}
+	return collage.ETag(stored), nil
 }
-
-// Invalidate leaves tag resolution to the framework's tracker.
-func (s *memoStore) Invalidate(_ context.Context, _ []string) error { return nil }
 
 // InvalidateKey removes one entry.
 func (s *memoStore) InvalidateKey(_ context.Context, key string) error {
@@ -815,7 +841,7 @@ func (s *memoStore) Clear(_ context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.entries = make(map[string][]byte)
+	s.entries = make(map[string]memoEntry)
 	return nil
 }
 
@@ -1162,6 +1188,21 @@ edit.
 exactly where the output changes between runs, and nobody bumps a version to save a
 file — the version guard catches a released build, not a developer.
 
+**Old builds' directories are removed.** Every deploy has a new `Version`, so a new
+subdirectory, and each can hold up to `MaxBytes`. At startup the cache removes the
+other builds' directories — only names it generates itself (16 lower-case hex
+characters), never `data/` or anything else you keep in `Dir` — once nothing has been
+written to them for an hour. The wait is for a rolling deploy, where the previous
+build is still serving and writing beside the new one; a directory that is swept
+while its build is somehow still running is recreated by that build's next write,
+and costs it a cold cache. Temporary files a crash left behind are removed too, once
+they are ten minutes old.
+
+**A damaged file is a miss.** An entry is checked against its own ETag when it is
+read, so a file cut short by a full disk or a crash is rendered again rather than
+served with the ETag of the whole page, which a client would answer with a `304`.
+Entries are flushed to disk before they are renamed into place.
+
 Each entry is one file: a JSON header line carrying the ETag, the expiry and the
 dependency tags, then the content. Written through a temporary file and a rename, so
 a reader sees either the whole previous entry or the whole new one. The header also carries the key and whether the entry was marked stale, which is
@@ -1173,3 +1214,32 @@ second structure that can disagree with the first or be left behind by a crash.
 Keys are hashed before they become filenames. `Cache` is a public interface and a
 caller can store under anything, so no key can name a path, a parent directory, or a
 filename longer than the filesystem accepts.
+
+## Metrics and tracing
+
+`Config.Observability.Metrics` receives the cache's events (`CacheEvent`: a hit, a
+miss, a store, an invalidation) along with render, fragment and response timings,
+and `Tracer` starts the spans. A nil value of either means "do nothing".
+
+**Embed `collage.NoopMetrics`** in a `Metrics` implementation, and `collage.NoopTracer`
+and `collage.NoopSpan` in a `Tracer` and its spans, and define only the methods
+that measure something:
+
+```go
+type renderTimes struct {
+	collage.NoopMetrics
+	histogram *prometheus.HistogramVec
+}
+
+func (m renderTimes) RenderDuration(_ context.Context, page string, d time.Duration, cacheHit bool) {
+	m.histogram.WithLabelValues(page, strconv.FormatBool(cacheHit)).Observe(d.Seconds())
+}
+```
+
+These interfaces cannot gain a method: that would break every implementation, in
+your code and in the plugins that bridge to Prometheus or OpenTelemetry. A signal
+the framework reports in a later release arrives as a separate, optional interface
+that it finds by type assertion — so an implementation that embeds the no-op type
+compiles unchanged, and ignores what it did not ask for. An implementation that
+lists all five `Metrics` methods itself works today and has nothing to gain from
+doing so.
