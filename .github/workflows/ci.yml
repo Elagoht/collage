@@ -98,6 +98,9 @@ jobs:
           # fails on the one the image still carries.
           check-latest: true
           cache: true
+      # The gate's own filter, which the module's ./... does not include.
+      - name: apidiffgate tests
+        run: go test ./.github/apidiffgate
       - name: apidiff
         run: bash .github/apidiff.sh
 
