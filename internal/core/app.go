@@ -638,16 +638,19 @@ func New(cfg Config) (*App, error) {
 	// negative MaxEntries means no entry cap on the cache, not an unbounded
 	// tracker: the cache is still bounded by MaxBytes while the tracker is not
 	// pruned on eviction, so each tag keeps the default cap.
+	//
+	// The total is always capped, with a custom Store too. The host tag is
+	// exempt from the per-tag cap (a dropped key would be left with no host),
+	// so MaxKeys is what bounds it: without one, distinct query strings or Host
+	// headers against a cacheable page grew the tracker for as long as the
+	// process ran, behind a Redis-backed cache that never showed the growth.
 	tracker := dependency.NewMemory()
-	switch {
-	case cfg.Cache.MaxEntries > 0:
-		tracker.MaxKeysPerTag = cfg.Cache.MaxEntries
-		if cfg.Cache.Store == nil {
-			tracker.MaxKeys = cfg.Cache.MaxEntries
-		}
-	default:
-		tracker.MaxKeysPerTag = defaultMaxEntries
+	capacity := defaultMaxEntries
+	if cfg.Cache.MaxEntries > 0 {
+		capacity = cfg.Cache.MaxEntries
 	}
+	tracker.MaxKeysPerTag = capacity
+	tracker.MaxKeys = capacity
 
 	app.tmpl = tmpl
 	// On when the page cache is, and never in development: there the page cache
