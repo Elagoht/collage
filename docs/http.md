@@ -253,7 +253,13 @@ from a Prometheus plugin, an upload endpoint — are mounted with `Host.Handle`,
 those always run inside the middleware: they are part of the site, and may read
 the session or rely on a `basicauth` in front of them.
 
-The prefix must begin and end with `/` and cannot be `/` alone. A prefix that
+The prefix must begin with `/` and cannot be `/` alone. One ending in `/` claims
+everything beneath it; one without is that exact path — `/metrics`,
+`/.well-known/security.txt`. It must not hold a doubled slash or a dot segment
+(`/a/./b/`, `/a/../b/`), which the clean-path redirect removes before a handler is
+asked, so such a prefix could never match: that is `ErrInvalidPrefix`, with the
+reason in the message. A segment that only *begins* with a dot is fine, so
+`/.well-known/acme-challenge/` can be mounted. A prefix that
 covers a page, a document, an action, a redirect or a mount is refused at startup,
 whichever was registered first — `app.Handle("/api/", …)` next to an action at
 `/api/count` is `ErrMountShadowsRoute`.
