@@ -41,11 +41,46 @@ func TestAliasedTypes_MethodAllowlist(t *testing.T) {
 		{reflect.TypeOf((*collage.Action)(nil)), nil},
 		{reflect.TypeOf((*collage.RenderContext)(nil)), []string{"ActionURL", "Asset", "Context", "Hoist", "HoistAlternate", "HoistLink", "HoistMeta", "HoistProperty", "HoistStylesheet", "HoistTitle", "Param", "URL", "WithContext"}},
 		{reflect.TypeOf((*collage.Redirect)(nil)), nil},
+		{reflect.TypeOf(collage.NoopMetrics{}), []string{"CacheEvent", "FragmentDuration", "HTTPResponse", "Invalidation", "RenderDuration"}},
+		{reflect.TypeOf(collage.NoopTracer{}), []string{"StartSpan"}},
+		{reflect.TypeOf(collage.NoopSpan{}), []string{"End", "RecordError", "SetAttribute"}},
 	} {
 		if got := exportedMethods(c.typ); !slices.Equal(got, c.want) {
 			t.Errorf("%v methods = %v, want %v", c.typ, got, c.want)
 		}
 	}
+}
+
+// Metrics, Tracer and Span cannot grow after v1.0: a method added to them
+// breaks every implementation. The Noop types are what an implementation embeds,
+// so that what the framework reports later arrives as an optional interface and
+// an embedder only overrides what it measures.
+type onlyRenders struct {
+	collage.NoopMetrics
+	renders int
+}
+
+func (m *onlyRenders) RenderDuration(context.Context, string, time.Duration, bool) { m.renders++ }
+
+type namesSpans struct{ collage.NoopTracer }
+
+func TestNoopMetricsAndTracer_AreEmbeddable(t *testing.T) {
+	m := &onlyRenders{}
+	var metrics collage.Metrics = m
+	metrics.RenderDuration(context.Background(), "p", time.Second, false)
+	metrics.Invalidation(context.Background(), nil, 0) // promoted, does nothing
+	if m.renders != 1 {
+		t.Errorf("renders = %d, want the override called once", m.renders)
+	}
+	var tracer collage.Tracer = namesSpans{}
+	ctx, span := tracer.StartSpan(context.Background(), "x")
+	span.SetAttribute("k", "v")
+	span.RecordError(nil)
+	span.End()
+	if ctx == nil {
+		t.Error("StartSpan returned a nil context")
+	}
+	var _ collage.Span = collage.NoopSpan{}
 }
 
 // A store that only gets, sets and drops entries is a Cache; invalidating tags
