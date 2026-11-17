@@ -1522,8 +1522,12 @@ func (h *Handler) invalidatedSince(m invalidationMark) bool {
 	return h.localMark().started != m.started
 }
 
-// foreignMarker matches the forgery-token marker of any key.
-var foreignMarker = regexp.MustCompile(`collage-csrf-[A-Za-z0-9_-]{32}`)
+// foreignMarker matches the rendered field of any key's forgery-token marker: the
+// value attribute csrf.Personalise replaces, not the bare marker. Text that merely
+// looks like one — a post quoting it — is escaped when rendered, so it cannot carry
+// the quote that closes the attribute's opening one, and matching it would drop a
+// good page on every request.
+var foreignMarker = regexp.MustCompile(`value="collage-csrf-[A-Za-z0-9_-]{32}"`)
 
 // staleMarker reports whether content carries a forgery-token marker this
 // application would not replace: another key's, or any at all when forgery
@@ -1534,7 +1538,7 @@ func (h *Handler) staleMarker(content []byte) bool {
 	}
 	current := ""
 	if h.csrf != nil {
-		current = h.csrf.Marker()
+		current = `value="` + h.csrf.Marker() + `"`
 	}
 	for _, found := range foreignMarker.FindAll(content, -1) {
 		if string(found) != current {
