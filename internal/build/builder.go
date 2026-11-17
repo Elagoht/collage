@@ -1029,7 +1029,7 @@ func (b *Builder) checkNoOutputCollisions(tasks []buildTask, docs []documentTask
 		// are case-insensitive, so "Go" and "go" are one file there and the second
 		// write would silently replace the first. Folded on every platform, so a
 		// build that works on Linux does not fail only on a colleague's laptop.
-		file = strings.ToLower(file)
+		file = ascii.LowerString(file)
 		for dir := path.Dir(file); dir != "/" && dir != "."; dir = path.Dir(dir) {
 			if previous, taken := claimed[dir]; taken {
 				if previous.dir {

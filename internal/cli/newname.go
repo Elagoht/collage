@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+
+	"github.com/Elagoht/collage/internal/ascii"
 )
 
 // checkModulePath reports why path cannot be the module path of a new project,
@@ -47,11 +49,11 @@ func checkModulePath(path string) error {
 // device name Windows will not create a file or directory called.
 func windowsReserved(element string) bool {
 	base, _, _ := strings.Cut(element, ".")
-	switch strings.ToLower(base) {
+	switch ascii.LowerString(base) {
 	case "con", "prn", "aux", "nul":
 		return true
 	}
-	lower := strings.ToLower(base)
+	lower := ascii.LowerString(base)
 	return len(lower) == 4 && (strings.HasPrefix(lower, "com") || strings.HasPrefix(lower, "lpt")) && lower[3] >= '1' && lower[3] <= '9'
 }
 
