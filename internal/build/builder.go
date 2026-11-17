@@ -63,6 +63,13 @@ var ErrInvalidOutDir = errors.New("collage: empty output directory")
 // because a config field was blank or mistyped.
 var ErrDangerousOutDir = errors.New("collage: refusing to use a dangerous output directory")
 
+// ExportMarker is the file a build leaves in an OutDir it created, or cleaned,
+// and the proof a later Clean looks for before it deletes anything. "Is this a
+// repository root" cannot tell a previous export from the project's own static/
+// or templates/ directory — both are ordinary directories — so Clean deletes only
+// what a build of this program says it made.
+const ExportMarker = ".collage-export"
+
 // ErrOutputPathCollision is returned by Build when two tasks resolve to the same
 // output file. Writing one over the other drops a page from the build with nothing
 // in the report to show for it, which is the kind of silent loss this framework
@@ -201,9 +208,12 @@ type Options struct {
 	// locale each page declares in its own Paths.
 	Locales []string
 	// Clean removes OutDir's existing contents (not OutDir itself) before writing.
-	// Build additionally refuses to run at all — Clean or not — when OutDir
-	// resolves to a filesystem root, and refuses to clean (though it still writes)
-	// when OutDir resolves to a repository root; see ErrDangerousOutDir.
+	// Build refuses to run at all — Clean or not — when OutDir resolves to a
+	// filesystem root. With Clean it also aborts the whole build, before anything
+	// is deleted or written, when OutDir is a repository root, the working
+	// directory or module root or a directory above either, or a non-empty
+	// directory a previous build did not create (no ExportMarker); see
+	// ErrDangerousOutDir.
 	Clean bool
 	// Concurrency bounds how many pages render and write concurrently. Zero or
 	// negative defaults to 1 — sequential, matching the framework's determinism
@@ -1015,6 +1025,11 @@ func (b *Builder) checkNoOutputCollisions(tasks []buildTask, docs []documentTask
 	// a directory — or the other way round — collides as two files do. Two
 	// outputs needing one directory do not.
 	claimFile := func(file, owner string) error {
+		// Keyed on the folded path: the default file systems on macOS and Windows
+		// are case-insensitive, so "Go" and "go" are one file there and the second
+		// write would silently replace the first. Folded on every platform, so a
+		// build that works on Linux does not fail only on a colleague's laptop.
+		file = ascii.LowerString(file)
 		for dir := path.Dir(file); dir != "/" && dir != "."; dir = path.Dir(dir) {
 			if previous, taken := claimed[dir]; taken {
 				if previous.dir {
@@ -1546,13 +1561,25 @@ func (b *Builder) checkOutDir() (string, error) {
 		return "", fmt.Errorf("%w: %s", ErrDangerousOutDir, resolved)
 	}
 
-	// Scoped to Clean, unlike the filesystem-root check above: building (without
-	// deleting) into a repository root is a plausible setup — a "docs/" or
-	// "dist/" directory inside the project — but deleting its contents because
-	// Options.OutDir was left pointing at the wrong directory is not something a
-	// blank or mistyped config field should be able to trigger.
-	if b.opts.Clean && hasRepositoryMarker(resolved) {
-		return "", fmt.Errorf("%w: %s", ErrDangerousOutDir, resolved)
+	// Everything below is scoped to Clean, unlike the filesystem-root check above:
+	// building (without deleting) into a repository root is a plausible setup — a
+	// "docs/" or "dist/" directory inside the project — but deleting a directory's
+	// contents because Options.OutDir was left pointing at the wrong place, or
+	// "-out .." was typed, is not something a mistyped field should be able to
+	// trigger.
+	if !b.opts.Clean {
+		return resolved, nil
+	}
+	if hasRepositoryMarker(resolved) || containsProject(resolved) {
+		return "", fmt.Errorf("%w: %s holds the project itself", ErrDangerousOutDir, resolved)
+	}
+	// A directory that already has files in it and was not made by a build is
+	// someone's: static/, templates/, a downloads folder. Without the marker the
+	// only evidence it is disposable is that its name was typed.
+	if !hasExportMarker(resolved) && !isEmptyOrMissing(resolved) {
+		return "", fmt.Errorf("%w: %s is not empty and was not created by a collage build (no %s in it); "+
+			"empty it yourself, or create an empty %s there once to say it is a build output",
+			ErrDangerousOutDir, resolved, ExportMarker, ExportMarker)
 	}
 	return resolved, nil
 }
@@ -1572,14 +1599,28 @@ func (b *Builder) prepareOutDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Decided before anything is cleaned or written: the marker may be written
+	// only into a directory this build owns — one it creates, one that was empty,
+	// or one a build already marked. A plain build into a populated directory of
+	// the user's must not be what later makes it fair game for Clean.
+	owned := hasExportMarker(resolved) || isEmptyOrMissing(resolved)
 	if b.opts.Clean {
-		if err := cleanDirContents(resolved); err != nil {
+		if err := cleanDirContents(resolved, ExportMarker); err != nil {
 			return "", fmt.Errorf("collage: clean %q: %w", resolved, err)
 		}
 	}
 
 	if err := os.MkdirAll(resolved, 0o755); err != nil {
 		return "", fmt.Errorf("collage: create output directory %q: %w", resolved, err)
+	}
+	if owned {
+		marker := filepath.Join(resolved, ExportMarker)
+		if _, err := os.Lstat(marker); err != nil {
+			const note = "Created by collage; \"collage export -clean\" empties this directory.\n"
+			if err := os.WriteFile(marker, []byte(note), 0o644); err != nil {
+				return "", fmt.Errorf("collage: write %q: %w", marker, err)
+			}
+		}
 	}
 
 	// Re-resolved after MkdirAll: checkOutDir may have stopped short of the full
@@ -1630,9 +1671,10 @@ func resolveExistingPrefix(path string) (string, error) {
 	return filepath.Join(append([]string{resolved}, missing...)...), nil
 }
 
-// cleanDirContents removes every entry inside dir, leaving dir itself in place. A
-// dir that does not exist yet is not an error: there is nothing to clean.
-func cleanDirContents(dir string) error {
+// cleanDirContents removes every entry inside dir except the one named keep,
+// leaving dir itself in place. A dir that does not exist yet is not an error:
+// there is nothing to clean.
+func cleanDirContents(dir, keep string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1641,6 +1683,9 @@ func cleanDirContents(dir string) error {
 		return err
 	}
 	for _, entry := range entries {
+		if entry.Name() == keep {
+			continue
+		}
 		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
 			return err
 		}
@@ -1669,4 +1714,61 @@ func hasRepositoryMarker(dir string) bool {
 		}
 	}
 	return false
+}
+
+// hasExportMarker reports whether a previous build left its ExportMarker in dir.
+func hasExportMarker(dir string) bool {
+	info, err := os.Lstat(filepath.Join(dir, ExportMarker))
+	return err == nil && info.Mode().IsRegular()
+}
+
+// isEmptyOrMissing reports whether dir does not exist or has nothing in it.
+func isEmptyOrMissing(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return os.IsNotExist(err)
+	}
+	return len(entries) == 0
+}
+
+// containsProject reports whether dir is, or lies above, the program's working
+// directory or its module root — the nearest ancestor of the working directory
+// holding a go.mod. "export -out .. -clean" names such a directory: it is not a
+// repository root itself, so hasRepositoryMarker passes it, and cleaning it
+// empties the project and whatever sits beside it. dir is already resolved; the
+// working directory is resolved here for the same reason, so a symlinked checkout
+// is compared by where it really is.
+func containsProject(dir string) bool {
+	wd, err := os.Getwd()
+	if err != nil {
+		// Without a working directory there is nothing to compare against, and
+		// "cannot tell" must not read as "safe to delete".
+		return true
+	}
+	if resolved, err := filepath.EvalSymlinks(wd); err == nil {
+		wd = resolved
+	}
+	if isWithin(dir, wd) {
+		return true
+	}
+	for root := wd; ; {
+		if _, err := os.Stat(filepath.Join(root, "go.mod")); err == nil {
+			return isWithin(dir, root)
+		}
+		parent := filepath.Dir(root)
+		if parent == root {
+			return false
+		}
+		root = parent
+	}
+}
+
+// isWithin reports whether target is dir or lies under it. It uses filepath.Rel
+// rather than a string prefix so "/out" does not claim "/outside".
+func isWithin(dir, target string) bool {
+	rel, err := filepath.Rel(dir, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }

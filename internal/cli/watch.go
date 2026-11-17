@@ -26,7 +26,7 @@ type sources map[string]stamp
 // watchedFile reports whether a change to the file at rel — relative to the
 // project root, with forward slashes — changes what "collage dev" runs.
 //
-// Only what the compiled program is made of, and the environment it is started
+// Only what the compiled program is made of, and the configuration and environment it is started
 // with. Templates and static files are read from disk on every request in
 // development, so a change to one needs no rebuild; a test file is not in the
 // binary; and anything the running program writes — its cache, an export — is
@@ -41,6 +41,13 @@ func watchedFile(rel string) bool {
 		return true
 	case name == "go.mod" || name == "go.sum":
 		return !strings.Contains(rel, "/")
+	}
+	// The program reads plugins-config.json once, at start: a setting edited
+	// after "collage plugin add" would otherwise run stale with nothing to say so.
+	// It is restarted through the same rebuild as a source change, which is
+	// simpler than telling the two apart and costs a cached build.
+	if rel == pluginConfigFile {
+		return true
 	}
 	for _, env := range devEnvFiles {
 		if rel == env {

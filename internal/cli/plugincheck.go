@@ -13,7 +13,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/Elagoht/collage/internal/cli/plugincontract"
 )
@@ -51,7 +50,7 @@ func (c *CLI) runPluginCheck(ctx context.Context, args []string) int {
 		dir = positional[0]
 	}
 	// Ctrl-C stops the go child, and the throwaway directory is still removed.
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, ShutdownSignals...)
 	defer stop()
 	if err := c.pluginCheck(ctx, dir, *release, *run); err != nil {
 		fmt.Fprintf(c.stderr(), "collage: plugin check: %v\n", err)

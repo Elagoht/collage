@@ -11,7 +11,7 @@ type homeView struct {
 // WithData rather than a data handler, and the page stays static.
 func Home() *collage.Fragment {
 	return collage.NewInlineFragment("home", homeBlock).
-		WithData(collage.Value(homeView{Name: "@@NAME@@"})).
+		WithData(collage.Value(homeView{Name: @@NAME_GO@@})).
 		Build()
 }
 

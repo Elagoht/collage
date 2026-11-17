@@ -543,7 +543,7 @@ func TestBuild_StaticParams_EscapeWritesNothingOutside(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
-	if len(entries) != 0 {
+	if len(entries) != 1 || entries[0].Name() != ExportMarker { // the marker is the only thing a build leaves
 		t.Fatalf("OutDir has unexpected entries: %v", entries)
 	}
 }
@@ -738,6 +738,9 @@ func TestBuild_Clean_RefusesRepositoryRoot(t *testing.T) {
 // build writes into it.
 func TestBuild_Clean_RemovesExistingContents(t *testing.T) {
 	out := resolvedTempDir(t)
+	if err := os.WriteFile(filepath.Join(out, ExportMarker), nil, 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
 	stale := filepath.Join(out, "stale.html")
 	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
 		t.Fatalf("write stale file: %v", err)

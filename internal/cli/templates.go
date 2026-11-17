@@ -2,11 +2,13 @@ package cli
 
 import (
 	"embed"
+	"html"
 	"io/fs"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -133,6 +135,12 @@ func targetName(rel string) string {
 func substitute(content []byte, module, name string) []byte {
 	s := string(content)
 	s = strings.ReplaceAll(s, "@@MODULE@@", module)
+	// The name goes into Go source as a literal and into the home page's markup;
+	// a name with a quote or an angle bracket in it (--module makes one possible)
+	// would otherwise end the literal or open a tag. Bare @@NAME@@ is for places
+	// that are neither — the README, .gitignore.
+	s = strings.ReplaceAll(s, "@@NAME_GO@@", strconv.Quote(name))
+	s = strings.ReplaceAll(s, "@@NAME_HTML@@", html.EscapeString(name))
 	s = strings.ReplaceAll(s, "@@NAME@@", name)
 	return []byte(s)
 }

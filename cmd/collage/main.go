@@ -13,14 +13,20 @@ package main
 import (
 	"context"
 	"os"
+	"os/signal"
 
 	"github.com/Elagoht/collage/internal/cli"
 )
 
 func main() {
-	c := &cli.CLI{
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
-	}
-	os.Exit(c.Run(context.Background(), os.Args[1:]))
+	// One context for the whole run, cancelled by Ctrl-C, a terminate or a
+	// hangup. With a bare Background context an interrupt killed the process
+	// where it stood, so no command's deferred cleanup ran: the temporary
+	// directories inspect, routes and check build into were left behind. Now
+	// the command returns, cleaning up, and the exit below follows.
+	ctx, stop := signal.NotifyContext(context.Background(), cli.ShutdownSignals...)
+	code := (&cli.CLI{Stdout: os.Stdout, Stderr: os.Stderr}).Run(ctx, os.Args[1:])
+	// os.Exit skips defers, so the handler is released explicitly.
+	stop()
+	os.Exit(code)
 }

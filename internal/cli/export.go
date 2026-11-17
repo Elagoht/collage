@@ -26,8 +26,15 @@ project, appending -clean when this command's own -clean was given.
 The scaffolded main.go (see "collage new") parses -collage-build, -out, and
 -clean and, on seeing -collage-build, renders the project to static files
 under <dir> instead of starting a server — removing <dir>'s existing contents
-first when -clean was given. It prints what it wrote as it writes it; that
-output is streamed straight through, not reformatted by this command.
+first when -clean was given. It prints one report when it is done; that output
+is streamed straight through, not reformatted by this command.
+
+-clean only empties a directory an export made: one that holds a
+.collage-export file, which an export leaves in a directory it created (or
+found empty). It refuses, deleting nothing, for the project's own directory or
+any directory above it, and for a non-empty directory without the marker such
+as static/. An old dist/ from before the marker needs "touch dist/.collage-export"
+once, or deleting by hand.
 
   -out dir   directory the project renders static files into (default "dist")
   -clean     remove -out's existing contents before building

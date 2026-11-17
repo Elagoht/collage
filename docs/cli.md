@@ -5,7 +5,7 @@ go install github.com/Elagoht/collage/cmd/collage@latest
 ```
 
 ```
-collage new <name> [--template minimal|demo] [--dir path] [--module path] [--force] [--ai]
+collage new <name> [--template minimal|demo] [--with plugins] [--dir path] [--module path] [--force] [--ai]
 collage add <page|fragment|action|document|layout|guard|middleware|command> <[area/]name> [flags]
 collage dev
 collage build [-o path] [-os name] [-arch name] [-i]
@@ -200,14 +200,15 @@ as a `collage.InlineHTML` const beside their data handler; layouts keep theirs i
 site's stylesheet, so a stylesheet a fragment hoists is the one that wins. An action a page attaches with `WithActionFor`
 shares the page's name and has no path of its own.
 
-- **`/`** is `Static()`: nothing about it depends on the request, which is what
-  lets `collage export` render it to a file.
+- **`/`** is static without saying so: nothing about it depends on the request,
+  which is what lets `collage export` render it to a file.
 - **`/features`** has four demos: a button posting to `/api/count`, an action
   that answers with JSON and invalidates the cached page by tag; a plain HTML form
   posting to `/hello`, whose own action renders the greeting; a clock fragment
   opened at `/fragments/clock` with `WithFragmentPath`; and `/healthz`, a JSON
   document. It is `Static()` too — cached, and invalidated by the count action —
-  but it carries forms, so a static export skips it and says why.
+  but it carries forms, so a static export skips it and says why — as it does
+  `/hello` (`Dynamic()`) and `/healthz`, which reports this process being up.
 
 Templates and static files are embedded, in `embed.go`, so the binary runs from
 any working directory; development builds leave them out and read the directories
@@ -216,7 +217,8 @@ inline markup is a Go change, which `collage dev` rebuilds for. Static files are
 so they are served content-addressed and `immutable`.
 
 It ships a `.env.example` with `COLLAGE_CSRF_KEY`, `PORT` and `HOST`; copy it to
-`.env.development` for `collage dev`. Set `COLLAGE_CSRF_KEY` before deploying
+`.env`, which `collage dev`, `go run .`, `collage export` and the built binary all
+read (`collage dev` prefers a `.env.development` when you add one). Set `COLLAGE_CSRF_KEY` before deploying
 anything with a form in it. Without one a key is generated per process, and the
 application says so at startup — as a warning outside development, and only when
 it has an action that could verify a token.
@@ -349,14 +351,15 @@ configuration and the static mount, a `routes.go` registering every route, the
 pages, fragments, action, document and their templates, the tests, a
 `.env.example`, a `.gitignore`, and a README.
 
-That is `--template demo`. The default, `--template minimal`, is the least a
+That is `--template demo`. (The `.env.example` and `.gitignore` come with both
+templates.) The default, `--template minimal`, is the least a
 project can be: the same `main.go`, `go.mod` and `routes.go`, and a layout around
 one page, `<h1>Hello from {{.Name}}</h1>` — the project's name, handed to the
 template by `WithData` — with a stylesheet that sets the background and text
 colour, dark mode included — no tests, no not-found page, nothing to
 delete before starting a real site. Flags take one dash or two.
 
-The scaffolded `main.go` is about forty lines: `main` hands `newApp` to
+The scaffolded `main.go` is about fifty lines: `main` hands `newApp` to
 `collage.Main`, and `newApp` builds the configuration from the `collage.Env` it
 is given. Everything else — the flags, the plugin commands, the static build,
 serving and shutting down — is `collage.Main`'s; see
@@ -377,6 +380,13 @@ collage new myblog -dir . -force         # into a non-empty directory
 With `-force`, what was there stays unless the scaffold has a file of the same
 name: those are replaced, and the command names them — `go.mod` among them is
 your module path and dependencies, back with `go mod tidy` and your own edit.
+
+`<name>` is the project's name and, unless `--module` says otherwise, its module
+path, so it must be one: letters, digits and `- . _ ~`, as `go mod init` takes. A
+path as the argument — `.` above all — scaffolds there and names the project for
+the directory's base name; `--module` is how a directory like `my site` gets a
+module path. What is not a valid module path is refused with exit status 2 before
+anything is written.
 
 Flags may appear before or after the project name; the command splits the
 positional argument out before parsing, so ordering does not matter.
@@ -412,7 +422,8 @@ editing them needs nothing. A change to Go code is rebuilt and restarted, with n
 tool to install:
 
 - **What is watched** is what the program is made of: `.go` files (test files
-  aside), `go.mod` and `go.sum` at the root, and the environment file. Hidden
+  aside), `go.mod` and `go.sum` at the root, `plugins-config.json` (read once, at
+  start), and the environment file. Hidden
   directories, `bin`, `dist`, `node_modules`, `testdata` and `vendor` are never
   looked at — so nothing the running program writes, its cache or an export, can
   set off a rebuild.
@@ -854,10 +865,13 @@ func main() {
 `ErrUnknownCommand` is the fall-through signal — no arguments, or a name no plugin
 claimed — so the program carries on with whatever it does by default. A command
 that ran and failed returns exit code `1` with its own error wrapped; a nil `*App`
-or an unclaimed name returns `2`. `DispatchCommands` has no built-ins of its own:
-`new`, `dev`, `build`, `export`, `serve`, `version` and `help` belong to the
-`collage` binary, which invokes your program rather than the other way round, and `App.Commands()` gives you the list if you want to
-print one.
+or an unclaimed name returns `2`. `DispatchCommands` has two built-ins, both for
+the `collage` binary to ask the program about itself: `collage-inspect` (what
+`collage inspect` and `collage routes` read) and `collage-check` (what
+`collage check` runs). `new`, `dev`, `build`, `export`, `serve`, `version` and `help`
+belong to the `collage` binary, which invokes your program rather than the other
+way round, and `App.Commands()` gives you the list of the plugins' commands if you
+want to print one.
 
 Dispatching starts the application, which closes registration — so call it after
 everything is registered. A later `ListenAndServe` reuses that start rather than
@@ -933,17 +947,18 @@ during the build vanishes without being logged.
 | --- | --- |
 | `OutDir` | Where output is written. Required |
 | `Locales` | Restrict the build to these locales. Empty builds every locale a page declares |
-| `Clean` | Remove `OutDir`'s contents (not `OutDir` itself) first |
+| `Clean` | Remove `OutDir`'s contents (not `OutDir` itself) first; see [Safety](#safety) for what it refuses |
 | `Concurrency` | How many pages render and write at once. `<= 1` is sequential |
+| `AllowDegraded` | Write a page whose render had a failed fragment, instead of refusing it with `ErrDegradedRender` |
 
-`Report` contents are deterministic regardless of `Concurrency`: tasks are merged
+`BuildReport` contents are deterministic regardless of `Concurrency`: tasks are merged
 back into enumeration order.
 
 ### What gets built
 
 - A page whose strategy is `Static()` or `Incremental(ttl)` is built, and so is one
   that declares none and renders no data handler. A dynamic page is recorded in
-  `Report.Skipped` — it exists to render per request.
+  `BuildReport.Skipped` — it exists to render per request.
 - Each page is written to `<OutDir>/<path>/index.html`; the root path `/` writes
   `<OutDir>/index.html`.
 - A page whose pattern for a locale contains `{param}` needs `WithStaticParams`,
@@ -1006,7 +1021,7 @@ collage.NewPage("post").
 - A map that does not fill the pattern exactly — a name missing, or one the
   pattern does not have — fails that one file with `collage.ErrRouteParams`, and
   the rest are built. An error from the function, or a panic in it, fails that
-  page's locale and is named in `Report.Errors`.
+  page's locale and is named in `BuildReport.Errors`.
 - Only a build calls it. A running server answers every value the pattern matches,
   listed or not.
 - A page with a data handler is dynamic unless it says otherwise, so a post page
@@ -1044,8 +1059,13 @@ adversarial `fs.FS` yields from a walk — must not be able to write outside
 rather than three copies of them. The builder:
 
 - refuses to run at all when `OutDir` resolves — after following symlinks — to a
-  filesystem root, and refuses to `Clean` (though it still writes) when it
-  resolves to a repository root (`ErrDangerousOutDir`);
+  filesystem root (`ErrDangerousOutDir`). With `Clean` it aborts the whole build,
+  before anything is deleted or written, when `OutDir` is a repository root, the
+  working directory or the module root, a directory above either (`-out ..`), or a
+  non-empty directory no build created: a build leaves `.collage-export` in a
+  directory it made (or found empty), and `Clean` empties only a directory that has
+  it. A populated `static/` you point `-out` at is refused; an old `dist/` from
+  before the marker needs `touch dist/.collage-export` once, or deleting by hand;
 - refuses a `WithStaticParams` value holding a backslash or a NUL
   (`ErrRouteParams`, that one file): on Windows a backslash is a separator, and
   `x\..\..\about` under `/blog/{slug}` would land on another page's file inside

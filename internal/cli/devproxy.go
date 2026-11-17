@@ -94,6 +94,11 @@ func newDevProxy(public, target string, names ...string) *devProxy {
 func (p *devProxy) set(state devState, owner *devProcess, output string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	p.setLocked(state, owner, output)
+}
+
+// setLocked is set for a caller already holding p.mu.
+func (p *devProxy) setLocked(state devState, owner *devProcess, output string) {
 	p.state, p.owner, p.output = state, owner, output
 	p.generation++
 	close(p.changed)
@@ -116,12 +121,7 @@ func (p *devProxy) awaitListening(ctx context.Context, process *devProcess) {
 		cancel()
 		if err == nil {
 			conn.Close()
-			p.mu.Lock()
-			current := p.state == devStarting && p.owner == process
-			p.mu.Unlock()
-			if current {
-				p.set(devReady, nil, "")
-			}
+			p.becomeReady(process)
 			return
 		}
 		select {
@@ -129,6 +129,19 @@ func (p *devProxy) awaitListening(ctx context.Context, process *devProcess) {
 			return
 		case <-time.After(25 * time.Millisecond):
 		}
+	}
+}
+
+// becomeReady marks the proxy ready if it is still waiting on process. The
+// check and the change are one critical section: with the lock released between
+// them, a rebuild that called starting or down in the gap was overwritten by a
+// ready state belonging to a process already replaced, and requests went to a
+// program that was being stopped.
+func (p *devProxy) becomeReady(process *devProcess) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.state == devStarting && p.owner == process {
+		p.setLocked(devReady, nil, "")
 	}
 }
 

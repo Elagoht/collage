@@ -9,12 +9,12 @@ at https://pkg.go.dev/github.com/Elagoht/collage/pkg/collage.
 
 ```
 go mod tidy
-cp .env.example .env.development
+cp .env.example .env
 collage dev
 ```
 
-The site is at http://localhost:6060. `collage dev` reads `.env.development`
-(or `.env` when there is none) and runs the project in development mode:
+The site is at http://localhost:6060. `collage dev` reads `.env.development` when there is one,
+else `.env`, and runs the project in development mode:
 templates and static files are read from disk on every request, and the page
 reloads itself when one changes. A change to Go code is rebuilt and restarted for you;
 one that does not compile stops the program, and the browser shows the
@@ -44,8 +44,8 @@ templates/    the HTML kept in files; small fragments keep theirs inline
 static/       CSS, JavaScript and images, at /static/
 ```
 
-`/` is the home page, declared `Static()`, so `collage export` writes it to a
-file. `/features` has four live demos:
+`/` is the home page: nothing about it depends on the request, so it is static and
+`collage export` writes it to a file. `/features` has four live demos:
 
 - **API** — a button posts to `/api/count`, an action that answers with JSON
   and invalidates the cached page by tag.
@@ -93,7 +93,7 @@ a restart is refused after it, and one instance refuses what another issued.
 openssl rand -hex 32
 ```
 
-Put the result in `.env.development` for development, and in your production
+Put the result in `.env`, and in your production
 environment's secrets for the deployed binary.
 
 ## Deploying

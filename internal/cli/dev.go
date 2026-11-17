@@ -17,7 +17,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/Elagoht/collage/internal/devhost"
@@ -55,7 +54,7 @@ a few days of saves. A project whose main package still embeds files in a
 development build is told so when "collage dev" starts.
 
 What is watched is what the program is made of: .go files (test files aside),
-go.mod and go.sum, and the environment file below. Hidden directories, bin,
+go.mod and go.sum, plugins-config.json, and the environment file below. Hidden directories, bin,
 dist, node_modules, testdata and vendor are not looked at, so nothing the
 running program writes — its cache, an export — can trigger a rebuild. The new
 build is made before the old process is stopped. A change that does not
@@ -111,7 +110,7 @@ func (c *CLI) runDev(ctx context.Context, args []string) int {
 
 	// Ctrl-C reaches the running program too, which shuts itself down; this is
 	// what stops the loop around it from exiting before it has.
-	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(ctx, ShutdownSignals...)
 	defer stop()
 
 	// Builds go outside the project, so the watcher never sees them and a

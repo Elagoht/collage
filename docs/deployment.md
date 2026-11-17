@@ -30,15 +30,17 @@ image can be the binary and nothing else:
 `collage build -i` writes this into `bin/`, beside the binary — so the command is
 `docker build -f bin/Dockerfile .`, which the build output prints. It is reproduced
 here, for a project named `mysite` built with Go 1.26, so you can read it before you
-run it; the file it writes names your project and the Go version that built it.
+run it; the file it writes names your project and the Go version that built it, and the
+`plugins-config.json` line appears only for a project that has one (a scaffolded
+one does).
 
 ```dockerfile
 # Built by "collage build -i".
 #
-# Two stages, and the second one holds the binary and nothing else: a collage
-# project embeds its templates and its static files, so there is nothing beside
-# the binary to copy. CGO is off, which is what makes the binary static enough
-# for a distroless base.
+# Two stages, and the second one holds the binary and what it reads from its
+# working directory: a collage project embeds its templates and its static
+# files, so that is plugins-config.json at most. CGO is off, which is what makes
+# the binary static enough for a distroless base.
 FROM golang:1.26 AS build
 WORKDIR /src
 # Dependencies first, so editing your own code does not re-download them. If
@@ -55,6 +57,9 @@ FROM gcr.io/distroless/static-debian12
 # process was started. Everything else about this project travels in the binary.
 WORKDIR /srv
 COPY --from=build /mysite /usr/local/bin/mysite
+# Read from the working directory before the copy the binary embeds, if it
+# embeds one; without either every plugin runs on its defaults.
+COPY --from=build /src/plugins-config.json /srv/plugins-config.json
 ENV HOST=0.0.0.0 PORT=8080
 # Set this to at least 32 random bytes, kept with your other secrets. Without
 # it a key is generated per process, and every form submitted before a restart
@@ -71,7 +76,7 @@ store rather than writing it into the image keeps it out of every copy of the
 image.
 
 Two things that are only true because the project embeds its files: the image needs
-no `COPY` of templates or assets, and nothing breaks if the container's working
+no `COPY` of templates or assets (only the plugin configuration, above), and nothing breaks if the container's working
 directory is not the project's.
 
 ## What to set
@@ -394,7 +399,7 @@ marks the disk and its own memory, and every other instance keeps serving its
 in-memory copy as a fresh `HIT` until it expires — for a `Static` page, until a
 restart or an eviction — where a CDN refetching it can pick it up again. A fleet
 that must see one another's invalidations needs a shared `Cache.Store` that
-implements `collage.StaleCache` and `collage.TaggedCache`. And an invalidated page
+implements `collage.SharedCache` (see [caching](caching.md#a-cache-a-fleet-shares)). And an invalidated page
 is kept, to be served if its re-render fails — see
 [caching](caching.md#stale-pages-and-x-collage-cache) — and is re-rendered in the
 background right after the invalidation, which costs CPU for a moment; see
@@ -412,9 +417,13 @@ writable:
 WORKDIR /srv
 ```
 
-A cache it cannot write to is not an error — the write fails, the page is served,
-and the next request renders it again. Quiet and slow rather than broken, which is
-the right failure for a cache and the wrong one to leave in place unnoticed.
+A cache directory it cannot use is not fatal, and not silent either. If it cannot
+be created at startup, the application logs a warning
+(`collage: cannot use the disk cache directory, using an in-memory cache instead`)
+and caches in memory for the life of the process. If it becomes unwritable later,
+the page is still served and rendered again on the next request, and each failed
+write is logged at error with stage `cache_write`. Slow rather than broken, which
+is the right failure for a cache; the log is how you find out.
 
 Pages declare how they are cached, and the declaration is the whole mechanism:
 
