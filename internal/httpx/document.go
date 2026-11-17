@@ -64,7 +64,7 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 			Path:    r.URL.Path,
 			Locale:  match.Locale,
 			Params:  match.PathParams,
-			Vary:    queryVary(r.URL, doc.CacheParams),
+			Vary:    keyVary(r, doc.CacheParams),
 			Request: requestVary(r),
 			Host:    cache.Host(r.Host),
 		})

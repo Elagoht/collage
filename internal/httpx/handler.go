@@ -609,6 +609,25 @@ func queryVary(u *url.URL, allow []string) []string {
 	return []string{selected.Encode()}
 }
 
+// keyVary is the Vary section of a page's or document's cache key: the query it
+// caches on, and for a request that arrived over TLS, that fact.
+//
+// A shared render is handed r.TLS (see sharedRequest), so a template building an
+// absolute URL from the request writes https:// into its page; keyed without it,
+// the first reader's scheme is the one every reader is served. It is the request's
+// own TLS state and not X-Forwarded-Proto that is keyed, because that is all a
+// shared render can see: its headers are dropped. A plain request adds nothing,
+// so its key is what it was before. The marker holds a NUL, which no query a
+// client sends unescaped can, and the section's entry count already tells an
+// https key's two entries from a plain one's.
+func keyVary(r *http.Request, cacheParams []string) []string {
+	vary := queryVary(r.URL, cacheParams)
+	if r.TLS != nil {
+		vary = append(vary, "scheme\x00https")
+	}
+	return vary
+}
+
 // serveGuarded runs serve and turns a panic escaping it into a 500 on the normal
 // error path — logged, dispatched to every ErrorHook, and counted by the metric
 // ServeHTTP reports — instead of letting it unwind into net/http, which closes the
@@ -914,7 +933,7 @@ func (h *Handler) serve(w http.ResponseWriter, r *http.Request, route *routeRef)
 			Path:    r.URL.Path,
 			Locale:  match.Locale,
 			Params:  match.PathParams,
-			Vary:    queryVary(r.URL, page.CacheParams),
+			Vary:    keyVary(r, page.CacheParams),
 			Request: requestVary(r),
 			Host:    cache.Host(r.Host),
 		})
