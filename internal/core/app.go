@@ -1432,6 +1432,10 @@ func (a *App) invalidations() (started, finished uint64) {
 // than let a stalled connection hold the caller.
 const sharedDropTimeout = 5 * time.Second
 
+// invalidationTimeout bounds one invalidation, which runs detached from its
+// caller's context. See dropTags.
+const invalidationTimeout = 30 * time.Second
+
 // dropShared is dropTags's call to a SharedCache: one DropTags, bounded by
 // sharedDropTimeout, returning the page entries it reached.
 func (a *App) dropShared(ctx context.Context, shared cache.SharedCache, tags []string, purge bool) ([]cache.Reached, error) {
@@ -1450,6 +1454,17 @@ func (a *App) dropTags(ctx context.Context, tags []string, purge bool) (int, err
 	if len(tags) == 0 {
 		return 0, nil
 	}
+
+	// Not cancelled with the caller. The callers are an action's result and a
+	// webhook, which pass the request's context, and a client that has hung up
+	// is no reason to leave a changed page cached: the tracker and the memory
+	// cache refuse a done context, so the whole call would resolve nothing and
+	// report nothing. The values stay, for the plugins and metrics that read
+	// them. A bound replaces the cancellation, so a store that stalls cannot
+	// hold the caller for ever; a SharedCache's drop has a tighter one of its
+	// own.
+	ctx, cancelDrop := context.WithTimeout(context.WithoutCancel(ctx), invalidationTimeout)
+	defer cancelDrop()
 
 	// The keys reached are warmed once this call is over: deferred before the
 	// finished count is, so it runs after it, because a warm render that began
