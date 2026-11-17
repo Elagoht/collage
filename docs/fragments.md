@@ -222,8 +222,9 @@ title holds, and each distinct string becomes a template the program keeps until
 it exits. This matters most in a slot resolver, which builds fragments per
 request: its fragments can be inline, but their templates are fixed, and the data
 reaches them through `WithData`, as a value or from a handler. The engine holds a
-resolver's sources to 256 distinct ones; the next fails its fragment with an error
-saying why, rather than growing the template set a request at a time.
+resolver's sources to 256 distinct ones; the next fails its fragment with
+`collage.ErrTooManyInlineSources`, rather than growing the template set a request at
+a time.
 
 Three limits come with it:
 

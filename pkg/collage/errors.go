@@ -269,6 +269,13 @@ var (
 	// ErrRequiredSlotUnfilled, which reports the same condition at validation time: this
 	// one is a per-render failure subject to the fragment failure policy.
 	ErrRequiredSlotEmpty = render.ErrRequiredSlotEmpty
+	// ErrTooManyInlineSources is the render failure reported when a slot resolver
+	// has returned more distinct inline fragments (a Fragment with Source set) than
+	// the engine keeps — 256 — while rendering. Each one is parsed into the
+	// template set and kept for the life of the process, so a Source must be fixed
+	// text, not built from request data. It is subject to the fragment failure
+	// policy like any other render failure.
+	ErrTooManyInlineSources = render.ErrTooManyInlineSources
 	// ErrNotFound reports that a fragment's data does not exist, as distinct from a
 	// failure to fetch it. It is the one sentinel here that application code returns
 	// rather than receives: a data handler that wraps it — fmt.Errorf("...: %w",
