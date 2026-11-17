@@ -525,15 +525,20 @@ func hasUnexported(iface *types.Interface) bool {
 // the declaration, so the source says which ones they are.
 func (s *surface) constantsOf(dir, rel, module string) error {
 	fset := token.NewFileSet()
-	pkgs, err := parser.ParseDir(fset, filepath.Join(dir, rel), func(fi os.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(filepath.Join(dir, rel))
 	if err != nil {
 		return err
 	}
 	internalPrefix := module + "/internal/"
-	for _, pkg := range pkgs {
-		for _, file := range pkg.Files {
+	{
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
+			}
+			file, err := parser.ParseFile(fset, filepath.Join(dir, rel, entry.Name()), nil, 0)
+			if err != nil {
+				return err
+			}
 			imports := map[string]string{}
 			for _, imp := range file.Imports {
 				path := strings.Trim(imp.Path.Value, `"`)
