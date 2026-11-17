@@ -101,8 +101,9 @@ slug := rc.Param("slug")          // or rc.PathParams["slug"]
 ```
 
 Matching happens on the *escaped* path, split first and percent-decoded one
-segment at a time. A segment holding an encoded slash (`%2F`) or a NUL (`%00`) is a
-404, not a 500. A segment whose escape is not one at all — `/blog/a%zz`, a trailing
+segment at a time. A segment holding an encoded slash (`%2F`) or a NUL (`%00`), or
+decoding to bytes that are not UTF-8 (`%c3%28`, `%ff`), is a 404, not a 500: no link
+the site builds can hold one, since `App.URL` escapes Go strings as UTF-8. A segment whose escape is not one at all — `/blog/a%zz`, a trailing
 `%` — never gets that far through a server: `net/http` answers `400 Bad Request` while
 reading the request line, before collage is asked, and only a path that arrives some
 other way, handed straight to the handler, meets the router's own 404 for it.

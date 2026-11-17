@@ -101,6 +101,20 @@ func TestDecodeSegments_RefusesNUL(t *testing.T) {
 	}
 }
 
+// A segment that decodes to bytes that are not UTF-8 matches no route, as a NUL
+// does: "%c3%28" reached a "{slug}" page as a two-byte value no link of the
+// site's could have produced. Multi-byte UTF-8 that is valid is kept.
+func TestDecodeSegments_RefusesInvalidUTF8(t *testing.T) {
+	for _, seg := range []string{"%c3%28", "%ff", "a%80b", "%ed%a0%80"} {
+		if _, ok := decodeSegments([]string{"blog", seg}); ok {
+			t.Errorf("decodeSegments accepted %q, which is not UTF-8", seg)
+		}
+	}
+	if decoded, ok := decodeSegments([]string{"blog", "%c3%bc"}); !ok || decoded[1] != "ü" {
+		t.Errorf("decodeSegments(%%c3%%bc) = %q, %v; want ü kept", decoded, ok)
+	}
+}
+
 func TestDecodeSegments_Success(t *testing.T) {
 	decoded, ok := decodeSegments([]string{"blog", "hello%20world"})
 	if !ok {

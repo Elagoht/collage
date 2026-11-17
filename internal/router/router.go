@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Elagoht/collage/internal/types"
 )
@@ -798,7 +799,8 @@ func (rt *router) ErrorPage() *types.Page {
 
 // decodeSegments percent-decodes each of raw's segments individually via
 // url.PathUnescape, returning the decoded segments and true, or nil and false if
-// any segment fails to decode or decodes to one holding a "/" or a NUL.
+// any segment fails to decode or decodes to one holding a "/" or a NUL, or to
+// bytes that are not UTF-8.
 //
 // A "%2F" is refused rather than kept inside its segment, which it once was.
 // Everything in front of the router — a middleware, a mount, a proxy — reads
@@ -813,11 +815,16 @@ func (rt *router) ErrorPage() *types.Page {
 // system call. A "\" is kept — it round-trips through a link and a build as any
 // other character — so a handler joining a value onto a directory on Windows,
 // where filepath.Join reads it as a separator, checks it with filepath.IsLocal.
+//
+// Bytes that are not UTF-8 are refused as well. Every path a site publishes is
+// built from Go strings, which App.URL escapes as UTF-8, so "%c3%28" is in no
+// link of the site's; let through, it reached a handler as a value no lookup
+// could match and a template could only print as a replacement character.
 func decodeSegments(raw []string) ([]string, bool) {
 	decoded := make([]string, len(raw))
 	for i, seg := range raw {
 		d, err := url.PathUnescape(seg)
-		if err != nil || strings.ContainsAny(d, "/\x00") {
+		if err != nil || strings.ContainsAny(d, "/\x00") || !utf8.ValidString(d) {
 			return nil, false
 		}
 		decoded[i] = d
