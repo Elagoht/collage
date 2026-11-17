@@ -164,13 +164,10 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 		}
 	}
 
-	targetDir := *dir
-	if targetDir == "" {
-		targetDir = filepath.Join(".", name)
-	}
-	modulePath := *module
-	if modulePath == "" {
-		modulePath = name
+	targetDir, name, modulePath, err := newTarget(name, *dir, *module)
+	if err != nil {
+		fmt.Fprintf(c.stderr(), "collage: new: %v\n", err)
+		return 2
 	}
 
 	if err := checkTarget(targetDir, *force); err != nil {

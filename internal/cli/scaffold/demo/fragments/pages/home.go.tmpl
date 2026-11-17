@@ -11,7 +11,7 @@ type homeView struct {
 // WithData rather than a data handler, and the page stays static.
 func Home() *collage.Fragment {
 	return collage.NewInlineFragment("home", homeBlock).
-		WithData(collage.Value(homeView{Name: "@@NAME@@"})).
+		WithData(collage.Value(homeView{Name: @@NAME_GO@@})).
 		Build()
 }
 
@@ -32,7 +32,7 @@ const homeBlock collage.InlineHTML = `<main class="home">
 
   <section class="terminal" aria-label="Your project">
     <div class="terminal-bar"><span aria-hidden="true"></span><span aria-hidden="true"></span><span aria-hidden="true"></span><p>{{.Name}}</p></div>
-    <pre><code><span class="dir">@@NAME@@/</span>
+    <pre><code><span class="dir">@@NAME_HTML@@/</span>
 ├── main.go       <span class="muted">configuration and the static mount</span>
 ├── routes.go     <span class="muted">every page, document and action</span>
 ├── <span class="dir">pages/</span>        <span class="muted">a page per file, by area: layout, content, route</span>
