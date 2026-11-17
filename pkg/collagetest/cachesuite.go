@@ -50,6 +50,10 @@ func CacheSuite(t *testing.T, newCache func(t *testing.T) collage.Cache) {
 		suiteRun(t, "InvalidateKey", newCache, cacheInvalidateKey)
 		suiteRun(t, "InvalidateMissingKey", newCache, cacheInvalidateMissingKey)
 		suiteRun(t, "Clear", newCache, cacheClear)
+		suiteRun(t, "Overwrite", newCache, cacheOverwrite)
+		suiteRun(t, "DefaultTTL", newCache, cacheDefaultTTL)
+		suiteRun(t, "BinaryContent", newCache, cacheBinaryContent)
+		suiteRun(t, "Concurrent", newCache, cacheConcurrent)
 	})
 	if tagged {
 		t.Run("Tagged", func(t *testing.T) {
@@ -63,6 +67,11 @@ func CacheSuite(t *testing.T, newCache func(t *testing.T) collage.Cache) {
 				suiteRun(t, "MarkTags", newCache, staleMarkTags)
 			}
 			suiteRun(t, "FreshWriteClears", newCache, staleFreshWriteClears)
+			suiteRun(t, "ExpiredIsStale", newCache, staleExpiredIsStale)
+			suiteRun(t, "RemovalIsNotAMark", newCache, staleRemovalIsNotAMark)
+			if tagged {
+				suiteRun(t, "InvalidateRemovesMarked", newCache, staleInvalidateRemovesMarked)
+			}
 		})
 	}
 }
@@ -101,6 +110,7 @@ func SharedCacheSuite(t *testing.T, newPair func(t *testing.T) (a, b collage.Sha
 			{"DataOverlap", sharedDataOverlap},
 			{"StaleWriteKeepsNewerFresh", sharedStaleWriteKeepsNewerFresh},
 			{"DataStaleWriteKeepsNewerFresh", sharedDataStaleWriteKeepsNewerFresh},
+			{"EpochSurvivesClear", sharedEpochSurvivesClear},
 			{"WideDrop", sharedWideDrop},
 			{"Concurrent", sharedConcurrent},
 		} {
@@ -232,6 +242,85 @@ func cacheClear(t *testing.T, c collage.Cache) {
 	}
 }
 
+// cacheOverwrite: a second Set of a live key replaces the first, content and
+// ETag together.
+func cacheOverwrite(t *testing.T, c collage.Cache) {
+	ctx := context.Background()
+	_, err := c.Set(ctx, "k", []byte("first"), time.Minute)
+	must(t, "Set", err)
+	etag, err := c.Set(ctx, "k", []byte("second"), time.Minute)
+	must(t, "Set", err)
+	got, gotEtag, found := c.Get(ctx, "k")
+	if !found || string(got) != "second" || gotEtag != etag {
+		t.Errorf("Get after overwriting a live key = %q %q found=%v, want %q with etag %q", got, gotEtag, found, "second", etag)
+	}
+}
+
+// cacheDefaultTTL: the Cache contract says a ttl of zero or less means the
+// store's own default, not "already expired". Only that the entry is there
+// right after is checked, so any positive default passes.
+func cacheDefaultTTL(t *testing.T, c collage.Cache) {
+	ctx := context.Background()
+	for i, ttl := range []time.Duration{0, -time.Second} {
+		key := fmt.Sprintf("k%d", i)
+		_, err := c.Set(ctx, key, []byte("body"), ttl)
+		must(t, "Set", err)
+		if _, _, found := c.Get(ctx, key); !found {
+			t.Errorf("Get missed a key Set with ttl %v: a ttl of zero or less must use the store's default TTL", ttl)
+		}
+	}
+}
+
+// cacheBinaryContent: a page is bytes, not text. Content that is not UTF-8 and
+// holds NUL and newline bytes must come back as it went in.
+func cacheBinaryContent(t *testing.T, c collage.Cache) {
+	ctx := context.Background()
+	body := []byte{0x00, 0xff, 0xfe, '\n', 0x80, 0x00, '\r', '\n', 0xc3, 0x28}
+	etag, err := c.Set(ctx, "k", body, time.Minute)
+	must(t, "Set", err)
+	got, gotEtag, found := c.Get(ctx, "k")
+	if !found || !bytes.Equal(got, body) || gotEtag != etag {
+		t.Errorf("Get = %x %q found=%v, want the bytes %x stored unchanged", got, gotEtag, found, body)
+	}
+}
+
+// cacheConcurrent: the docs promise a store is called from request goroutines,
+// so it must be safe for concurrent use. Meaningful under -race.
+func cacheConcurrent(t *testing.T, c collage.Cache) {
+	const workers, ops = 8, 100
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for w := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range ops {
+				key := fmt.Sprintf("k-%d", i%10)
+				var err error
+				switch (i + w) % 4 {
+				case 0:
+					_, err = c.Set(ctx, key, []byte("body"), time.Minute)
+				case 1:
+					c.Get(ctx, key)
+				case 2:
+					err = c.InvalidateKey(ctx, key)
+				case 3:
+					if i%20 == 3 {
+						err = c.Clear(ctx)
+					} else {
+						c.Get(ctx, key)
+					}
+				}
+				if err != nil {
+					t.Errorf("concurrent op returned error %v, want nil", err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
 func taggedInvalidateAnyTag(t *testing.T, c collage.TaggedCache) {
 	ctx := context.Background()
 	for k, tags := range map[string][]string{"k1": {"a", "b"}, "k2": {"b"}, "k3": {"c"}} {
@@ -317,6 +406,80 @@ func staleFreshWriteClears(t *testing.T, c collage.StaleCache) {
 	}
 }
 
+// staleExpiredIsStale: an entry past its TTL is a miss for Get, and GetStale
+// still has it, stale; found is false only for a key with no entry at all.
+func staleExpiredIsStale(t *testing.T, c collage.StaleCache) {
+	ctx := context.Background()
+	etag, err := c.Set(ctx, "k", []byte("body"), suiteTTL)
+	must(t, "Set", err)
+	eventually(t, "GetStale never reported the expired entry stale", func() bool {
+		_, _, stale, _ := c.GetStale(ctx, "k")
+		return stale
+	})
+	wantStale(t, c, "k", []byte("body"), etag)
+}
+
+// staleRemovalIsNotAMark: InvalidateKey and Clear remove, they do not mark, so
+// GetStale must not find the entry afterwards. A store that marks instead of
+// removing would pass a Get-only check and keep serving the entry as a fallback.
+func staleRemovalIsNotAMark(t *testing.T, c collage.StaleCache) {
+	ctx := context.Background()
+	for _, k := range []string{"fresh", "marked", "other"} {
+		_, err := c.Set(ctx, k, []byte(k), time.Minute)
+		must(t, "Set", err)
+	}
+	must(t, "MarkStaleKey", c.MarkStaleKey(ctx, "marked"))
+	must(t, "InvalidateKey", c.InvalidateKey(ctx, "fresh"))
+	must(t, "InvalidateKey", c.InvalidateKey(ctx, "marked"))
+	for _, k := range []string{"fresh", "marked"} {
+		if _, _, _, found := c.GetStale(ctx, k); found {
+			t.Errorf("GetStale found %s after InvalidateKey: InvalidateKey removes the entry, marked stale or not", k)
+		}
+	}
+	if _, _, _, found := c.GetStale(ctx, "other"); !found {
+		t.Error("InvalidateKey removed an entry under another key")
+	}
+	must(t, "Clear", c.Clear(ctx))
+	if _, _, _, found := c.GetStale(ctx, "other"); found {
+		t.Error("GetStale found an entry after Clear: Clear removes every entry, stale ones too")
+	}
+}
+
+// staleInvalidateRemovesMarked: Invalidate removes entries by tag whether they
+// are fresh or already marked stale. PurgeTags relies on it for pages the
+// framework's tracker has forgotten, so a mark must not drop an entry's tags.
+func staleInvalidateRemovesMarked(t *testing.T, c taggedStale) {
+	ctx := context.Background()
+	for _, k := range []string{"fresh", "markedByTag", "markedByKey", "other"} {
+		tag := "t"
+		if k == "other" {
+			tag = "o"
+		}
+		_, err := c.SetTagged(ctx, k, []byte(k), time.Minute, []string{tag})
+		must(t, "SetTagged", err)
+	}
+	must(t, "MarkStale", c.MarkStale(ctx, []string{"t"}))
+	// markedByKey is re-written and marked by key; fresh stays marked from above.
+	_, err := c.SetTagged(ctx, "markedByKey", []byte("markedByKey"), time.Minute, []string{"t"})
+	must(t, "SetTagged", err)
+	must(t, "MarkStaleKey", c.MarkStaleKey(ctx, "markedByKey"))
+	must(t, "Invalidate", c.Invalidate(ctx, []string{"t"}))
+	for _, k := range []string{"fresh", "markedByTag", "markedByKey"} {
+		if _, _, _, found := c.GetStale(ctx, k); found {
+			t.Errorf("GetStale found %s after Invalidate([t]): a stale mark must keep the entry's tags, and Invalidate removes every entry under them", k)
+		}
+	}
+	if _, _, _, found := c.GetStale(ctx, "other"); !found {
+		t.Error("Invalidate([t]) removed an entry carrying only tag o")
+	}
+}
+
+// taggedStale is a store that is both, for the checks that need both.
+type taggedStale interface {
+	collage.TaggedCache
+	collage.StaleCache
+}
+
 func sharedEpoch(t *testing.T, c collage.SharedCache) uint64 {
 	t.Helper()
 	e, err := c.Epoch(context.Background())
@@ -341,6 +504,18 @@ func sharedEpochGrows(t *testing.T, a, b collage.SharedCache) {
 	drop(t, a, []string{"t"}, true)
 	if after := sharedEpoch(t, b); after <= again {
 		t.Errorf("Epoch = %d after a purging DropTags, want more than %d", after, again)
+	}
+}
+
+// sharedEpochSurvivesClear: the epoch only grows, and a Clear is the case a
+// store backed by a flushable database gets wrong, by starting again from zero.
+// A since read before it would then compare newer than every generation after.
+func sharedEpochSurvivesClear(t *testing.T, a, b collage.SharedCache) {
+	drop(t, b, []string{"t"}, false)
+	before := sharedEpoch(t, a)
+	must(t, "Clear", a.Clear(context.Background()))
+	if after := sharedEpoch(t, b); after < before {
+		t.Errorf("Epoch = %d after Clear, was %d before: the epoch must never go back", after, before)
 	}
 }
 
@@ -455,7 +630,10 @@ func sharedPurgeRemoves(t *testing.T, a, b collage.SharedCache) {
 	must(t, "SetSince", err)
 	_, err = a.SetData(ctx, "d", []byte("val"), 0, []string{"t"}, sharedEpoch(t, a))
 	must(t, "SetData", err)
-	drop(t, b, []string{"t"}, true)
+	reached := drop(t, b, []string{"t"}, true)
+	if len(reached) != 1 || reached[0].Key != "k" {
+		t.Errorf("purging DropTags reached %+v, want exactly the page k: the pages it removes are returned as an invalidating drop's are", reached)
+	}
 	if _, _, _, found := a.GetStale(ctx, "k"); found {
 		t.Error("GetStale found a page after a purging DropTags, want it removed")
 	}
