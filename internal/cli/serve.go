@@ -28,7 +28,7 @@ That is the whole reason this exists rather than "open dist/index.html": a file:
 page has no root, so every absolute link and stylesheet in the export is broken,
 and a plain file server is not a static host either. This one answers a
 directory with its index.html and nothing else — no listings — serves 404.html
-with a 404 when a path resolves to nothing, and sends no caching headers, so
+with a 404 when a path resolves to nothing, and sends Cache-Control: no-store, so
 re-exporting and reloading shows the new output rather than the old.
 
 It serves files. It does not run the project: for that, "collage dev".

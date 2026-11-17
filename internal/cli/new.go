@@ -33,8 +33,14 @@ Scaffolds a new, runnable collage project named <name>.
             stylesheet with a dark mode — nothing to delete before you start
   demo      the same main.go, with a home page, a page of live demos (an API
             action, a form, a fragment with its own URL, a JSON document), a
-            not-found page, their tests, a .env.example for "collage dev", a
-            .gitignore and a README
+            not-found page and their tests
+
+Both templates write a .env.example, a .gitignore and a README. Copy
+.env.example to .env, which "collage dev", "go run ." and the built binary read.
+
+<name> is the project's name, and the default module path: letters, digits and
+- . _ ~, as "go mod init" takes. Give a path instead — "." for the current
+directory — to scaffold there, naming the project for that directory.
 
   --template name   the project to scaffold: minimal or demo (default: minimal)
   --with plugins    plugins to add once it is scaffolded, as "collage plugin add"
@@ -216,7 +222,7 @@ func (c *CLI) runNew(ctx context.Context, args []string) int {
 		fmt.Fprintln(out, "  go mod tidy")
 	}
 	if variant == variantDemo {
-		fmt.Fprintln(out, "  cp .env.example .env.development")
+		fmt.Fprintln(out, "  cp .env.example .env")
 	}
 	fmt.Fprintln(out, "  collage dev")
 	return code
