@@ -39,11 +39,14 @@ type RenderContext struct {
 	// the same one — and so that copying a RenderContext never copies a mutex.
 	state *renderShared
 	// depth is how deep in the fragment tree this context's fragment sits, and
-	// order is the number it was launched with. Hoist carries both, which is what
+	// order is the number the walk reached it with. Hoist carries both, which is what
 	// lets the innermost declaration win without the collector having to track a
 	// "current" position that concurrent handlers would make meaningless.
 	depth int
 	order int
+	// hlog, when set, is where this fragment's Hoist calls and Cached tags are
+	// held until the fragment is known to be on the page; see HoistLog.
+	hlog *HoistLog
 }
 
 // renderShared is the state one render's fragments share. Its zero value is not
@@ -142,15 +145,35 @@ func (rc *RenderContext) Param(name string) string {
 // values you control, or escape them yourself.
 //
 // Two fragments at the same depth declaring one key is a conflict with nothing to
-// settle it but a rule: the later-declared fragment wins. Declaration order, not
-// the order the handlers happened to finish in — sibling handlers run at the same
-// time, so finishing order is not something to build a page on.
+// settle it but a rule: the later fragment wins, later meaning later in the page —
+// the order a slot's fragments are bound in and, between slots, the order the
+// template renders them. Not the order the handlers happened to finish in, and not
+// the order they were started in: sibling handlers run at the same time, so neither
+// is something to build a page on.
+//
+// A fragment the page does not render declares nothing. A handler is started
+// before its template decides whether to render the fragment, and a declaration it
+// made then, like those of a fragment that failed and was replaced by its fallback,
+// is dropped.
 //
 // Call it from a data handler, synchronously, on the handler's own goroutine. A
 // handler that hoists from a goroutine it started itself is declaring from
 // somewhere with no position in the tree.
 func (rc *RenderContext) Hoist(area, key string, html template.HTML) {
+	if rc.hlog != nil {
+		rc.hlog.add(loggedHoist{area: area, key: key, depth: rc.depth, order: rc.order, html: html})
+		return
+	}
 	rc.hoisted.Add(area, key, rc.depth, rc.order, html)
+}
+
+// WithHoistLog returns a shallow copy of rc whose declarations — Hoist, and the tags
+// of Cached — go to log instead of reaching the page. The render engine gives each
+// fragment one; an application has no reason to.
+func WithHoistLog(rc *RenderContext, log *HoistLog) *RenderContext {
+	cp := *rc
+	cp.hlog = log
+	return &cp
 }
 
 // RenderHoisted returns rc's render's collector. It is how the render engine reads
@@ -158,7 +181,7 @@ func (rc *RenderContext) Hoist(area, key string, html template.HTML) {
 func RenderHoisted(rc *RenderContext) *Hoisted { return rc.hoisted }
 
 // RenderWithFragment returns a shallow copy of rc positioned at one fragment: depth
-// is how deep it sits in the tree and order is the number it was launched with.
+// is how deep it sits in the tree and order is the number the walk reached it with.
 // The render engine calls it as it walks; an application has no reason to.
 //
 // Everything a render shares — the render's values, the hoist collector, the Once table — is
