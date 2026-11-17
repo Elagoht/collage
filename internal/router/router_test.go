@@ -618,9 +618,9 @@ func TestRouter_Redirect_CatchAllKeepsSegmentBoundaries(t *testing.T) {
 	// is now a request for no route.
 	root := New(LocaleOptions{Default: "en", Supported: []string{"en"}})
 	mustRegister(t, root, newTestPageWithRedirects("root", map[string]string{"en": "/unrelated"}, []*types.Redirect{
-		{From: "/{rest...}", To: "/{rest}"},
+		{From: "/x/{rest...}", To: "/{rest}"},
 	}))
-	result, err := root.Match(httptest.NewRequest(http.MethodGet, "/%2Fevil.com", nil))
+	result, err := root.Match(httptest.NewRequest(http.MethodGet, "/x/%2Fevil.com", nil))
 	if err != nil || !result.IsNotFound {
 		t.Fatalf("Match = %+v, %v; want not found", result, err)
 	}

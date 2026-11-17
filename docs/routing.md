@@ -209,6 +209,15 @@ page := collage.NewPage("blog-post").
   rejected in either registration order (`collage.ErrRedirectShadowsPage`): one
   of the two would be unreachable. The sentinel's name predates documents
   sharing the tree; it covers both.
+- That covers a redirect that merely *matches* a route's path, not only one
+  spelled the same. `WithRedirect("/{slug}", "/blog/{slug}", 301)` takes
+  `/about.txt`, so a document there is refused — and so is a catch-all
+  `/old/{rest...}` next to `/old/keep.txt`, and a literal redirect source that a
+  route with a placeholder answers. The error names both. Redirects win over
+  routes, so the check is made rather than the order decided: narrow the
+  redirect's source, or move one of the two. Two patterns that *both* hold
+  placeholders are not compared — whether they overlap depends on the request —
+  so there the redirect still wins.
 - Redirects are matched **before** pages and documents, and the redirect tree is
   shared across locales, since a `Redirect` carries no locale of its own.
 - A captured value is escaped for where it lands: as a path segment in the

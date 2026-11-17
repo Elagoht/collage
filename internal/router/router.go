@@ -17,7 +17,8 @@ import (
 
 // ErrRedirectShadowsPage is returned at registration time when a redirect's From
 // pattern normalizes to the same path as a page or document already registered
-// for some locale, in either registration order: the redirect would make the
+// for some locale, or matches a literal route path (or is a literal source a route
+// with placeholders answers), in either registration order: the redirect would make the
 // page or document unreachable, or the page or document would make the
 // redirect unreachable, whichever was registered second. The name predates
 // documents sharing the page tree; it covers both route kinds, and a caller
@@ -530,7 +531,36 @@ func (rt *router) checkRedirectShadow(owner, pattern, locale, normalized string)
 		return fmt.Errorf("%w: %s path %q locale %q: redirect %q -> %q already registered there",
 			ErrRedirectShadowsPage, owner, pattern, locale, existing.From, existing.To)
 	}
+	// A literal path a registered redirect with placeholders would take: the
+	// redirect is matched first, so "/{slug}" sends /about.txt away and the
+	// document there is never served. Comparing identical patterns misses it.
+	if literal, ok := literalSegments(pattern); ok {
+		if node, _, matched := rt.redirectTree.match(literal); matched {
+			return fmt.Errorf("%w: %s path %q locale %q: redirect from %q would take every request for it; a redirect is matched before a route, so narrow its source",
+				ErrRedirectShadowsPage, owner, pattern, locale, node.redirectFrom)
+		}
+	}
 	return nil
+}
+
+// literalSegments returns pattern's segments when every one is literal text, and
+// false when it holds a placeholder or is not a valid pattern. A literal path is
+// the one kind a shadow check can run through another pattern's tree and get an
+// exact answer; two patterns that both hold placeholders overlap or not depending
+// on what a request holds, which no registration-time check can know.
+func literalSegments(pattern string) ([]string, bool) {
+	segments, err := parsePattern(pattern)
+	if err != nil {
+		return nil, false
+	}
+	literal := make([]string, len(segments))
+	for i, seg := range segments {
+		if seg.kind != segmentStatic {
+			return nil, false
+		}
+		literal[i] = seg.text
+	}
+	return literal, true
 }
 
 // recordRoutedPath records that owner claims pattern's normalized form for
@@ -566,6 +596,32 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 		}
 	}
 
+	// A route this redirect would take, whichever was registered first. Every
+	// literal route is run through a tree holding only this redirect, and a
+	// literal source through each locale's routes: the redirect applies after the
+	// locale prefix is stripped, so it meets every locale's tree.
+	probe := &node{}
+	if end, err := probe.insert(fromSegments); err == nil {
+		end.hasRedirect = true
+		for _, c := range rt.claims {
+			if c.locale == "" {
+				continue
+			}
+			if literal, ok := literalSegments(c.pattern); ok {
+				if _, _, matched := probe.match(literal); matched {
+					return fmt.Errorf("%w: redirect from %q: %s at %q would be taken by it; a redirect is matched before a route, so narrow its source", ErrRedirectShadowsPage, redirect.From, c.owner, c.pattern)
+				}
+			}
+		}
+	}
+	if literal, ok := literalSegments(redirect.From); ok {
+		for locale, tree := range rt.routeTrees {
+			if matched, _, ok := tree.match(literal); ok {
+				return fmt.Errorf("%w: redirect from %q: %s in locale %q answers that path; the redirect would take it, so move one of them", ErrRedirectShadowsPage, redirect.From, routeOwner(matched), locale)
+			}
+		}
+	}
+
 	catchAll := ""
 	for _, seg := range fromSegments {
 		if seg.kind == segmentCatchAll {
@@ -588,6 +644,7 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	target.redirectTo = redirect.To
 	target.redirectStatus = types.RedirectStatus(redirect)
 	target.redirectCatchAll = catchAll
+	target.redirectFrom = redirect.From
 	rt.redirectFroms[normalizedFrom] = redirect
 	// Locale is empty: the redirect tree is shared across locales, so this
 	// pattern is claimed under every one of them. ClaimedPaths expands that.
@@ -597,6 +654,17 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	})
 
 	return nil
+}
+
+// routeOwner describes what answers at n, for an error message.
+func routeOwner(n *node) string {
+	if owner := occupantName(n); owner != "" {
+		return owner
+	}
+	for _, a := range n.actions {
+		return fmt.Sprintf("action %q", a.Name)
+	}
+	return "a route"
 }
 
 // ClaimedPaths implements Router.
