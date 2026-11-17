@@ -1621,7 +1621,12 @@ func (h *Handler) serveCached(w http.ResponseWriter, r *http.Request, page *type
 // A SharedCache is written through writeShared instead, which weighs the write
 // against the store's epoch as well, so an invalidation on any instance counts.
 func (h *Handler) writeCache(r *http.Request, key string, page *types.Page, content []byte, tags []string, mark invalidationMark) string {
-	ctx := r.Context()
+	// r is the shareable request, whose context still wraps the leader's. The
+	// render was detached from the leader so that it finishes, and so does the
+	// write: under a cancelled context a MemoryCache refuses the entry, and a
+	// store that ignores the context keeps it while Track fails, leaving an
+	// entry no invalidation can reach. Values, the warm state among them, stay.
+	ctx := context.WithoutCancel(r.Context())
 	// A static build asking what it answers is not a reader: the build has
 	// written the file, and an entry or a hook call on its behalf would be
 	// state the build left behind.

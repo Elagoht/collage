@@ -241,7 +241,9 @@ func (h *Handler) writeShared(r *http.Request, shared cache.SharedCache, key str
 	if h.warm != nil {
 		h.recipes.put(key, rcp, warmStateOf(ctx) == nil)
 	}
-	if err := h.tracker.Track(ctx, key, routeTags); err != nil {
+	// detached, not ctx: a leader that left must not leave an entry the
+	// tracker never heard of, which no invalidation would reach.
+	if err := h.tracker.Track(detached, key, routeTags); err != nil {
 		report(fmt.Errorf("collage: track %q: %w", key, err))
 	}
 	if h.staleIfOverlapped(ctx, shared, key, mark) {

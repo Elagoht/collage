@@ -103,11 +103,22 @@ func (h *Handler) serveDocument(w http.ResponseWriter, r *http.Request, match *r
 		// holds, as a page does: see sharedRequest for the request and
 		// renderSafeContext for the context's values, which the handler reaches
 		// both directly and through rc.Request.
+		//
+		// Like a page's, the run is detached from the leader's request: the
+		// readers coalesced on it did not leave with it. A handler that
+		// tolerates an upstream error would otherwise answer a cancelled
+		// leader with a partial body, which every waiter would be handed and
+		// the cache would keep. A warm or a static build's capture is no
+		// reader's request, so it keeps its own context, as on the page path.
 		renderCtx, req := ctx, r
 		if key != "" {
-			renderCtx = h.renderSafeContext(ctx)
+			base := ctx
+			if warmStateOf(ctx) == nil && !types.IsCapture(ctx) {
+				base = context.WithoutCancel(ctx)
+			}
+			renderCtx = h.renderSafeContext(base)
 			req = sharedRequest(r, doc.CacheParams)
-			req = req.WithContext(h.renderSafeContext(req.Context()))
+			req = req.WithContext(h.renderSafeContext(base))
 		}
 		rc := types.NewRenderContext(renderCtx, req, nil, match.Locale, match.PathParams)
 		if skipsCache(r) {
@@ -273,7 +284,8 @@ func (h *Handler) serveCachedDocument(w http.ResponseWriter, r *http.Request, do
 // mark is read before the handler ran; a document an invalidation overlapped is
 // not written, as in writeCache.
 func (h *Handler) writeDocumentCache(r *http.Request, key string, doc *types.Document, result *render.DocumentResult, route *routeRef, mark invalidationMark) string {
-	ctx := r.Context()
+	// Not cancelled with the request: see writeCache.
+	ctx := context.WithoutCancel(r.Context())
 	// Not for a static build's header capture; see writeCache.
 	if types.IsCapture(ctx) {
 		return ""
