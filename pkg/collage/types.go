@@ -26,6 +26,24 @@
 //
 // Build returns a copy: a WithX call after Build changes the builder and what a
 // later Build returns, never a value already built or registered.
+//
+// # What is stable
+//
+// Page, Fragment, Document, Action and SlotDefinition are made with their
+// builders: NewPage, NewFragment (or NewInlineFragment), NewDocument, NewAction,
+// and FragmentBuilder.WithSlot for a slot. Constructing one as a struct literal
+// is unsupported, because only a builder sets the defaults and records the
+// mistakes registration checks for. Their exported fields are readable, and the
+// framework and plugins read them, but they are not part of the compatibility
+// promise beyond what the builders set: a field may be added or may take a value
+// it never had, and a release does not break a program for either.
+//
+// Metrics, Tracer, Span and the Cache interfaces (Cache, TaggedCache,
+// StaleCache, SharedCache) never gain a method within v1, so an implementation
+// written today keeps compiling. Implement Metrics, Tracer and Span by embedding
+// NoopMetrics, NoopTracer and NoopSpan, which ignore a signal added later. A new
+// capability arrives as an optional interface the framework finds by type
+// assertion, which an implementation opts into by adding its methods.
 package collage
 
 import "github.com/Elagoht/collage/internal/types"

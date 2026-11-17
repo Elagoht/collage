@@ -108,11 +108,16 @@ type Host = interface {
 
 	// --- Wrapping requests ---
 	//
-	// Use adds middleware around the handling of every request, as App.Use does,
-	// after the application's: a plugin's headers, limits and cookies wrap what
-	// the application's middleware produced. Like App.Use's, it does not
-	// run for a handler the application mounted with App.Handle without
-	// WithMiddleware: that one brings its own.
+	// Use adds middleware around the handling of every request, as App.Use does.
+	// A plugin's middleware is placed where
+	// the plugin was registered. A plugin in Config.Plugins is registered by New, so its
+	// middleware is outside everything App.Use adds, and its headers, limits and
+	// cookies wrap what the application's middleware does; one added with
+	// App.RegisterPlugin is inside what App.Use added before it and outside what
+	// it adds after. Its own middleware keep the order they were added in.
+	//
+	// Like App.Use's, it does not run for a handler the application mounted with
+	// App.Handle without WithMiddleware: that one brings its own.
 	Use(middleware func(http.Handler) http.Handler) error
 
 	// --- Reading the site map ---

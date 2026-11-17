@@ -94,7 +94,9 @@ func (a *App) warnSafeOnlyAction(action *types.Action) {
 	a.logger.Warn(safeOnlyActionWarning, "action", action.Name, "methods", action.Methods)
 }
 
-// Actions returns every registered action in registration order, as a copy.
+// Actions returns every registered action in registration order, as a copy of the
+// slice. The actions themselves are the application's own, not copies, and must
+// not be modified.
 func (a *App) Actions() []*types.Action {
 	a.mu.RLock()
 	defer a.mu.RUnlock()

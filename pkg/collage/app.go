@@ -96,18 +96,23 @@ func (a *App) RegisterCommand(cmd Command) error { return a.c.RegisterCommand(cm
 func (a *App) Commands() []Command { return a.c.Commands() }
 
 // Pages returns every registered page in registration order, each a copy, so
-// changing one does not change the application.
+// changing one does not change the application. Documents and Actions do not
+// copy: read what they return, do not modify it.
 func (a *App) Pages() []*Page { return a.c.Pages() }
 
 // Page returns a copy of the page registered as name, and whether there is one.
 func (a *App) Page(name string) (*Page, bool) { return a.c.Page(name) }
 
 // Documents returns every registered document in registration order. The slice is
-// a copy; the documents are the values that were registered.
+// a copy; the documents are the values that were registered, not copies of them,
+// so the application shares them with the caller. They must not be modified:
+// a change is made to the running application, without a lock, and without the
+// checks registration applies.
 func (a *App) Documents() []*Document { return a.c.Documents() }
 
 // Actions returns every registered action in registration order, as a copy of the
-// slice.
+// slice. The actions are the values that were registered, not copies of them,
+// and must not be modified, for the reason given at Documents.
 func (a *App) Actions() []*Action { return a.c.Actions() }
 
 // Handle serves handler under prefix: an API, a webhook receiver, anything written
@@ -119,9 +124,9 @@ func (a *App) Actions() []*Action { return a.c.Actions() }
 // The request hooks, span, metrics, panic guard and the clean-path redirect still
 // apply.
 //
-// WithMiddleware runs one mount inside the middleware chain instead, as every
-// mount was before v0.67.0; a middleware that rewrites a path into prefix reaches
-// the handler only then. A plugin's Host.Handle always runs inside the chain.
+// WithMiddleware runs one mount inside the middleware chain instead, as a page
+// is; a middleware that rewrites a path into prefix reaches the handler only
+// then. A plugin's Host.Handle always runs inside the chain.
 func (a *App) Handle(prefix string, handler http.Handler, opts ...HandleOption) error {
 	return a.c.Handle(prefix, handler, opts...)
 }
