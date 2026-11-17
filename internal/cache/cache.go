@@ -12,6 +12,16 @@ import (
 // cancellation, reported via the standard context.Canceled and
 // context.DeadlineExceeded errors — this package defines no cache-specific error
 // sentinels.
+//
+// Get has no error by design: a lookup that cannot be answered is a miss, and a
+// store that can fail (a remote one) reports outages through its own logging or
+// metrics, or implements SharedCache, whose GetData returns an error. Clear is
+// called only by tests, collagetest and the tiered cache when it is itself
+// cleared, never while serving.
+//
+// The interface is frozen: it gains no methods after v1.0. New capabilities
+// arrive as optional interfaces a store may implement, as TaggedCache,
+// StaleCache and SharedCache did.
 type Cache interface {
 	// Get returns the cached content and its ETag for key. found is false when
 	// there is no fresh entry for key, including one that has expired or, in a
