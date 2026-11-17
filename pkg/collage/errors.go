@@ -192,6 +192,11 @@ var (
 	// registered page path, in either registration order: one of the two would be
 	// unreachable.
 	ErrRedirectShadowsPage = router.ErrRedirectShadowsPage
+	// ErrRedirectLoop is returned when a redirect's destination is a path its own
+	// source matches: "/loop" to "/loop", or "/docs" to "/docs/", which a source
+	// matches with or without its trailing slash. A client following it would
+	// never arrive anywhere.
+	ErrRedirectLoop = router.ErrRedirectLoop
 	// ErrUnsubstitutedPlaceholder is returned when a redirect's destination contains a
 	// "{name}" its source pattern does not capture, so it could never be substituted at
 	// match time.

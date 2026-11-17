@@ -25,6 +25,12 @@ import (
 // handles either collision identically.
 var ErrRedirectShadowsPage = errors.New("collage: redirect shadows a registered page")
 
+// ErrRedirectLoop is returned at registration time when a redirect's destination is
+// a path its own source matches: "/loop" to "/loop", "/docs" to "/docs/" (a source
+// matches with or without its trailing slash), "/blog/{slug}" to "/blog/{slug}".
+// A client following it would never arrive anywhere.
+var ErrRedirectLoop = errors.New("collage: redirect loops back to its own source")
+
 // ErrUnsubstitutedPlaceholder is returned at registration time when a redirect's
 // To template contains a "{name}" placeholder that is not among the parameter
 // names its From pattern captures, since such a placeholder could never be
@@ -640,6 +646,10 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 		return fmt.Errorf("%w: redirect %q -> %q: placeholder %q", ErrUnsubstitutedPlaceholder, redirect.From, redirect.To, name)
 	}
 
+	if rt.redirectLoops(fromSegments, redirect.To) {
+		return fmt.Errorf("%w: redirect %q -> %q: the destination is matched by the source, so a request for it is redirected again", ErrRedirectLoop, redirect.From, redirect.To)
+	}
+
 	target, err := rt.redirectTree.insert(fromSegments)
 	if err != nil {
 		return fmt.Errorf("redirect from %q: %w", redirect.From, err)
@@ -661,6 +671,43 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	})
 
 	return nil
+}
+
+// redirectLoops reports whether the destination to, run back through a redirect
+// from from, would be redirected again. Each placeholder is substituted by itself:
+// "{slug}" is the segment "slug". That is enough to ask whether the source's
+// pattern covers the destination's shape: "/blog/{slug}" to "/blog/{slug}" does, and
+// "/old/{slug}" to "/blog/{slug}" does not. The query and fragment are not part of
+// what is matched, and a leading locale prefix is stripped as a request's is, so
+// "/about" to "/tr/about" loops too. A destination that is not a path on this site
+// is refused when it is served, not here.
+func (rt *router) redirectLoops(from []patternSegment, to string) bool {
+	if i := strings.IndexAny(to, "?#"); i >= 0 {
+		to = to[:i]
+	}
+	if !strings.HasPrefix(to, "/") {
+		return false
+	}
+	destination := splitPath(to)
+	if len(destination) > 0 {
+		if _, ok := matchSupported(rt.localeOptions.supportedLocales(), destination[0]); ok {
+			destination = destination[1:]
+		}
+	}
+	for i, segment := range destination {
+		for _, name := range placeholderNames(segment) {
+			segment = strings.ReplaceAll(segment, "{"+name+"}", name)
+		}
+		destination[i] = segment
+	}
+	probe := &node{}
+	end, err := probe.insert(from)
+	if err != nil {
+		return false
+	}
+	end.hasRedirect = true
+	_, _, matched := probe.match(destination)
+	return matched
 }
 
 // routeOwner describes what answers at n, for an error message.

@@ -46,8 +46,10 @@ branch would have matched further down.
 
 `/blog` and `/blog/` are the same route. A pattern must start with `/`, must not
 contain an empty segment or an empty placeholder name, must hold at most one
-placeholder in a segment, and must not put a catch-all anywhere but last;
-anything else is `collage.ErrInvalidPattern` at registration.
+placeholder in a segment, must not use one placeholder name twice
+(`/a/{id}/b/{id}` has no way to say which `id` a link fills), and must not put a
+catch-all anywhere but last; anything else is `collage.ErrInvalidPattern` at
+registration.
 
 ### Text around a placeholder
 
@@ -213,6 +215,11 @@ page := collage.NewPage("blog-post").
 - A placeholder in the destination must be captured by the source pattern, or
   registration fails with `collage.ErrUnsubstitutedPlaceholder` — such a
   placeholder could never be substituted at match time.
+- A destination its own source matches is a loop and is refused with
+  `collage.ErrRedirectLoop`: `/loop` to `/loop`, `/docs` to `/docs/` (a source
+  matches with or without its slash), `/blog/{slug}` to `/blog/{slug}`, and a
+  destination under a locale prefix that the source also matches once it is
+  stripped. The query and fragment are not compared.
 - A redirect whose source collides with a registered page *or document* path is
   rejected in either registration order (`collage.ErrRedirectShadowsPage`): one
   of the two would be unreachable. The sentinel's name predates documents
@@ -476,6 +483,7 @@ they keep `RegisterNotFoundPage` and `RegisterErrorPage`. `Register` takes a
 | `collage.ErrAmbiguousParameterName` | Two parameter names at one position |
 | `collage.ErrOverlappingPattern` | Two placeholders with text around them that cross: `a{x}` and `{x}b` |
 | `collage.ErrRedirectShadowsPage` | A redirect source that is also a page or document path |
+| `collage.ErrRedirectLoop` | A redirect whose destination its own source matches |
 | `collage.ErrUnsubstitutedPlaceholder` | A redirect destination placeholder the source does not capture |
 | `collage.ErrTemplateRootMissing` | `New`: `Template.Root` does not exist, on disk or within `Template.FS` |
 
