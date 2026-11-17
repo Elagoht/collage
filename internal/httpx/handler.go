@@ -1832,6 +1832,14 @@ func (h *Handler) setCacheHeaders(header http.Header, r *http.Request, strategy 
 		// shows the next edit; a browser or a proxy keeping the page would
 		// undo that, and keep the dev overlay's error text besides.
 		control = "no-store"
+	case len(header.Values("Set-Cookie")) > 0:
+		// A cookie a middleware wrote is for the reader who got it. Public, a
+		// CDN would keep this response with its Set-Cookie and hand the same
+		// cookie, a session perhaps, to every reader after. The framework's own
+		// forgery cookie and a PersonaliseHook already made the response
+		// private later; this covers the cookie the framework did not write.
+		// Vary is skipped below with it: there is no shared copy to select.
+		control = "private, no-store"
 	}
 	header.Set("Cache-Control", control)
 
