@@ -2,6 +2,7 @@ package types
 
 import (
 	"reflect"
+	"strings"
 	"sync"
 )
 
@@ -31,8 +32,21 @@ func NewKey[T any](name string) Key[T] {
 
 // With returns the key named k's name, a colon and part, for the same type:
 // articleKey.With(slug) for one article among many.
+//
+// A colon in part is written \: and a backslash \\, so the parts stay apart:
+// With("b:c") and With("b").With("c") are two keys, not one. Parts without either
+// character — slugs, ids, locales — are written as they are, which keeps their
+// names byte-identical for a data cache that stored them.
 func (k Key[T]) With(part string) Key[T] {
-	return Key[T]{name: k.id().name + ":" + part}
+	return Key[T]{name: k.id().name + ":" + escapeKeyPart(part)}
+}
+
+// escapeKeyPart escapes the characters With's joining would otherwise confuse.
+func escapeKeyPart(part string) string {
+	if !strings.ContainsAny(part, `:\`) {
+		return part
+	}
+	return strings.NewReplacer(`\`, `\\`, `:`, `\:`).Replace(part)
 }
 
 // Name returns the key's name, for logs and errors.
