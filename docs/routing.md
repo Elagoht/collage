@@ -44,7 +44,14 @@ them from the most specific, then the bare placeholder, then the catch-all — w
 backtracking, so a static match always beats a dynamic one even when the dynamic
 branch would have matched further down.
 
-`/blog` and `/blog/` are the same route. A pattern must start with `/`, must not
+`/blog` and `/blog/` are the same route, with **one address**: a page's other
+spelling is a `301` to it, with the query kept. The address is the one without the
+slash, or with it under `Config.TrailingSlash`. A [document](documents.md) and an
+[action](actions.md) are always spelled without a trailing slash, as `app.URL` and
+`{{actionURL}}` build them: `/sitemap.xml/` is a `301`, and a `POST` to `/login/` is
+a `308` to `/login`, so the body is sent again. See
+[http.md](http.md#a-trailing-slash-is-the-routers-not-the-middlewares) for what that
+means for a middleware that guards an exact path. A pattern must start with `/`, must not
 contain an empty segment or an empty placeholder name, must hold at most one
 placeholder in a segment, must not use one placeholder name twice
 (`/a/{id}/b/{id}` has no way to say which `id` a link fills), and must not put a
@@ -94,17 +101,23 @@ slug := rc.Param("slug")          // or rc.PathParams["slug"]
 ```
 
 Matching happens on the *escaped* path, split first and percent-decoded one
-segment at a time. A segment that fails to decode is a 404, not a 500, and so is
-one holding an encoded slash (`%2F`). `%2F` is not a separator, so the router
+segment at a time. A segment holding an encoded slash (`%2F`) or a NUL (`%00`) is a
+404, not a 500. A segment whose escape is not one at all — `/blog/a%zz`, a trailing
+`%` — never gets that far through a server: `net/http` answers `400 Bad Request` while
+reading the request line, before collage is asked, and only a path that arrives some
+other way, handed straight to the handler, meets the router's own 404 for it.
+`%2F` is not a separator, so the router
 reads `/public%2Fsecret` as one segment; but a middleware reads the decoded
 `r.URL.Path`, where it is `/public/secret` — two segments — and a router that
 served the one would serve a request the middleware judged as something else. A value
 that is itself a path — `guide/intro` — belongs in a catch-all, `{rest...}`;
 `BuildPath` and `{{pageURL}}` refuse a `/` in a single segment's value.
 
-A page answers `GET` and `HEAD`. Any other method is a 405 carrying an `Allow`
-header, unless an [action](actions.md) claims it for that URL — which is how a form
-posts to the page it sits on. Only `GET` and `HEAD` are eligible to be served from,
+A page answers `GET` and `HEAD`. `OPTIONS` is answered by the router with a `204`
+and an `Allow` header listing what the URL accepts, unless an [action](actions.md)
+claims `OPTIONS` itself. Any other method is a 405 carrying an `Allow` header,
+unless an action claims it for that URL — which is how a form posts to the page it
+sits on. Only `GET` and `HEAD` are eligible to be served from,
 or (for `GET`) to populate, the cache.
 
 ## Locales

@@ -158,6 +158,7 @@ err := app.Mount("/media/", root.FS(),
 | --- | --- |
 | `collage.WithCacheControl(value)` | The `Cache-Control` served with every file in this mount. The default is `public, max-age=3600` |
 | `collage.WithoutBuildCopy()` | A static build does not copy this mount into its output |
+| `collage.WithAttachments()` | An `.html`, `.xhtml`, `.svg` or `.xml` file is served with `Content-Disposition: attachment`, so a browser saves it instead of running it. For a mount of uploads |
 
 `Cache-Control` is the one part of an asset response the framework does not
 derive, because it cannot: how long a client may keep a file depends on whether
@@ -166,6 +167,17 @@ fingerprinted filenames and wrong for `app.css`.
 
 `WithoutBuildCopy()` is for a mount served from a CDN in production, or one large
 enough that duplicating it into the build directory is not wanted.
+
+### A mount of uploads needs `WithAttachments()`
+
+A mount serves a file as its name says: `up.html` is `text/html` and `up.svg` is
+`image/svg+xml`, on your site's origin, where their script runs with your cookies. The
+rule that content is never sniffed into `text/html` covers only a file with *no*
+extension. A mount of what readers upload therefore uses `WithAttachments()`, which
+adds `Content-Disposition: attachment` to those types — a browser downloads the file
+instead of rendering it — or else controls which extensions are ever stored. Neither
+is automatic: a plain mount of a directory you wrote yourself has no reason to pay for
+it.
 
 ## What a mounted file response contains
 
@@ -182,10 +194,12 @@ per-mount `Cache-Control`, and answers 404 in HTML.
 | | |
 | --- | --- |
 | Methods | `GET` and `HEAD`. Anything else is `405` with an `Allow: GET, HEAD` header |
-| `Content-Type` | From `mime.TypeByExtension`, falling back to `ServeContent`'s 512-byte content sniff |
-| `ETag` | A strong content hash, computed on first serve and memoised |
-| `Cache-Control` | The mount's, on every response |
+| `Content-Type` | From `mime.TypeByExtension`. A file with no known extension is sniffed from its first 512 bytes (`http.DetectContentType`) — but never into `text/html` or `text/xml`, which become `text/plain`. Always with `X-Content-Type-Options: nosniff` |
+| `ETag` | A strong content hash, computed on first serve and memoised; concurrent first requests for one file share a single hash |
+| `Cache-Control` | `public, max-age=31536000, immutable` for a verified fingerprinted name; `no-store` in development mode; the mount's own (`WithCacheControl`, default `public, max-age=3600`) for every other file |
 | Directory listings | None. A request for a directory, or for the bare prefix, is a 404 |
+| A trailing slash | A file has one URL: `/static/app.css/` is a 404 |
+| Dotfiles | A path with an element starting with `.` — `.env`, `.git/config`, `.DS_Store` — is a 404, except `.well-known`. `Mount.URL` refuses to mint a link to one |
 | Implicit `index.html` | None |
 | A missing file | `404` in `text/plain`, with `no-store` and `nosniff` — never HTML |
 
@@ -269,6 +283,11 @@ and logs the reason once, and `App.ListenAndServe()` returns the error instead.
 like every other registration method.
 
 ## Path resolution
+
+`{{asset}}` (`Mount.URL`) escapes each segment of the file name, so `a b#c?.css` and
+`100%.css` link as `a%20b%23c%3F…` and `100%25….css`, and it returns an error — as it
+does for a file that is not there — for a name the mount would not serve: a dotfile,
+or one that is not a valid path within the mount.
 
 After the prefix is stripped, the remainder is `path.Clean`ed and checked with
 `fs.ValidPath`, which rejects `..`, absolute paths and empty elements. A path
