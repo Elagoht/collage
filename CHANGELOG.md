@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.0.1
+
+### Added
+
+- **`collage.ErrTooManyInlineSources`.** v1.0.0 capped the inline fragments a
+  slot resolver may add while rendering at 256 and named this error in its notes
+  and docs, but it lived in an internal package, out of reach of `errors.Is`. It
+  is now exported, so the promise v1.0.0 made is one an application can use.
+
+### Fixed
+
+- **A path segment that is not UTF-8 matches no route.** `/blog/%c3%28` reached a
+  `{slug}` page with a 200 and a value no link of the site's could hold — `App.URL`
+  escapes Go strings as UTF-8. It is now a 404, as an encoded slash and a NUL are.
+
 ## v1.0.0
 
 The first stable release. From here on `pkg/collage` and `pkg/collagetest`
