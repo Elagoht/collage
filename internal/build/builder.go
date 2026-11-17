@@ -1025,6 +1025,11 @@ func (b *Builder) checkNoOutputCollisions(tasks []buildTask, docs []documentTask
 	// a directory — or the other way round — collides as two files do. Two
 	// outputs needing one directory do not.
 	claimFile := func(file, owner string) error {
+		// Keyed on the folded path: the default file systems on macOS and Windows
+		// are case-insensitive, so "Go" and "go" are one file there and the second
+		// write would silently replace the first. Folded on every platform, so a
+		// build that works on Linux does not fail only on a colleague's laptop.
+		file = strings.ToLower(file)
 		for dir := path.Dir(file); dir != "/" && dir != "."; dir = path.Dir(dir) {
 			if previous, taken := claimed[dir]; taken {
 				if previous.dir {
