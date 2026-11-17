@@ -32,10 +32,10 @@ type prefetch struct {
 	done chan struct{}
 	// cancel stops the handler when nothing will consume it.
 	cancel context.CancelFunc
-	// depth and order are the position the fragment was launched at, so what it
-	// hoists is placed as if the walk had reached it in order.
-	depth int
-	order int
+	// log holds what the handler declared — hoists, and the tags of Cached — until
+	// the walk takes this prefetch. A fragment the template never renders is never
+	// taken, and its declarations are never committed, so they never reach the page.
+	log *types.HoistLog
 
 	data    any // any: fragment data is opaque to the framework, exactly as in attempt
 	tags    []string
@@ -51,10 +51,9 @@ func (p *prefetch) wait() (any, []string, time.Duration, error) { // any: see th
 
 // prefetchChildren starts the data handlers of every fragment bound into f's slots.
 //
-// The launch happens here, on the render's own goroutine, in the order the tree
-// declares: that is what keeps depth and order deterministic, and therefore what
-// keeps hoisting deterministic, even though the handlers themselves finish in
-// whatever order they finish.
+// The launch happens here, on the render's own goroutine. Nothing the handlers do
+// to the page depends on when they were started or finished: their declarations
+// are held in a log, and placed in the tree's order when the walk takes them.
 //
 // A fragment with no data handler is not launched. There is nothing to overlap, and
 // a prefetch entry for it would only add a channel to wait on.
@@ -92,19 +91,14 @@ func (e *SlotEngine) startPrefetch(rc *types.RenderContext, f *types.Fragment, s
 	p := &prefetch{
 		done:   make(chan struct{}),
 		cancel: cancel,
-		depth:  len(state.stack) + 1,
-		order:  state.nextOrder(),
+		log:    types.NewHoistLog(),
 	}
 
-	// The handler's context carries the fragment's own position, so a handler that
-	// hoists is placed where the fragment is rather than where the walk happens to
-	// be — there is no longer one place the walk "is".
-	handlerRC := types.RenderWithFragment(rc.WithContext(ctx), p.depth, p.order)
-
-	// Before the handler starts, for the reason attempt gives.
-	if f.Title != "" {
-		handlerRC.HoistTitle(f.Title)
-	}
+	// The handler declares into a log of its own, not the page: it runs before the
+	// template has decided whether the fragment is rendered, so a title or a robots
+	// meta declared now would otherwise reach a page that never shows it. The walk
+	// commits the log, at the fragment's place, when it takes this prefetch.
+	handlerRC := types.WithHoistLog(rc.WithContext(ctx), p.log)
 
 	go func() {
 		defer close(p.done)
