@@ -27,12 +27,13 @@ routed, cacheable non-HTML responses such as a sitemap, a feed or a `robots.txt`
 whose handler returns bytes — and **assets**, a mounted `fs.FS` served with
 `Range` support and its own `Cache-Control`.
 
-No dependencies: the standard library, and nothing else. Go 1.26.10 or later.
+No dependencies: the standard library, and nothing else. Go 1.26.11 or later (GO-2026-6859: earlier patches have a race in `http.MaxBytesReader`, which the body limit uses, that can panic the HTTP/1 server).
 
-**Status: pre-1.0.** The API can still change between minor versions. Every
-change that breaks an application is listed first, under **Breaking**, in
-[CHANGELOG.md](CHANGELOG.md), with what to do instead; patch versions never break
-anything. The aim for 1.0 is an API that then stays put.
+**Stability.** `pkg/collage` and `pkg/collagetest` follow semantic versioning:
+nothing in them breaks within v1. CI compares their API against the last release
+and refuses an incompatible change; a break would mean a v2 module path. Everything
+under `internal/` is not API and can change in any release. What changed in each
+release is in [CHANGELOG.md](CHANGELOG.md).
 
 ## Getting started
 
@@ -49,7 +50,7 @@ collage dev
 
 http://localhost:6060 — a home page and a page of live demos: an API action, a form,
 a fragment with its own URL and a JSON document, with the tests that drive them.
-`collage dev` reads `.env.development`; `PORT=8080 collage dev` moves it. Go 1.26.10 or
+`collage dev` reads `.env.development`; `PORT=8080 collage dev` moves it. Go 1.26.11 or
 later is the only requirement; `go install` puts `collage` in `$(go env GOPATH)/bin`, which is on your `PATH` if you have
 installed any Go tool before.
 
@@ -105,6 +106,7 @@ type homeData struct {
 
 func main() {
 	app, err := collage.New(&collage.Config{
+		DevMode: true,
 		Server: collage.ServerConfig{
 			Host: "localhost",
 			Port: 6060,
@@ -112,7 +114,6 @@ func main() {
 		Template: collage.TemplateConfig{
 			Root:      "templates",
 			Extension: ".html",
-			DevMode:   true,
 		},
 		Cache: collage.CacheConfig{
 			Enabled:    true,
