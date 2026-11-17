@@ -12,7 +12,14 @@ were made.
 
 ```
 pkg/collage        the only package you import: builders, config, and type aliases
+pkg/collagetest    drives an application from a test: a browser-like client, CacheSuite
 cmd/collage        the CLI binary
+internal/ascii     ASCII case folding for paths, headers, hosts and rendered markup
+internal/clienv    the environment names the collage binary sets for a program it runs
+internal/devhost   whether a request's Host names this machine, for the development server
+internal/envfile   the .env files collage dev and collage.Main load
+internal/netaddr   peer address, trusted ranges and TLS detection, shared by httpx and csrf
+internal/suggest   the "did you mean" behind every misspelt name, flag and command
 internal/types     the domain types: Fragment, Page, Document, Redirect, RenderContext
 internal/template  html/template loading, the function map, per-render funcs
 internal/template/typecheck  walks a template against its data's Go type
@@ -82,8 +89,9 @@ state and wants tag invalidation; a served file (audio, video, a zip, a
 stylesheet) sits on disk or in an embed, is potentially large, and wants `Range`
 and `Last-Modified`. Forcing the second through the first breaks in three
 specific ways: a `[]byte`-returning API cannot do `Range` without hand-rolling
-RFC 9110 range parsing; the page cache is bounded by entry count, so one 50 MB
-zip would evict thousands of pages; and the framework's content-hash ETag is not
+RFC 9110 range parsing; the page cache is bounded (`MaxEntries` and `MaxBytes`)
+and evicts the oldest first, so a few 50 MB zips would push thousands of pages
+out; and the framework's content-hash ETag is not
 viable over 500 MB per request.
 
 Documents register into the *same* radix tree as pages, so a collision between
@@ -251,8 +259,8 @@ error instead, so a program that starts a server never loses it.
 
 A plugin cannot mutate core state directly: that is the framework's rule. So
 `Plugin.Init` receives a `collage.Host` — `DevMode`, `Pages`, `Page`,
-`Logger`, `RegisterCommand`, `Config`,
-`RegisterDocument`, `Mount` — and not the `*App`. A plugin has no way to reach the
+`Logger`, `RegisterCommand`, `RegisterDocument`, `Mount`, and the rest listed in
+[plugins](plugins.md#the-host) — and not the `*App`. A plugin has no way to reach the
 router, the cache, the render engine, the template set, or any page it was not
 explicitly handed; it can add to the application through those methods, but not
 reach the structures behind them.

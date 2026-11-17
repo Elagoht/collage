@@ -619,8 +619,8 @@ collage: page "post": fragment "post-body" (post.html:1:6): {{.Titel}}: type blo
 
 It reports only what is certain to fail: each finding is an expression
 `text/template` would fail on when the render reached it. So an application that
-now fails at startup had a template that would already have failed when rendered;
-the check reports it earlier, and adds no rule of its own.
+fails at startup on it had a template that would have failed when rendered; the
+check reports it earlier, and adds no rule of its own.
 
 ### What is walked
 
@@ -667,7 +667,7 @@ variables keep the type they were given for their scope.
   indexed by a key of its own key type, or an integer converted to it:
   `{{index .ByID "7"}}` on a `map[int]Post` is reported.
 - **An argument its parameter cannot take**, as `text/template` judges it when
-  it calls a template function or a method (from v0.51.0):
+  it calls a template function or a method:
   - a constant is judged by the parameter's kind. An integer parameter takes a
     number written as an integer (`1`, `1.0`, `'a'`) and converts it without a
     range check, so `{{i8 300}}` renders 44; an unsigned one a non-negative
@@ -830,7 +830,7 @@ sidebar := collage.NewFragment("sidebar", "partials/sidebar.html").
 
 In development mode a failed fragment emits an HTML comment naming the fragment
 and its error instead of nothing, so a failure looks like a failure rather than
-like a section nobody wrote. In every mode it is logged, since v0.36.0, as a
+like a section nobody wrote. In every mode it is logged as a
 warning through `Config.Logger`: `collage: fragment failed; the page is served
 without it`, with the page, the fragment, the locale, whether a fallback covered
 for it, and the error. The page still answers 200, so the log is where a missing
@@ -933,7 +933,7 @@ which locale it is in. Link by the name the page was registered under instead:
 - **Values are strings, integers or `fmt.Stringer`s.** `{{pageURL "story" "id" .ID}}`
   works for an `int64` `.ID`. A float, a bool or nil fails with
   `collage.ErrRouteParams` naming its type, since none has one obvious spelling in
-  a URL. Before v0.36.0 only strings were taken.
+  a URL.
 
 A language switcher is `localeURL`, which keeps the page's own path parameters
 and is empty for a language the page has not been translated into:

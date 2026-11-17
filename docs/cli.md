@@ -293,8 +293,7 @@ collage add command seed            # commands/seed.go + app.RegisterCommand
   attached to it and its fragment paths all meet the guard. On **`add layout`**
   it goes on the layout, and every page wrapped in it meets the guard first.
 - **`add action ... --guard <name>`** gives the action the guard itself,
-  `.WithGuard(guards.Admin)` (`ActionBuilder.WithGuard`, collage v0.70.0 and
-  later): asked before the handler, the body and the forgery check. It is how an
+  `.WithGuard(guards.Admin)` (`ActionBuilder.WithGuard`): asked before the handler, the body and the forgery check. It is how an
   action on its own `--path`, which has no page and so no page guards, is
   guarded; on a page it is asked after the page's.
 - **A middleware** is `middleware/<name>.go`, a `func(http.Handler)
@@ -797,7 +796,7 @@ model, reads them first and follows them over its own habits.
 collage writes only its own section, between two markers:
 
 ```markdown
-<!-- collage:begin v0.77.0 — written by `collage ai init`; … -->
+<!-- collage:begin v1.0.0 — written by `collage ai init`; … -->
 …
 <!-- collage:end -->
 
@@ -912,8 +911,8 @@ recorded in `report.Errors` as `collage.ErrDegradedRender`, because a static fil
 has no TTL to recover through and would keep serving that failure until the next
 build. Set `BuildOptions.AllowDegraded` if a partial page is genuinely better than
 no page. A page that renders no markup at all is always refused, as
-`collage.ErrEmptyRender` — that used to reach disk as a zero-byte `index.html` and
-an exit status of zero. A panic while building one page is recovered as
+`collage.ErrEmptyRender`, rather than written as a zero-byte `index.html` with an
+exit status of zero. A panic while building one page is recovered as
 `collage.ErrBuildPanic` and the rest of the build continues.
 
 ```go

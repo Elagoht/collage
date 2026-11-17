@@ -149,7 +149,7 @@ client chooses how to spell it: `EXAMPLE.com:8080`, `example.com.` and
 every case a render and an entry of their own — a cheap way to push the pages
 everyone reads out of a bounded cache. The shared render is given the same
 normalised host, so the spelling one request used is never written into what
-another is served. **A cacheable page's render no longer sees the port in
+another is served. **A cacheable page's render does not see the port in
 `r.Host`;** a site served on a port that is not the scheme's default builds its
 absolute URLs from `Config.BaseURL` (`collage.BaseURL(rc)`), which keeps it. A
 dynamic page sees the request's `Host` as sent.
@@ -162,8 +162,8 @@ key holds it), the query parameters
 in the key, and the headers middleware declared with `collage.Vary`. Not the
 reader's cookies, `Authorization`, address or client certificate, and not a query
 parameter `WithCacheParams` left out. A handler on a cacheable page that reads a
-cookie finds none — where it used to find the first reader's, and write it into
-the copy everyone after got. The context's values are not passed on: a value
+cookie finds none: handing it the first reader's would write it into the copy
+everyone after got. The context's values are not passed on: a value
 middleware stored there is hidden from the render, as it would differ between
 readers. Declare it with `collage.Vary` and read it back with `collage.Varied`,
 which is in the key. In development a warning is logged, once per render, when
@@ -559,7 +559,7 @@ func authorCard(ctx context.Context, rc *collage.RenderContext) (Author, []strin
 }
 ```
 
-Thirty pages by two authors now fetch twice, served or exported.
+Thirty pages by two authors fetch twice, served or exported.
 
 The key is a [`collage.Key`](fragments.md#how-a-pages-fragments-run), the same kind
 the fragments of one render share values through: a name and a type, declared once,
@@ -1167,9 +1167,9 @@ rendered again until the disk takes writes again.
 build's directory, newest entries first, until the next one would make it evict —
 so the pages most recently written are `HIT`s from memory at once, and the rest
 are one read away. Stale entries are warmed too, so a restart in the middle of an
-upstream outage still has them to serve. Files written by v0.62 or earlier carry no
-key in their header, so they are not warmed; they are still served, on the first
-request that reads them.
+upstream outage still has them to serve. A file whose header
+carries no key, or whose name is not the one its key hashes to, is not warmed; it
+is still served, on the first request that reads it.
 
 **Instances do not share a cache through one `Dir`.** Each has its own memory
 tier, and memory's answer is final once it holds a page. An invalidation in one
@@ -1294,7 +1294,7 @@ func (m renderTimes) RenderDuration(_ context.Context, page string, d time.Durat
 
 These interfaces cannot gain a method: that would break every implementation, in
 your code and in the plugins that bridge to Prometheus or OpenTelemetry. A signal
-the framework reports in a later release arrives as a separate, optional interface
+the framework reports later arrives as a separate, optional interface
 that it finds by type assertion — so an implementation that embeds the no-op type
 compiles unchanged, and ignores what it did not ask for. An implementation that
 lists all five `Metrics` methods itself works today and has nothing to gain from

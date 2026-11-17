@@ -167,11 +167,11 @@ in a tree no URL reaches. Collage refuses such a path when it is registered, wit
 A locale named twice for one page, or an empty one, is refused at `WithPath`
 (`collage.ErrDuplicateLocalePath`, `collage.ErrInvalidLocale`).
 
-Collage never assigns a locale from `Accept-Language` or a cookie. It used to, and
-the result was one URL with different content per reader — which is what caches,
+Collage never assigns a locale from `Accept-Language` or a cookie. A locale taken
+from a header gives one URL different content per reader — which is what caches,
 crawlers and shared links all get wrong — and a Turkish browser following a link to
-an English page was handed a 404, because the header moved the lookup into a tree
-where that path did not exist.
+an English page would be handed a 404, because the header would move the lookup
+into a tree where that path does not exist.
 
 **Negotiating is yours to do**, in middleware, and there are two honest shapes for
 it:
@@ -360,7 +360,7 @@ from. A **fragment path** is a part of the page that opened it, and meets the
 page's guards first — outermost layout inwards, then the content fragment's —
 and then the fragment's own. A guarded layout whose content a script refreshes
 from a URL of its own refuses that URL to the same readers. An action carries a
-guard of its own with `WithGuard` (since v0.70.0): one on a page's URL meets the
+guard of its own with `WithGuard`: one on a page's URL meets the
 page's guards first, then its own — the page decides who sees the form, the
 action who may submit it — and one registered on its own URL, which has no page,
 meets its own alone. It is asked before the body is read and before the forgery

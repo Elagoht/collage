@@ -107,7 +107,7 @@ app.Use(func(next http.Handler) http.Handler {
   [caching](caching.md#cookies-and-cache-control).
 
 This is how to negotiate a language without collage doing it for you — see
-[routing](routing.md#locales) for why it no longer does.
+[routing](routing.md#locales) for why it does not.
 
 ## `collage.SkipCache`: previews
 
@@ -194,7 +194,7 @@ a page refuses it.
 
 ### No middleware, unless you ask
 
-Since v0.67.0 **no middleware runs for it**: neither what `app.Use` added nor any
+**No middleware runs for it**: neither what `app.Use` added nor any
 plugin's — session, flash, i18n, consent, secure, ratelimit, basicauth, compress,
 fail2ban, accesslog, redirects, tenant, the development toolbar. Your handler, your
 middleware: an API has its own idea of
@@ -246,7 +246,7 @@ prefix ending in `/` claims what begins with it, one without its exact path alon
 (`/api` is not `/apix`, nor `/api/`). Since no page, document, action or mount may
 share a handler's prefix, a request that skips the middleware can only reach that
 handler. One consequence: a middleware that rewrites a request's path *into* a
-plain `Handle` prefix no longer reaches it — the request comes out of the chain,
+plain `Handle` prefix does not reach it — the request comes out of the chain,
 and is routed as everything else the chain hands on, to a 404. Mount the target
 `WithMiddleware` if you rewrite into it. The other way round, a middleware that
 rewrites a path *out of* a plain `Handle` prefix — `/api/legacy` to a page — no
@@ -306,5 +306,5 @@ pages follow `Config.TrailingSlash`.
 The consequence for a middleware that guards an exact path: compare the canonical
 spelling, or trim the slash first — `strings.TrimSuffix(r.URL.Path, "/")` — and
 prefer a prefix such as `/admin/` where you can. A check on `"/admin/delete"` alone
-used to be bypassed by `/admin/delete/`; the handler no longer runs at that
-spelling, but the middleware still judges the request that arrived.
+is bypassed by `/admin/delete/`; the handler does not run at that spelling, but
+the middleware still judges the request that arrived.
