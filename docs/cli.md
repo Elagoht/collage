@@ -412,7 +412,8 @@ editing them needs nothing. A change to Go code is rebuilt and restarted, with n
 tool to install:
 
 - **What is watched** is what the program is made of: `.go` files (test files
-  aside), `go.mod` and `go.sum` at the root, and the environment file. Hidden
+  aside), `go.mod` and `go.sum` at the root, `plugins-config.json` (read once, at
+  start), and the environment file. Hidden
   directories, `bin`, `dist`, `node_modules`, `testdata` and `vendor` are never
   looked at — so nothing the running program writes, its cache or an export, can
   set off a rebuild.

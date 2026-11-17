@@ -55,7 +55,7 @@ a few days of saves. A project whose main package still embeds files in a
 development build is told so when "collage dev" starts.
 
 What is watched is what the program is made of: .go files (test files aside),
-go.mod and go.sum, and the environment file below. Hidden directories, bin,
+go.mod and go.sum, plugins-config.json, and the environment file below. Hidden directories, bin,
 dist, node_modules, testdata and vendor are not looked at, so nothing the
 running program writes — its cache, an export — can trigger a rebuild. The new
 build is made before the old process is stopped. A change that does not

@@ -366,7 +366,8 @@ func TestWatchedFile(t *testing.T) {
 		"pages/.env":                false,
 		"templates/pages/home.html": false,
 		"static/app.css":            false,
-		"plugins-config.json":       false,
+		"plugins-config.json":       true,
+		"pages/plugins-config.json": false,
 	} {
 		if got := watchedFile(rel); got != want {
 			t.Errorf("watchedFile(%q) = %v, want %v", rel, got, want)
