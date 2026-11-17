@@ -27,6 +27,9 @@ func (rt *router) RegisterDocument(doc *types.Document) error {
 		if err := rt.localeOptions.checkReachable(owner, locale); err != nil {
 			return err
 		}
+		if err := rt.localeOptions.checkPrefix(owner, pattern); err != nil {
+			return err
+		}
 		if err := rt.checkRedirectShadow(owner, pattern, locale, normalized); err != nil {
 			return err
 		}

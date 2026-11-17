@@ -135,6 +135,14 @@ query string is carried over.
 
 A path registered for one locale only is reachable only in that locale.
 
+**A path cannot begin with a locale's own code.** `/tr/guide.txt` registered under
+`en` would be a request for `/guide.txt` in `tr`, since the first segment is taken
+for the prefix and stripped — the route would answer nothing, and `/en/self.txt`
+would only redirect to a 404. A page, document, action or redirect source whose
+first segment is literal text naming `Default` or a supported locale, in any
+case, is refused at registration with `collage.ErrLocaleUnreachable`. A
+placeholder first segment, or the code anywhere but first, is fine.
+
 **The locale in `WithPath(locale, …)` is not a label.** It names the tree the path
 goes into, and a request reaches that tree only if the locale is `Default` or in
 `Supported`. `Default` is `"en"` when left unset. So a site that writes only

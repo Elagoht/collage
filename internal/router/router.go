@@ -477,6 +477,9 @@ func (rt *router) Register(page *types.Page) error {
 		if err := rt.localeOptions.checkReachable(owner, locale); err != nil {
 			return err
 		}
+		if err := rt.localeOptions.checkPrefix(owner, pattern); err != nil {
+			return err
+		}
 		if err := rt.checkRedirectShadow(owner, pattern, locale, normalized); err != nil {
 			return err
 		}
@@ -587,6 +590,10 @@ func (rt *router) registerRedirect(redirect *types.Redirect) error {
 	fromSegments, err := parsePattern(redirect.From)
 	if err != nil {
 		return fmt.Errorf("redirect from %q: %w", redirect.From, err)
+	}
+
+	if err := rt.localeOptions.checkPrefix(fmt.Sprintf("redirect from %q", redirect.From), redirect.From); err != nil {
+		return err
 	}
 
 	normalizedFrom := normalizePattern(redirect.From)
