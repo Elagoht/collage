@@ -285,11 +285,13 @@ the cache evicts or expires it, and the cache key carries the request's query
 string, so any client can mint unlimited distinct keys for one page. Without a
 cap the tracker would grow without bound behind a cache that stays at
 `MaxEntries`. When a tag reaches the cap — `MaxEntries` keys, so 10000 by default — recording a new key under it drops the
-oldest key recorded under that tag: the cache entry itself is untouched and keeps
-being served until it expires, but `InvalidateTags` no longer reaches it. The
+oldest key recorded under that tag, and the cache entry for it is removed with it
+(`InvalidateKey`): a key the tracker lets go of is one `InvalidateTags` could no
+longer reach, so it is never left cached to be served stale. The page renders
+again on its next request, as if the cache had evicted it. The
 tracker as a whole is capped the same way, which is what bounds the host tag the
 per-tag cap leaves out, and it is capped whatever the store is: with a custom
-`Store` too, where the keys it holds are the store's own to bound. A zero or
+`Store` too, where every key the tracker drops is removed from the store. A zero or
 negative `MaxEntries` caps both at 10000.
 
 ## Invalidating

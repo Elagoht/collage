@@ -651,6 +651,26 @@ func New(cfg Config) (*App, error) {
 	}
 	tracker.MaxKeysPerTag = capacity
 	tracker.MaxKeys = capacity
+	// A key the tracker lets go of is one an invalidation of its tag no longer
+	// reaches, and the store does not know that: it keeps the entry, so a Static
+	// page would be served stale until its TTL, silently. So the entry goes with
+	// the key, which makes "not tracked" imply "not cached" for every store, the
+	// built-in ones too, whose own eviction order need not match the tracker's.
+	// The cost is a render for a page the cap pushed out, which is no worse than
+	// the cache evicting it. Bounded, and not on any request's cancellation: the
+	// Track that dropped it may be the leader's, who has gone.
+	if store != nil {
+		tracker.OnEvict = func(keys []string) {
+			ctx, cancel := context.WithTimeout(context.Background(), trackerEvictTimeout)
+			defer cancel()
+			for _, key := range keys {
+				if err := store.InvalidateKey(ctx, key); err != nil {
+					logger.Warn("collage: a key the dependency tracker dropped could not be removed from the cache, "+
+						"so it may be served stale until it expires", "err", err)
+				}
+			}
+		}
+	}
 
 	app.tmpl = tmpl
 	// On when the page cache is, and never in development: there the page cache
@@ -1434,6 +1454,10 @@ func (a *App) invalidations() (started, finished uint64) {
 // store is treated as down for this invalidation, which is reported, rather
 // than let a stalled connection hold the caller.
 const sharedDropTimeout = 5 * time.Second
+
+// trackerEvictTimeout bounds removing from the cache the keys a tracker's cap
+// dropped, for all of them in one Track. See New.
+const trackerEvictTimeout = 5 * time.Second
 
 // invalidationTimeout bounds one invalidation, which runs detached from its
 // caller's context. See dropTags.
