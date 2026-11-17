@@ -8,6 +8,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -88,7 +89,27 @@ func validSegment(segment string) bool {
 // name that may also hold dashes, "user-settings", since it is only a path.
 // Its package is areaIdent's.
 func validArea(segment string) bool {
-	return !strings.HasPrefix(segment, "-") && validSegment(strings.ReplaceAll(segment, "-", ""))
+	return !strings.HasPrefix(segment, "-") && validSegment(strings.ReplaceAll(segment, "-", "")) && areaPackageProblem(segment) == ""
+}
+
+// areaPackageProblem says why an area directory cannot be a package name, or
+// returns "". validArea checks the segment as typed, but the package is its
+// lowercase (areaIdent), and "Type" passed as a name while "type" is a keyword:
+// add wrote a file that did not parse, and "main" wrote a package main that
+// the build then refused. A name Go predeclares — string, error, len — is a
+// legal package name that shadows the builtin in every file importing it, so
+// it is refused too.
+func areaPackageProblem(segment string) string {
+	ident := areaIdent(segment)
+	switch {
+	case token.IsKeyword(ident):
+		return fmt.Sprintf("its package would be %q, a Go keyword", ident)
+	case ident == "main" || ident == "init" || ident == "_":
+		return fmt.Sprintf("its package would be %q, which cannot be imported", ident)
+	case types.Universe.Lookup(ident) != nil:
+		return fmt.Sprintf("its package would be %q, a name Go predeclares", ident)
+	}
+	return ""
 }
 
 // areaIdent is an area directory as a package name or an import alias' stem:
@@ -249,6 +270,9 @@ func (r *addRequest) parseTarget(target string) error {
 	segments := strings.Split(strings.Trim(target, "/"), "/")
 	r.area, r.name = segments[:len(segments)-1], segments[len(segments)-1]
 	for _, segment := range r.area {
+		if problem := areaPackageProblem(segment); problem != "" {
+			return fmt.Errorf("%w: %q cannot be a directory here: %s", ErrAddUsage, segment, problem)
+		}
 		if !validArea(segment) {
 			return fmt.Errorf("%w: %q is not a directory name: letters, digits, underscores and dashes, a letter first", ErrAddUsage, segment)
 		}
