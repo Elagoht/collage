@@ -21,6 +21,17 @@ var ErrNilRenderContext = errors.New("collage: nil render context")
 // one of its own slots.
 var ErrMaxDepthExceeded = errors.New("collage: max fragment depth exceeded")
 
+// maxRuntimeSources bounds the inline template sources a render may add to the
+// template set after registration — the ones a slot resolver's fragments bring.
+// A source is Go code and there are as many as the program has literals; a number
+// past this is a source built from request data.
+const maxRuntimeSources = 256
+
+// ErrTooManyInlineSources is a fragment's failure when its inline Source would be
+// one more than maxRuntimeSources the set has taken in while rendering. A source
+// must be static: build the template once and vary what it renders with data.
+var ErrTooManyInlineSources = errors.New("collage: too many inline template sources added while rendering; a Source must be fixed, not built from request data")
+
 // ErrRequiredSlotEmpty is returned when a fragment declares a slot as Required and
 // nothing is bound to it at render time. It is deliberately distinct from
 // types.ErrRequiredSlotUnfilled, which reports the same condition from

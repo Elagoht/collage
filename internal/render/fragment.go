@@ -324,6 +324,14 @@ func (e *SlotEngine) attempt(rc *types.RenderContext, f *types.Fragment, state *
 			if failed, ok := e.failedSources.Load(name); ok {
 				return wrapFragment(label, f.Name, failed.(error))
 			}
+			// Each source reaching here is new to the engine, and costs it a write
+			// lock and a copy of the whole set, kept for good, success or failure.
+			// A source built from request data would grow both without bound, so
+			// past a cap the fragment fails instead. The count is not undone: a
+			// source that fails is remembered too.
+			if e.runtimeSources.Add(1) > maxRuntimeSources {
+				return wrapFragment(label, f.Name, ErrTooManyInlineSources)
+			}
 			if err := e.tmpl.AddSource(name, f.Source); err != nil {
 				err = types.HumanizeTemplateError(err)
 				e.failedSources.Store(name, err)
