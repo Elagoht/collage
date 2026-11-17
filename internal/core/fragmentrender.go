@@ -333,14 +333,19 @@ func (a *App) memoizes() bool {
 // memoKey is what one Shared render of the fragment at r's URL is kept under:
 // the URL as the router keys it — the path, its parameters and locale, the
 // query the page caches on (all of r's there is, from ShareableRequest) — and
-// the host, as the page cache keys a render. The build is not in it: the memo
-// lives as long as the process.
+// the host, as the page cache keys a render, and whether the request was TLS,
+// which the render is shown (see httpx's keyVary). The build is not in it: the
+// memo lives as long as the process.
 func (a *App) memoKey(r *http.Request, at fragmentMatch) string {
+	vary := []string{"fragment:" + at.page.Name + "/" + at.fragment.Name, "query:" + r.URL.RawQuery}
+	if r.TLS != nil {
+		vary = append(vary, "scheme\x00https")
+	}
 	return cache.Key(cache.KeyInput{
 		Path:   r.URL.Path,
 		Locale: at.locale,
 		Params: at.params,
-		Vary:   []string{"fragment:" + at.page.Name + "/" + at.fragment.Name, "query:" + r.URL.RawQuery},
+		Vary:   vary,
 		Host:   cache.Host(r.Host),
 	})
 }
