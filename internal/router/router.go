@@ -360,6 +360,27 @@ func (rt *router) Match(req *http.Request) (*MatchResult, error) {
 					return rt.canonical(req, locale, "/"+locale+path, permanent(req)), nil
 				}
 			}
+			// Everything else has one spelling too. A document and an action
+			// were served at "/x" and "/x/" alike, so a middleware refusing
+			// r.URL.Path == "/admin/delete" never saw the request for
+			// "/admin/delete/" that ran the same handler. The redirect is the
+			// router's to make, because the middleware cannot know which
+			// spellings reach what; it is 308 for an action so a POST is
+			// posted again.
+			//
+			// A document is a file, so "/sitemap.xml" in both modes, as the
+			// links built for it are — and so is an action, on a page's URL or
+			// off it, as ActionURL spells it: under TrailingSlash the page is
+			// at "/login/" and the form it carries posts to "/login".
+			if ok && (page == nil || action != nil) {
+				mode := rt.slash
+				if mode != SlashEither {
+					mode = SlashNever
+				}
+				if target, redirect := canonicalSlashIn(mode, path); redirect {
+					return rt.canonical(req, locale, target, permanent(req)), nil
+				}
+			}
 			if !ok {
 				return &MatchResult{
 					Locale:           locale,
@@ -412,13 +433,19 @@ func (rt *router) canonical(req *http.Request, locale, target string, status int
 // root follows the rule like any page: "/tr/" under SlashAlways, "/tr" under
 // SlashNever.
 func (rt *router) canonicalSlash(path string) (string, bool) {
-	if rt.slash == SlashEither || path == "/" {
+	return canonicalSlashIn(rt.slash, path)
+}
+
+// canonicalSlashIn is canonicalSlash under mode, which is not always the
+// router's own: see the document and action case in Match.
+func canonicalSlashIn(mode Slash, path string) (string, bool) {
+	if mode == SlashEither || path == "/" {
 		return "", false
 	}
 	// One leading slash, whatever arrived: "//evil.example/" matched against
 	// "/{slug}" must not come back as a Location a browser reads as another host.
 	target := "/" + strings.TrimLeft(path, "/")
-	if rt.slash == SlashAlways {
+	if mode == SlashAlways {
 		if !strings.HasSuffix(target, "/") {
 			target += "/"
 		}

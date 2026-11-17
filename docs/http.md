@@ -281,3 +281,19 @@ its path, which is a scanner's: `collage.RouteInfo` reports `Kind`
 `collage.RouteKindRejected` (`"rejected"`) and `Name` `collage.RouteNameNormalise`
 (`"normalise"`), `Metrics.HTTPResponse` is given an empty path, and the request
 span carries no `http.path`.
+
+### A trailing slash is the router's, not the middleware's
+
+Every route has one spelling, and the router redirects the other — but it does so
+*after* your middleware, which sees the path as it arrived. A page's other
+spelling is a 301; a document's and an action's is too, with a 308 for a method
+that carries a body, so a form posted to `/admin/delete/` is posted again to
+`/admin/delete`. Documents and actions are spelled without a trailing slash in
+both `TrailingSlash` modes, as `app.URL` and `{{actionURL}}` build them; only
+pages follow `Config.TrailingSlash`.
+
+The consequence for a middleware that guards an exact path: compare the canonical
+spelling, or trim the slash first — `strings.TrimSuffix(r.URL.Path, "/")` — and
+prefer a prefix such as `/admin/` where you can. A check on `"/admin/delete"` alone
+used to be bypassed by `/admin/delete/`; the handler no longer runs at that
+spelling, but the middleware still judges the request that arrived.
