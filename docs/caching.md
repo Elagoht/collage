@@ -10,10 +10,10 @@ app, err := collage.New(&collage.Config{
 	Cache: collage.CacheConfig{
 		Enabled:    true,
 		Type:       collage.CacheMemory, // or collage.CacheDisk; "memory" and "disk" still compile
-		DefaultTTL:    5 * time.Minute,
-		MaxEntries:    10000,
-		MaxBytes:      256 << 20, // 0 means the type's default; negative, unlimited
-		WarmLimit:     0,         // pages re-rendered after an invalidation; 0 means 1000, negative, off
+		DefaultTTL: 5 * time.Minute,
+		MaxEntries: 10000,
+		MaxBytes:   256 << 20, // 0 means the type's default; negative, unlimited
+		WarmLimit:  0,         // pages re-rendered after an invalidation; 0 means 1000, negative, off
 	},
 })
 ```
@@ -100,6 +100,14 @@ direction, and a registered page's `Strategy` is always the resolved one.
 
 `Incremental` without a positive TTL is a registration error
 (`collage.ErrInvalidTTL`), not a page that silently never expires.
+
+`CacheConfig.DefaultTTL` is therefore not what a page's entry lives for: every
+page and document the framework caches carries a TTL of its own, `Incremental`'s
+or the practically unbounded one of `Static()`. It is the lifetime the built-in
+stores (`"memory"` and `"disk"`) give a `Set` made with a TTL of zero or less, which
+is the `Cache` contract's meaning for it; a custom `Store` applies its own. It
+defaults to five minutes and a negative value is refused. `collage.Cached` values
+have their own `ttl` argument, and a zero there means the value does not expire.
 
 `Static()` means what it says: its cache entry is written with no practical
 expiry, so `DefaultTTL` does not apply to it. Only `InvalidateTags`, or eviction

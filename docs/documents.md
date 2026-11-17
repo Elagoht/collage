@@ -99,10 +99,10 @@ including responses served from cache. That is why it is not stored with the
 cached body: the framework reads it from the matched document at serve time, so
 adding documents did not change the `Cache` interface at all.
 
-`Build` records `collage.ErrNoDocumentHandler` when no handler was ever set.
-Unlike a page, a document has no template to fall back on, so the handler is
-mandatory; `BuildErr` reports it, and `RegisterDocument` refuses the document by
-name regardless of whether you checked.
+`Build` records `collage.ErrNoDocumentHandler` when neither a handler nor a body
+was ever set. Unlike a page, a document has no template to fall back on, so one of
+the two is mandatory; `BuildErr` reports it, and `RegisterDocument` refuses the
+document by name regardless of whether you checked.
 
 ## The handler contract
 
@@ -117,7 +117,7 @@ content-addressed URL, and `collage.Cached` for data kept across requests — a
 sitemap reads the same records the pages do, and shares their cache. One field
 differs: `rc.Page` is `nil`, since no page is being rendered.
 
-The returned `tags` are unioned with the document's own `WithDependency` tags,
+The returned `tags` are unioned with the document's own `WithDependencyTags` tags,
 de-duplicated and sorted, exactly as a page's are — and, exactly as with a page,
 the tags are collected *before* the error is checked, so a handler that resolved
 what it depends on and then failed has still said what would invalidate this
@@ -350,9 +350,10 @@ Stated so you do not go looking for them:
   served in full. Files that want seeking — audio, video, large downloads — are
   [assets](assets.md), which are served with `http.ServeContent` and do support
   `Range`.
-- **No per-document timeout.** The engine's default applies.
+- **No timeout of its own unless it sets one.** `WithTimeout` gives a document
+  its own; without it `Config.Template.Timeout` applies.
 
 A document body is held entirely in memory and, when its strategy is cacheable,
-stored in the page cache — which is bounded by `MaxEntries`, not by bytes. A
-50 MB document would evict thousands of pages. Serve anything large as an
+stored in the page cache — which is bounded by `MaxEntries` and `MaxBytes`, and
+evicts the oldest first. A few 50 MB documents would push thousands of pages out. Serve anything large as an
 [asset](assets.md) instead.

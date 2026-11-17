@@ -546,7 +546,7 @@ A handler made with `LoadTagged` returns three things:
   value that looks present.
 - **tags** — the dependency tags this data was derived from, e.g.
   `[]string{"post:" + slug}`. They are unioned with the page's own
-  `WithDependency` tags and stored with the cache entry. See
+  `WithDependencyTags` tags and stored with the cache entry. See
   [caching](caching.md).
 - **error** — see below.
 
